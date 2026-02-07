@@ -109,6 +109,7 @@ type OrchestratorAgentConfig struct {
 	PreDiscoveredTools []string `json:"pre_discovered_tools,omitempty"` // Tools always available without searching
 	// Context offloading configuration
 	EnableContextOffloading *bool `json:"enable_context_offloading,omitempty"` // Enable/disable context offloading (default: true if nil)
+	LargeOutputThreshold    int   `json:"large_output_threshold,omitempty"`    // Token threshold for context offloading (0 = use default: 10000)
 
 	// System prompt configuration
 	OverwriteSystemPrompt *bool `json:"overwrite_system_prompt,omitempty"` // Overwrite (true) or append (false) system prompt during execution (default: false if nil)

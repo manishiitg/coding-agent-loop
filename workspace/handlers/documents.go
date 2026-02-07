@@ -23,6 +23,26 @@ import (
 // Global lock manager
 var lockManager = utils.NewLockManager()
 
+// getUserID extracts the user ID from the request header
+// Returns the default user ID if not provided
+func getUserID(c *gin.Context) string {
+	userID := c.GetHeader("X-User-ID")
+	return utils.SanitizeUserID(userID)
+}
+
+// resolveUserPath resolves a requested path with user isolation
+func resolveUserPath(c *gin.Context, requestedPath string) (string, error) {
+	docsDir := viper.GetString("docs-dir")
+	userID := getUserID(c)
+	return utils.ResolveUserPath(docsDir, requestedPath, userID)
+}
+
+// convertToUserRelativePath converts an absolute path to user-relative for API responses
+func convertToUserRelativePath(fullPath string) (string, error) {
+	docsDir := viper.GetString("docs-dir")
+	return utils.ConvertToUserRelativePath(fullPath, docsDir)
+}
+
 // isImageFile checks if the file is an image
 func isImageFile(filename string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
@@ -91,8 +111,16 @@ func CreateDocument(c *gin.Context) {
 		return
 	}
 
-	// Create full file path
-	fullPath := filepath.Join(docsDir, req.FilePath)
+	// Resolve path with user isolation
+	fullPath, err := resolveUserPath(c, req.FilePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Acquire file lock
 	lock, err := lockManager.AcquireLock(fullPath, 30*time.Second)
@@ -415,17 +443,32 @@ func ListDocuments(c *gin.Context) {
 	}
 
 	docsDir := viper.GetString("docs-dir")
+	userID := getUserID(c)
 
 	// Normalize folder path by removing trailing slashes
 	// This fixes issues where trailing slashes cause comparison failures in buildHierarchicalStructure
 	normalizedFolder := normalizeFolderPath(req.Folder)
 
-	// Build search path
+	// Build search path with user isolation
 	var searchPath string
+	var err error
+	var isRootListing bool
 	if normalizedFolder != "" {
-		searchPath = filepath.Join(docsDir, normalizedFolder)
+		// Resolve with user isolation for per-user folders
+		searchPath, err = resolveUserPath(c, normalizedFolder)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to resolve path",
+				Error:   err.Error(),
+			})
+			return
+		}
 	} else {
+		// Root listing - need to handle specially for per-user folders
+		// In this case, list from docsDir but we'll inject per-user folder contents
 		searchPath = docsDir
+		isRootListing = true
 	}
 
 	// Check if the folder exists before attempting to read it
@@ -470,6 +513,46 @@ func ListDocuments(c *gin.Context) {
 			Error:   err.Error(),
 		})
 		return
+	}
+
+	// For root listing, inject per-user folders and filter out _users/ directory
+	if isRootListing {
+		// Filter out _users/ directory from the listing (internal implementation detail)
+		var filteredDocs []models.Document
+		for _, doc := range documents {
+			if !strings.HasPrefix(doc.FilePath, utils.UsersDirectory+"/") && doc.FilePath != utils.UsersDirectory {
+				filteredDocs = append(filteredDocs, doc)
+			}
+		}
+		documents = filteredDocs
+
+		// Inject per-user folders from /_users/{userID}/
+		userDir := filepath.Join(docsDir, utils.UsersDirectory, userID)
+		if _, statErr := os.Stat(userDir); statErr == nil {
+			// User directory exists, get its contents
+			userDocuments, userErr := getAllDocumentsRecursively(userDir, userDir, req.MaxDepth)
+			if userErr == nil {
+				// Map user documents to appear at root level (Chats/ instead of _users/{userID}/Chats/)
+				for i := range userDocuments {
+					// The filepath from getAllDocumentsRecursively is relative to userDir
+					// We keep it as-is since userDir was used as docsDir for the recursive call
+					documents = append(documents, userDocuments[i])
+				}
+			}
+		} else {
+			// User directory doesn't exist yet - ensure per-user folders are created
+			if ensureErr := utils.EnsureUserDirectories(docsDir, userID); ensureErr == nil {
+				// Add empty per-user folder entries
+				for _, folder := range utils.PerUserFolders {
+					documents = append(documents, models.Document{
+						FilePath:    folder,
+						Type:        "folder",
+						IsDirectory: true,
+						ModifiedAt:  time.Now(),
+					})
+				}
+			}
+		}
 	}
 
 	// Filter out blocked paths before building hierarchy
@@ -521,10 +604,19 @@ func GlobDocuments(c *gin.Context) {
 	// Normalize folder path
 	normalizedFolder := normalizeFolderPath(req.Folder)
 
-	// Build search path
+	// Resolve user path for per-user folder isolation
 	var searchPath string
+	var err error
 	if normalizedFolder != "" {
-		searchPath = filepath.Join(docsDir, normalizedFolder)
+		searchPath, err = resolveUserPath(c, normalizedFolder)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to resolve folder path",
+				Error:   err.Error(),
+			})
+			return
+		}
 	} else {
 		searchPath = docsDir
 	}
@@ -718,8 +810,16 @@ func GetDocument(c *gin.Context) {
 	// Sanitize input path to ensure it's relative
 	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
 
-	// Convert relative path to full path internally
-	filePath := filepath.Join(docsDir, filePathParam)
+	// Resolve path with user isolation
+	filePath, err := resolveUserPath(c, filePathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -774,23 +874,14 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Determine folder
+	// Determine folder from the user-relative path (not the internal path)
 	folder := ""
-	relPath, _ := filepath.Rel(docsDir, filePath)
-	if dir := filepath.Dir(relPath); dir != "." {
+	if dir := filepath.Dir(filePathParam); dir != "." {
 		folder = dir
 	}
 
-	// Convert full path to relative path for API response
-	relativePath, err := utils.GetRelativePath(filePath, docsDir)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
-			Success: false,
-			Message: "Failed to convert file path",
-			Error:   err.Error(),
-		})
-		return
-	}
+	// Return the original user-relative path in the response (not the internal path)
+	relativePath := filePathParam
 
 	// Check if file is an image
 	var contentStr string
@@ -853,8 +944,16 @@ func GetRawDocument(c *gin.Context) {
 	// Sanitize input path to ensure it's relative
 	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
 
-	// Convert relative path to full path internally
-	filePath := filepath.Join(docsDir, filePathParam)
+	// Resolve path with user isolation
+	filePath, err := resolveUserPath(c, filePathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -927,7 +1026,16 @@ func UpdateDocument(c *gin.Context) {
 	// Sanitize input path to ensure it's relative
 	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
 
-	filePath := filepath.Join(docsDir, filePathParam)
+	// Resolve path with user isolation
+	filePath, err := resolveUserPath(c, filePathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -991,10 +1099,9 @@ func UpdateDocument(c *gin.Context) {
 		go fileProcessor.QueueJob(filePathParam, req.Content, action)
 	}
 
-	// Determine folder
+	// Determine folder from user-relative path
 	folder := ""
-	relPath, _ := filepath.Rel(docsDir, filePath)
-	if dir := filepath.Dir(relPath); dir != "." {
+	if dir := filepath.Dir(filePathParam); dir != "." {
 		folder = dir
 	}
 
@@ -1006,16 +1113,8 @@ func UpdateDocument(c *gin.Context) {
 		}
 	}
 
-	// Convert full path to relative path for API response
-	relativePath, err := utils.GetRelativePath(filePath, docsDir)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
-			Success: false,
-			Message: "Failed to convert file path",
-			Error:   err.Error(),
-		})
-		return
-	}
+	// Return user-relative path in the response
+	relativePath := filePathParam
 
 	// Get file info for metadata
 	fileInfo, err := os.Stat(filePath)
@@ -1069,7 +1168,16 @@ func DeleteDocument(c *gin.Context) {
 	// Sanitize input path to ensure it's relative
 	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
 
-	filePath := filepath.Join(docsDir, filePathParam)
+	// Resolve path with user isolation
+	filePath, err := resolveUserPath(c, filePathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -1103,6 +1211,9 @@ func DeleteDocument(c *gin.Context) {
 		})
 		return
 	}
+
+	// Unused variable
+	_ = commitMessage
 
 	// Delete file
 	if err := os.Remove(filePath); err != nil {
@@ -1186,8 +1297,26 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	sourceFilePath := filepath.Join(docsDir, sourcePath)
-	destinationFilePath := filepath.Join(docsDir, destinationPath)
+	// Resolve user paths for per-user folder isolation
+	sourceFilePath, err := resolveUserPath(c, sourcePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve source path",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	destinationFilePath, err := resolveUserPath(c, destinationPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve destination path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file paths for security
 	if !utils.IsValidFilePath(sourceFilePath, docsDir) {
@@ -1348,10 +1477,16 @@ func GetFileVersionHistory(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Sanitize input path to ensure it's relative
-	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
-
-	filePath := filepath.Join(docsDir, filePathParam)
+	// Resolve user path for per-user folder isolation
+	filePath, err := resolveUserPath(c, filePathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve file path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -1407,10 +1542,16 @@ func RestoreFileVersion(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Sanitize input path to ensure it's relative
-	filePathParam = utils.SanitizeInputPath(filePathParam, docsDir)
-
-	filePath := filepath.Join(docsDir, filePathParam)
+	// Resolve user path for per-user folder isolation
+	filePath, err := resolveUserPath(c, filePathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve file path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate file path for security
 	if !utils.IsValidFilePath(filePath, docsDir) {
@@ -1481,7 +1622,16 @@ func CreateFolder(c *gin.Context) {
 		return
 	}
 
-	folderPath := filepath.Join(docsDir, req.FolderPath)
+	// Resolve path with user isolation
+	folderPath, err := resolveUserPath(c, req.FolderPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate folder path for security
 	if !utils.IsValidFilePath(folderPath, docsDir) {
@@ -1599,8 +1749,26 @@ func CopyFolder(c *gin.Context) {
 		return
 	}
 
-	sourcePath := filepath.Join(docsDir, req.SourcePath)
-	destinationPath := filepath.Join(docsDir, req.DestinationPath)
+	// Resolve user paths for per-user folder isolation
+	sourcePath, err := resolveUserPath(c, req.SourcePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve source path",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	destinationPath, err := resolveUserPath(c, req.DestinationPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve destination path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate paths for security
 	if !utils.IsValidFilePath(sourcePath, docsDir) {
@@ -1812,10 +1980,16 @@ func DeleteFolder(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Sanitize input folder path to ensure it's relative
-	folderPathParam = utils.SanitizeInputPath(folderPathParam, docsDir)
-
-	folderPath := filepath.Join(docsDir, folderPathParam)
+	// Resolve user path for per-user folder isolation
+	folderPath, err := resolveUserPath(c, folderPathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve folder path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate folder path for security
 	if !utils.IsValidFilePath(folderPath, docsDir) {
@@ -1908,10 +2082,16 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Sanitize input folder path to ensure it's relative
-	folderPathParam = utils.SanitizeInputPath(folderPathParam, docsDir)
-
-	folderPath := filepath.Join(docsDir, folderPathParam)
+	// Resolve user path for per-user folder isolation
+	folderPath, err := resolveUserPath(c, folderPathParam)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve folder path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Validate folder path for security
 	if !utils.IsValidFilePath(folderPath, docsDir) {
@@ -2125,11 +2305,18 @@ func UploadFile(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 
-	// Sanitize input folder path to ensure it's relative
-	req.FolderPath = utils.SanitizeInputPath(req.FolderPath, docsDir)
+	// Resolve user path for per-user folder isolation
+	folderPath, err := resolveUserPath(c, req.FolderPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+			Success: false,
+			Message: "Failed to resolve folder path",
+			Error:   err.Error(),
+		})
+		return
+	}
 
 	// Create folder path
-	folderPath := filepath.Join(docsDir, req.FolderPath)
 	if err := os.MkdirAll(folderPath, 0755); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
@@ -2218,8 +2405,8 @@ func UploadFile(c *gin.Context) {
 		}
 	}
 
-	// Convert full path to relative path for API response
-	relativePath, err := utils.GetRelativePath(fullFilePath, docsDir)
+	// Convert full path to user-relative path for API response
+	relativePath, err := convertToUserRelativePath(fullFilePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
@@ -2229,13 +2416,16 @@ func UploadFile(c *gin.Context) {
 		return
 	}
 
+	// Get folder path relative to user
+	folderRelPath := filepath.Dir(relativePath)
+
 	// Prepare response
 	response := models.FileUploadResponse{
 		FilePath:    relativePath,
 		FileName:    fileName,
 		FileSize:    fileSize,
 		ContentType: contentType,
-		Folder:      req.FolderPath,
+		Folder:      folderRelPath,
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[any]{

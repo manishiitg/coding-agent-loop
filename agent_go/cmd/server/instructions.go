@@ -21,9 +21,20 @@ func GetAgentInstructions() string {
 	// Add chat mode folder restriction note
 	instructions += `
 
-## Workspace Write Restriction
-You can only write/create/modify files in the "Chats/" folder. All other folders are read-only.
-If you need to save output, create files in "Chats/" (e.g., "Chats/output.txt", "Chats/results.json").
+## Workspace Folder Access Rules
+
+### Your Workspace - Chats/ Folder
+Save all your output files to the **Chats/** folder. This is your personal workspace.
+Examples: "Chats/output.txt", "Chats/results.json", "Chats/report.md"
+
+### Read-Only Folders
+You can READ from these folders but CANNOT write to them:
+- **skills/** - Skill instructions and templates
+- **Workflow/** - Workflow definitions
+- **Downloads/** - User's downloaded files
+
+### Blocked Folder
+- **_users/** - Internal directory (access blocked)
 `
 	return instructions
 }
@@ -110,10 +121,11 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 
 1. **Read the skill first**: Use execute_shell_command with "cat skills/<skill-name>/SKILL.md" to read the skill instructions
 2. **Follow the instructions**: The SKILL.md contains step-by-step guidance - follow it carefully
-3. **Check for additional files**: Use "ls -la skills/<skill-name>/" to see if there are supporting files
-4. **Apply to user's request**: Use the skill's methodology to address what the user is asking for
+3. **Check for additional files**: Use "ls -R skills/<skill-name>/" to see ALL files in the skill folder (recursively)
+4. **Read context**: If you see other files (scripts, templates, configs), read them too so you understand the full context
+5. **Apply to user's request**: Use the skill's methodology to address what the user is asking for
 
-**IMPORTANT: Before responding to the user's request, you MUST first read and understand the skill instructions.**
+**IMPORTANT: Before responding to the user's request, you MUST first read and understand the skill instructions and its supporting files.**
 
 ### Activated Skills:
 `)
@@ -138,7 +150,10 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 
 	promptParts = append(promptParts, `
 
-**Action Required:** Before proceeding with the user's request, use execute_shell_command with "cat" to read each skill's SKILL.md and follow the instructions within.
+**Action Required:** Before proceeding, use execute_shell_command to:
+1. "cat" the SKILL.md for each skill
+2. "ls -R" the skill directory to find supporting files
+3. Read any relevant supporting files found
 `)
 
 	return strings.Join(promptParts, "\n")

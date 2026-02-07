@@ -96,6 +96,9 @@ type BaseOrchestrator struct {
 	contextEditingThreshold     int  // Token threshold for context editing
 	contextEditingTurnThreshold int  // Turn age threshold for context editing
 
+	// Context offloading configuration
+	largeOutputThreshold int // Token threshold for context offloading (0 = use default: 10000)
+
 	// MCP session ID for connection sharing across agents
 	// When set, all agents created by this orchestrator share MCP connections
 	mcpSessionID string
@@ -169,6 +172,16 @@ func NewBaseOrchestrator(
 		}
 	}
 
+	// Load large output threshold for context offloading from environment
+	// Default to 0 which means use library default (10000 tokens)
+	largeOutputThreshold := 0
+	if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
+		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+			largeOutputThreshold = threshold
+			logger.Info(fmt.Sprintf("🔧 Large output threshold set to %d tokens from env", largeOutputThreshold))
+		}
+	}
+
 	// Default maxTurns from environment variable or 50 if not provided or 0
 	if maxTurns <= 0 {
 		maxTurns = GetDefaultMaxTurnsFromEnv()
@@ -206,6 +219,8 @@ func NewBaseOrchestrator(
 		enableContextEditing:        enableContextEditing,
 		contextEditingThreshold:     contextEditingThreshold,
 		contextEditingTurnThreshold: contextEditingTurnThreshold,
+		// Context offloading configuration
+		largeOutputThreshold: largeOutputThreshold,
 	}
 
 	// Note: No fallback to orchestrator default provider/model - LLM selection uses temp override → step config → preset LLM priority

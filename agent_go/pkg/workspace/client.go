@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // FolderGuardConfig represents folder access restrictions
@@ -25,6 +27,7 @@ type Client struct {
 	BaseURL     string
 	HTTPClient  *http.Client
 	FolderGuard *FolderGuardConfig
+	UserID      string // User ID for per-user folder isolation
 }
 
 // ClientOption is a functional option for configuring the Client
@@ -41,6 +44,16 @@ func WithFolderGuard(config *FolderGuardConfig) ClientOption {
 func WithHTTPClient(httpClient *http.Client) ClientOption {
 	return func(c *Client) {
 		c.HTTPClient = httpClient
+	}
+}
+
+// WithUserID sets the user ID for per-user folder isolation
+// When set, the client includes X-User-ID header in all requests
+// The workspace API uses this to route per-user folders (Chats/, Downloads/)
+// to /_users/{userID}/ while keeping shared folders at root
+func WithUserID(userID string) ClientOption {
+	return func(c *Client) {
+		c.UserID = userID
 	}
 }
 
@@ -147,6 +160,22 @@ func isPathUnder(inputPath, basePath string) bool {
 	return false
 }
 
+// getUserIDFromContext extracts user ID from context or returns the static UserID
+func (c *Client) getUserIDFromContext(ctx context.Context) string {
+	// First check if user ID is set on the client directly
+	if c.UserID != "" {
+		return c.UserID
+	}
+
+	// Then check the context for user ID (set by auth middleware)
+	if userID, ok := ctx.Value(common.UserIDKey).(string); ok && userID != "" {
+		return userID
+	}
+
+	// Return empty string - workspace API will use default user
+	return ""
+}
+
 // request executes a generic HTTP request and returns the response body
 func (c *Client) request(ctx context.Context, method, path string, body interface{}) ([]byte, error) {
 	var bodyReader io.Reader
@@ -164,6 +193,12 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
+	// Include user ID header for per-user folder isolation
+	// Check both static UserID and context-based user ID
+	if userID := c.getUserIDFromContext(ctx); userID != "" {
+		req.Header.Set("X-User-ID", userID)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

@@ -17,6 +17,8 @@ NAMESPACE="prod-mcpagent"
 # Configuration
 ECR_REGISTRY="414085459896.dkr.ecr.ap-south-1.amazonaws.com"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+# AWS EKS context to use (script will switch to this before deploy). Override with KUBE_CONTEXT env if needed.
+KUBE_CONTEXT="${KUBE_CONTEXT:-arn:aws:eks:ap-south-1:414085459896:cluster/app-services}"
 
 # Parse arguments
 DEPLOY_SUFFIX="${DEPLOY_SUFFIX:--cs}"
@@ -139,6 +141,14 @@ if ! command -v kubectl &> /dev/null; then
     echo -e "${RED}Error: kubectl is not installed or not in PATH${NC}"
     exit 1
 fi
+
+# Ensure we're on the AWS EKS context (default: app-services)
+echo -e "${BLUE}Switching kubectl context to: $KUBE_CONTEXT${NC}"
+if ! kubectl config use-context "$KUBE_CONTEXT" 2>/dev/null; then
+    echo -e "${RED}Error: failed to switch to context '$KUBE_CONTEXT'. Ensure the AWS context (e.g. app-services) exists (e.g. aws eks update-kubeconfig --name <cluster>).${NC}" >&2
+    exit 1
+fi
+echo -e "${GREEN}✓ Using context: $KUBE_CONTEXT${NC}\n"
 
 if [ "$BUILD" = true ]; then
     if ! command -v docker &> /dev/null; then

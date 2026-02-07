@@ -248,12 +248,17 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 // wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode writes.
 // By default, only Chats/ is writable. Pass additionalWriteFolders to allow extra folders (e.g. "skills/custom/").
 // This creates a wrapper that:
-// 1. ALLOWS read access to all folders (list, search, read operations)
-// 2. ONLY ALLOWS write access to Chats/ folder (plus any additionalWriteFolders)
-// 3. BLOCKS write access to all other folders (Workflow/, etc.)
+// 1. BLOCKS access to _users/ directory (internal structure, prevents accessing other users' data)
+// 2. ALLOWS read access to all other folders (skills/, Workflow/, Downloads/, etc.)
+// 3. ONLY ALLOWS write access to Chats/ folder (user's workspace, plus any additionalWriteFolders)
 // 4. Restricts shell writes to allowed folders
+// Note: Chats/ and Downloads/ are routed to /_users/{user_id}/ by the workspace API via X-User-ID header
 func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Build the list of allowed write folders
+	// Protected folders - block ALL access (read and write)
+	// Only _users/ is blocked to prevent direct access to internal user directory structure
+	protectedFolders := []string{"_users"}
+
+	// Build the list of allowed write folders (default: Chats/ - user's workspace)
 	allowedWriteFolders := []string{"Chats/"}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
@@ -269,10 +274,27 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		"write_workspace_file":      true,
 	}
 
-	// Path parameters to check for write tools
+	// Path parameters to check for all tools (both read and write)
+	allPathParams := []string{"filepath", "source_filepath", "destination_filepath", "folder", "pattern"}
+
+	// Path parameters specific to write operations
 	writePathParams := []string{"filepath", "source_filepath", "destination_filepath"}
 
-	// Helper: check if a cleaned path is within any allowed folder
+	// Helper: check if a cleaned path is within a protected folder
+	isPathProtected := func(cleanedPath string) bool {
+		pathLower := strings.ToLower(cleanedPath)
+		for _, folder := range protectedFolders {
+			folderLower := strings.ToLower(folder)
+			if pathLower == folderLower ||
+				strings.HasPrefix(pathLower, folderLower+"/") ||
+				strings.HasPrefix(pathLower, folderLower+"\\") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Helper: check if a cleaned path is within any allowed write folder
 	isPathAllowed := func(cleanedPath string) bool {
 		for _, folder := range allowedWriteFolders {
 			folderClean := filepath.Clean(folder)
@@ -292,13 +314,39 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		originalExecutor := executor
 
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-			// For shell commands, restrict writes
+			// FIRST: Check for protected folder access (applies to ALL tools)
+			for _, paramName := range allPathParams {
+				if paramValue, exists := args[paramName]; exists {
+					if pathStr, ok := paramValue.(string); ok && pathStr != "" {
+						cleanedPath := filepath.Clean(pathStr)
+						if isPathProtected(cleanedPath) {
+							log.Printf("[CHAT MODE FOLDER GUARD] Blocked access to protected folder '%s' for tool %s", pathStr, toolNameCopy)
+							return "", fmt.Errorf("access denied: '%s' is a protected system folder (Chats/, Downloads/, _users/ are off-limits)", pathStr)
+						}
+					}
+				}
+			}
+
+			// For shell commands, check for protected folder references and restrict writes
 			if toolNameCopy == "execute_shell_command" {
 				if cmdValue, exists := args["command"]; exists {
 					if cmdStr, ok := cmdValue.(string); ok {
 						cmdLower := strings.ToLower(cmdStr)
 
-						// Check if shell command references Workflow/ folder (blocked entirely for shell)
+						// Check if shell command references protected folders
+						for _, folder := range protectedFolders {
+							folderLower := strings.ToLower(folder)
+							if strings.Contains(cmdLower, folderLower+"/") ||
+								strings.Contains(cmdLower, folderLower+" ") ||
+								strings.Contains(cmdLower, " "+folderLower) ||
+								strings.Contains(cmdLower, "/"+folderLower) ||
+								strings.HasSuffix(cmdLower, folderLower) {
+								log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing protected folder %s: %s", folder, cmdStr)
+								return "", fmt.Errorf("access denied: shell commands cannot reference '%s/' folder (protected system folder)", folder)
+							}
+						}
+
+						// Check if shell command references Workflow/ folder (blocked for shell in chat mode)
 						workflowLower := "workflow"
 						if strings.Contains(cmdLower, workflowLower+"/") ||
 							strings.Contains(cmdLower, workflowLower+" ") ||
@@ -319,7 +367,6 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				for _, paramName := range writePathParams {
 					if paramValue, exists := args[paramName]; exists {
 						if pathStr, ok := paramValue.(string); ok && pathStr != "" {
-							// Clean the path to resolve .. and .
 							cleanedPath := filepath.Clean(pathStr)
 
 							if !isPathAllowed(cleanedPath) {
@@ -331,9 +378,6 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				}
 			}
 
-			// READ tools (list, search, read_workspace_file) are ALLOWED for all folders
-			// No blocking needed for read operations
-
 			// Call original executor
 			return originalExecutor(ctx, args)
 		}
@@ -341,7 +385,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 		wrappedExecutors[toolNameCopy] = wrappedExecutor
 	}
 
-	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - allowed write folders: %v", len(wrappedExecutors), allowedWriteFolders)
+	log.Printf("[CHAT MODE FOLDER GUARD] Wrapped %d executors - protected folders: %v, allowed write folders: %v", len(wrappedExecutors), protectedFolders, allowedWriteFolders)
 	return wrappedExecutors
 }
 
@@ -458,13 +502,7 @@ type ServerConfig struct {
 	ModelID       string   `json:"model_id"`
 	Temperature   float64  `json:"temperature"`
 	MaxTurns      int      `json:"max_turns"`
-	MCPConfigPath string   `json:"mcp_config_path"`
-	AgentMode     string   `json:"agent_mode"` // Add agent mode configuration
-
-	// Structured Output LLM Configuration
-	StructuredOutputProvider string  `json:"structured_output_provider"`
-	StructuredOutputModel    string  `json:"structured_output_model"`
-	StructuredOutputTemp     float64 `json:"structured_output_temperature"`
+	MCPConfigPath string `json:"mcp_config_path"`
 }
 
 // ActiveSessionInfo represents an active session for page refresh recovery
@@ -476,6 +514,7 @@ type ActiveSessionInfo struct {
 	CreatedAt    time.Time `json:"created_at"`
 	Query        string    `json:"query,omitempty"`
 	LLMGuidance  string    `json:"llm_guidance,omitempty"` // LLM guidance message for this session
+	UserID       string    `json:"-"`                      // User ID for session isolation (not exposed in JSON)
 }
 
 // StreamingAPI represents the streaming API server
@@ -590,8 +629,10 @@ type QueryRequest struct {
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
-	// Delegation mode: When enabled, agent gets a 'delegate' tool to spawn sub-agents
-	EnableDelegationMode *bool `json:"enable_delegation_mode,omitempty"` // Enable/disable delegation mode (nil = inherit default, true/false = explicit override)
+	// Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, '' = disabled
+	DelegationMode string `json:"delegation_mode,omitempty"`
+	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
+	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -647,12 +688,6 @@ func init() {
 	ServerCmd.Flags().Float64("temperature", 0.0, "Temperature for LLM")
 	ServerCmd.Flags().Int("max-turns", 100, "Maximum conversation turns")
 	ServerCmd.Flags().String("mcp-config", "configs/mcp_servers_clean.json", "MCP servers configuration path")
-	ServerCmd.Flags().String("agent-mode", "simple", "Agent mode (simple)")
-
-	// Structured Output LLM flags
-	ServerCmd.Flags().String("structured-output-provider", "", "Structured output LLM provider (uses main provider if empty)")
-	ServerCmd.Flags().String("structured-output-model", "", "Structured output model ID (uses main model if empty)")
-	ServerCmd.Flags().Float64("structured-output-temp", 0.0, "Structured output temperature (uses main temperature if 0)")
 
 	// Chat History Database flags
 	ServerCmd.Flags().String("db-path", "/app/chat_history.db", "SQLite database path for chat history")
@@ -673,12 +708,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		Temperature:   viper.GetFloat64("temperature"),
 		MaxTurns:      viper.GetInt("max-turns"),
 		MCPConfigPath: viper.GetString("mcp-config"),
-		AgentMode:     viper.GetString("agent-mode"), // Bind agent mode flag
-
-		// Structured Output LLM Configuration
-		StructuredOutputProvider: viper.GetString("structured-output-provider"),
-		StructuredOutputModel:    viper.GetString("structured-output-model"),
-		StructuredOutputTemp:     viper.GetFloat64("structured-output-temp"),
 	}
 
 	log.Printf("[SERVER DEBUG] Using MCP config file: %s", config.MCPConfigPath)
@@ -689,34 +718,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		if err := godotenv.Load(); err == nil {
 			os.Setenv("MCP_ENV_LOADED", "1")
 			fmt.Println("[ENV] Loaded .env file for LLM config")
-		}
-	}
-
-	// Set agent mode from environment variable if not set via command line
-	if config.AgentMode == "" {
-		if envMode := os.Getenv("ORCHESTRATOR_AGENT_MODE"); envMode != "" {
-			config.AgentMode = envMode
-		} else {
-			config.AgentMode = "simple" // Default to simple agent
-		}
-	}
-
-	// Set structured output LLM configuration from environment variables if not set via command line
-	if config.StructuredOutputProvider == "" {
-		if envProvider := os.Getenv("ORCHESTRATOR_STRUCTURED_OUTPUT_PROVIDER"); envProvider != "" {
-			config.StructuredOutputProvider = envProvider
-		}
-	}
-	if config.StructuredOutputModel == "" {
-		if envModel := os.Getenv("ORCHESTRATOR_STRUCTURED_OUTPUT_MODEL"); envModel != "" {
-			config.StructuredOutputModel = envModel
-		}
-	}
-	if config.StructuredOutputTemp == 0.0 {
-		if envTemp := os.Getenv("ORCHESTRATOR_STRUCTURED_OUTPUT_TEMPERATURE"); envTemp != "" {
-			if temp, err := strconv.ParseFloat(envTemp, 64); err == nil {
-				config.StructuredOutputTemp = temp
-			}
 		}
 	}
 
@@ -753,33 +754,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Printf("🚀 Starting Streaming API Server\n")
 	fmt.Printf("📡 Host: %s:%d\n", config.Host, config.Port)
 	fmt.Printf("🤖 Primary Provider: %s | Model: %s\n", config.Provider, config.ModelID)
-	fmt.Printf("🧠 Agent Mode: %s\n", config.AgentMode)
-
 	// Show tracing configuration
 	tracingProvider := os.Getenv("TRACING_PROVIDER")
 	if tracingProvider == "" {
 		tracingProvider = "noop"
 	}
 	fmt.Printf("📊 Tracing: %s\n", tracingProvider)
-
-	// Show structured output LLM configuration
-	if config.StructuredOutputProvider != "" || config.StructuredOutputModel != "" {
-		provider := config.StructuredOutputProvider
-		model := config.StructuredOutputModel
-		temp := config.StructuredOutputTemp
-
-		if provider == "" {
-			provider = config.Provider
-		}
-		if model == "" {
-			model = config.ModelID
-		}
-		if temp == 0.0 {
-			temp = config.Temperature
-		}
-
-		fmt.Printf("🔧 Structured Output LLM: %s | %s | temp=%.2f\n", provider, model, temp)
-	}
 
 	fmt.Printf("🌐 CORS Origins: %v\n", config.CORSOrigins)
 	fmt.Printf("📁 Config: %s\n", config.MCPConfigPath)
@@ -932,8 +912,30 @@ func runServer(cmd *cobra.Command, args []string) {
 	// CORS middleware
 	router.Use(api.corsMiddleware)
 
+	// Auth middleware - applies to all API routes
+	// Note: AuthMiddleware handles skipping auth for public endpoints (login, register, health, shared)
+	router.Use(AuthMiddleware)
+
 	// API routes
 	apiRouter := router.PathPrefix("/api").Subrouter()
+
+	// Authentication API routes (public - no auth required, handled by AuthMiddleware)
+	apiRouter.HandleFunc("/auth/register", api.handleRegister).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/auth/login", api.handleLogin).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/auth/logout", api.handleLogout).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/auth/me", api.handleGetCurrentUser).Methods("GET")
+	apiRouter.HandleFunc("/auth/mode", api.handleGetAuthMode).Methods("GET")
+	// Multi-provider OAuth routes
+	apiRouter.HandleFunc("/auth/start", api.handleAuthStart).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/auth/callback", api.handleAuthCallback).Methods("GET")
+
+	// Session sharing routes
+	apiRouter.HandleFunc("/sessions/{session_id}/share", api.handleCreateShare).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/sessions/{session_id}/shares", api.handleListShares).Methods("GET")
+	apiRouter.HandleFunc("/sessions/{session_id}/share/{share_id}", api.handleRevokeShare).Methods("DELETE", "OPTIONS")
+
+	// Public shared session access (no auth required)
+	apiRouter.HandleFunc("/shared/{share_token}", api.handleGetSharedSession).Methods("GET")
 	apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
@@ -941,6 +943,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")
+	apiRouter.HandleFunc("/llm-config/delegation-tiers", api.handleGetDelegationTierDefaults).Methods("GET")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
 
@@ -1537,11 +1540,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		sessionID = queryID // fallback: use queryID as sessionID if not provided
 	}
 
+	// Get current user ID for session isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+
 	// Create or get chat session for this query
 	// The agent will modify the session ID to agent-init-{sessionID}-{timestamp}
 	// So we need to create the chat session with the original sessionID
 	// and the events will use the modified sessionID
-	chatSession, err := api.chatDB.GetChatSession(r.Context(), sessionID)
+	chatSession, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
 	if err != nil {
 		// Chat session doesn't exist, create a new one
 		// Extract title from req.Query (user message)
@@ -1593,6 +1599,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// If LLM config is locked and not provided by frontend, use server defaults from env
+			if config.LLMConfig == nil && isLLMConfigLocked() {
+				provider, modelID := getPrimaryProviderAndModelFromDefaults()
+				if provider != "" && modelID != "" {
+					config.LLMConfig = &database.LLMConfigForStorage{
+						Provider: provider,
+						ModelID:  modelID,
+					}
+					log.Printf("[CONFIG DEBUG] Using locked LLM config from env: provider=%s, model=%s", provider, modelID)
+				}
+			}
+
 			var err error
 			configJSON, err = config.ToJSON()
 			if err != nil {
@@ -1601,13 +1619,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		chatSession, err = api.chatDB.CreateChatSession(r.Context(), &database.CreateChatSessionRequest{
+		chatSession, err = api.chatDB.CreateChatSessionWithUser(r.Context(), &database.CreateChatSessionRequest{
 			SessionID:     sessionID,
 			Title:         title,
 			AgentMode:     req.AgentMode,
 			PresetQueryID: req.PresetQueryID,
 			Config:        configJSON,
-		})
+		}, currentUserID)
 		if err != nil {
 			log.Printf("[DATABASE DEBUG] Failed to create chat session: %v", err)
 			// Continue without chat session - events won't be stored but query can proceed
@@ -1718,7 +1736,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Track active session for page refresh recovery (no observer needed)
-	api.trackActiveSession(sessionID, req.AgentMode, req.Query)
+	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
 
 	// Create fresh agent for this request
 	// Use LLM configuration from request if provided, otherwise use request defaults
@@ -1991,6 +2009,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being canceled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
+
+		// Inject user ID into the workflow context for per-user folder isolation
+		// This allows workspace tools to route per-user folders correctly
+		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
 
 		// Store the cancel function for potential cancellation (keyed by queryID for independent executions)
 		api.workflowOrchestratorContextMux.Lock()
@@ -2520,10 +2542,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			UseCodeExecutionMode: useCodeExecutionMode,
 			// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
 			UseToolSearchMode: useToolSearchMode,
-			// Pre-discovered tools: delegate tool is always available when delegation mode is on
+			// Pre-discovered tools: delegation tools are always available when delegation mode is on
 			PreDiscoveredTools: func() []string {
-				enableDelegationMode := req.EnableDelegationMode != nil && *req.EnableDelegationMode
-				if useToolSearchMode && enableDelegationMode {
+				if useToolSearchMode && req.DelegationMode == "plan" {
+					return []string{"delegate", "create_delegation_plan", "execute_plan_task", "update_plan_task", "get_plan_status"}
+				}
+				if useToolSearchMode && req.DelegationMode == "spawn" {
 					return []string{"delegate"}
 				}
 				return nil
@@ -2683,6 +2707,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Default to 0 (use default: 5)
 				return 0
 			}(),
+			// Context offloading: large output threshold
+			// Tool outputs larger than this threshold (in tokens) are offloaded to filesystem
+			LargeOutputThreshold: func() int {
+				// Check environment variable
+				if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
+					if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+						return threshold
+					}
+				}
+				// Default to 0 (use library default: 10000 tokens)
+				return 0
+			}(),
 			// Parallel tool execution: enabled by default, can be disabled via ENABLE_PARALLEL_TOOL_EXECUTION=false
 			EnableParallelToolExecution: func() bool {
 				if envVal := os.Getenv("ENABLE_PARALLEL_TOOL_EXECUTION"); envVal == "false" {
@@ -2693,6 +2729,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// MCP session ID for connection reuse (e.g., Playwright browser sharing)
 			// Use the chat session ID so all agents in the same session share MCP connections
 			SessionID: sessionID,
+			// User ID for per-user OAuth token isolation
+			// This ensures MCP servers with OAuth use user-specific token files
+			UserID: currentUserID,
 		}
 
 		// Set agent mode based on request
@@ -2932,12 +2971,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Register delegation tool if delegation mode is enabled
 			// Note: This is outside the workspace access block because delegation should work regardless of workspace access
-			enableDelegationMode := false
-			if req.EnableDelegationMode != nil && *req.EnableDelegationMode {
-				enableDelegationMode = true
-			}
+			delegationMode := req.DelegationMode // "spawn", "plan", or ""
 
-			if enableDelegationMode {
+			if delegationMode == "spawn" || delegationMode == "plan" {
 				delegationTools := virtualtools.CreateDelegationTools()
 				delegationExecutors := virtualtools.CreateDelegationToolExecutors()
 				delegationCategory := virtualtools.GetDelegationToolCategory()
@@ -2953,11 +2989,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return api.executeDelegatedTask(subCtx, req, sessionID, instruction)
 					}
 
+					// Create workspace client for plan file I/O (Chats/Delegations/)
+					planWorkspaceClient := workspace.NewClient(
+						getWorkspaceAPIURL(),
+						workspace.WithFolderGuard(&workspace.FolderGuardConfig{
+							Enabled:      true,
+							WritePaths:   []string{"Chats/Delegations"},
+							BlockedPaths: []string{"_users"},
+						}),
+					)
+
+					// Build delegation tier config from request or env vars
+					tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
+
 					for _, tool := range delegationTools {
 						if tool.Function == nil {
 							continue
 						}
 						toolName := tool.Function.Name
+
+						// In 'spawn' mode, only register the simple 'delegate' tool
+						// In 'plan' mode, register all delegation tools
+						if delegationMode == "spawn" && toolName != "delegate" {
+							continue
+						}
+
 						if executor, exists := delegationExecutors[toolName]; exists {
 							var params map[string]interface{}
 							if tool.Function.Parameters != nil {
@@ -2971,11 +3027,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								continue
 							}
 
-							// Wrap the executor to inject the delegation execution function
+							// Capture executor for closure
+							exec := executor
+
+							// Wrap the executor to inject delegation function, workspace client, and tier config
 							wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-								// Inject the execution function into context
 								ctx = context.WithValue(ctx, virtualtools.ExecuteDelegatedTaskKey, virtualtools.ExecuteDelegatedTaskFunc(executeDelegatedTask))
-								return executor(ctx, args)
+								ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
+								if tierConfig != nil {
+									ctx = context.WithValue(ctx, virtualtools.DelegationTierConfigKey, tierConfig)
+								}
+								return exec(ctx, args)
 							}
 
 							if err := delegationAgent.RegisterCustomTool(
@@ -2991,7 +3053,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							log.Printf("[DELEGATION TOOLS] Registered delegation tool: %s (category: %s)", toolName, delegationCategory)
 						}
 					}
-					log.Printf("[DELEGATION TOOLS] Successfully registered delegation tools for chat mode")
+					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
 				}
 			}
 		}
@@ -3081,9 +3143,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Add delegation instructions if delegation mode is enabled
-			if req.EnableDelegationMode != nil && *req.EnableDelegationMode {
+			if req.DelegationMode == "spawn" || req.DelegationMode == "plan" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
-				log.Printf("[DELEGATION] Added delegation instructions to system prompt")
+				log.Printf("[DELEGATION] Added delegation instructions to system prompt (mode: %s)", req.DelegationMode)
 			}
 		}
 
@@ -3206,6 +3268,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Create a cancellable context for agent execution using background context
 		// This prevents the agent from being canceled when the HTTP request ends
 		agentCtx, agentCancel := context.WithCancel(context.Background())
+
+		// Inject user ID into the agent context for per-user folder isolation
+		// This allows workspace tools to route per-user folders correctly
+		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
 
 		// Store the cancel function for potential cancellation
 		api.agentCancelMux.Lock()
@@ -3346,6 +3412,14 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Verify session ownership for multi-user isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
+	if err != nil {
+		http.Error(w, "Session not found or access denied", http.StatusNotFound)
+		return
+	}
+
 	// Cancel agent execution context if it exists
 	api.agentCancelMux.Lock()
 	if cancelFunc, exists := api.agentCancelFuncs[sessionID]; exists {
@@ -3400,6 +3474,14 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	sessionID := r.Header.Get("X-Session-ID")
 	if sessionID == "" {
 		http.Error(w, "Session ID required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify session ownership for multi-user isolation
+	currentUserID := GetUserIDFromContext(r.Context())
+	_, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
+	if err != nil {
+		http.Error(w, "Session not found or access denied", http.StatusNotFound)
 		return
 	}
 
@@ -3471,7 +3553,10 @@ func createChatSessionHandler(db database.Database) http.HandlerFunc {
 			return
 		}
 
-		session, err := db.CreateChatSession(r.Context(), &req)
+		// Get current user ID for session isolation
+		userID := GetUserIDFromContext(r.Context())
+
+		session, err := db.CreateChatSessionWithUser(r.Context(), &req, userID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -3518,7 +3603,10 @@ func listChatSessionsHandler(db database.Database) http.HandlerFunc {
 			agentModePtr = &agentMode
 		}
 
-		sessions, total, err := db.ListChatSessions(r.Context(), limit, offset, presetQueryIDPtr, agentModePtr)
+		// Get current user ID for session isolation
+		userID := GetUserIDFromContext(r.Context())
+
+		sessions, total, err := db.ListChatSessionsWithUser(r.Context(), limit, offset, presetQueryIDPtr, agentModePtr, userID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -3542,7 +3630,10 @@ func getChatSessionHandler(db database.Database) http.HandlerFunc {
 		vars := mux.Vars(r)
 		sessionID := vars["session_id"]
 
-		session, err := db.GetChatSession(r.Context(), sessionID)
+		// Get current user ID for session isolation
+		userID := GetUserIDFromContext(r.Context())
+
+		session, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -3558,6 +3649,14 @@ func updateChatSessionHandler(db database.Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		sessionID := vars["session_id"]
+
+		// Get current user ID for session isolation - verify ownership first
+		userID := GetUserIDFromContext(r.Context())
+		_, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
+		if err != nil {
+			http.Error(w, "Session not found or access denied", http.StatusNotFound)
+			return
+		}
 
 		var req database.UpdateChatSessionRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -3582,7 +3681,15 @@ func deleteChatSessionHandler(db database.Database) http.HandlerFunc {
 		vars := mux.Vars(r)
 		sessionID := vars["session_id"]
 
-		err := db.DeleteChatSession(r.Context(), sessionID)
+		// Get current user ID for session isolation - verify ownership first
+		userID := GetUserIDFromContext(r.Context())
+		_, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
+		if err != nil {
+			http.Error(w, "Session not found or access denied", http.StatusNotFound)
+			return
+		}
+
+		err = db.DeleteChatSession(r.Context(), sessionID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -3894,7 +4001,7 @@ func chatHistoryHealthCheckHandler(db database.Database) http.HandlerFunc {
 // --- ACTIVE SESSION MANAGEMENT ---
 
 // trackActiveSession tracks a new active session
-func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query string) {
+func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query, userID string) {
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
@@ -3905,9 +4012,10 @@ func (api *StreamingAPI) trackActiveSession(sessionID, agentMode, query string) 
 		LastActivity: time.Now(),
 		CreatedAt:    time.Now(),
 		Query:        query,
+		UserID:       userID,
 	}
 
-	log.Printf("[ACTIVE_SESSION] Tracked active session: %s (mode: %s)", sessionID, agentMode)
+	log.Printf("[ACTIVE_SESSION] Tracked active session: %s (mode: %s, user: %s)", sessionID, agentMode, userID)
 }
 
 // updateSessionActivity updates the LastActivity timestamp for a session when events are added
@@ -3994,6 +4102,27 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		modelID = "claude-sonnet-4-20250514"
 	}
 
+	// Resolve reasoning level tier to specific provider/model if configured
+	if reasoningLevel, ok := ctx.Value(virtualtools.ReasoningLevelKey).(string); ok && reasoningLevel != "" {
+		tierConfig := resolveDelegationTierConfig(parentReq.DelegationTierConfig)
+		if tierConfig != nil {
+			var tierModel *virtualtools.TierModel
+			switch reasoningLevel {
+			case "high":
+				tierModel = tierConfig.High
+			case "medium":
+				tierModel = tierConfig.Medium
+			case "low":
+				tierModel = tierConfig.Low
+			}
+			if tierModel != nil && tierModel.Provider != "" && tierModel.ModelID != "" {
+				provider = llm.Provider(tierModel.Provider)
+				modelID = tierModel.ModelID
+				log.Printf("[DELEGATION] Using tier %s model: %s/%s", reasoningLevel, tierModel.Provider, tierModel.ModelID)
+			}
+		}
+	}
+
 	// Build server name from enabled servers
 	var serverName string
 	if len(parentReq.EnabledServers) > 0 {
@@ -4042,6 +4171,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 	}
 
+	// Get user ID from context for per-user OAuth token isolation
+	subAgentUserID := ""
+	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
+		subAgentUserID = userID
+	}
+
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
 		Name:                 fmt.Sprintf("%s-sub-%d-%d", sessionID, currentDepth, time.Now().UnixNano()),
@@ -4050,12 +4185,22 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		Provider:             provider,
 		ModelID:              modelID,
 		Temperature:          0.7,
-		MaxTurns:             30,
+		MaxTurns:             100,
 		ToolChoice:           "auto",
 		StreamingChunkSize:   1,
 		UseCodeExecutionMode: parentReq.UseCodeExecutionMode,
 		UseToolSearchMode:    parentReq.UseToolSearchMode,
 		APIKeys:              apiKeys,
+		UserID:               subAgentUserID, // Per-user OAuth token isolation
+		// Context offloading: inherit from environment
+		LargeOutputThreshold: func() int {
+			if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
+				if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
+					return threshold
+				}
+			}
+			return 0
+		}(),
 	}
 
 	// Create sub-agent using the wrapper (same as parent agent creation)
@@ -4278,6 +4423,61 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 	}
 	api.eventStore.AddEvent(sessionID, event)
 	log.Printf("[DELEGATION] Emitted delegation_end event for %s at depth %d (success: %v)", delegationID, depth, errorMsg == "")
+}
+
+// resolveDelegationTierConfig builds a DelegationTierConfig by merging:
+// 1. Frontend config (from QueryRequest) - highest priority
+// 2. Environment variables (DELEGATION_TIER_*) - fallback
+// Returns nil if no tier config is available at all
+func resolveDelegationTierConfig(frontendConfig *virtualtools.DelegationTierConfig) *virtualtools.DelegationTierConfig {
+	result := &virtualtools.DelegationTierConfig{}
+	hasAny := false
+
+	// Start with env var defaults
+	if p, m := os.Getenv("DELEGATION_TIER_HIGH_PROVIDER"), os.Getenv("DELEGATION_TIER_HIGH_MODEL"); p != "" && m != "" {
+		result.High = &virtualtools.TierModel{Provider: p, ModelID: m}
+		hasAny = true
+	}
+	if p, m := os.Getenv("DELEGATION_TIER_MEDIUM_PROVIDER"), os.Getenv("DELEGATION_TIER_MEDIUM_MODEL"); p != "" && m != "" {
+		result.Medium = &virtualtools.TierModel{Provider: p, ModelID: m}
+		hasAny = true
+	}
+	if p, m := os.Getenv("DELEGATION_TIER_LOW_PROVIDER"), os.Getenv("DELEGATION_TIER_LOW_MODEL"); p != "" && m != "" {
+		result.Low = &virtualtools.TierModel{Provider: p, ModelID: m}
+		hasAny = true
+	}
+
+	// Override with frontend config (higher priority)
+	if frontendConfig != nil {
+		if frontendConfig.High != nil && frontendConfig.High.Provider != "" && frontendConfig.High.ModelID != "" {
+			result.High = frontendConfig.High
+			hasAny = true
+		}
+		if frontendConfig.Medium != nil && frontendConfig.Medium.Provider != "" && frontendConfig.Medium.ModelID != "" {
+			result.Medium = frontendConfig.Medium
+			hasAny = true
+		}
+		if frontendConfig.Low != nil && frontendConfig.Low.Provider != "" && frontendConfig.Low.ModelID != "" {
+			result.Low = frontendConfig.Low
+			hasAny = true
+		}
+	}
+
+	if !hasAny {
+		return nil
+	}
+	return result
+}
+
+// handleGetDelegationTierDefaults returns the env var default values for delegation tier config
+func (api *StreamingAPI) handleGetDelegationTierDefaults(w http.ResponseWriter, r *http.Request) {
+	tierConfig := resolveDelegationTierConfig(nil) // env vars only
+	if tierConfig == nil {
+		tierConfig = &virtualtools.DelegationTierConfig{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tierConfig)
 }
 
 // getActiveSession retrieves an active session by ID

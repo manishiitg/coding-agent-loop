@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAuthToken } from '../services/api';
 import type {
   Skill,
   ImportSkillRequest,
@@ -17,6 +18,15 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// Add auth token interceptor
+api.interceptors.request.use((config) => {
+  const authToken = getAuthToken()
+  if (authToken && config.headers) {
+    config.headers['Authorization'] = `Bearer ${authToken}`
+  }
+  return config
+})
 
 export const skillsApi = {
   // List all skills

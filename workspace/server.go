@@ -50,15 +50,35 @@ func runServer(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Create default workspace subdirectories
-	defaultFolders := []string{"Downloads", "Chats", "Workflow", "skills", "Workspace"}
-	for _, folder := range defaultFolders {
+	// Migrate per-user folders from root to /_users/default/ if needed
+	// This handles backwards compatibility with workspaces created before per-user isolation
+	fmt.Printf("🔄 Checking for per-user folder migration...\n")
+	migratedCount, err := utils.MigratePerUserFolders(docsDir)
+	if err != nil {
+		fmt.Printf("⚠️  Failed to migrate per-user folders: %v\n", err)
+		// Continue anyway - this is not a fatal error
+	} else if migratedCount > 0 {
+		fmt.Printf("✅ Migrated %d per-user folders to /_users/default/\n", migratedCount)
+	} else {
+		fmt.Printf("✅ No per-user folders need migration\n")
+	}
+
+	// Create default shared workspace subdirectories (these remain at root level)
+	sharedFolders := []string{"Workflow", "skills", "Workspace"}
+	for _, folder := range sharedFolders {
 		path := filepath.Join(docsDir, folder)
 		if err := os.MkdirAll(path, 0755); err != nil {
-			fmt.Printf("Warning: Failed to create default folder %s: %v\n", folder, err)
+			fmt.Printf("Warning: Failed to create shared folder %s: %v\n", folder, err)
 		} else {
-			fmt.Printf("Created default folder: %s\n", path)
+			fmt.Printf("Created shared folder: %s\n", path)
 		}
+	}
+
+	// Ensure default user directories exist (for per-user folders)
+	if err := utils.EnsureUserDirectories(docsDir, utils.DefaultUserID); err != nil {
+		fmt.Printf("Warning: Failed to create default user directories: %v\n", err)
+	} else {
+		fmt.Printf("Created default user directories under /_users/%s/\n", utils.DefaultUserID)
 	}
 
 	// Sync with GitHub on startup if credentials are configured
@@ -160,7 +180,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-ID")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)

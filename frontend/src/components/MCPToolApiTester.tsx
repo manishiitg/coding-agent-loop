@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Play, Copy, Check, AlertCircle, Loader2 } from 'lucide-react'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
+import { getAuthToken } from '../services/api'
 
 interface MCPToolApiTesterProps {
   isOpen: boolean
@@ -74,11 +75,15 @@ export default function MCPToolApiTester({
 
       console.log('[MCPToolApiTester] Executing tool:', requestBody)
 
+      const headers: HeadersInit = { 'Content-Type': 'application/json' }
+      const token = getAuthToken()
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`
+      }
+
       const res = await fetch(`${apiBaseUrl}/api/mcp/execute`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify(requestBody)
       })
 

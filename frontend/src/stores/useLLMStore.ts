@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
-import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel } from '../services/api-types'
+import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
 import { llmConfigService } from '../services/llm-config-api'
@@ -61,6 +61,11 @@ interface LLMState extends StoreActions {
   // Supported providers (from backend, not persisted)
   supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
   isProviderSupported: (provider: string) => boolean
+
+  // Delegation tier configuration
+  delegationTierConfig: DelegationTierConfig | null
+  setDelegationTierConfig: (config: DelegationTierConfig | null) => void
+  loadDelegationTierDefaults: () => Promise<void>
 
   // Lock state from backend (not persisted; re-read on each load)
   llmConfigLocked: boolean
@@ -219,6 +224,9 @@ export const useLLMStore = create<LLMState>()(
         error: null,
         defaultsLoaded: false,
 
+        // Delegation tier config
+        delegationTierConfig: null,
+
         // Supported providers (always load fresh from backend, default to all)
         supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
         llmConfigLocked: false,
@@ -294,6 +302,26 @@ export const useLLMStore = create<LLMState>()(
 
         setShowLLMModal: (show) => {
           set({ showLLMModal: show })
+        },
+
+        setDelegationTierConfig: (config) => {
+          set({ delegationTierConfig: config })
+        },
+
+        loadDelegationTierDefaults: async () => {
+          try {
+            const defaults = await llmConfigService.getDelegationTierDefaults()
+            const currentConfig = get().delegationTierConfig
+            // Only set defaults if user hasn't already configured tiers
+            if (!currentConfig) {
+              const hasDefaults = defaults.high || defaults.medium || defaults.low
+              if (hasDefaults) {
+                set({ delegationTierConfig: defaults })
+              }
+            }
+          } catch (error) {
+            console.warn('Failed to load delegation tier defaults:', error)
+          }
         },
 
         // Library management
@@ -846,6 +874,7 @@ export const useLLMStore = create<LLMState>()(
           customVertexModels: state.customVertexModels,
           customAzureModels: state.customAzureModels,
           showLLMModal: state.showLLMModal,
+          delegationTierConfig: state.delegationTierConfig,
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
           // These should always be loaded fresh from backend
           // DO NOT persist defaultsLoaded - this should be reset on each app load

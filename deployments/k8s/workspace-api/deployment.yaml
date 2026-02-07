@@ -29,7 +29,9 @@ spec:
       containers:
         - name: workspace-api
           securityContext:
-            {}
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: false
           image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-workspace-api:latest
           imagePullPolicy: Always
           command: ["./planner"]

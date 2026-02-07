@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -17,6 +17,7 @@ import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import ResumeSessionDialog from './ResumeSessionDialog'
+import DelegationTierConfigModal from './DelegationTierConfigModal'
 import type { PlannerFile } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
@@ -31,8 +32,62 @@ interface ChatInputProps {
   onStopStreaming: () => void
 }
 
+// Shorten model ID to max 5 char label
+const shortModelName = (modelId: string): string => {
+  let m = modelId.replace(/^(global\.|us\.|eu\.)?anthropic\./, '').replace(/^(global\.|us\.|eu\.)?meta\./, '')
+  m = m.split('/').pop() || m
+  // Map to short names
+  if (/opus-4/i.test(m)) return 'opus4'
+  if (/sonnet-4-5|sonnet-4\.5/i.test(m)) return 'sn4.5'
+  if (/sonnet-4/i.test(m)) return 'sn4'
+  if (/sonnet-3-7|sonnet-3\.7/i.test(m)) return 'sn3.7'
+  if (/sonnet-3-5|sonnet-3\.5/i.test(m)) return 'sn3.5'
+  if (/haiku-4-5|haiku-4\.5/i.test(m)) return 'hk4.5'
+  if (/haiku-3-5|haiku-3\.5/i.test(m)) return 'hk3.5'
+  if (/gpt-5-mini/i.test(m)) return 'g5m'
+  if (/gpt-5/i.test(m)) return 'gpt5'
+  if (/gpt-4\.?1-mini/i.test(m)) return 'g4.1m'
+  if (/gpt-4\.?1/i.test(m)) return 'g4.1'
+  if (/gpt-4o-mini/i.test(m)) return 'g4om'
+  if (/gpt-4o/i.test(m)) return 'g4o'
+  if (/grok/i.test(m)) return 'grok'
+  if (/gemini.*3.*flash/i.test(m)) return 'gm3f'
+  if (/gemini.*3.*pro/i.test(m)) return 'gm3p'
+  if (/gemini.*2\.?5.*pro/i.test(m)) return 'gm25p'
+  if (/gemini.*2\.?5.*flash/i.test(m)) return 'gm25f'
+  if (/gemini.*2\.?0.*flash/i.test(m)) return 'gm20f'
+  if (/gemini.*1\.?5.*pro/i.test(m)) return 'gm15p'
+  if (/gemini.*1\.?5.*flash/i.test(m)) return 'gm15f'
+  if (/gemini/i.test(m)) return 'gem'
+  if (/llama/i.test(m)) return 'llama'
+  if (/mistral/i.test(m)) return 'mstrl'
+  // Fallback: first 5 chars
+  return m.slice(0, 5)
+}
+
 // Stable empty array reference to avoid infinite loops in selectors
 const EMPTY_EVENTS: never[] = []
+
+// Provider icon for tier chip (official SVGs from simple-icons)
+const TierProviderDot = ({ provider }: { provider: string }) => {
+  const cls = "w-3 h-3 flex-shrink-0"
+  switch (provider) {
+    case 'anthropic':
+      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M17.304 3.541h-3.672l6.696 16.918H24zm-10.608 0L0 20.459h3.744l1.37-3.553h7.005l1.369 3.553h3.744L10.536 3.541zm-.371 10.223 2.291-5.946 2.291 5.946z"/></svg>
+    case 'openai':
+      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>
+    case 'openrouter':
+      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"/></svg>
+    case 'bedrock':
+      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M4.985 0c-.294.003-.534.247-.534.548l-.006 4.908c0 .145.06.284.159.39a.532.532 0 0 0 .381.155h3.428l8.197 17.681a.537.537 0 0 0 .489.318h5.81c.298 0 .543-.245.543-.548V18.544c0-.303-.239-.548-.543-.548h-2.013L12.739.315A.536.536 0 0 0 12.245 0h-7.254zm.54 1.091h6.368l8.16 17.68a.537.537 0 0 0 .488.318h1.818v3.817h-2.922L11.24 5.226a.536.536 0 0 0-.488-.318H5.522z"/></svg>
+    case 'vertex':
+      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>
+    case 'azure':
+      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M13.05 4.24 7.56 18.05l-4.3.76L13.05 4.24M14.7.76H9.07L1.97 19.45l5.03-.88L14.7.76zM22.03 18.76 14.26 3.38l-3.2 7.36 4.78 8.79-8.27 1.23L22.03 18.76z"/></svg>
+    default:
+      return <span className="text-[8px] font-bold uppercase leading-none">{provider?.slice(0, 2) || '?'}</span>
+  }
+}
 
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
@@ -43,7 +98,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const {
     agentMode,
     setWorkspaceMinimized,
-    enableDelegationMode
+    delegationMode
   } = useAppStore()
   
   // Use selectors to subscribe only to specific values, reducing re-renders
@@ -321,7 +376,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     availableLLMs,
     getCurrentLLMOption,
     refreshAvailableLLMs: onRefreshAvailableLLMs,
-    llmConfigLocked
+    llmConfigLocked,
+    delegationTierConfig
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
@@ -389,6 +445,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandDialogPosition, setCommandDialogPosition] = useState({ bottom: 0, left: 0 })
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
+
+  // Tier config modal state (for plan mode chip)
+  const [showTierModal, setShowTierModal] = useState(false)
 
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
@@ -1088,19 +1147,40 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         openDialog('resume')
         break
       case 'spawn': {
-        // Enable sub-agent spawning mode globally (persisted)
-        useAppStore.getState().setEnableDelegationMode(true)
+        useAppStore.getState().setDelegationMode('spawn')
         addToast(
-          'Sub-agent spawning enabled - Agent can now delegate tasks to sub-agents',
+          'Simple delegation enabled - Agent can delegate tasks to sub-agents',
           'success'
         )
         break
       }
+      case 'plan': {
+        // Check if delegation tier config exists in localStorage
+        const tierConfig = useLLMStore.getState().delegationTierConfig
+        const hasTierConfig = tierConfig && (tierConfig.high || tierConfig.medium || tierConfig.low)
+
+        useAppStore.getState().setDelegationMode('plan')
+
+        if (!hasTierConfig) {
+          // First time - open left sidebar and expand delegation tiers section
+          useAppStore.getState().setSidebarMinimized(false)
+          openDialog('delegationTiers')
+          addToast(
+            'Plan delegation enabled - Configure your delegation tier models in the sidebar',
+            'info'
+          )
+        } else {
+          addToast(
+            'Plan delegation enabled - Agent will create plans and delegate with multi-LLM tiers',
+            'success'
+          )
+        }
+        break
+      }
       case 'nospawn': {
-        // Disable sub-agent spawning mode globally (persisted)
-        useAppStore.getState().setEnableDelegationMode(false)
+        useAppStore.getState().setDelegationMode('off')
         addToast(
-          'Sub-agent spawning disabled',
+          'Sub-agent delegation disabled',
           'success'
         )
         break
@@ -1123,7 +1203,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig?.selectedSkills, tabConfig?.enableDelegationMode, setTabConfig, onSubmit, openDialog, addToast])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig?.selectedSkills, setTabConfig, onSubmit, openDialog, addToast])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
     if (!textareaRef.current || atPosition === -1 || !activeTabId) return
@@ -1349,25 +1429,67 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         />
                       </>
                     
-                    <TooltipProvider>
+                    {/* Hide LLM dropdown in plan mode - show tier summary chip instead */}
+                    {delegationMode === 'plan' ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <div className="flex">
-                            <LLMSelectionDropdown
-                              availableLLMs={availableLLMs}
-                              selectedLLM={primaryLLM}
-                              onLLMSelect={onPrimaryLLMSelect}
-                              onRefresh={onRefreshAvailableLLMs}
-                              disabled={isStreaming || isSummarizing}
-                              openDirection="up"
-                            />
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowTierModal(true)}
+                            className="flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors text-xs"
+                          >
+                            <Layers className="w-3.5 h-3.5 flex-shrink-0" />
+                            {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                              <span className="flex items-center gap-2 font-medium">
+                                {delegationTierConfig.high && (
+                                  <span className="flex items-center gap-0.5" title={`High: ${delegationTierConfig.high.provider}/${delegationTierConfig.high.model_id}`}>
+                                    <TierProviderDot provider={delegationTierConfig.high.provider} />
+                                    <span className="text-[10px]">H:{shortModelName(delegationTierConfig.high.model_id)}</span>
+                                  </span>
+                                )}
+                                {delegationTierConfig.medium && (
+                                  <span className="flex items-center gap-0.5" title={`Medium: ${delegationTierConfig.medium.provider}/${delegationTierConfig.medium.model_id}`}>
+                                    <TierProviderDot provider={delegationTierConfig.medium.provider} />
+                                    <span className="text-[10px]">M:{shortModelName(delegationTierConfig.medium.model_id)}</span>
+                                  </span>
+                                )}
+                                {delegationTierConfig.low && (
+                                  <span className="flex items-center gap-0.5" title={`Low: ${delegationTierConfig.low.provider}/${delegationTierConfig.low.model_id}`}>
+                                    <TierProviderDot provider={delegationTierConfig.low.provider} />
+                                    <span className="text-[10px]">L:{shortModelName(delegationTierConfig.low.model_id)}</span>
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <span className="font-medium">Configure Tiers</span>
+                            )}
+                          </button>
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          <p>{llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
+                          <p>Click to configure delegation tier models</p>
                         </TooltipContent>
                       </Tooltip>
-                    </TooltipProvider>
+                    ) : (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex">
+                              <LLMSelectionDropdown
+                                availableLLMs={availableLLMs}
+                                selectedLLM={primaryLLM}
+                                onLLMSelect={onPrimaryLLMSelect}
+                                onRefresh={onRefreshAvailableLLMs}
+                                disabled={isStreaming || isSummarizing}
+                                openDirection="up"
+                              />
+                            </div>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <p>{llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                     {/* Workspace Access Toggle - Icon Button with expand on hover */}
                     <button
                       type="button"
@@ -1422,62 +1544,67 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span>Summarizing...</span>
                     </div>
-                  ) : isStreaming ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button 
-                          type="button"
-                          variant="destructive"
-                          onClick={onStopStreaming}
-                          size="sm"
-                          className="px-3"
-                          data-testid="chat-stop-button"
-                        >
-                          <Square className="w-4 h-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Stop streaming</p>
-                      </TooltipContent>
-                    </Tooltip>
                   ) : (
                     <div className="flex items-center gap-1">
                       {/* Delegation mode indicator */}
-                      {enableDelegationMode && (
+                      {delegationMode !== 'off' && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className="p-1.5 text-purple-500 dark:text-purple-400 opacity-60 hover:opacity-100 transition-opacity cursor-default">
+                            <div className={`p-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-default ${
+                              delegationMode === 'plan' ? 'text-blue-500 dark:text-blue-400' : 'text-purple-500 dark:text-purple-400'
+                            }`}>
                               <GitBranch className="w-3.5 h-3.5" />
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>Sub-agent delegation enabled (/nospawn to disable)</p>
+                            <p>{delegationMode === 'plan' ? 'Plan delegation enabled' : 'Simple delegation enabled'} (/nospawn to disable)</p>
                           </TooltipContent>
                         </Tooltip>
                       )}
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="submit"
-                            disabled={submitButtonDisabled}
-                            size="sm"
-                            className="px-3"
-                            data-testid="chat-submit-button"
-                          >
-                            <Send className="w-4 h-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>
-                            {!inputText?.trim()
-                              ? 'Type a message to send'
-                              : !tabSessionId
-                                ? 'Session not ready yet'
-                                : 'Send message'
-                            }
-                          </p>
-                        </TooltipContent>
-                      </Tooltip>
+
+                      {isStreaming ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button 
+                              type="button"
+                              variant="destructive"
+                              onClick={onStopStreaming}
+                              size="sm"
+                              className="px-3"
+                              data-testid="chat-stop-button"
+                            >
+                              <Square className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Stop streaming</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="submit"
+                              disabled={submitButtonDisabled}
+                              size="sm"
+                              className="px-3"
+                              data-testid="chat-submit-button"
+                            >
+                              <Send className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>
+                              {!inputText?.trim()
+                                ? 'Type a message to send'
+                                : !tabSessionId
+                                  ? 'Session not ready yet'
+                                  : 'Send message'
+                              }
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1531,6 +1658,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           onClose={() => closeDialog('resume')}
         />
       )}
+      <DelegationTierConfigModal
+        isOpen={showTierModal}
+        onClose={() => setShowTierModal(false)}
+      />
       </div>
     </TooltipProvider>
   )

@@ -19,7 +19,11 @@ func CreateWorkspaceGitTools() []llmtypes.Tool {
 
 // CreateWorkspaceGitToolExecutors creates the execution functions for workspace git tools
 // Uses the shared executors from pkg/workspace
+// Includes FolderGuard to protect per-user folders (Chats/, Downloads/) from LLM writes
 func CreateWorkspaceGitToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	client := workspace.NewClient(getWorkspaceAPIURL())
+	client := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+	)
 	return workspace.NewGitExecutor(client)
 }

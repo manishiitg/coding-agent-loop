@@ -50,14 +50,18 @@ spec:
           resources:
             requests:
               cpu: "500m"
-              memory: "1Gi"
-            limits:
-              cpu: "1"
               memory: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
           volumeMounts:
             # Persistent chat history and DB; RWO so only one pod can attach (use Recreate strategy).
             - name: agent-db
               mountPath: /app/data
+            # Persistent OAuth tokens for MCP servers; survives pod restarts.
+            - name: agent-db
+              mountPath: /home/appuser/.config/mcpagent/tokens
+              subPath: oauth-tokens
             # MCP server list (command/args per server); from ConfigMap mcpagent-agent-config (deploy script syncs agent/mcp_config.json).
             - name: mcp-config
               mountPath: /app/configs/mcp_servers.json

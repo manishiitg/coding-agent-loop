@@ -112,6 +112,12 @@ func NewDelegationEventObserver(store *EventStore, sessionID string, depth int, 
 // HandleEvent processes sub-agent events and stores them with delegation metadata
 // Events are linked to the delegation_start event via ParentID for hierarchical display
 func (deo *DelegationEventObserver) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
+	// Skip streaming events - sub-agent streaming should not appear in the UI
+	// These are ephemeral and only relevant for the parent agent's real-time text display
+	if event.Type == events.StreamingStart || event.Type == events.StreamingChunk || event.Type == events.StreamingEnd {
+		return nil
+	}
+
 	// Tag the event with delegation metadata
 	// We modify a copy to avoid affecting the original event
 	taggedEvent := *event

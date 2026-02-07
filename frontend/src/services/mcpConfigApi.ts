@@ -1,3 +1,15 @@
+import { getAuthToken } from './api';
+
+// Helper to get auth headers
+function getAuthHeaders(): HeadersInit {
+  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export interface MCPConfigResponse {
   status: string;
   message?: string;
@@ -30,7 +42,9 @@ export class MCPConfigApi {
    * Get current MCP configuration
    */
   async getConfig(): Promise<unknown> {
-    const response = await fetch(`${this.baseUrl}/api/mcp-config`);
+    const response = await fetch(`${this.baseUrl}/api/mcp-config`, {
+      headers: getAuthHeaders()
+    });
     if (!response.ok) {
       throw new Error(`Failed to get config: ${response.statusText}`);
     }
@@ -43,9 +57,7 @@ export class MCPConfigApi {
   async saveConfig(config: unknown): Promise<MCPConfigResponse> {
     const response = await fetch(`${this.baseUrl}/api/mcp-config`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: getAuthHeaders(),
       body: JSON.stringify({ config }),
     });
 
@@ -63,6 +75,7 @@ export class MCPConfigApi {
   async discoverServers(): Promise<MCPConfigResponse> {
     const response = await fetch(`${this.baseUrl}/api/mcp-config/discover`, {
       method: 'POST',
+      headers: getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -77,7 +90,9 @@ export class MCPConfigApi {
    * Get configuration status
    */
   async getStatus(): Promise<MCPConfigStatus> {
-    const response = await fetch(`${this.baseUrl}/api/mcp-config/status`);
+    const response = await fetch(`${this.baseUrl}/api/mcp-config/status`, {
+      headers: getAuthHeaders()
+    });
     if (!response.ok) {
       throw new Error(`Failed to get status: ${response.statusText}`);
     }

@@ -21,8 +21,8 @@ interface AppState {
   // Code execution mode (for chat mode when no preset is active)
   useCodeExecutionMode: boolean
 
-  // Delegation mode (spawn sub-agents)
-  enableDelegationMode: boolean
+  // Delegation mode: 'off' = disabled, 'spawn' = simple delegate only, 'plan' = plan-driven delegation + delegate
+  delegationMode: 'off' | 'spawn' | 'plan'
 
   // Actions
   setAgentMode: (mode: AgentMode) => void
@@ -43,7 +43,7 @@ interface AppState {
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
-  setEnableDelegationMode: (enabled: boolean) => void
+  setDelegationMode: (mode: 'off' | 'spawn' | 'plan') => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -64,7 +64,7 @@ export const useAppStore = create<AppState>()(
           sidebarMinimized: false,
           workspaceMinimized: false,
           useCodeExecutionMode: true, // Default to enabled
-          enableDelegationMode: true, // Default to enabled (user can disable via /nospawn)
+          delegationMode: 'off' as const, // Default to off (user enables via /spawn or /plan)
           // Actions
           setAgentMode: (mode) => {
             const currentMode = get().agentMode
@@ -139,8 +139,8 @@ export const useAppStore = create<AppState>()(
           set({ useCodeExecutionMode: enabled })
         },
 
-        setEnableDelegationMode: (enabled) => {
-          set({ enableDelegationMode: enabled })
+        setDelegationMode: (mode) => {
+          set({ delegationMode: mode })
         },
         }
       },
@@ -153,7 +153,7 @@ export const useAppStore = create<AppState>()(
         workspaceMinimized: state.workspaceMinimized,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
-        enableDelegationMode: state.enableDelegationMode
+        delegationMode: state.delegationMode
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: chat tabs have their own, workflow uses preset
         })

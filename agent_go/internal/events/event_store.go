@@ -617,3 +617,29 @@ type DelegationEndEventData struct {
 func (d *DelegationEndEventData) GetEventType() events.EventType {
 	return events.EventType("delegation_end")
 }
+
+// DelegationPlanCreatedEventData implements events.EventData for delegation_plan_created
+type DelegationPlanCreatedEventData struct {
+	PlanID    string `json:"plan_id"`
+	Objective string `json:"objective"`
+	TaskCount int    `json:"task_count"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (d *DelegationPlanCreatedEventData) GetEventType() events.EventType {
+	return events.EventType("delegation_plan_created")
+}
+
+// DelegationPlanUpdatedEventData implements events.EventData for delegation_plan_updated
+type DelegationPlanUpdatedEventData struct {
+	PlanID    string `json:"plan_id"`
+	Status    string `json:"status"`
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+	Failed    int    `json:"failed"`
+	Timestamp string `json:"timestamp"`
+}
+
+func (d *DelegationPlanUpdatedEventData) GetEventType() events.EventType {
+	return events.EventType("delegation_plan_updated")
+}

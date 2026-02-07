@@ -1,0 +1,91 @@
+import { useEffect, useState } from 'react'
+import { useAuthStore } from '../stores/useAuthStore'
+import { Login } from '../pages/Login'
+import { AuthCallback } from '../pages/AuthCallback'
+import { SharedSession } from '../pages/SharedSession'
+import { Loader2 } from 'lucide-react'
+
+interface AuthWrapperProps {
+  children: React.ReactNode
+}
+
+export function AuthWrapper({ children }: AuthWrapperProps) {
+  const {
+    isAuthenticated,
+    isMultiUserMode,
+    isMultiUserModeChecked,
+    isLoading,
+    checkAuthMode,
+    checkAuth
+  } = useAuthStore()
+
+  const [shareToken, setShareToken] = useState<string | null>(null)
+  const [isAuthCallback, setIsAuthCallback] = useState(false)
+
+  // Check for shared session URL or OAuth callback
+  useEffect(() => {
+    const path = window.location.pathname
+
+    // Check for shared session
+    const shareMatch = path.match(/^\/shared\/([^/]+)$/)
+    if (shareMatch) {
+      setShareToken(shareMatch[1])
+      return
+    }
+
+    // Check for OAuth callback
+    if (path === '/auth/callback') {
+      setIsAuthCallback(true)
+      return
+    }
+  }, [])
+
+  // Initialize auth state
+  useEffect(() => {
+    checkAuthMode()
+    checkAuth()
+  }, [checkAuthMode, checkAuth])
+
+  // If viewing a shared session, render it directly (no auth required)
+  if (shareToken) {
+    return (
+      <SharedSession
+        shareToken={shareToken}
+        onBack={() => {
+          setShareToken(null)
+          window.history.pushState({}, '', '/')
+        }}
+      />
+    )
+  }
+
+  // If handling OAuth callback, render callback component
+  if (isAuthCallback) {
+    return <AuthCallback />
+  }
+
+  // Still loading auth mode
+  if (!isMultiUserModeChecked || isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-500" />
+          <p className="mt-4 text-gray-600 dark:text-gray-400">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Single-user mode: no auth required, render children directly
+  if (!isMultiUserMode) {
+    return <>{children}</>
+  }
+
+  // Multi-user mode: require authentication (login only, no registration)
+  if (!isAuthenticated) {
+    return <Login />
+  }
+
+  // Authenticated: render children
+  return <>{children}</>
+}

@@ -189,6 +189,9 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 
 // handleGetTools handles GET requests to retrieve all tools
 func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) {
+	// Get user ID from context for per-user OAuth status
+	userID := GetUserIDFromContext(r.Context())
+
 	// Return cached results immediately if available
 	api.toolStatusMux.RLock()
 	cachedResults := make([]ToolStatus, 0, len(api.toolStatus))
@@ -221,11 +224,13 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create comprehensive results showing ALL configured servers
+	// Apply per-user OAuth status to each result
 	allResults := make([]ToolStatus, 0, len(cfg.MCPServers))
 	for serverName, serverConfig := range cfg.MCPServers {
 		if cachedStatus, exists := cachedMap[serverName]; exists {
-			// Use cached result if available
-			allResults = append(allResults, cachedStatus)
+			// Use cached result but apply user-specific OAuth status
+			userStatus := api.getToolStatusForUser(cachedStatus, userID)
+			allResults = append(allResults, userStatus)
 		} else {
 			// Create fallback result for servers not yet discovered
 			allResults = append(allResults, ToolStatus{
@@ -267,15 +272,19 @@ func (api *StreamingAPI) handleGetToolDetail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Get user ID from context for per-user OAuth status
+	userID := GetUserIDFromContext(r.Context())
+
 	// Check if we have cached detailed results for this server
 	api.toolStatusMux.RLock()
 	cachedStatus, exists := api.toolStatus[serverName]
 	api.toolStatusMux.RUnlock()
 
-	// If we have cached results with detailed tools, return them immediately
+	// If we have cached results with detailed tools, return them with user-specific OAuth status
 	if exists && len(cachedStatus.Tools) > 0 {
+		userStatus := api.getToolStatusForUser(cachedStatus, userID)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(&cachedStatus)
+		json.NewEncoder(w).Encode(&userStatus)
 		return
 	}
 
@@ -314,8 +323,10 @@ func (api *StreamingAPI) handleGetToolDetail(w http.ResponseWriter, r *http.Requ
 	api.toolStatus[serverName] = *result
 	api.toolStatusMux.Unlock()
 
+	// Return result with user-specific OAuth status
+	userStatus := api.getToolStatusForUser(*result, userID)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(&userStatus)
 }
 
 // handleSetEnabledTools handles POST requests to set enabled tools
@@ -734,6 +745,26 @@ func (api *StreamingAPI) stopPeriodicRefresh() {
 		api.discoveryTicker = nil
 		api.logger.Info("⏹️ Stopped periodic tool discovery refresh")
 	}
+}
+
+
+// getToolStatusForUser returns tool status with user-specific OAuth status
+// Optimized: Only checks token file existence (fast) - avoids config reload and HTTP requests
+func (api *StreamingAPI) getToolStatusForUser(status ToolStatus, userID string) ToolStatus {
+	// If the status already shows OAuth is required, check if this user has authenticated
+	if status.RequiresOAuth {
+		// Fast path: just check if token file exists
+		userTokenFile := getUserTokenFilePath(userID, status.Server)
+		expandedPath := expandPath(userTokenFile)
+		if _, err := os.Stat(expandedPath); err == nil {
+			// User has authenticated - clear the OAuth required flag
+			status.RequiresOAuth = false
+			status.OAuthEndpoints = nil
+			status.Error = ""
+			// Note: The tools may still be empty if discovery failed for other reasons
+		}
+	}
+	return status
 }
 
 // tryOAuthDiscovery attempts to discover OAuth endpoints from a 401 response

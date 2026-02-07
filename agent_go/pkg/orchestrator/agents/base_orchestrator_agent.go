@@ -131,6 +131,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.logger,
 		false,                                 // cacheOnly - not used in orchestrator agents
 		boa.config.EnableContextOffloading,
+		boa.config.LargeOutputThreshold,       // Token threshold for context offloading
 		boa.config.EnableContextSummarization, // Context summarization configuration
 		boa.config.SummarizeOnTokenThreshold,
 		boa.config.TokenThresholdPercent,

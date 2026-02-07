@@ -31,7 +31,7 @@ export default function SkillSelectionDropdown({
     if (isOpen && skills.length === 0) {
       loadSkills();
     }
-  }, [isOpen]);
+  }, [isOpen, skills.length]);
 
   const loadSkills = async () => {
     setIsLoading(true);

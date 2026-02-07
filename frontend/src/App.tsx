@@ -19,7 +19,7 @@ import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
 import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
 import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
-import { useAppStore, useLLMStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
+import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
@@ -161,6 +161,8 @@ function App() {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [isRestoring, setIsRestoring] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
+  const [isExportingPdf, setIsExportingPdf] = useState(false)
+  const markdownContentRef = useRef<HTMLDivElement>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
   const hasCreatedDefaultTabRef = useRef<string | null>(null)
@@ -322,6 +324,341 @@ function App() {
       setIsRestoring(false)
     }
   }, [selectedFile, isEditMode, setIsEditMode, setEditedContent, setFileContent, setLoadingFileContent, setShowRevisionsModal])
+
+  // Handle export to PDF
+  const handleExportPdf = useCallback(async () => {
+    if (!markdownContentRef.current || !selectedFile) return
+    setIsExportingPdf(true)
+    try {
+      const html2pdf = (await import('html2pdf.js')).default
+      const filename = (selectedFile.name || selectedFile.path?.split('/').pop() || 'document').replace(/\.[^.]+$/, '') + '.pdf'
+
+      // 1. Temporarily force light mode so Tailwind dark: variants drop off
+      const htmlEl = document.documentElement
+      const wasDark = htmlEl.classList.contains('dark')
+      if (wasDark) {
+        htmlEl.classList.remove('dark')
+        htmlEl.classList.add('light')
+      }
+
+      // 2. Force white background on all ancestor containers up to the overlay
+      const ancestors: { el: HTMLElement; prev: string }[] = []
+      let parent = markdownContentRef.current.parentElement
+      while (parent) {
+        ancestors.push({ el: parent, prev: parent.style.backgroundColor })
+        parent.style.backgroundColor = '#ffffff'
+        parent = parent.parentElement
+        if (parent === document.body) break
+      }
+
+      // 3. Fix SyntaxHighlighter inline styles (dark theme colors baked at render time)
+      //    and any other elements with dark inline backgrounds/colors.
+      //    Map oneDark theme token colors → prism (light) theme equivalents.
+      const darkToLightTokenMap: Record<string, string> = {
+        // oneDark → prism light equivalents
+        'rgb(224, 108, 117)': '#e45649',   // red (tags, deleted)
+        'rgb(198, 120, 221)': '#a626a4',   // purple (keywords)
+        'rgb(97, 175, 239)': '#4078f2',    // blue (functions)
+        'rgb(152, 195, 121)': '#50a14f',   // green (strings)
+        'rgb(209, 154, 102)': '#986801',   // orange (numbers, constants)
+        'rgb(86, 182, 194)': '#0184bc',    // cyan (regex, builtins)
+        'rgb(229, 192, 123)': '#c18401',   // yellow (classes)
+        'rgb(171, 178, 191)': '#383a42',   // comment gray → dark gray
+        'rgb(190, 80, 70)': '#e45649',     // alt red
+        'rgb(92, 99, 112)': '#a0a1a7',     // dim comment → lighter for light bg
+      }
+      const inlineFixups: { el: HTMLElement; prevColor: string; prevBg: string }[] = []
+      markdownContentRef.current.querySelectorAll('*').forEach((el) => {
+        const htmlEl = el as HTMLElement
+        const style = htmlEl.style
+        const prevColor = style.color
+        const prevBg = style.backgroundColor
+
+        // Fix inline dark background colors (e.g. SyntaxHighlighter dark theme)
+        if (style.backgroundColor) {
+          const bgRgb = window.getComputedStyle(htmlEl).backgroundColor.match(/\d+/g)
+          if (bgRgb) {
+            const [r, g, b] = bgRgb.map(Number)
+            if (r < 60 && g < 60 && b < 60) {
+              style.backgroundColor = '#f9fafb'
+            }
+          }
+        }
+
+        // Fix inline text colors for code tokens
+        if (style.color) {
+          const computedColor = window.getComputedStyle(htmlEl).color
+          // Check the dark→light token map first
+          const mapped = darkToLightTokenMap[computedColor]
+          if (mapped) {
+            style.color = mapped
+          } else {
+            // Fallback: fix any light/white text that would be invisible on white bg
+            const cRgb = computedColor.match(/\d+/g)
+            if (cRgb) {
+              const [r, g, b] = cRgb.map(Number)
+              if (r > 180 && g > 180 && b > 180) {
+                style.color = '#1f2937'
+              }
+            }
+          }
+        }
+
+        if (prevColor !== style.color || prevBg !== style.backgroundColor) {
+          inlineFixups.push({ el: htmlEl, prevColor, prevBg })
+        }
+      })
+
+      // 4. Fix lists — html2canvas doesn't render ::marker pseudo-elements,
+      //    so inject visible bullet/number text and inline spacing for proper indentation.
+      const listFixups: { el: HTMLElement; prevStyle: string; marker?: HTMLSpanElement }[] = []
+
+      // Hide native markers and set explicit spacing on ul/ol
+      markdownContentRef.current.querySelectorAll('ul, ol').forEach((list) => {
+        const el = list as HTMLElement
+        listFixups.push({ el, prevStyle: el.getAttribute('style') || '' })
+        el.style.listStyleType = 'none'
+        el.style.paddingLeft = '0'
+        el.style.marginLeft = '0'
+        el.style.marginTop = '4px'
+        el.style.marginBottom = '4px'
+      })
+
+      // Inject bullet/number spans into each li
+      markdownContentRef.current.querySelectorAll('li').forEach((li) => {
+        const el = li as HTMLElement
+        const parentList = el.closest('ul, ol')
+        const depth = (() => {
+          let d = 0
+          let p = el.parentElement
+          while (p && markdownContentRef.current?.contains(p)) {
+            if (p.tagName === 'UL' || p.tagName === 'OL') d++
+            p = p.parentElement
+          }
+          return d
+        })()
+
+        listFixups.push({ el, prevStyle: el.getAttribute('style') || '' })
+        el.style.paddingLeft = `${depth * 20}px`
+        el.style.marginTop = '2px'
+        el.style.marginBottom = '2px'
+        el.style.display = 'flex'
+        el.style.alignItems = 'flex-start'
+        el.style.gap = '6px'
+
+        // Create marker span
+        const marker = document.createElement('span')
+        marker.setAttribute('data-pdf-marker', 'true')
+        marker.style.flexShrink = '0'
+        marker.style.color = '#374151'
+        marker.style.userSelect = 'none'
+        marker.style.minWidth = '16px'
+
+        if (parentList?.tagName === 'OL') {
+          const siblings = Array.from(parentList.children).filter(c => c.tagName === 'LI')
+          const index = siblings.indexOf(el) + 1
+          marker.textContent = `${index}.`
+        } else {
+          const bullets = ['\u2022', '\u25E6', '\u25AA'] // bullet, circle, square
+          marker.textContent = bullets[Math.min(depth - 1, bullets.length - 1)] || '\u2022'
+        }
+
+        el.prepend(marker)
+        listFixups.push({ el, prevStyle: '', marker })
+      })
+
+      // 5. Fix heading/spacing — inline explicit margins for h1-h6, p, blockquote, hr
+      const spacingFixups: { el: HTMLElement; prevStyle: string }[] = []
+      const spacingRules: Record<string, { mt: string; mb: string; extra?: string }> = {
+        H1: { mt: '24px', mb: '12px', extra: 'font-size:1.5em;font-weight:700;' },
+        H2: { mt: '20px', mb: '10px', extra: 'font-size:1.25em;font-weight:600;' },
+        H3: { mt: '16px', mb: '8px', extra: 'font-size:1.125em;font-weight:600;' },
+        H4: { mt: '12px', mb: '6px', extra: 'font-weight:600;' },
+        H5: { mt: '10px', mb: '4px', extra: 'font-weight:600;' },
+        H6: { mt: '8px', mb: '4px', extra: 'font-weight:600;' },
+        P: { mt: '0', mb: '8px' },
+        BLOCKQUOTE: { mt: '8px', mb: '8px' },
+        HR: { mt: '16px', mb: '16px' },
+      }
+      markdownContentRef.current.querySelectorAll('h1, h2, h3, h4, h5, h6, p, blockquote, hr').forEach((el) => {
+        const htmlEl = el as HTMLElement
+        const rules = spacingRules[htmlEl.tagName]
+        if (!rules) return
+        spacingFixups.push({ el: htmlEl, prevStyle: htmlEl.getAttribute('style') || '' })
+        htmlEl.style.marginTop = rules.mt
+        htmlEl.style.marginBottom = rules.mb
+        if (rules.extra) {
+          htmlEl.style.cssText += rules.extra
+        }
+      })
+
+      // 5b. Fix inline <code> elements — html2canvas drops background/padding on inline elements.
+      //     Set explicit inline styles so they render with a visible background pill.
+      const codeFixups: { el: HTMLElement; prevStyle: string }[] = []
+      markdownContentRef.current.querySelectorAll('code').forEach((el) => {
+        const htmlEl = el as HTMLElement
+        // Skip code blocks inside SyntaxHighlighter (they have a parent pre/div with inline styles)
+        if (htmlEl.closest('pre') || htmlEl.parentElement?.tagName === 'PRE') return
+        codeFixups.push({ el: htmlEl, prevStyle: htmlEl.getAttribute('style') || '' })
+        htmlEl.style.backgroundColor = '#f3f4f6'
+        htmlEl.style.color = '#2563eb'
+        htmlEl.style.padding = '1px 6px'
+        htmlEl.style.borderRadius = '4px'
+        htmlEl.style.fontSize = '0.75em'
+        htmlEl.style.fontFamily = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
+        htmlEl.style.display = 'inline'
+        htmlEl.style.wordBreak = 'break-word'
+      })
+
+      // 6. Convert images to data URLs so html2canvas can render them.
+      //    Cross-origin images without CORS headers will be hidden to avoid tainting the canvas.
+      const imageFixups: { el: HTMLImageElement; prevSrc: string; prevDisplay: string }[] = []
+      const images = markdownContentRef.current.querySelectorAll('img')
+      await Promise.all(Array.from(images).map(async (img) => {
+        const prevSrc = img.src
+        const prevDisplay = img.style.display
+        try {
+          const resp = await fetch(img.src)
+          const blob = await resp.blob()
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result as string)
+            reader.readAsDataURL(blob)
+          })
+          imageFixups.push({ el: img, prevSrc, prevDisplay })
+          img.src = dataUrl
+        } catch {
+          // Can't fetch (cross-origin) — hide to prevent canvas taint
+          imageFixups.push({ el: img, prevSrc, prevDisplay })
+          img.style.display = 'none'
+        }
+      }))
+
+      // 6b. Fix container — clean up margins so content is flush with the page edge.
+      const containerPrev = markdownContentRef.current.getAttribute('style') || ''
+      markdownContentRef.current.style.margin = '0'
+      markdownContentRef.current.style.padding = '0'
+      markdownContentRef.current.style.backgroundColor = '#ffffff'
+
+      // Strip top margin from the very first child element
+      const firstChild = markdownContentRef.current.querySelector(':scope > * > :first-child') as HTMLElement | null
+      const firstChildPrevStyle = firstChild?.getAttribute('style') || ''
+      if (firstChild) {
+        firstChild.style.marginTop = '0'
+      }
+      // Strip bottom margin from the very last child element
+      const lastChild = markdownContentRef.current.querySelector(':scope > * > :last-child') as HTMLElement | null
+      const lastChildPrevStyle = lastChild?.getAttribute('style') || ''
+      if (lastChild) {
+        lastChild.style.marginBottom = '0'
+      }
+
+      // 7. Prevent page breaks from cutting through content.
+      //    Inject break-inside: avoid on block-level elements.
+      const breakFixups: { el: HTMLElement; prevStyle: string }[] = []
+      markdownContentRef.current.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, pre, table, tr, blockquote, .syntax-highlighter-wrapper').forEach((el) => {
+        const htmlEl = el as HTMLElement
+        breakFixups.push({ el: htmlEl, prevStyle: htmlEl.style.breakInside || '' })
+        htmlEl.style.breakInside = 'avoid'
+      })
+
+      // 8. Wait for browser to repaint with new styles
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
+
+      // Pick scale based on content height to stay within browser canvas limits (~32k px).
+      // Tiered: scale 2 for short, 1.5 for medium, 1 for very long docs.
+      const contentHeight = markdownContentRef.current.scrollHeight
+      const pdfScale = contentHeight > 25000 ? 1 : contentHeight > 12000 ? 1.5 : 2
+
+      try {
+        await html2pdf().set({
+          margin: [15, 10, 15, 10],
+          filename,
+          image: { type: 'png', quality: 1 },
+          html2canvas: { scale: pdfScale, backgroundColor: '#ffffff', scrollY: 0 },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['css', 'legacy'] }
+        }).from(markdownContentRef.current).save()
+      } finally {
+        // Restore everything
+        if (wasDark) {
+          htmlEl.classList.remove('light')
+          htmlEl.classList.add('dark')
+        }
+        for (const { el, prev } of ancestors) {
+          el.style.backgroundColor = prev
+        }
+        for (const { el, prevColor, prevBg } of inlineFixups) {
+          el.style.color = prevColor
+          el.style.backgroundColor = prevBg
+        }
+        // Remove injected markers and restore list/li styles
+        for (const fixup of listFixups) {
+          if (fixup.marker) {
+            fixup.marker.remove()
+          } else if (fixup.prevStyle) {
+            fixup.el.setAttribute('style', fixup.prevStyle)
+          } else {
+            fixup.el.removeAttribute('style')
+          }
+        }
+        // Restore heading/spacing styles
+        for (const { el, prevStyle } of spacingFixups) {
+          if (prevStyle) {
+            el.setAttribute('style', prevStyle)
+          } else {
+            el.removeAttribute('style')
+          }
+        }
+        // Restore container styles
+        if (containerPrev) {
+          markdownContentRef.current!.setAttribute('style', containerPrev)
+        } else {
+          markdownContentRef.current!.removeAttribute('style')
+        }
+        // Restore first/last child styles
+        if (firstChild) {
+          if (firstChildPrevStyle) firstChild.setAttribute('style', firstChildPrevStyle)
+          else firstChild.removeAttribute('style')
+        }
+        if (lastChild && lastChild !== firstChild) {
+          if (lastChildPrevStyle) lastChild.setAttribute('style', lastChildPrevStyle)
+          else lastChild.removeAttribute('style')
+        }
+        // Restore inline code styles
+        for (const { el, prevStyle } of codeFixups) {
+          if (prevStyle) el.setAttribute('style', prevStyle)
+          else el.removeAttribute('style')
+        }
+        // Restore break-inside styles
+        for (const { el, prevStyle } of breakFixups) {
+          el.style.breakInside = prevStyle
+        }
+        // Restore image src and display
+        for (const { el, prevSrc, prevDisplay } of imageFixups) {
+          el.src = prevSrc
+          el.style.display = prevDisplay
+        }
+      }
+    } catch (err) {
+      console.error('PDF export failed:', err)
+    } finally {
+      setIsExportingPdf(false)
+    }
+  }, [selectedFile])
+
+  // Handle download raw markdown file
+  const handleDownloadMarkdown = useCallback(() => {
+    if (!selectedFile || !fileContent) return
+    const filename = selectedFile.name || selectedFile.path?.split('/').pop() || 'document.md'
+    const blob = new Blob([fileContent], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [selectedFile, fileContent])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -508,6 +845,7 @@ function App() {
     // NOTE: Only include selectedModeCategory and setSidebarMinimized in dependencies
     // Do NOT include sidebarMinimized as it would cause the effect to re-run every time
     // the sidebar state changes, preventing manual toggle functionality after auto-minimize
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModeCategory, setSidebarMinimized])
 
   // Show mode selection modal if initial setup not completed
@@ -933,6 +1271,35 @@ function App() {
                         </svg>
                         Revisions
                       </button>
+                      {selectedFile?.path && !isCodeFile(selectedFile.path) &&
+                       !selectedFile.path.toLowerCase().endsWith('.json') &&
+                       !fileContent.startsWith('data:image/') && (
+                        <>
+                          <button
+                            onClick={handleExportPdf}
+                            disabled={isExportingPdf}
+                            className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Export as PDF"
+                          >
+                            {isExportingPdf ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9l-5-5H7a2 2 0 00-2 2v13a2 2 0 002 2z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 4v5h5" />
+                                <text x="7" y="18" fontSize="6" fontWeight="bold" fill="currentColor" stroke="none">PDF</text>
+                              </svg>
+                            )}
+                          </button>
+                          <button
+                            onClick={handleDownloadMarkdown}
+                            className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                            title="Download raw markdown"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
                     </>
                   ) : (
                     <>
@@ -1114,7 +1481,7 @@ function App() {
                           // Default: render as markdown
                           else {
                             return (
-                              <div className="max-w-4xl mx-auto">
+                              <div ref={markdownContentRef} className="max-w-4xl mx-auto">
                                 <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-gray-900 dark:prose-headings:text-gray-100 prose-p:text-gray-700 dark:prose-p:text-gray-300 prose-a:text-blue-600 dark:prose-a:text-blue-400 prose-a:no-underline hover:prose-a:underline prose-strong:text-gray-900 dark:prose-strong:text-gray-100 prose-code:text-blue-600 dark:prose-code:text-blue-400 prose-pre:bg-gray-50 dark:prose-pre:bg-gray-900 prose-blockquote:border-l-blue-500 prose-blockquote:text-gray-700 dark:prose-blockquote:text-gray-300">
                                   <MarkdownRenderer 
                                     content={fileContent} 

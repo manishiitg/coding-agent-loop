@@ -43,7 +43,6 @@ interface StepSidebarProps {
   plan?: PlanningResponse | null
   completedStepIndices?: number[]  // Deprecated: no longer used (all steps can run)
   isCompact?: boolean  // When true, use narrower width (400px instead of 600px)
-  showChatArea?: boolean  // When true, use lower z-index so ChatArea appears on top
 }
 
 export const StepSidebar: React.FC<StepSidebarProps> = ({
@@ -58,9 +57,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   onStartPhase,
   plan,
   isCompact = false,
-  showChatArea = false
 }) => {
-  const { availableLLMs, llmConfigLocked } = useLLMStore()
+  const { availableLLMs } = useLLMStore()
   
   // Get step-specific phases from workflow store (already filtered)
   const { getStepSpecificPhases, loadPhases } = useWorkflowStore()
@@ -710,7 +708,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           stepDataForLogging: !!stepDataForLogging,
           stepType: stepDataForLogging?.type,
           isTodoTaskStepResult: stepDataForLogging ? isTodoTaskStep(stepDataForLogging) : false,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           hasTodoTaskStep: !!(stepDataForLogging as any)?.todo_task_step,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           todoTaskStepId: (stepDataForLogging as any)?.todo_task_step?.id
         })
         if (stepDataForLogging && isTodoTaskStep(stepDataForLogging) && stepDataForLogging.todo_task_step?.id) {
@@ -908,7 +908,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
     
     // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
-    const sidebarWidth = showChatArea ? 'w-[50vw]' : (isCompact ? 'w-[400px]' : 'w-[600px]')
+    const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
     
     return (
       <div className={`absolute right-0 top-0 bottom-0 ${sidebarWidth} bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl z-50 flex flex-col transition-all duration-300`}>
@@ -1041,7 +1041,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const step = stepData.step
 
   // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
-  const sidebarWidth = showChatArea ? 'w-[50vw]' : (isCompact ? 'w-[400px]' : 'w-[600px]')
+  const sidebarWidth = isCompact ? 'w-[400px]' : 'w-[600px]'
   
   // Start node and execution-settings node don't need sidebar (they're simple nodes)
   // Execution mode is now configured directly in the execution-settings node

@@ -955,7 +955,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     }
 
     const delegationData = data?.data || data
-    const result = delegationData?.result || ''
+    // result removed
     const error = delegationData?.error
     const duration = delegationData?.duration || ''
     const isSuccess = !error

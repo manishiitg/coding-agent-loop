@@ -87,11 +87,11 @@ interface PresetQueriesProps {
     }
   };
 
-  const handleAddPreset = () => {
+  const handleAddPreset = useCallback(() => {
     setEditingPreset(null);
     setIsModalOpen(true);
     setWorkspaceMinimized(true);
-  };
+  }, [setWorkspaceMinimized]);
 
   // Handle trigger from parent component
   useEffect(() => {
@@ -99,7 +99,7 @@ interface PresetQueriesProps {
       handleAddPreset();
       onAddPresetTriggered?.();
     }
-  }, [triggerAddPreset, onAddPresetTriggered]);
+  }, [triggerAddPreset, onAddPresetTriggered, handleAddPreset]);
 
 
   const handleEditPreset = (preset: CustomPreset) => {

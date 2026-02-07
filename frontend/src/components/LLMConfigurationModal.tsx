@@ -64,12 +64,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     defaultsLoaded,
     loadDefaultsFromBackend,
     refreshAvailableLLMs,
-    // Subscribe to custom model lists so modal re-renders when user adds a custom model (list updates in Primary Model dropdown)
-    customOpenRouterModels,
-    customBedrockModels,
-    customOpenAIModels,
-    customVertexModels,
-    customAzureModels,
     // Supported providers filter
     isProviderSupported,
     llmConfigLocked

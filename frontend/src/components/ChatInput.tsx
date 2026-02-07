@@ -131,9 +131,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
   }, [tabSessionId, allTabEvents])
 
-  // Throttle recalculation - only update when event count changes by 5+
-  const eventCountBatch = Math.floor(tabEvents.length / 5)
-
   // Find the latest token usage (optimized with backward iteration)
   const { contextUsagePercent, latestTokenUsage } = useMemo(() => {
     if (tabEvents.length === 0) return { contextUsagePercent: null, latestTokenUsage: null }
@@ -201,7 +198,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     return { contextUsagePercent: null, latestTokenUsage: null }
-  }, [tabEvents, eventCountBatch])
+  }, [tabEvents])
   
   // Always use tab-specific config (ChatInput is only in chat mode)
   // Memoize to prevent unnecessary re-renders when other config values change
@@ -287,6 +284,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (storedInputText !== localInputText && !syncToStoreTimeoutRef.current) {
       setLocalInputText(storedInputText)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storedInputText]) // Intentionally exclude localInputText to avoid loops
 
   // Cleanup timeout refs on unmount
@@ -992,7 +990,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, activeTab?.tabId, activeTab?.sessionId, setTabConfig, adjustTextareaHeight, tabConfig?.queuedMessages])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()

@@ -2,13 +2,41 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
-	"encoding/json"
+	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/browser"
+	"mcp-agent-builder-go/agent_go/pkg/common"
+
+	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// workspaceEventEmitterKey matches the key used in virtualtools package
+const workspaceEventEmitterKey common.ContextKey = "workspace_event_emitter"
+
+// emitWorkspaceFileEvent emits a workspace_file_operation event if an emitter is present in context
+func emitWorkspaceFileEvent(ctx context.Context, operation, filepath, folder string) {
+	emitter, ok := ctx.Value(workspaceEventEmitterKey).(interface {
+		HandleEvent(ctx context.Context, event *events.AgentEvent) error
+	})
+	if !ok || emitter == nil {
+		return
+	}
+
+	turn, _ := ctx.Value(common.ContextKey("turn")).(int)
+	serverName, _ := ctx.Value(common.ContextKey("server_name")).(string)
+
+	eventData := events.NewWorkspaceFileOperationEvent(operation, filepath, folder, turn, serverName)
+	agentEvent := &events.AgentEvent{
+		Type:      events.WorkspaceFileOperation,
+		Timestamp: time.Now(),
+		Data:      eventData,
+	}
+	_ = emitter.HandleEvent(ctx, agentEvent)
+}
 
 // --- Tool Definitions ---
 
@@ -282,7 +310,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.ListWorkspaceFiles(ctx, params)
+		result, err := client.ListWorkspaceFiles(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "list", "", params.Folder)
+		}
+		return result, err
 	}
 
 	executors["read_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -290,7 +322,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.ReadWorkspaceFile(ctx, params)
+		result, err := client.ReadWorkspaceFile(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "read", params.Filepath, "")
+		}
+		return result, err
 	}
 
 	executors["update_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -298,7 +334,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.UpdateWorkspaceFile(ctx, params)
+		result, err := client.UpdateWorkspaceFile(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "update", params.Filepath, "")
+		}
+		return result, err
 	}
 
 	executors["diff_patch_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -306,7 +346,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.DiffPatchWorkspaceFile(ctx, params)
+		result, err := client.DiffPatchWorkspaceFile(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "patch", params.Filepath, "")
+		}
+		return result, err
 	}
 
 	executors["regex_search_workspace_files"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -341,7 +385,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.DeleteWorkspaceFile(ctx, params)
+		result, err := client.DeleteWorkspaceFile(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "delete", params.Filepath, "")
+		}
+		return result, err
 	}
 
 	executors["move_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -349,7 +397,11 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		if err := mapToStruct(args, &params); err != nil {
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
-		return client.MoveWorkspaceFile(ctx, params)
+		result, err := client.MoveWorkspaceFile(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "move", params.DestinationFilepath, "")
+		}
+		return result, err
 	}
 
 	return executors

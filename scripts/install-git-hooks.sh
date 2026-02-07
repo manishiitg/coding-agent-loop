@@ -161,83 +161,61 @@ else
 fi
 set -e  # Re-enable exit on error
 
-# If linting passed, run build then proceed
-if [ $LINT_EXIT -eq 0 ]; then
+# STRICT MODE: Fail on ANY linting issue
+if [ $LINT_EXIT -ne 0 ]; then
     echo ""
-    echo -e "${GREEN}✅ Linting passed.${NC}"
-    # Ensure we are at repo root (lint may have left us in agent_go)
-    cd "$(git rev-parse --show-toplevel)"
-    echo -e "${BLUE}🏗️  Building agent_go...${NC}"
-    if ! (cd agent_go && go build ./...); then
-        echo -e "${RED}❌ Build failed! Commit blocked.${NC}"
+    echo -e "${RED}❌ Linting failed! Commit blocked.${NC}"
+    echo "This repository enforces strict linting. Please fix all issues before committing."
+    echo "You can run 'cd agent_go && make lint-fix' to auto-fix some issues."
+    exit 1
+fi
+
+echo ""
+echo -e "${GREEN}✅ Linting passed.${NC}"
+
+# Ensure we are at repo root (lint may have left us in agent_go)
+cd "$(git rev-parse --show-toplevel)"
+
+# Run Go Tests (Short mode for speed)
+echo -e "${BLUE}🧪 Running Go tests (short mode)...${NC}"
+if ! (cd agent_go && go test -short ./...); then
+    echo -e "${RED}❌ Tests failed! Commit blocked.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ Tests passed.${NC}"
+
+echo -e "${BLUE}🏗️  Building agent_go...${NC}"
+if ! (cd agent_go && go build ./...); then
+    echo -e "${RED}❌ Build failed! Commit blocked.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ Build successful.${NC}"
+
+if [ -d "workspace" ] && [ -f "workspace/go.mod" ]; then
+    echo -e "${BLUE}🏗️  Building workspace...${NC}"
+    if ! (cd workspace && go build ./...); then
+        echo -e "${RED}❌ Workspace build failed! Commit blocked.${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✅ Build successful.${NC}"
-    if [ -d "workspace" ] && [ -f "workspace/go.mod" ]; then
-        echo -e "${BLUE}🏗️  Building workspace...${NC}"
-        if ! (cd workspace && go build ./...); then
-            echo -e "${RED}❌ Workspace build failed! Commit blocked.${NC}"
-            exit 1
+    echo -e "${GREEN}✅ Workspace build successful.${NC}"
+fi
+
+# Frontend Linting
+if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
+    # Only run if frontend files changed
+    if git diff --cached --name-only | grep -q "^frontend/"; then
+        echo -e "${BLUE}🎨 Linting frontend...${NC}"
+        if ! (cd frontend && npm run lint); then
+             echo -e "${RED}❌ Frontend linting failed! Commit blocked.${NC}"
+             exit 1
         fi
-        echo -e "${GREEN}✅ Workspace build successful.${NC}"
-    fi
-    echo ""
-    echo -e "${GREEN}✅ All pre-commit checks passed. Proceeding with commit.${NC}"
-    exit 0
-else
-    # Linting found issues - check severity
-    # Use the already filtered output (from above) for analysis
-    # LINT_OUTPUT is already filtered and available from the previous run
-    
-    # Count issues to decide if we should block or warn
-    ISSUE_COUNT=$(echo "$LINT_OUTPUT" | grep -E "issues:" | grep -oE "[0-9]+ issues" | grep -oE "[0-9]+" || echo "0")
-    
-    # Check for truly critical security issues (G201/G202 SQL injection, G204 command injection, G304 path traversal)
-    # Exclude test files from critical checks (G304 in test files are usually test fixtures)
-    CRITICAL_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d ' ')
-    
-    # Check for unused functions/variables/types (unused linter) - CRITICAL: blocks commit
-    # Unused code indicates dead code that should be removed
-    UNUSED_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | wc -l | tr -d ' ')
-    
-    if [ "$CRITICAL_ISSUES" -gt 0 ]; then
-        echo ""
-        echo -e "${RED}❌ Critical security issues detected ($CRITICAL_ISSUES critical)! Commit blocked.${NC}"
-        echo ""
-        echo "Critical issues found: SQL injection (G201/G202), Command injection (G204), Path traversal (G304)"
-        echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | head -10
-        echo ""
-        echo "Please fix these security issues before committing."
-        exit 1
-    elif [ "$UNUSED_ISSUES" -gt 0 ]; then
-        # Unused functions/variables/types detected - block commit
-        echo ""
-        echo -e "${RED}❌ Unused code detected ($UNUSED_ISSUES unused functions/variables/types)! Commit blocked.${NC}"
-        echo ""
-        echo "Unused code found (dead code that should be removed):"
-        echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | head -20
-        echo ""
-        echo "Please remove unused code before committing."
-        echo "You can run 'cd agent_go && make lint' to see all unused code."
-        exit 1
-    elif [ "$ISSUE_COUNT" -gt 200 ]; then
-        # Too many issues - block commit
-        echo ""
-        echo -e "${RED}❌ Too many linting issues ($ISSUE_COUNT)! Commit blocked.${NC}"
-        echo ""
-        echo "Please fix linting errors before committing."
-        echo "You can run 'cd agent_go && make lint-fix' to auto-fix some issues."
-        exit 1
-    else
-        # Non-critical issues - warn but allow commit
-        echo ""
-        echo -e "${YELLOW}⚠️  Linting found $ISSUE_COUNT issues (non-blocking).${NC}"
-        echo "Most are low-priority gosec checks (G104, G301, etc.)"
-        echo "Run 'cd agent_go && make lint' to see all issues."
-        echo -e "${YELLOW}Proceeding with commit...${NC}"
-        exit 0
+        echo -e "${GREEN}✅ Frontend linting passed.${NC}"
     fi
 fi
+
+echo ""
+echo -e "${GREEN}✅ All pre-commit checks passed. Proceeding with commit.${NC}"
+exit 0
 EOF
 
 # Make the pre-commit hook executable

@@ -594,10 +594,12 @@ func (es *EventStore) AddSummarizationErrorEvent(sessionID string, errorMessage 
 
 // DelegationStartEventData implements events.EventData for delegation_start
 type DelegationStartEventData struct {
-	DelegationID string `json:"delegation_id"`
-	Depth        int    `json:"depth"`
-	Instruction  string `json:"instruction"`
-	Timestamp    string `json:"timestamp"`
+	DelegationID   string `json:"delegation_id"`
+	Depth          int    `json:"depth"`
+	Instruction    string `json:"instruction"`
+	ReasoningLevel string `json:"reasoning_level,omitempty"`
+	ModelID        string `json:"model_id,omitempty"`
+	Timestamp      string `json:"timestamp"`
 }
 
 func (d *DelegationStartEventData) GetEventType() events.EventType {
@@ -612,6 +614,10 @@ type DelegationEndEventData struct {
 	Error        string `json:"error,omitempty"`
 	Success      bool   `json:"success"`
 	Timestamp    string `json:"timestamp"`
+	InputTokens  int64  `json:"input_tokens,omitempty"`
+	OutputTokens int64  `json:"output_tokens,omitempty"`
+	ToolCalls    int64  `json:"tool_calls,omitempty"`
+	Duration     string `json:"duration,omitempty"`
 }
 
 func (d *DelegationEndEventData) GetEventType() events.EventType {

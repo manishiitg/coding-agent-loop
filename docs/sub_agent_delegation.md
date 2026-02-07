@@ -1,14 +1,13 @@
-# Sub-Agent Delegation (Spawn Mode)
+# Sub-Agent Delegation System
 
 ## Overview
 
-Sub-agent delegation allows the main agent to spawn independent sub-agents to handle tasks in parallel. This is particularly useful for:
+Sub-agent delegation allows the main agent to spawn independent sub-agents to handle tasks. Two modes are supported:
 
-- Breaking down complex tasks into smaller, independent pieces
-- Running multiple operations simultaneously
-- Delegating focused subtasks that can be handled autonomously
+1. **Simple delegation** (`delegate` tool) — Quick one-off tasks
+2. **Plan-driven delegation** (`create_delegation_plan` + `execute_plan_task`) — Complex multi-step projects with task tracking
 
-When delegation mode is enabled, the agent has access to a `delegate` tool that spawns sub-agents with the same tool access as the parent agent.
+When delegation mode is enabled, the agent receives delegation tools and can spawn sub-agents with the same tool access as the parent (workspace, browser, skills, MCP servers).
 
 ---
 
@@ -16,7 +15,7 @@ When delegation mode is enabled, the agent has access to a `delegate` tool that 
 
 ### Enabling Delegation Mode
 
-Delegation mode is **enabled by default** for new chat sessions. You can toggle it using slash commands:
+Delegation mode is **enabled by default** for new chat sessions.
 
 | Command | Action |
 |---------|--------|
@@ -25,193 +24,250 @@ Delegation mode is **enabled by default** for new chat sessions. You can toggle 
 
 ### UI Indicator
 
-When delegation mode is enabled, a small purple **GitBranch icon** appears next to the send button in the chat input. Hovering over it shows: "Sub-agent delegation enabled (/nospawn to disable)"
+When delegation mode is enabled, a small purple **GitBranch icon** appears next to the send button in the chat input.
 
 ---
 
-## How It Works
+## Delegation Tools
 
-### Architecture
+### 1. `delegate` — Simple One-Off Tasks
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Parent Agent                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │ Has access to: delegate tool + all other tools   │    │
-│  └─────────────────────────────────────────────────┘    │
-│                         │                                │
-│                         ▼                                │
-│              delegate(instruction)                       │
-│                         │                                │
-│         ┌───────────────┼───────────────┐               │
-│         ▼               ▼               ▼               │
-│   ┌──────────┐   ┌──────────┐   ┌──────────┐           │
-│   │Sub-Agent │   │Sub-Agent │   │Sub-Agent │           │
-│   │  Depth 1 │   │  Depth 1 │   │  Depth 1 │           │
-│   │          │   │          │   │          │           │
-│   │ Same     │   │ Same     │   │ Same     │           │
-│   │ tools as │   │ tools as │   │ tools as │           │
-│   │ parent   │   │ parent   │   │ parent   │           │
-│   └──────────┘   └──────────┘   └──────────┘           │
-└─────────────────────────────────────────────────────────┘
-```
-
-### The `delegate` Tool
-
-When delegation mode is enabled, the agent receives a `delegate` tool:
+Spawns a sub-agent with a single instruction. Best for quick, independent tasks.
 
 ```json
 {
   "name": "delegate",
-  "description": "Delegate a task to a sub-agent. The sub-agent will have access to the same tools as you and will execute the task independently.",
   "parameters": {
-    "type": "object",
-    "properties": {
-      "instruction": {
-        "type": "string",
-        "description": "Clear, detailed instructions for what the sub-agent should accomplish."
-      }
-    },
-    "required": ["instruction"]
+    "instruction": "Clear, detailed instructions for the sub-agent",
+    "reasoning_level": "high | medium | low (optional)"
   }
 }
 ```
 
-### Sub-Agent Behavior
+### 2. `create_delegation_plan` — Plan-Driven Delegation
 
-- **Tool Access**: Sub-agents inherit all tools from the parent agent (MCP servers, workspace tools, etc.)
-- **Isolation**: Each sub-agent has its own conversation context (no access to parent's history)
-- **Recursion Limit**: Maximum depth of 3 to prevent infinite delegation chains
-- **No Delegation**: Sub-agents do NOT receive the `delegate` tool themselves (v1 design choice)
-
----
-
-## When to Use Delegation
-
-### Good Use Cases
-
-| Scenario | Example |
-|----------|---------|
-| **Parallel independent tasks** | "Implement feature A" + "Implement feature B" simultaneously |
-| **Research while working** | Delegate "Research library X" while continuing other work |
-| **Multi-file operations** | Process multiple unrelated files in parallel |
-| **Complex subtasks** | Break down a large task into focused, autonomous pieces |
-
-### When NOT to Delegate
-
-| Scenario | Reason |
-|----------|--------|
-| **Simple single operations** | Just do it directly - delegation overhead not worth it |
-| **Sequential dependencies** | Each step depends on previous results |
-| **Context-dependent tasks** | Sub-agent has no access to parent's conversation history |
-| **Quick lookups** | Faster to do directly |
-
----
-
-## Example Usage
-
-### Parallel Feature Implementation
-
-```
-User: Implement login and signup forms for the app
-
-Agent: I'll delegate these independent tasks to sub-agents:
-
-[Calls delegate tool]
-instruction: "Implement a login form component in src/components/LoginForm.tsx with email and password fields, validation, and submit handler that calls the /api/auth/login endpoint"
-
-[Calls delegate tool]
-instruction: "Implement a signup form component in src/components/SignupForm.tsx with email, password, confirm password fields, validation, and submit handler that calls the /api/auth/signup endpoint"
-```
-
-### Research and Implementation
-
-```
-User: Add caching to our API using the best library for our stack
-
-Agent: I'll delegate the research while I prepare the integration points:
-
-[Calls delegate tool]
-instruction: "Research the best caching libraries for Go APIs. Compare redis-go, go-cache, and bigcache. Recommend one based on our use case of caching API responses with TTL support."
-
-[Meanwhile, agent continues analyzing the codebase for integration points]
-```
-
----
-
-## Technical Details
-
-### Key Files
-
-| Component | File Path | Description |
-|-----------|-----------|-------------|
-| **Delegation Tools** | `agent_go/cmd/server/virtual-tools/delegation_tools.go` | Tool definition and executor |
-| **Server Integration** | `agent_go/cmd/server/server.go` | `executeDelegatedTask()` method |
-| **Event Observer** | `agent_go/internal/events/event_observer.go` | `DelegationEventObserver` for sub-agent events |
-| **Frontend Toggle** | `frontend/src/components/ChatInput.tsx` | `/spawn` and `/nospawn` handlers |
-| **Store** | `frontend/src/stores/useAppStore.ts` | `enableDelegationMode` state |
-
-### Event Hierarchy
-
-Sub-agent events are tagged with metadata for hierarchical display:
+Creates a structured plan with multiple tasks. Plan files (`.json` + `.md`) are saved to `Chats/Delegations/{planID}/`.
 
 ```json
 {
-  "component": "delegation-0",      // Identifies delegation depth
-  "hierarchy_level": 1,             // Depth + 1
-  "correlation_id": "delegation-0-123456789",  // Groups related events
-  "parent_id": "session_delegation_start_..."   // Links to parent event
+  "name": "create_delegation_plan",
+  "parameters": {
+    "title": "Plan title",
+    "tasks": [
+      { "id": "task-1", "title": "...", "description": "...", "reasoning_level": "high" },
+      { "id": "task-2", "title": "...", "description": "...", "reasoning_level": "medium" }
+    ]
+  }
 }
 ```
 
-### Streaming Behavior
+### 3. `execute_plan_task` — Execute a Plan Task
 
-- **Parent agent**: Streaming text shown in real-time
-- **Sub-agents**: Streaming filtered out to prevent UI conflicts
-- Sub-agent results are returned via the `delegate` tool response
+Spawns a sub-agent for a specific task from a plan. The sub-agent is:
+- **Instructed** to save all output to `Chats/Delegations/{planID}/`
+- **Restricted** via FolderGuard to only write to that plan folder
+- **Isolated** per-user via `X-User-ID` header (Chats/ routes to `_users/{userID}/Chats/`)
 
-### Recursion Prevention
-
-```go
-const MaxDelegationDepth = 3
-
-// Checked before each delegation
-if currentDepth >= MaxDelegationDepth {
-    return "", fmt.Errorf("maximum delegation depth (%d) reached", MaxDelegationDepth)
+```json
+{
+  "name": "execute_plan_task",
+  "parameters": {
+    "plan_id": "plan-xxx",
+    "task_id": "task-1",
+    "reasoning_level": "high | medium | low (optional)",
+    "additional_context": "Extra context for this execution (optional)"
+  }
 }
 ```
+
+### 4. `update_plan_task` / `get_plan_status` — Plan Management
+
+Update task status/notes or check overall plan progress.
 
 ---
 
-## Configuration
+## Multi-LLM Reasoning Tiers
 
-### Default State
+Sub-agents can use different LLM providers/models based on task complexity:
 
-Delegation mode is **enabled by default** for new sessions. This can be changed in:
+| Tier | Use Case | Default |
+|------|----------|---------|
+| **high** | Complex reasoning, architecture decisions | Parent model (fallback) |
+| **medium** | Standard coding, implementation | Parent model (fallback) |
+| **low** | Simple tasks, formatting, lookups | Parent model (fallback) |
 
-```typescript
-// frontend/src/stores/useAppStore.ts
-enableDelegationMode: true, // Default to enabled
+### Tier Configuration
+
+**Priority order**: Frontend config > Environment variables > Parent model (fallback)
+
+**Frontend**: Set via `delegationTierConfig` in chat request:
+```json
+{
+  "delegationTierConfig": {
+    "high": { "provider": "anthropic", "model_id": "claude-sonnet-4-20250514" },
+    "medium": { "provider": "google", "model_id": "gemini-2.0-flash" },
+    "low": { "provider": "google", "model_id": "gemini-2.0-flash-lite" }
+  }
+}
 ```
 
-### Per-Session Toggle
+**Environment variables**: `DELEGATION_HIGH_PROVIDER`, `DELEGATION_HIGH_MODEL`, etc.
 
-Users can toggle delegation mode at any time during a chat session using `/spawn` or `/nospawn`. The setting persists for the session.
+---
+
+## Sub-Agent Capabilities
+
+### Inherited from Parent
+
+- **Workspace tools**: Read/write workspace files (with FolderGuard restrictions)
+- **Browser tools**: If enabled in parent session
+- **MCP servers**: Same server connections as parent
+- **Skills**: Selected skills are passed to sub-agent system prompt via `buildSkillPrompt()`
+
+### FolderGuard Restrictions
+
+| Mode | Allowed Write Folders |
+|------|----------------------|
+| **Simple delegate** | `Chats/` (full folder) |
+| **Plan task** | `Chats/Delegations/{planID}/` only |
+| **With skill-creator** | Adds `skills/custom/` to allowed list |
+
+All modes block `_users/` directory access. Per-user isolation is handled by the workspace API via `X-User-ID` header.
+
+### Isolation
+
+- **No parent context**: Sub-agents start fresh with no access to parent conversation
+- **No sub-delegation**: Sub-agents cannot spawn their own sub-agents (prevents runaway chains)
+- **Max depth**: 3 levels of delegation depth
+- **Same session**: All events flow to the same session ID (tagged with delegation metadata)
+
+---
+
+## Event System
+
+### Delegation Events
+
+Sub-agent lifecycle emits two events:
+
+**`delegation_start`**: Emitted when a sub-agent is spawned
+```json
+{
+  "type": "delegation_start",
+  "data": {
+    "delegation_id": "delegation-0-1234567890",
+    "depth": 0,
+    "instruction": "Task instruction...",
+    "reasoning_level": "high",
+    "model_id": "claude-sonnet-4-20250514"
+  }
+}
+```
+
+**`delegation_end`**: Emitted when a sub-agent completes
+```json
+{
+  "type": "delegation_end",
+  "data": {
+    "delegation_id": "delegation-0-1234567890",
+    "result": "Task completed successfully...",
+    "input_tokens": 15234,
+    "output_tokens": 3456,
+    "tool_calls": 12,
+    "duration": "45.2s"
+  }
+}
+```
+
+### Sub-Agent Event Tagging
+
+All events from a sub-agent are tagged by `DelegationEventObserver`:
+
+```json
+{
+  "component": "delegation-0",
+  "hierarchy_level": 1,
+  "correlation_id": "delegation-0-1234567890",
+  "parent_id": "session_delegation_start_delegation-0-1234567890"
+}
+```
+
+### Plan File Events
+
+When plans are created/updated, a `workspace_file_operation` event is emitted via `PlanEventEmitter`. This triggers the workspace sidebar to highlight the plan file.
+
+---
+
+## Frontend UI
+
+### Delegation Start Event
+- Shows `🔀` emoji with instruction summary (truncated to 80 chars)
+- **+/−** expand indicator to toggle full details
+- **Reasoning level badge**: Colored by tier (red=high, yellow=medium, green=low)
+- **Live stats**: Token count and tool call count updated in real-time from child events
+- Expanded view shows: full instruction, reasoning level, model ID, depth, delegation ID
+
+### Delegation End Event
+- Shows `✅` (success) or `❌` (failure) with summary
+- **+/−** expand indicator for full details
+- Inline stats: total tokens, tool calls, duration
+- Expanded view shows: full result/error text, detailed token breakdown
+
+### Live Stats Computation
+
+`EventHierarchy.tsx` computes a `delegationStats` map by scanning all events with matching `correlation_id`:
+- Counts `tool_call_start` events for tool call tally
+- Sums `token_usage` events for token counts
+- Passed to `EventDispatcher` as `delegationStats` prop
+
+---
+
+## Key Files
+
+| Component | File Path | Description |
+|-----------|-----------|-------------|
+| **Delegation Tools** | `agent_go/cmd/server/virtual-tools/delegation_tools.go` | Tool definitions, plan CRUD, `PlanEventEmitter` interface |
+| **Server Integration** | `agent_go/cmd/server/server.go` | `executeDelegatedTask()`, folder guards, event emission |
+| **Event Observer** | `agent_go/internal/events/event_observer.go` | `DelegationEventObserver` — tags sub-agent events |
+| **Event Store** | `agent_go/internal/events/event_store.go` | `DelegationStartEventData`, `DelegationEndEventData` structs |
+| **Agent Metrics** | `agent_go/pkg/agentwrapper/llm_agent.go` | `GetMetricsSnapshot()` for post-invoke token/tool stats |
+| **Frontend Events** | `frontend/src/components/events/EventDispatcher.tsx` | Delegation event rendering with expand/collapse |
+| **Event Hierarchy** | `frontend/src/components/events/EventHierarchy.tsx` | Live `delegationStats` computation from child events |
+| **Frontend Toggle** | `frontend/src/components/ChatInput.tsx` | `/spawn` and `/nospawn` handlers |
+| **Store** | `frontend/src/stores/useAppStore.ts` | `enableDelegationMode` state |
+
+---
+
+## Context Keys
+
+Defined in `delegation_tools.go`:
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `ExecuteDelegatedTaskKey` | `ExecuteDelegatedTaskFunc` | Function to spawn sub-agents |
+| `DelegationDepthKey` | `int` | Current delegation depth |
+| `WorkspaceClientKey` | `*workspace.Client` | Workspace client for plan file I/O |
+| `DelegationTierConfigKey` | `*DelegationTierConfig` | Multi-LLM tier configuration |
+| `ReasoningLevelKey` | `string` | Reasoning level for current delegation |
+| `PlanEventEmitterKey` | `PlanEventEmitter` | Emits workspace file events for plan files |
+| `PlanFolderKey` | `string` | Plan-specific output folder (e.g., `Chats/Delegations/{planID}`) |
+
+---
+
+## Plan File Structure
+
+Plans are stored as dual files in `Chats/Delegations/{planID}/`:
+
+- `plan.json` — Machine-readable plan data
+- `plan.md` — Human-readable markdown plan (visible in workspace sidebar)
+
+The workspace API routes `Chats/` to `_users/{userID}/Chats/` via per-user isolation.
 
 ---
 
 ## Limitations
 
-1. **No Sub-Agent Delegation**: Sub-agents cannot spawn their own sub-agents (prevents runaway chains)
-2. **No Conversation Context**: Sub-agents start fresh with no access to parent's history
-3. **Same Session**: All events flow to the same session ID (sub-agent events are tagged for identification)
-4. **Timeout**: Sub-agent execution has a 30-minute timeout
-
----
-
-## Future Enhancements
-
-- Parallel delegation execution (multiple sub-agents running simultaneously)
-- Progress streaming from sub-agents to UI
-- Sub-agent task queuing and management
-- Predefined sub-agent specializations (researcher, coder, reviewer)
+1. **No sub-agent delegation**: Sub-agents cannot spawn their own sub-agents
+2. **No conversation context**: Sub-agents start fresh with no parent history
+3. **Max depth**: 3 levels of delegation depth
+4. **Same session events**: All events flow to the same session (tagged for identification)
+5. **Plan folder restriction**: Plan task sub-agents can only write to their plan folder

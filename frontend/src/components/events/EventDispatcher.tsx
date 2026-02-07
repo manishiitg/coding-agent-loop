@@ -118,6 +118,12 @@ import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
 
+export interface DelegationStats {
+  toolCalls: number
+  inputTokens: number
+  outputTokens: number
+}
+
 interface EventDispatcherProps {
   event: PollingEvent
   mode?: 'compact' | 'detailed'
@@ -129,6 +135,7 @@ interface EventDispatcherProps {
   eventCount?: number
   onToggleCollapse?: () => void
   compact?: boolean
+  delegationStats?: Map<string, DelegationStats>
 }
 
 // Helper function to wrap event component with orchestrator context
@@ -148,17 +155,18 @@ function WithContext<T extends { metadata?: Record<string, unknown> }>({
   )
 }
 
-export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({ 
-  event, 
-  mode, 
-  onApproveWorkflow, 
-  onSubmitFeedback, 
-  onFeedbackSubmitted, 
-  isApproving, 
-  isCollapsed, 
-  eventCount, 
-  onToggleCollapse, 
-  compact = false 
+export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
+  event,
+  mode,
+  onApproveWorkflow,
+  onSubmitFeedback,
+  onFeedbackSubmitted,
+  isApproving,
+  isCollapsed,
+  eventCount,
+  onToggleCollapse,
+  compact = false,
+  delegationStats
 }) => {
   // Wrapper component to apply compact styling
   const CompactWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -907,31 +915,82 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         delegation_id?: string
         depth?: number
         instruction?: string
+        reasoning_level?: string
+        model_id?: string
       }
       delegation_id?: string
       depth?: number
       instruction?: string
+      reasoning_level?: string
+      model_id?: string
       timestamp?: string
     }
 
     const delegationData = data?.data || data
     const instruction = delegationData?.instruction || 'No instruction provided'
+    const depth = delegationData?.depth
+    const delegationId = delegationData?.delegation_id
+    const reasoningLevel = delegationData?.reasoning_level
+    const modelId = delegationData?.model_id
+
+    const reasoningColors: Record<string, string> = {
+      high: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',
+      medium: 'bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300',
+      low: 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300',
+    }
+
+    // Get live stats for this delegation from child events
+    const liveStats = delegationId ? delegationStats?.get(delegationId) : undefined
+    const hasLiveStats = liveStats && (liveStats.toolCalls > 0 || liveStats.inputTokens > 0)
 
     return (
       <CompactWrapper>
-        <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded px-2 py-1.5">
-          <div className="flex items-center gap-2">
+        <details className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded px-2 py-1.5 group">
+          <summary className="flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
             <span className="text-sm">🔀</span>
+            <span className="text-[10px] text-purple-400 group-open:hidden">+</span>
+            <span className="text-[10px] text-purple-400 hidden group-open:inline">−</span>
             <div className="text-xs font-medium text-purple-700 dark:text-purple-300 flex-1 truncate" title={instruction}>
               Sub-agent: {instruction.length > 80 ? instruction.substring(0, 80) + '...' : instruction}
             </div>
-            {event.timestamp && (
-              <div className="text-[10px] text-purple-500 dark:text-purple-400 flex-shrink-0">
-                {new Date(event.timestamp).toLocaleTimeString()}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {hasLiveStats && (
+                <span className="text-[10px] text-purple-500 dark:text-purple-400 animate-pulse">
+                  {liveStats.inputTokens ? `${((liveStats.inputTokens + liveStats.outputTokens) / 1000).toFixed(1)}k tok` : ''}
+                  {liveStats.toolCalls ? ` · ${liveStats.toolCalls} tools` : ''}
+                </span>
+              )}
+              {reasoningLevel && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${reasoningColors[reasoningLevel] || 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}`}>
+                  {reasoningLevel}
+                </span>
+              )}
+              {event.timestamp && (
+                <span className="text-[10px] text-purple-500 dark:text-purple-400">
+                  {new Date(event.timestamp).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          </summary>
+          <div className="mt-2 pt-2 border-t border-purple-200 dark:border-purple-700 space-y-1.5">
+            <div className="text-xs text-purple-700 dark:text-purple-300 whitespace-pre-wrap break-words">
+              {instruction}
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400">
+              {reasoningLevel && <span>Reasoning: {reasoningLevel}</span>}
+              {modelId && <span>Model: {modelId}</span>}
+              {depth !== undefined && <span>Depth: {depth}</span>}
+              {delegationId && <span className="font-mono">{delegationId}</span>}
+            </div>
+            {hasLiveStats && (
+              <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400">
+                {liveStats.inputTokens > 0 && <span>In: {liveStats.inputTokens.toLocaleString()} tokens</span>}
+                {liveStats.outputTokens > 0 && <span>Out: {liveStats.outputTokens.toLocaleString()} tokens</span>}
+                {liveStats.toolCalls > 0 && <span>Tool calls: {liveStats.toolCalls}</span>}
               </div>
             )}
           </div>
-        </div>
+        </details>
       </CompactWrapper>
     )
   }
@@ -945,44 +1004,86 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         result?: string
         error?: string
         duration?: string
+        input_tokens?: number
+        output_tokens?: number
+        tool_calls?: number
       }
       delegation_id?: string
       depth?: number
       result?: string
       error?: string
       duration?: string
+      input_tokens?: number
+      output_tokens?: number
+      tool_calls?: number
       timestamp?: string
     }
 
     const delegationData = data?.data || data
-    // result removed
+    const resultText = delegationData?.result
     const error = delegationData?.error
     const duration = delegationData?.duration || ''
     const isSuccess = !error
+    const inputTokens = delegationData?.input_tokens
+    const outputTokens = delegationData?.output_tokens
+    const toolCalls = delegationData?.tool_calls
+    const hasStats = inputTokens || outputTokens || toolCalls
+
+    const colorClasses = isSuccess
+      ? { bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-300', muted: 'text-green-500 dark:text-green-400', divider: 'border-green-200 dark:border-green-700' }
+      : { bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-200 dark:border-red-800', text: 'text-red-700 dark:text-red-300', muted: 'text-red-500 dark:text-red-400', divider: 'border-red-200 dark:border-red-700' }
 
     return (
       <CompactWrapper>
-        <div className={`${isSuccess ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'} border rounded px-2 py-1.5`}>
-          <div className="flex items-center gap-2">
+        <details className={`${colorClasses.bg} border ${colorClasses.border} rounded px-2 py-1.5 group`}>
+          <summary className="flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
             <span className="text-sm">{isSuccess ? '✅' : '❌'}</span>
-            <div className={`text-xs font-medium flex-1 ${isSuccess ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+            <span className={`text-[10px] ${colorClasses.muted} group-open:hidden`}>+</span>
+            <span className={`text-[10px] ${colorClasses.muted} hidden group-open:inline`}>−</span>
+            <div className={`text-xs font-medium flex-1 ${colorClasses.text}`}>
               {isSuccess ? 'Sub-agent done' : 'Sub-agent failed'}
               {error && <span className="font-normal ml-1">- {error.length > 50 ? error.substring(0, 50) + '...' : error}</span>}
             </div>
             <div className="flex items-center gap-1.5 text-[10px] flex-shrink-0">
-              {duration && (
-                <span className={isSuccess ? 'text-green-500 dark:text-green-400' : 'text-red-500 dark:text-red-400'}>
-                  {duration}
+              {hasStats && (
+                <span className={colorClasses.muted}>
+                  {inputTokens ? `${((inputTokens + (outputTokens || 0)) / 1000).toFixed(1)}k tok` : ''}
+                  {toolCalls ? ` · ${toolCalls} tools` : ''}
                 </span>
               )}
+              {duration && (
+                <span className={colorClasses.muted}>{duration}</span>
+              )}
               {event.timestamp && (
-                <span className={isSuccess ? 'text-green-500 dark:text-green-400' : 'text-red-500 dark:text-red-400'}>
+                <span className={colorClasses.muted}>
                   {new Date(event.timestamp).toLocaleTimeString()}
                 </span>
               )}
             </div>
+          </summary>
+          <div className={`mt-2 pt-2 border-t ${colorClasses.divider} space-y-1.5`}>
+            {error && (
+              <div className="text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap break-words">
+                <span className="font-medium">Error: </span>{error}
+              </div>
+            )}
+            {resultText && (
+              <div className={`text-xs ${colorClasses.text} whitespace-pre-wrap break-words max-h-40 overflow-y-auto`}>
+                {resultText}
+              </div>
+            )}
+            {hasStats && (
+              <div className={`flex items-center gap-3 text-[10px] ${colorClasses.muted}`}>
+                {inputTokens !== undefined && <span>In: {inputTokens.toLocaleString()} tokens</span>}
+                {outputTokens !== undefined && <span>Out: {outputTokens.toLocaleString()} tokens</span>}
+                {toolCalls !== undefined && <span>Tool calls: {toolCalls}</span>}
+              </div>
+            )}
+            {duration && (
+              <div className={`text-[10px] ${colorClasses.muted}`}>Duration: {duration}</div>
+            )}
           </div>
-        </div>
+        </details>
       </CompactWrapper>
     )
   }

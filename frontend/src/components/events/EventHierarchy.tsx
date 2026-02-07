@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { PollingEvent } from '../../services/api-types';
-import { EventDispatcher } from './EventDispatcher';
+import { EventDispatcher, type DelegationStats } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
@@ -149,6 +149,32 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     setHasMoreOlderEvents(hasMore)
   }, [sessionId, eventMode])
   
+  // Compute live delegation stats from sub-agent events (tool calls, token usage)
+  const delegationStats = useMemo(() => {
+    const stats = new Map<string, DelegationStats>()
+    for (const event of displayEvents) {
+      if (!event.data || typeof event.data !== 'object') continue
+      const data = event.data as Record<string, unknown>
+      const correlationId = data.correlation_id as string | undefined
+      if (!correlationId) continue
+
+      if (!stats.has(correlationId)) {
+        stats.set(correlationId, { toolCalls: 0, inputTokens: 0, outputTokens: 0 })
+      }
+      const s = stats.get(correlationId)!
+
+      if (event.type === 'tool_call_start') {
+        s.toolCalls++
+      }
+      if (event.type === 'token_usage') {
+        const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
+        s.inputTokens += (payload.input_tokens as number) || 0
+        s.outputTokens += (payload.output_tokens as number) || 0
+      }
+    }
+    return stats
+  }, [displayEvents])
+
   // Helpers to extract hierarchy info
   const getParentId = useCallback((event: PollingEvent): string | undefined => {
     // Check top-level parent_id
@@ -360,8 +386,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           
           <div className="event-content">
             <div className="event-details">
-              <EventDispatcher 
-                event={event} 
+              <EventDispatcher
+                event={event}
                 onApproveWorkflow={onApproveWorkflow}
                 onSubmitFeedback={onSubmitFeedback}
                 onFeedbackSubmitted={onFeedbackSubmitted}
@@ -370,13 +396,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 eventCount={eventCount}
                 onToggleCollapse={onToggleCollapse}
                 compact={compact}
+                delegationStats={delegationStats}
               />
             </div>
           </div>
         </div>
       </div>
     );
-  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact, flatHierarchy]);
+  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact, flatHierarchy, delegationStats]);
 
   if (flattenedItems.length === 0) {
     return <div className="text-gray-500 text-center py-4">No hierarchical events to display</div>;

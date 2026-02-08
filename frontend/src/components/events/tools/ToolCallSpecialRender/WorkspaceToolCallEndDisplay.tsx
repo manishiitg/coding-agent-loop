@@ -93,7 +93,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
     const renderFileTree = (items: unknown[], depth = 0): React.ReactElement[] => {
       return items.map((item: unknown, index: number) => {
         const fileItem = item as Record<string, unknown>
-        const isFolder = fileItem.is_directory || fileItem.children
+        const isFolder = fileItem.type === 'folder' || fileItem.children
         const icon = isFolder ? '📁' : '📄'
         const indent = depth * 16
         const name = (fileItem.name || fileItem.filepath) as string
@@ -189,7 +189,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
   if (toolName === 'read_workspace_file') {
     const content = (parsedResult.content as string) || ''
     const filepath = (parsedResult.filepath as string) || ''
-    const folder = (parsedResult.folder as string) || ''
+    const folder = filepath.includes('/') ? filepath.substring(0, filepath.lastIndexOf('/')) : ''
     const lastModified = (parsedResult.last_modified as string) || ''
     
     
@@ -293,7 +293,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
   // Handle update_workspace_file tool response
   if (toolName === 'update_workspace_file' || toolName === 'diff_patch_workspace_file') {
     const filepath = (parsedResult.filepath as string) || ''
-    const folder = (parsedResult.folder as string) || ''
+    const folder = filepath.includes('/') ? filepath.substring(0, filepath.lastIndexOf('/')) : ''
     const lastModified = (parsedResult.last_modified as string) || ''
     const applied = (parsedResult.applied as boolean) || false
     
@@ -384,7 +384,7 @@ export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayPr
   // Handle delete_workspace_file tool response
   if (toolName === 'delete_workspace_file') {
     const filepath = (parsedResult.filepath as string) || ''
-    const folder = (parsedResult.folder as string) || ''
+    const folder = filepath.includes('/') ? filepath.substring(0, filepath.lastIndexOf('/')) : ''
     const deleted = (parsedResult.deleted as boolean) || false
 
     return (

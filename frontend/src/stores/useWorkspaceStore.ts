@@ -100,11 +100,15 @@ interface WorkspaceState {
   
   // File Operations
   addFile: (file: PlannerFile) => void
+  addFileToTree: (filepath: string) => void
   removeFile: (filepath: string) => void
   updateFile: (filepath: string, updates: Partial<PlannerFile>) => void
   
-  // File fetching
-  fetchFiles: () => Promise<void>
+  // File fetching — activeFolder remembers the last folder scope (e.g., workflow path)
+  // so that unscoped fetchFiles() calls from other components don't replace the scoped tree
+  activeFolder: string | null
+  setActiveFolder: (folder: string | null) => void
+  fetchFiles: (folder?: string) => Promise<void>
   
   // File highlighting
   highlightedFile: string | null
@@ -161,6 +165,102 @@ const buildFileIndex = (files: PlannerFile[]): Map<string, PlannerFile> => {
   return index
 }
 
+// --- Incremental file tree updates ---
+// Previously, every workspace_file_operation event for a new file triggered a full fetchFiles()
+// call (~2MB payload for large workspaces). Now we insert new files into the tree client-side
+// using addFileToTree(), avoiding the network round-trip entirely.
+
+// Image file extensions for client-side detection (mirrors backend isImageFile in documents.go)
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'])
+
+const isImageFile = (filename: string): boolean => {
+  const dot = filename.lastIndexOf('.')
+  if (dot === -1) return false
+  return IMAGE_EXTENSIONS.has(filename.slice(dot).toLowerCase())
+}
+
+// Insert a new file into the correct position in a hierarchical file tree,
+// creating only TRULY missing intermediate folders.
+//
+// The tree from fetchFiles(folder) has nodes with FULL multi-segment filepaths
+// (e.g., "Workflow/MyProject/runs"), NOT single-segment names. We walk the tree
+// by matching existing folder prefixes. If no existing parent can be found at
+// root level, we bail out (return null) and let the caller fall back to fetchFiles
+// — this avoids creating phantom duplicate folders when the tree is scoped to a
+// workspace sub-path.
+const insertIntoTree = (files: PlannerFile[], newFile: PlannerFile): PlannerFile[] | null => {
+  const targetPath = newFile.filepath
+  const root = [...files]
+
+  // Recursively descend into the deepest matching parent folder, then create
+  // any remaining intermediate folders and append the new file.
+  // Returns false if no matching parent was found at all (caller should fallback).
+  const insertAt = (items: PlannerFile[], parentPath: string, isRoot: boolean): boolean => {
+    // Try to descend into a deeper matching folder first
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type === 'folder' && targetPath.startsWith(item.filepath + '/')) {
+        // Clone this node (immutable update) and descend into its children
+        const cloned = { ...item, children: [...(item.children || [])] }
+        items[i] = cloned
+        return insertAt(cloned.children!, item.filepath, false)
+      }
+    }
+
+    // No matching folder found at this level.
+    // If we're still at root and never descended, bail out — we can't safely create
+    // intermediate folders because the tree uses multi-segment filepaths and we'd
+    // create duplicates (e.g., a "Workflow" folder alongside "Workflow/MyProject").
+    if (isRoot && !parentPath) {
+      return false
+    }
+
+    // We're inside a matched parent — create remaining intermediate folders
+    const remaining = targetPath.slice(parentPath.length + 1)
+    const parts = remaining.split('/')
+
+    if (parts.length === 1) {
+      // Direct child — just append
+      if (!items.some(f => f.filepath === targetPath)) {
+        items.push(newFile)
+      }
+      return true
+    }
+
+    // Create missing intermediate folders for the remaining path segments
+    let current = items
+    for (let i = 0; i < parts.length - 1; i++) {
+      const folderPath = parentPath + '/' + parts.slice(0, i + 1).join('/')
+
+      const existingIdx = current.findIndex(f => f.filepath === folderPath && f.type === 'folder')
+      if (existingIdx === -1) {
+        const newFolder: PlannerFile = {
+          filepath: folderPath,
+          content: '',
+          last_modified: new Date().toISOString(),
+          type: 'folder',
+          children: [],
+        }
+        current.push(newFolder)
+        current = newFolder.children!
+      } else {
+        // Clone existing folder to keep immutable
+        const cloned = { ...current[existingIdx], children: [...(current[existingIdx].children || [])] }
+        current[existingIdx] = cloned
+        current = cloned.children!
+      }
+    }
+
+    if (!current.some(f => f.filepath === targetPath)) {
+      current.push(newFile)
+    }
+    return true
+  }
+
+  const inserted = insertAt(root, '', true)
+  return inserted ? root : null
+}
+
 const initialState = {
   files: [],
   fileIndex: new Map<string, PlannerFile>(),
@@ -203,10 +303,14 @@ const initialState = {
     isLoading: false
   },
   showActionsDropdown: false,
+  activeFolder: null,
   highlightedFile: null,
   highlightTimeout: null,
   expandedFolders: new Set<string>()
 }
+
+// Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder
+let inflightFetch: { folder: string | undefined; promise: Promise<void> } | null = null
 
 export const useWorkspaceStore = create<WorkspaceState>()(
   devtools(
@@ -384,6 +488,39 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const index = buildFileIndex(updatedFiles)
         return { files: updatedFiles, fileIndex: index }
       }),
+      // Incremental file insert: adds a single file to the correct position in the
+      // hierarchical tree without re-fetching the entire file list from the server.
+      // Called from processWorkspaceEvent when a tool creates/updates a file not yet in the tree.
+      addFileToTree: (filepath: string) => set((state) => {
+        // Skip if file already exists in the index — no work needed
+        const normalizedPath = filepath.trim()
+        if (state.fileIndex.has(normalizedPath)) {
+          console.log('[WORKSPACE_DEBUG] addFileToTree SKIP (already exists):', normalizedPath)
+          return state
+        }
+        console.log('[WORKSPACE_DEBUG] addFileToTree INSERT:', normalizedPath, '| current top-level:', state.files.map(f => f.filepath).join(', '))
+
+        const fileName = normalizedPath.split('/').pop() || normalizedPath
+        const newFile: PlannerFile = {
+          filepath: normalizedPath,
+          content: '',
+          last_modified: new Date().toISOString(),
+          type: 'file',
+          is_image: isImageFile(fileName),
+        }
+
+        // insertIntoTree walks the tree by matching existing folder prefixes and inserts
+        // the file. Returns null if no matching parent folder was found (tree is scoped
+        // to a sub-path and we can't safely create intermediates without duplicates).
+        // In that case we no-op — the debounced fetchFiles from WorkflowLayout will
+        // pick up the file shortly.
+        const updatedFiles = insertIntoTree([...state.files], newFile)
+        if (!updatedFiles) {
+          return state // Couldn't insert safely — let fetchFiles handle it
+        }
+        const index = buildFileIndex(updatedFiles)
+        return { files: updatedFiles, fileIndex: index }
+      }),
       removeFile: (filepath) => set((state) => {
         // IMPORTANT: In workflow mode, state.files is already filtered to only contain files
         // within the workflow folder (this filtering happens in Workspace component).
@@ -483,31 +620,71 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         return { files: updatedFiles, fileIndex: index }
       }),
       
-      // File fetching
-      fetchFiles: async () => {
-        try {
-          set({ loading: true, error: null })
-          const response = await agentApi.getPlannerFiles()
-          if (response.success && response.data) {
-            const allFiles = response.data
-            
-            // Process hierarchical structure from API
-            const processedFiles = processHierarchicalFiles(allFiles)
-            const index = buildFileIndex(processedFiles)
-            set({ files: processedFiles, fileIndex: index })
-            
-            // NOTE: Expansion restoration is now handled by the Workspace component
-            // which has the necessary context about workflow mode and filtered files
-            // The store just fetches and stores raw data
-          } else {
-            set({ error: response.message || 'Failed to load files' })
-          }
-        } catch (err) {
-          console.error('Failed to fetch Planner files:', err)
-          set({ error: err instanceof Error ? err.message : 'Failed to fetch files' })
-        } finally {
-          set({ loading: false })
+      // Active folder — remembers the current workspace scope (e.g., "Workflow/MyProject").
+      // When components call fetchFiles() without a folder, this prevents them from
+      // accidentally fetching the entire root tree and replacing the workflow-scoped tree.
+      setActiveFolder: (folder: string | null) => {
+        console.log('[WORKSPACE_DEBUG] setActiveFolder:', folder)
+        set({ activeFolder: folder })
+      },
+
+      // File fetching — uses activeFolder as fallback when no folder is explicitly passed,
+      // so that unscoped fetchFiles() calls from StepNode, WorkflowCanvas, etc. stay scoped.
+      fetchFiles: async (folder?: string) => {
+        // Use activeFolder as fallback so unscoped calls stay scoped to the workflow folder.
+        // When an explicit folder IS passed (including undefined from Workspace.tsx chat mode),
+        // callers who want to update the scope should call setActiveFolder() separately.
+        const effectiveFolder = folder ?? get().activeFolder ?? undefined
+
+        // Deduplicate: if a fetch for the same folder is already in flight, reuse it
+        if (inflightFetch && inflightFetch.folder === effectiveFolder) {
+          console.log('[WORKSPACE_DEBUG] fetchFiles DEDUP — reusing in-flight request for:', effectiveFolder)
+          return inflightFetch.promise
         }
+
+        const callStack = new Error().stack?.split('\n').slice(1, 6).join(' <- ')
+        console.log('[WORKSPACE_DEBUG] fetchFiles called — folder arg:', folder, '| activeFolder:', get().activeFolder, '| effectiveFolder:', effectiveFolder, '| stack:', callStack)
+
+        const promise = (async () => {
+          try {
+            set({ loading: true, error: null })
+            const response = await agentApi.getPlannerFiles(effectiveFolder)
+            if (response.success && response.data) {
+              // Guard against mount race condition: if this fetch was unscoped (effectiveFolder
+              // was undefined) but by the time the response arrived, activeFolder has been set,
+              // it means a scoped fetch is already in flight or completed. Storing these unscoped
+              // results would replace the correctly scoped tree with the full root tree.
+              const currentActiveFolder = get().activeFolder
+              if (!effectiveFolder && currentActiveFolder) {
+                console.log('[WORKSPACE_DEBUG] fetchFiles DISCARDING unscoped result — activeFolder was set to', currentActiveFolder, 'while fetch was in flight | CALLER:', callStack)
+                return
+              }
+
+              const allFiles = response.data
+
+              // Process hierarchical structure from API
+              const processedFiles = processHierarchicalFiles(allFiles)
+              const index = buildFileIndex(processedFiles)
+              console.log('[WORKSPACE_DEBUG] fetchFiles got', processedFiles.length, 'top-level items, paths:', processedFiles.map(f => f.filepath).join(', '), '| effectiveFolder was:', effectiveFolder, '| CALLER:', callStack)
+              set({ files: processedFiles, fileIndex: index })
+
+              // NOTE: Expansion restoration is now handled by the Workspace component
+              // which has the necessary context about workflow mode and filtered files
+              // The store just fetches and stores raw data
+            } else {
+              set({ error: response.message || 'Failed to load files' })
+            }
+          } catch (err) {
+            console.error('Failed to fetch Planner files:', err)
+            set({ error: err instanceof Error ? err.message : 'Failed to fetch files' })
+          } finally {
+            set({ loading: false })
+            inflightFetch = null
+          }
+        })()
+
+        inflightFetch = { folder: effectiveFolder, promise }
+        return promise
       },
       
       // File highlighting
@@ -520,24 +697,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
         
         try {
-          // Use index for O(1) lookup instead of O(n) tree search
-          const normalizedPath = filepath.trim()
-          const fileExists = state.fileIndex.has(normalizedPath) || 
-                            state.fileIndex.has(normalizedPath.split('/').pop() || '')
-          
-          // If file doesn't exist, refresh the tree
-          // Note: In workflow mode, the component will handle filtering
-          // so we only refresh if the file is truly missing from raw data
-          if (!fileExists) {
-            await get().fetchFiles()
-            
-            // Wait a bit for state to update after refresh
-            setTimeout(() => {
-              set({ highlightedFile: filepath })
-            }, 100)
-          } else {
-            set({ highlightedFile: filepath })
-          }
+          // Set the highlight regardless of whether the file exists in the tree yet.
+          // If the file is missing, the next debounced fetchFiles (from WorkflowLayout or
+          // Workspace mount) will bring it in. We do NOT call fetchFiles() here because
+          // calling it without a folder param fetches ALL files from root, which replaces
+          // the workflow-scoped tree and causes duplicate folders in workflow mode.
+          set({ highlightedFile: filepath })
           
           // Auto-clear highlight after 5 seconds
           const timeout = setTimeout(() => {
@@ -598,6 +763,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             const { operation, filepath } = eventData
             // Check should_highlight flag (defaults to true for backward compatibility)
             const shouldHighlight = eventData.should_highlight !== false
+            console.log('[WORKSPACE_DEBUG] processWorkspaceEvent:', operation, filepath, '| shouldHighlight:', shouldHighlight)
             
             if (!operation) {
               return true
@@ -623,28 +789,22 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               const fileExists = state.fileIndex.has(normalizedPath) || 
                                 state.fileIndex.has(normalizedPath.split('/').pop() || '')
               
-              // Always try to highlight - if file doesn't exist, refresh first
+              // Always try to highlight - if file doesn't exist, insert it incrementally.
+              // Previously this called fetchFiles() (full ~2MB re-fetch). Now we use addFileToTree()
+              // to insert the single new file client-side, avoiding the expensive network call.
+              //
+              // NOTE: We only call highlightFile() here — NOT expandFoldersForFile().
+              // Folder expansion is handled by the Workspace component's highlightedFile effect,
+              // which uses the display-adjusted path (correct for workflow mode). Expanding here
+              // with the raw path would open all parent segments redundantly.
               if (!fileExists) {
-                // File not found - refresh tree to show it (especially for new files)
-                get().fetchFiles().then(() => {
-                  // Wait a bit longer for state to update after refresh
-                  setTimeout(() => {
-                    get().highlightFile(filepath)
-                    // Expand folders to show the file (works with workflow folder filtering)
-                    get().expandFoldersForFile(filepath)
-                  }, 300)
-                }).catch(err => {
-                  console.error('[WorkspaceStore] Error refreshing files:', err)
-                  // Still try to highlight even if refresh fails
-                  setTimeout(() => {
-                    get().highlightFile(filepath)
-                    get().expandFoldersForFile(filepath)
-                  }, 100)
-                })
+                get().addFileToTree(filepath)
+                // Small delay for Zustand state to propagate before highlighting
+                setTimeout(() => {
+                  get().highlightFile(filepath)
+                }, 50)
               } else {
-                // File exists - highlight and expand folders immediately
                 get().highlightFile(filepath)
-                get().expandFoldersForFile(filepath)
               }
             } else if (operation === 'delete') {
               if (filepath) {
@@ -672,15 +832,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 const fileExists = state.fileIndex.has(normalizedPath) || 
                                   state.fileIndex.has(normalizedPath.split('/').pop() || '')
                 if (!fileExists) {
-                  get().fetchFiles().then(() => {
-                    setTimeout(() => {
-                      get().highlightFile(filepath)
-                      get().expandFoldersForFile(filepath)
-                    }, 300)
-                  })
+                  // Move destination: insert incrementally instead of full re-fetch
+                  get().addFileToTree(filepath)
+                  setTimeout(() => {
+                    get().highlightFile(filepath)
+                  }, 50)
                 } else {
                   get().highlightFile(filepath)
-                  get().expandFoldersForFile(filepath)
                 }
               }
             }
@@ -706,15 +864,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Auto-scroll to file without highlighting
       scrollToFile: async (filepath: string) => {
         try {
-          // Use index for O(1) lookup instead of O(n) tree search
-          const state = get()
-          const normalizedPath = filepath.trim()
-          const fileExists = state.fileIndex.has(normalizedPath) || 
-                            state.fileIndex.has(normalizedPath.split('/').pop() || '')
-          if (!fileExists) {
-            // File not found, refresh the file list
-            await get().fetchFiles()
-          }
+          // We no longer call fetchFiles() here when file is missing, because calling
+          // it without a folder param fetches ALL files from root, replacing the
+          // workflow-scoped tree. The file will appear after the next debounced fetch.
           
           // Use a small delay to ensure DOM is updated
           setTimeout(() => {

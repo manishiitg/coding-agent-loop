@@ -67,7 +67,7 @@ export default function PlannerFileList({
   workflowFolderPath,
   isExporting = false,
   isImporting = false,
-  importProgress = 0,
+  // importProgress = 0,
   isSelectionMode = false,
   selectedFiles = new Set(),
   onToggleFileSelection,

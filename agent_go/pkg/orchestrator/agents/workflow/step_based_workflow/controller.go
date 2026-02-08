@@ -189,13 +189,11 @@ func NewStepBasedWorkflowOrchestrator(
 		}
 		hcpo.tierResolver = NewTierResolver(tieredConfig, apiKeys)
 		hcpo.useTieredMode = true
-		// Only use Tier1 as fallback if no explicit Phase LLM is configured
-		// This allows users to configure a separate Phase LLM even in tiered mode
-		if hcpo.presetPhaseLLM == nil && tieredConfig.Tier1 != nil {
-			hcpo.presetPhaseLLM = tieredConfig.Tier1
-			logger.Info(fmt.Sprintf("🏷️ Using Tier1 as Phase LLM fallback: %s/%s", tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID))
-		} else if hcpo.presetPhaseLLM != nil {
-			logger.Info(fmt.Sprintf("🏷️ Using explicitly configured Phase LLM: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
+		// Phase LLM is independent of tiered mode - always configured separately
+		if hcpo.presetPhaseLLM != nil {
+			logger.Info(fmt.Sprintf("🏷️ Phase LLM (independent): %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
+		} else {
+			logger.Info("🏷️ WARNING: No Phase LLM configured - phase agents will fail")
 		}
 		logger.Info(fmt.Sprintf("🏷️ Tiered LLM allocation mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
 			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,

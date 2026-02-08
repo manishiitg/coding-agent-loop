@@ -96,15 +96,13 @@ func (tr *TierResolver) ResolveForExecution(maturity LearningMaturity) (*orchest
 }
 
 // ResolveForLearning returns the LLM for learning agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings: Tier 2 (Medium), Mature: Tier 3 (Low)
+// No Learnings: Tier 2 (Medium), Has Learnings: Tier 2 (Medium), Mature: Tier 3 (Low)
 func (tr *TierResolver) ResolveForLearning(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
 	switch maturity {
-	case NoLearnings:
-		return tr.ResolveTier(TierHigh), TierHigh
-	case HasLearnings:
-		return tr.ResolveTier(TierMedium), TierMedium
-	default:
+	case MatureLearnings:
 		return tr.ResolveTier(TierLow), TierLow
+	default:
+		return tr.ResolveTier(TierMedium), TierMedium
 	}
 }
 
@@ -113,9 +111,8 @@ func (tr *TierResolver) ResolveForValidation() (*orchestrator.LLMConfig, TierLev
 	return tr.ResolveTier(TierLow), TierLow
 }
 
-// Note: Phase agents get their LLM from presetPhaseLLM which is populated from Tier1
-// in tiered mode (see workflow_orchestrator.go and controller.go). No resolver method
-// is needed since phase agents don't have maturity-based selection.
+// Note: Phase agents use presetPhaseLLM which is independently configured (not part of tiered allocation).
+// No resolver method is needed since phase agents don't have maturity-based selection.
 
 // ResolveForConditional returns the LLM for conditional agents based on learning maturity
 // No Learnings: Tier 1 (High), Has Learnings: Tier 2 (Medium), Mature: Tier 2 (Medium)

@@ -17,13 +17,13 @@ export default function ActivePresetDisplay({
 
   return (
     <div className="space-y-2">
-      {/* Active Preset */}
+      {/* Active Workflow */}
       {activePreset ? (
         <div className="flex items-center justify-between p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
             <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
-              {activePreset.label || 'Preset Selected'}
+              {activePreset.label || 'Workflow Selected'}
             </span>
           </div>
           <button
@@ -36,7 +36,7 @@ export default function ActivePresetDisplay({
       ) : (
         <div className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg">
           <span className="text-sm text-gray-600 dark:text-gray-400">
-            No preset selected
+            No workflow selected
           </span>
           <button
             onClick={onToggle}

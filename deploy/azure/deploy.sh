@@ -13,10 +13,10 @@ PARENT_DIR="$(cd "$REPO_ROOT/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # Get config from terraform
-ACR_NAME="$(terraform output -raw acr_name 2>/dev/null)"
-AGENT_APP="$(terraform output -raw agent_container_app_name 2>/dev/null || echo "mcpagent-agent")"
-WORKSPACE_APP="$(terraform output -raw workspace_api_container_app_name 2>/dev/null || echo "mcpagent-workspace-api")"
-FRONTEND_APP="$(terraform output -raw frontend_container_app_name 2>/dev/null || echo "mcpagent-frontend")"
+ACR_NAME="${ACR_NAME:-$(terraform output -raw acr_name 2>/dev/null)}"
+AGENT_APP="${AGENT_APP:-$(terraform output -raw agent_container_app_name 2>/dev/null || echo "mcpagent-agent")}"
+WORKSPACE_APP="${WORKSPACE_APP:-$(terraform output -raw workspace_api_container_app_name 2>/dev/null || echo "mcpagent-workspace-api")}"
+FRONTEND_APP="${FRONTEND_APP:-$(terraform output -raw frontend_container_app_name 2>/dev/null || echo "mcpagent-frontend")}"
 
 # Fallback for app names if terraform output missing
 PROJECT_NAME="mcpagent" # Update if you changed var.project_name
@@ -30,16 +30,39 @@ fi
 TARGET="${1:-all}"
 shift # Shift arguments so we can check for --local
 USE_LOCAL_BUILD=false
+BUILD_ONLY=false
 
-if [[ "$1" == "--local" ]] || [[ "$TARGET" == "--local" ]]; then
-  USE_LOCAL_BUILD=true
-  # If first arg was --local, default target to all
-  if [[ "$TARGET" == "--local" ]]; then
-    TARGET="all"
-  fi
+# Loop through remaining arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --local)
+      USE_LOCAL_BUILD=true
+      if [[ "$TARGET" == "--local" ]]; then
+        TARGET="all"
+      fi
+      shift # past argument
+      ;;
+    --build-only)
+      BUILD_ONLY=true
+      if [[ "$TARGET" == "--build-only" ]]; then
+        TARGET="all"
+      fi
+      shift # past argument
+      ;;
+    *)
+      shift # past argument
+      ;;
+  esac
+done
+
+if [ "$USE_LOCAL_BUILD" = "true" ]; then
   echo "==> Mode: LOCAL BUILD (docker build + push)"
 else
   echo "==> Mode: REMOTE BUILD (az acr build)"
+fi
+
+if [ "$BUILD_ONLY" = "true" ]; then
+  echo "==> Mode: BUILD ONLY (skipping deployment)"
 fi
 
 TAG="v$(date +%Y%m%d-%H%M%S)"
@@ -215,12 +238,20 @@ build_base() {
 
 build_frontend() {
   local CONTEXT_DIR="/tmp/mcp-agent-build-ctx-$$/frontend"
-  create_clean_context "$CONTEXT_DIR"
+  # Optimization: Use selective copy instead of full repo rsync
+  echo "    Creating selective build context in $CONTEXT_DIR..."
+  mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
+  cp -r "$REPO_ROOT/frontend" "$CONTEXT_DIR/mcp-agent-builder-go/"
 
   echo "    [Frontend] Building..."
-  local AGENT_URL="$(terraform output -raw agent_fqdn 2>/dev/null)"
-  local WORKSPACE_URL="$(terraform output -raw workspace_api_fqdn 2>/dev/null)"
+  # Allow overriding URLs via env vars (useful for VM/Hybrid deployment)
+  # Use ${VAR-default} (no colon) to allow empty string as a valid value override
+  local AGENT_URL="${FRONTEND_API_URL-$(terraform output -raw agent_fqdn 2>/dev/null)}"
+  local WORKSPACE_URL="${FRONTEND_WORKSPACE_URL-$(terraform output -raw workspace_api_fqdn 2>/dev/null)}"
   
+  echo "DEBUG: Checking api.ts content in context:"
+  head -n 5 "$CONTEXT_DIR/mcp-agent-builder-go/frontend/src/services/api.ts"
+
   (
     cd "$CONTEXT_DIR/mcp-agent-builder-go/frontend" || exit 1
     run_build "mcp-agent-frontend" "Dockerfile.prod" "--build-arg VITE_API_BASE_URL=$AGENT_URL --build-arg VITE_WORKSPACE_API_URL=$WORKSPACE_URL" "$CONTEXT_DIR/mcp-agent-builder-go/frontend"
@@ -301,39 +332,44 @@ echo "==> All builds finished successfully."
 # Update Container Apps (Zero-Downtime)
 # ------------------------------------------------------------------
 
-update_app() {
-  local app_name="$1"
-  local image="$2"
-  echo "    [$app_name] Updating to $image..."
-  az containerapp update \
-    --name "$app_name" \
-    --resource-group "$RG_NAME" \
-    --image "$ACR_NAME.azurecr.io/$image" \
-    --output none
-  echo "    [$app_name] Update complete."
-}
+if [ "$BUILD_ONLY" = "false" ]; then
+  update_app() {
+    local app_name="$1"
+    local image="$2"
+    echo "    [$app_name] Updating to $image..."
+    az containerapp update \
+      --name "$app_name" \
+      --resource-group "$RG_NAME" \
+      --image "$ACR_NAME.azurecr.io/$image" \
+      --output none
+    echo "    [$app_name] Update complete."
+  }
 
-echo "==> Updating Container Apps..."
+  echo "==> Updating Container Apps..."
 
-# Reset PIDs for update phase
-pids=()
+  # Reset PIDs for update phase
+  pids=()
 
-if [[ "$TARGET" == "agent" || "$TARGET" == "all" ]]; then
-  update_app "${PROJECT_NAME}-agent" "mcp-agent:$TAG" & pids+=($!)
+  if [[ "$TARGET" == "agent" || "$TARGET" == "all" ]]; then
+    update_app "${PROJECT_NAME}-agent" "mcp-agent:$TAG" & pids+=($!)
+  fi
+
+  if [[ "$TARGET" == "workspace" || "$TARGET" == "all" ]]; then
+    update_app "${PROJECT_NAME}-workspace-api" "workspace-api:$TAG" & pids+=($!)
+  fi
+
+  if [[ "$TARGET" == "frontend" || "$TARGET" == "all" ]]; then
+    update_app "${PROJECT_NAME}-frontend" "mcp-agent-frontend:$TAG" & pids+=($!)
+  fi
+
+  for pid in "${pids[@]}"; do
+    wait "$pid"
+  done
+
+  echo ""
+  echo "SUCCESS! Deployed version: $TAG"
+  echo "Frontend: $(terraform output -raw frontend_fqdn 2>/dev/null)"
+else
+  echo ""
+  echo "SUCCESS! Build complete (deployed skipped). Version: $TAG"
 fi
-
-if [[ "$TARGET" == "workspace" || "$TARGET" == "all" ]]; then
-  update_app "${PROJECT_NAME}-workspace-api" "workspace-api:$TAG" & pids+=($!)
-fi
-
-if [[ "$TARGET" == "frontend" || "$TARGET" == "all" ]]; then
-  update_app "${PROJECT_NAME}-frontend" "mcp-agent-frontend:$TAG" & pids+=($!)
-fi
-
-for pid in "${pids[@]}"; do
-  wait "$pid"
-done
-
-echo ""
-echo "SUCCESS! Deployed version: $TAG"
-echo "Frontend: $(terraform output -raw frontend_fqdn 2>/dev/null)"

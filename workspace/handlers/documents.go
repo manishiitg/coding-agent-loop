@@ -181,12 +181,6 @@ func CreateDocument(c *gin.Context) {
 	// Parse markdown structure
 	structure := parsers.ParseMarkdown(req.Content)
 
-	// Extract folder from filepath
-	folder := filepath.Dir(req.FilePath)
-	if folder == "." {
-		folder = ""
-	}
-
 	// Convert full path to relative path for API response
 	relativePath, err := utils.GetRelativePath(fullPath, docsDir)
 	if err != nil {
@@ -198,24 +192,9 @@ func CreateDocument(c *gin.Context) {
 		return
 	}
 
-	// Get file info for metadata
-	fileInfo, err := os.Stat(fullPath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
-			Success: false,
-			Message: "Failed to get file info",
-			Error:   err.Error(),
-		})
-		return
-	}
-
 	// Create response
 	doc := models.Document{
-		FilePath:    relativePath,
-		Folder:      folder,
-		Size:        fileInfo.Size(),
-		ModifiedAt:  fileInfo.ModTime(),
-		IsDirectory: fileInfo.IsDir(),
+		FilePath: relativePath,
 	}
 
 	// Handle git operations if commit message provided
@@ -263,17 +242,9 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 					return nil
 				}
 
-				folder := ""
-				if dir := filepath.Dir(relPathFromDocs); dir != "." {
-					folder = dir
-				}
-
 				doc := models.Document{
-					FilePath:    relPathFromDocs,
-					Folder:      folder,
-					Type:        "folder", // Mark as folder
-					IsDirectory: true,
-					ModifiedAt:  info.ModTime(),
+					FilePath: relPathFromDocs,
+					Type:     "folder", // Mark as folder
 				}
 				documents = append(documents, doc)
 			}
@@ -306,19 +277,11 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 			return nil // Skip files/folders that can't be relativized
 		}
 
-		folder := ""
-		if dir := filepath.Dir(relPathFromDocs); dir != "." {
-			folder = dir
-		}
-
 		if info.IsDir() {
 			// This is a folder - add it to the list
 			doc := models.Document{
-				FilePath:    relPathFromDocs,
-				Folder:      folder,
-				Type:        "folder", // Mark as folder
-				IsDirectory: true,
-				ModifiedAt:  info.ModTime(),
+				FilePath: relPathFromDocs,
+				Type:     "folder", // Mark as folder
 			}
 			documents = append(documents, doc)
 		} else {
@@ -330,13 +293,8 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 			isImage := isImageFile(info.Name())
 
 			doc := models.Document{
-				FilePath:    relPathFromDocs,
-				Folder:      folder,
-				Type:        "file", // Mark as file
-				IsImage:     isImage,
-				Size:        info.Size(),
-				ModifiedAt:  info.ModTime(),
-				IsDirectory: false,
+				FilePath: relPathFromDocs,
+				IsImage:  isImage,
 			}
 			documents = append(documents, doc)
 		}
@@ -360,13 +318,23 @@ func buildHierarchicalStructure(documents []models.Document, queryFolder string)
 		}
 	}
 
+	// Helper to get parent directory ("." maps to "" for root-level items)
+	parentDir := func(filePath string) string {
+		dir := filepath.Dir(filePath)
+		if dir == "." {
+			return ""
+		}
+		return dir
+	}
+
 	// Second pass: organize files and folders into hierarchy
 	for i := range documents {
 		doc := &documents[i]
+		docParent := parentDir(doc.FilePath)
 
 		if doc.Type == "folder" {
 			// This is a folder - add to root if it's a top-level folder, the queried folder itself, or a direct child of the queried folder
-			if doc.Folder == "" || (queryFolder != "" && (doc.FilePath == queryFolder || doc.Folder == queryFolder)) {
+			if docParent == "" || (queryFolder != "" && (doc.FilePath == queryFolder || docParent == queryFolder)) {
 				// Add the folder pointer to root items
 				rootItems = append(rootItems, folderMap[doc.FilePath])
 			}
@@ -374,13 +342,13 @@ func buildHierarchicalStructure(documents []models.Document, queryFolder string)
 			// we need to process all files first to populate the folders
 		} else {
 			// This is a file - add to its parent folder
-			if doc.Folder == "" || (queryFolder != "" && doc.Folder == queryFolder) {
+			if docParent == "" || (queryFolder != "" && docParent == queryFolder) {
 				// File is in root or in the queried folder - create a copy for root items
 				fileCopy := *doc
 				rootItems = append(rootItems, &fileCopy)
 			} else {
 				// File is in a folder - add to parent folder
-				if parent, exists := folderMap[doc.Folder]; exists {
+				if parent, exists := folderMap[docParent]; exists {
 					if parent.Children == nil {
 						parent.Children = []models.Document{}
 					}
@@ -393,9 +361,10 @@ func buildHierarchicalStructure(documents []models.Document, queryFolder string)
 	// Third pass: add subfolders to their parents (process in reverse order for deep nesting)
 	for i := len(documents) - 1; i >= 0; i-- {
 		doc := &documents[i]
-		if doc.Type == "folder" && doc.Folder != "" {
+		docParent := parentDir(doc.FilePath)
+		if doc.Type == "folder" && docParent != "" {
 			// This is a subfolder - add to its parent
-			if parent, exists := folderMap[doc.Folder]; exists {
+			if parent, exists := folderMap[docParent]; exists {
 				if parent.Children == nil {
 					parent.Children = []models.Document{}
 				}
@@ -559,10 +528,8 @@ func ListDocuments(c *gin.Context) {
 				// Add empty per-user folder entries
 				for _, folder := range utils.PerUserFolders {
 					documents = append(documents, models.Document{
-						FilePath:    folder,
-						Type:        "folder",
-						IsDirectory: true,
-						ModifiedAt:  time.Now(),
+						FilePath: folder,
+						Type:     "folder",
 					})
 				}
 			}
@@ -714,7 +681,7 @@ func matchGlobPattern(documents []models.Document, pattern string, includeDirs b
 
 	for _, doc := range documents {
 		// Skip directories if not included
-		if doc.IsDirectory && !includeDirs {
+		if doc.Type == "folder" && !includeDirs {
 			continue
 		}
 
@@ -856,8 +823,8 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Check if file exists and get file info
-	fileInfo, err := os.Stat(filePath)
+	// Check if file exists
+	_, err = os.Stat(filePath)
 	if os.IsNotExist(err) {
 		// File doesn't exist - return 200 with message indicating file doesn't exist
 		c.JSON(http.StatusOK, models.APIResponse[models.Document]{
@@ -888,12 +855,6 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Determine folder from the user-relative path (not the internal path)
-	folder := ""
-	if dir := filepath.Dir(filePathParam); dir != "." {
-		folder = dir
-	}
-
 	// Return the original user-relative path in the response (not the internal path)
 	relativePath := filePathParam
 
@@ -913,13 +874,9 @@ func GetDocument(c *gin.Context) {
 	}
 
 	doc := models.Document{
-		FilePath:    relativePath,
-		Folder:      folder,
-		Content:     contentStr, // Include content for read_workspace_file tool
-		IsImage:     isImage,
-		Size:        fileInfo.Size(),
-		ModifiedAt:  fileInfo.ModTime(),
-		IsDirectory: fileInfo.IsDir(),
+		FilePath: relativePath,
+		Content:  contentStr, // Include content for read_workspace_file tool
+		IsImage: isImage,
 	}
 
 	// Check if this is a download request (query parameter or Accept header)
@@ -1113,12 +1070,6 @@ func UpdateDocument(c *gin.Context) {
 		go fileProcessor.QueueJob(filePathParam, req.Content, action)
 	}
 
-	// Determine folder from user-relative path
-	folder := ""
-	if dir := filepath.Dir(filePathParam); dir != "." {
-		folder = dir
-	}
-
 	// Handle git operations if commit message provided
 	if req.CommitMessage != "" {
 		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
@@ -1130,23 +1081,8 @@ func UpdateDocument(c *gin.Context) {
 	// Return user-relative path in the response
 	relativePath := filePathParam
 
-	// Get file info for metadata
-	fileInfo, err := os.Stat(filePath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
-			Success: false,
-			Message: "Failed to get file info",
-			Error:   err.Error(),
-		})
-		return
-	}
-
 	doc := models.Document{
-		FilePath:    relativePath,
-		Folder:      folder,
-		Size:        fileInfo.Size(),
-		ModifiedAt:  fileInfo.ModTime(),
-		IsDirectory: fileInfo.IsDir(),
+		FilePath: relativePath,
 	}
 
 	// Determine appropriate message based on whether file was created or updated
@@ -1449,24 +1385,8 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	// Get new file info
-	fileInfo, err := os.Stat(destinationFilePath)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
-			Success: false,
-			Message: "Failed to get new file info",
-			Error:   err.Error(),
-		})
-		return
-	}
-
 	responseData := models.Document{
-		FilePath:    relativePath,
-		Folder:      filepath.Dir(relativePath),
-		Type:        "file",
-		Size:        fileInfo.Size(),
-		ModifiedAt:  fileInfo.ModTime(),
-		IsDirectory: fileInfo.IsDir(),
+		FilePath: relativePath,
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[models.Document]{

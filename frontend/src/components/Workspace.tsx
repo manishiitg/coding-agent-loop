@@ -10,6 +10,7 @@ import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
 import RenameFileDialog from './workspace/RenameFileDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
+import ImportProgressDialog from './ui/ImportProgressDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -17,14 +18,12 @@ import { useModeStore } from '../stores/useModeStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useChatStore } from '../stores/useChatStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
-import { 
-  collectFolderPaths, 
-  restoreExpandedFolders, 
+import {
+  collectFolderPaths,
+  restoreExpandedFolders,
   getOriginalPath,
   isPathWithinFolder,
-  normalizePath,
-  adjustFilePathsRecursive,
-  findFileByPath
+  adjustFilePathsRecursive
 } from '../utils/workspacePathUtils'
 import { isTextBasedFile } from '../utils/fileUtils'
 import { useIterationExpansion } from './workspace/useIterationExpansion'
@@ -98,6 +97,8 @@ export default function Workspace({
   // Export/Import backup state
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState(0)
+  const [importingFileName, setImportingFileName] = useState<string>('')
   const [exportError, setExportError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
@@ -160,7 +161,8 @@ export default function Workspace({
     setFileContent,
     setLoadingFileContent,
     setShowFileContent,
-    fetchFiles
+    fetchFiles,
+    setActiveFolder
   } = useWorkspaceStore()
 
   // Note: moveDialog from store is shadowed by local state below
@@ -264,59 +266,16 @@ export default function Workspace({
     }
     return null
   }, [activeWorkflowPreset])
-  
-  // Filter files to show only the workflow folder when a workflow preset is selected
-  // This function collects all files/folders that are within the workflow folder path
-  const filterToWorkflowFolder = useCallback((files: PlannerFile[], parentFolderPath: string): PlannerFile[] => {
-    // Normalize paths for comparison (remove leading/trailing slashes, lowercase)
-    const targetPath = normalizePath(parentFolderPath)
-    
-    // Recursively collect all files within the workflow folder
-    const collectWorkflowFiles = (fileList: PlannerFile[]): PlannerFile[] => {
-      const result: PlannerFile[] = []
-      
-      for (const file of fileList) {
-        const filePath = normalizePath(file.filepath)
-        
-        // Check if this is the workflow folder itself
-        if (filePath === targetPath) {
-          // Found the workflow folder - include it with all its children
-          result.push({
-            ...file,
-            children: file.children ? collectWorkflowFiles(file.children) : []
-          })
-        }
-        // Check if this file/folder is within the workflow folder
-        else if (filePath.startsWith(targetPath + '/')) {
-          // This is a child of the workflow folder
-          if (file.type === 'folder') {
-            result.push({
-              ...file,
-              children: file.children ? collectWorkflowFiles(file.children) : []
-            })
-          } else {
-            result.push(file)
-          }
-        }
-        // If this is a folder, search its children for workflow folder
-        else if (file.type === 'folder' && file.children) {
-          const found = collectWorkflowFiles(file.children)
-          if (found.length > 0) {
-            // Found workflow folder in children - include parent folder with filtered children
-            result.push({
-              ...file,
-              children: found
-            })
-          }
-        }
-      }
-      
-      return result
+
+  // Determine which folder to pass to the API based on mode
+  const activeFolder = useMemo(() => {
+    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+      return workflowFolderPath
     }
-    
-    return collectWorkflowFiles(files)
-  }, [])
-  
+    // For chat mode and default, fetch root (Chats + skills are at root level)
+    return undefined
+  }, [selectedModeCategory, workflowFolderPath])
+
   // Helper function to apply filtering and path adjustment to files
   // This matches the logic in filteredFiles useMemo to ensure paths are consistent
   const applyFilteringAndPathAdjustment = useCallback((filesToProcess: PlannerFile[]): PlannerFile[] => {
@@ -325,10 +284,8 @@ export default function Workspace({
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in chat mode, show all files regardless of preset
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-      result = filterToWorkflowFolder(filesToProcess, workflowFolderPath)
-      
-      // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
-      // Store original path in originalFilepath for API calls
+      // Files are already scoped to the workflow folder by the API (folder param)
+      // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, workflowFolderPath)
     } else if (selectedModeCategory === 'chat') {
       // Chat mode: show only Chats/ and skills/ top-level folders
@@ -339,7 +296,7 @@ export default function Workspace({
     }
 
     return result
-  }, [selectedModeCategory, workflowFolderPath, filterToWorkflowFolder])
+  }, [selectedModeCategory, workflowFolderPath])
   
   // Restore expanded folders when files change
   // This runs after store's fetchFiles completes and handles workflow mode filtering
@@ -460,28 +417,31 @@ export default function Workspace({
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
     let result = files
-    
+
+    console.log('[WORKSPACE_DEBUG] filteredFiles recalc — mode:', selectedModeCategory, '| workflowFolderPath:', workflowFolderPath, '| raw files count:', files.length, '| raw top-level paths:', files.map(f => f.filepath).join(', '))
+
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in chat mode, show all files regardless of preset
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-      result = filterToWorkflowFolder(files, workflowFolderPath)
-      
-      // Debug logging (only log warnings, not every filter operation)
-      if (result.length === 0 && files.length > 0) {
-        const presetLabel = activeWorkflowPreset?.label
-        const presetFolderPath = activeWorkflowPreset?.selectedFolder?.filepath
-        console.warn('[WORKSPACE] No files found after filtering!', {
-          workflowFolder: workflowFolderPath,
-          preset: presetLabel,
-          selectedFolder: presetFolderPath,
-          totalFiles: files.length,
-          samplePaths: files.slice(0, 3).map(f => f.filepath)
-        })
+      // The API returns the workflow folder itself AND its children as flat top-level siblings.
+      // e.g., [Workflow/codeanalysis, Workflow/codeanalysis/knowledgebase, Workflow/codeanalysis/learnings, ...]
+      // The folder item (Workflow/codeanalysis) already has children nested inside it.
+      // If we adjust all flat items, we get duplicates: the folder's children appear BOTH
+      // inside the folder AND as top-level siblings. Fix: find the workflow folder item
+      // and use only it (with its nested children) as the root of the tree.
+      const workflowFolderItem = result.find(f => {
+        const normalized = f.filepath.replace(/\/$/, '')
+        const normalizedTarget = workflowFolderPath.replace(/\/$/, '')
+        return normalized === normalizedTarget
+      })
+      if (workflowFolderItem && workflowFolderItem.children && workflowFolderItem.children.length > 0) {
+        // Use the folder as a single root with its proper nested children
+        result = adjustFilePathsRecursive([workflowFolderItem], workflowFolderPath)
+      } else {
+        // Fallback: no hierarchical folder found, adjust all items
+        result = adjustFilePathsRecursive(result, workflowFolderPath)
       }
-      
-      // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
-      // Store original path in originalFilepath for API calls
-      result = adjustFilePathsRecursive(result, workflowFolderPath)
+      console.log('[WORKSPACE_DEBUG] after adjustFilePathsRecursive:', result.length, 'items, paths:', result.map(f => f.filepath).join(', '))
     } else if (selectedModeCategory === 'multi-agent') {
       // Multi Agent Chat mode: show Plans/, Chats/ and skills/ folders
       result = files.filter(f => {
@@ -498,32 +458,29 @@ export default function Workspace({
 
     // Apply search filter
     result = filterFiles(result, searchQuery)
-    
+
     return result
-  }, [files, workflowFolderPath, filterToWorkflowFolder, searchQuery, activeWorkflowPreset, selectedModeCategory])
+  }, [files, workflowFolderPath, searchQuery, selectedModeCategory])
   
-  // Enhanced file highlighting with folder expansion and auto-scroll
+  // File highlighting with auto-scroll.
+  // In workflow mode we only scroll — we do NOT call expandFoldersForFile() because it
+  // opens ALL parent folders with no depth limit, overriding the maxLevel=3 cap from
+  // the initial auto-expand. The relevant folders should already be open from the
+  // auto-expand or run-folder expansion effects.
+  // In chat mode we still expand folders since there's no depth concern.
   useEffect(() => {
     if (highlightedFile) {
-      // In workflow mode, we need to convert the original path to the adjusted path for folder expansion
-      // Find the file in filtered files that matches the highlightedFile (by originalFilepath or filepath)
-      let pathToUse = highlightedFile
-      if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-        const foundFile = findFileByPath(filteredFiles, highlightedFile)
-        // Use the adjusted filepath if found, otherwise use the original path
-        if (foundFile) {
-          pathToUse = foundFile.filepath
-        }
+      if (selectedModeCategory !== 'workflow') {
+        // Chat mode: expand folders to reveal the highlighted file
+        expandFoldersForFile(highlightedFile)
       }
-      
-      expandFoldersForFile(pathToUse)
-      
-      // Auto-scroll to highlighted file after a short delay to allow folder expansion
+
+      // Auto-scroll to highlighted file after a short delay
       setTimeout(() => {
         scrollToHighlightedFile(highlightedFile)
       }, 100)
     }
-  }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory, workflowFolderPath, filteredFiles])
+  }, [highlightedFile, expandFoldersForFile, scrollToHighlightedFile, selectedModeCategory])
   
   // Automatically expand workspace folder when a workflow is first opened
   // Only runs once per workflow preset or mode switch to allow manual open/close afterward
@@ -542,10 +499,10 @@ export default function Workspace({
             ? workflowFolder.children 
             : filteredFiles
           
-          // Expand children up to 4 levels deep
+          // Expand children up to 3 levels deep (e.g., runs/ → iteration-1/ → group-1/)
           const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
           const excludeFolders = ['planning', 'variables', 'learnings', 'logs']
-          expandFoldersToLevel(filesToExpand, 4, additionalFolders, excludeFolders)
+          expandFoldersToLevel(filesToExpand, 3, additionalFolders, excludeFolders)
           
           // Mark this workflow as auto-expanded
           autoExpandedWorkflowRef.current = workflowPresetId
@@ -616,10 +573,22 @@ export default function Workspace({
     }
   }, [showActionsDropdown, setShowActionsDropdown])
 
-  // Load files on component mount
+  // Load files on component mount and re-fetch when active folder changes.
+  // Optimization: skip the fetch when workspace panel is minimized to avoid wasting bandwidth
+  // Keep the store's activeFolder in sync with the workspace scope.
+  // This ensures that unscoped fetchFiles() calls from other components (StepNode, WorkflowCanvas,
+  // etc.) stay scoped to the workflow folder instead of fetching the entire root tree.
   useEffect(() => {
-    fetchFiles()
-  }, [fetchFiles])
+    setActiveFolder(activeFolder ?? null)
+  }, [activeFolder, setActiveFolder])
+
+  // on data the user can't see. When the user opens the panel (minimized transitions false → true),
+  // this effect re-runs and triggers the fetch automatically.
+  useEffect(() => {
+    if (!minimized) {
+      fetchFiles(activeFolder)
+    }
+  }, [activeFolder, fetchFiles, minimized])
 
   // Handle file click - fetch content and show in chat area
   const handleFileClick = async (file: PlannerFile) => {
@@ -877,7 +846,7 @@ export default function Workspace({
       }
 
       // Refresh the file list
-      await fetchFiles()
+      await fetchFiles(activeFolder)
 
       // Clear selection and exit selection mode
       setSelectedFiles(new Set())
@@ -940,7 +909,7 @@ export default function Workspace({
       }
       
       // Refresh the file list to show updated state
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       
       // Close dialog
       closeDeleteDialog()
@@ -969,7 +938,7 @@ export default function Workspace({
       await agentApi.deleteAllFilesInFolder(fullFolderPath)
       
       // Refresh the file list to show updated state
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       
       // Close dialog
       closeDeleteAllFilesDialog()
@@ -1201,7 +1170,7 @@ export default function Workspace({
       await agentApi.movePlannerFile(fullFilePath, fullDestinationPath, commitMessage)
       
       // Refresh the file list to show updated state
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       
       // Update selected file if it was moved
       if (localMoveDialog.item.filepath === highlightedFile) {
@@ -1245,7 +1214,7 @@ export default function Workspace({
       await agentApi.movePlannerFile(fullFilePath, destinationPath, commitMessage)
       
       // Refresh the file list to show updated state
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       
       // Update selected file if it was renamed
       if (renameDialog.item.filepath === highlightedFile) {
@@ -1371,18 +1340,18 @@ export default function Workspace({
 
     const allSucceeded = results.every(r => r.success)
     if (allSucceeded) {
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       setPendingFiles([])
       closeUploadDialog()
       setUploadResults(null)
     } else {
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       // Keep dialog open to show results; remove succeeded files from pending
       const failedNames = new Set(results.filter(r => !r.success).map(r => r.name))
       setPendingFiles(prev => prev.filter(f => failedNames.has(f.name)))
       setUploadDialog({ isLoading: false })
     }
-  }, [pendingFiles, uploadDialog.folderPath, uploadDialog.commitMessage, setUploadDialog, closeUploadDialog, fetchFiles, setError, getFullFilePath, validateFile])
+  }, [pendingFiles, uploadDialog.folderPath, uploadDialog.commitMessage, setUploadDialog, closeUploadDialog, fetchFiles, activeFolder, setError, getFullFilePath, validateFile])
 
   const cancelUpload = useCallback(() => {
     setPendingFiles([])
@@ -1455,7 +1424,7 @@ export default function Workspace({
       await agentApi.createPlannerFolder(fullFolderPath, commitMessage)
       
       // Refresh file list to show the new folder
-      await fetchFiles()
+      await fetchFiles(activeFolder)
       
       // Close dialog
       closeCreateFolderDialog()
@@ -1550,6 +1519,8 @@ export default function Workspace({
     }
 
     setIsImporting(true)
+    setImportProgress(0)
+    setImportingFileName(file.name)
     setImportError(null)
     setImportSuccess(null)
 
@@ -1566,14 +1537,26 @@ export default function Workspace({
         'This will restore the workspace from the backup. Existing files may be overwritten. Continue?'
       )
 
-      const result = await agentApi.importWorkflowBackup(fullPath, file, overwrite)
+      if (!overwrite) {
+        setIsImporting(false)
+        setImportingFileName('')
+        if (backupFileInputRef.current) backupFileInputRef.current.value = ''
+        return
+      }
+
+      const result = await agentApi.importWorkflowBackup(
+        fullPath, 
+        file, 
+        true, // overwrite confirmed above
+        (progress) => setImportProgress(progress)
+      )
       
       if (result.success) {
         setImportSuccess(`Successfully imported ${result.data?.files_extracted || 0} files`)
         
         // Refresh workspace files
         setTimeout(() => {
-          fetchFiles().catch(console.error)
+          fetchFiles(activeFolder).catch(console.error)
         }, 500)
         
         // Auto-dismiss success message after 5 seconds
@@ -1592,6 +1575,8 @@ export default function Workspace({
       setImportError(error instanceof Error ? error.message : 'Failed to import backup')
     } finally {
       setIsImporting(false)
+      setImportProgress(0)
+      setImportingFileName('')
       // Reset file input
       if (backupFileInputRef.current) {
         backupFileInputRef.current.value = ''
@@ -1705,7 +1690,7 @@ export default function Workspace({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={fetchFiles}
+                      onClick={() => fetchFiles(activeFolder)}
                       disabled={loading}
                       className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
                     >
@@ -1795,7 +1780,7 @@ export default function Workspace({
               {/* Git Sync Status - Hidden in selection mode */}
               {!isSelectionMode && (
                 <div className="relative">
-                  <GitSyncStatus onSync={fetchFiles} isVisible={!minimized} />
+                  <GitSyncStatus onSync={() => fetchFiles(activeFolder)} isVisible={!minimized} />
                 </div>
               )}
 
@@ -1803,7 +1788,7 @@ export default function Workspace({
               {!isSelectionMode && (
                 <div className="relative">
                   <SemanticSearchSync 
-                    onResync={fetchFiles} 
+                    onResync={() => fetchFiles(activeFolder)}
                     isVisible={!minimized} 
                     hideButton={true}
                     showDetailsExternal={showSearchSyncDetails}
@@ -1910,7 +1895,7 @@ export default function Workspace({
                 onFileDelete={handleFileDelete}
                 onFolderDelete={handleFolderDelete}
                 onDeleteAllFilesInFolder={handleDeleteAllFilesInFolder}
-                onRetry={fetchFiles}
+                onRetry={() => fetchFiles(activeFolder)}
                 expandedFolders={expandedFolders}
                 loadingChildren={emptyLoadingSet}
                 chatFileContext={chatFileContext}
@@ -1929,6 +1914,7 @@ export default function Workspace({
                 workflowFolderPath={workflowFolderPath}
                 isExporting={isExporting}
                 isImporting={isImporting}
+                importProgress={importProgress}
                 isSelectionMode={isSelectionMode}
                 selectedFiles={selectedFiles}
                 onToggleFileSelection={toggleFileSelection}
@@ -2298,6 +2284,12 @@ export default function Workspace({
           </div>
         </div>
       )}
+
+      <ImportProgressDialog 
+        isOpen={isImporting} 
+        progress={importProgress} 
+        fileName={importingFileName} 
+      />
       </div>
     </TooltipProvider>
   )

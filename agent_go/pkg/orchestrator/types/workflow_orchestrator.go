@@ -357,12 +357,9 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		// Initialize all learning-related agents from learning LLM (not individually configurable in UI)
-		if presetLearningLLM != nil {
-			presetPlanImprovementLLM = presetLearningLLM
-			presetPlanToolOptimizationLLM = presetLearningLLM
-			// Note: presetAnonymizationLLM and presetLearningConsolidationLLM are deprecated and removed
-		}
+		// Note: Plan improvement and plan tool optimization are phase agents - they use presetPhaseLLM
+		// (not learning LLM). The presetPlanImprovementLLM and presetPlanToolOptimizationLLM fields
+		// are kept for backward compatibility but should NOT be populated from learning LLM.
 	} else {
 		log.Printf("[PRESET_EXECUTION_LLM_DEBUG] presetLLMConfig is nil - no preset LLM config provided")
 	}
@@ -386,13 +383,12 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
 			},
 		}
-		// In tiered mode, only use Tier1 as fallback if no explicit Phase LLM is configured
-		// This allows users to configure a separate Phase LLM even in tiered mode
-		if presetPhaseLLM == nil {
-			presetPhaseLLM = tieredConfig.Tier1
-			log.Printf("[TIERED_LLM] Using Tier1 as Phase LLM fallback: %s/%s", tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID)
+		// Phase LLM is independent of tiered mode - it's always configured separately
+		// The frontend saves phase_llm with Tier1 as default when user hasn't explicitly set one
+		if presetPhaseLLM != nil {
+			log.Printf("[TIERED_LLM] Phase LLM (independent): %s/%s", presetPhaseLLM.Provider, presetPhaseLLM.ModelID)
 		} else {
-			log.Printf("[TIERED_LLM] Using explicitly configured Phase LLM: %s/%s", presetPhaseLLM.Provider, presetPhaseLLM.ModelID)
+			log.Printf("[TIERED_LLM] WARNING: No Phase LLM configured - phase agents will fail")
 		}
 		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
 			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,

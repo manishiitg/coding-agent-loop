@@ -254,21 +254,48 @@ docker build -t mcp-planner ./planner
 
 ## ☁️ Cloud Deployment (Azure)
 
-The project includes a production-grade deployment stack for Microsoft Azure using **Terraform** and **Azure Container Apps**.
+The project includes a robust, production-ready deployment stack for **Microsoft Azure** using **Terraform** and **Virtual Machines (VMs)**.
 
-### **Infrastructure Features**
-- **Managed Database**: Uses **Azure Database for PostgreSQL Flexible Server** for persistent, reliable chat history (replacing SQLite).
-- **Scalable Compute**: Deploys as serverless **Azure Container Apps** for the Agent, Workspace API, and Frontend.
-- **Persistent Storage**: Azure File Shares for shared configuration and OAuth tokens.
-- **Observability**: Integrated with Azure Log Analytics and Application Insights.
+This architecture is chosen to support advanced filesystem isolation features (using Linux namespaces/`unshare`) that are not available in standard serverless container environments.
 
-### **Optimized Deployment Workflow**
-A custom, high-performance deployment script (`deploy/azure/deploy.sh`) provides:
-- **Clean Context Builds**: Automatically creates a lightweight build context by excluding local data (like `workspace-docs/` or `node_modules`), reducing upload sizes from ~800MB to **<100KB**.
-- **Parallel Execution**: Builds all three service images simultaneously on Azure Container Registry (native amd64).
-- **Zero-Downtime Updates**: Uses unique timestamped tags and graceful revision swapping for seamless rollouts.
+### **Infrastructure Architecture**
+- **Compute**: Azure Virtual Machine (Standard_D2s_v3 or similar) running Ubuntu Linux.
+- **Orchestration**: Docker Compose manages the application stack (Agent, Workspace API, Frontend).
+- **Networking**: **Caddy Reverse Proxy** handles automatic HTTPS (Let's Encrypt), domain routing, and secure exposure of services.
+- **Storage**: Local high-performance SSDs for workspace data, ensuring full compatibility with file locking and permission guards.
+- **Database**: Supports managed **Azure Database for PostgreSQL** or local SQLite.
 
-See the **[Azure Deployment Guide](deploy/azure/README.md)** for detailed setup instructions.
+### **Deployment Workflow**
+A unified deployment script (`deploy/azure/deploy_vm.sh`) handles the entire lifecycle:
+1.  **Builds** optimized Docker images locally or via Azure Container Registry (ACR).
+2.  **Pushes** images to your private ACR.
+3.  **Configures** the remote VM with the latest `docker-compose.yml` and Caddy configuration.
+4.  **Deploys** the new version with zero-touch restart.
+
+### **How to Deploy**
+
+**1. Provision Infrastructure (One-time setup)**
+Use Terraform to create the VM, Network, and Public IP.
+```bash
+cd deploy/azure/terraform
+terraform init
+terraform apply -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
+# Note the output 'public_ip_address'
+```
+
+**2. Deploy Application**
+Run the deployment script with your VM's IP address (or DNS name).
+```bash
+cd deploy/azure
+./deploy_vm.sh <VM_IP_ADDRESS> all
+```
+
+**3. Access Application**
+- **Frontend**: `https://<VM_DNS_NAME>` (Automatic HTTPS)
+- **Agent API**: `https://<VM_DNS_NAME>/api/health`
+- **Workspace API**: `https://<VM_DNS_NAME>/workspace/health`
+
+See the **[Azure Deployment Guide](deploy/azure/README.md)** for detailed setup instructions, including secret management and DNS configuration.
 
 ## 📁 Project Structure
 

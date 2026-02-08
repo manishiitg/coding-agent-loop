@@ -69,6 +69,7 @@ interface LLMState extends StoreActions {
 
   // Lock state from backend (not persisted; re-read on each load)
   llmConfigLocked: boolean
+  lockedProviders: string[]
   defaultPublishedLLMsLocked: boolean
 
   // Actions
@@ -230,6 +231,7 @@ export const useLLMStore = create<LLMState>()(
         // Supported providers (always load fresh from backend, default to all)
         supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
         llmConfigLocked: false,
+        lockedProviders: [],
         defaultPublishedLLMsLocked: false,
         isProviderSupported: (provider) => {
           const supported = get().supportedProviders
@@ -531,6 +533,7 @@ export const useLLMStore = create<LLMState>()(
               availableAzureModels: defaults.available_models.azure || [],
               supportedProviders: defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
               llmConfigLocked: locked,
+              lockedProviders: defaults.locked_providers || [],
               defaultPublishedLLMsLocked: defaultPublishedLocked,
               defaultsLoaded: true,
               error: null,

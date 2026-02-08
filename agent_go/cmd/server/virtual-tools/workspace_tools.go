@@ -24,14 +24,10 @@ type WorkspaceFileContent struct {
 
 // WorkspaceFile represents a file or folder from the workspace list API (used by orchestrator)
 type WorkspaceFile struct {
-	FilePath    string `json:"filepath"`
-	Folder      string `json:"folder,omitempty"`
-	Type        string `json:"type"`
-	IsDirectory bool   `json:"is_directory,omitempty"`
-	Size        int64  `json:"size,omitempty"`
-	ModifiedAt  string `json:"modified_at,omitempty"`
-	Content     string `json:"content,omitempty"`
-	Name        string `json:"-"`
+	FilePath string `json:"filepath"`
+	Type     string `json:"type"`
+	Content  string `json:"content,omitempty"`
+	Name     string `json:"-"`
 }
 
 // WorkspaceAPIResponse is the generic workspace API response (Success, Message, Error, Data)
@@ -45,9 +41,8 @@ type WorkspaceAPIResponse struct {
 // WorkspaceFolderItem is a single item in a folder listing (can have Children for nested listing)
 type WorkspaceFolderItem struct {
 	FilePath    string                `json:"filepath"`
-	Type        string                `json:"type"`
-	IsDirectory bool                  `json:"is_directory,omitempty"`
-	Children    []WorkspaceFolderItem `json:"children,omitempty"`
+	Type     string                `json:"type"`
+	Children []WorkspaceFolderItem `json:"children,omitempty"`
 }
 
 // WorkspaceFolderListing is the folder listing response (array of folder items)

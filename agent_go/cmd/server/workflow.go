@@ -164,7 +164,7 @@ func aggregateGroupTokenUsage(ctx context.Context, runFolderPath string) map[str
 	groupsFound := []string{}
 
 	for _, item := range apiResp.Data {
-		isDir := item.Type == "folder" || item.IsDirectory
+		isDir := item.Type == "folder"
 		if !isDir {
 			continue
 		}
@@ -311,8 +311,8 @@ func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProg
 // Supports both top-level (iteration-X) and nested (iteration-X/group-Y) folders
 func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceFolderItem, existingFolders []string) []string {
 	for _, child := range children {
-		// Check for is_directory or type field using typed struct
-		isDir := child.IsDirectory || child.Type == "folder"
+		// Check type field using typed struct
+		isDir := child.Type == "folder"
 
 		// Get name from FilePath field
 		name := ""
@@ -345,7 +345,7 @@ func extractIterationFoldersFromTypedChildren(children []virtualtools.WorkspaceF
 						groupFolders := []string{}
 
 						for _, groupChild := range child.Children {
-							if groupChild.IsDirectory || groupChild.Type == "folder" {
+							if groupChild.Type == "folder" {
 								groupName := ""
 								if groupChild.FilePath != "" {
 									// Extract relative path
@@ -408,14 +408,10 @@ func extractIterationFoldersFromInterfaceArray(dataArray []interface{}, existing
 func extractIterationFoldersFromChildren(children []interface{}, existingFolders []string) []string {
 	for _, child := range children {
 		if childMap, ok := child.(map[string]interface{}); ok {
-			// Check for is_directory or type field
+			// Check type field
 			isDir := false
-			if d, ok := childMap["is_directory"].(bool); ok {
-				isDir = d
-			} else if t, ok := childMap["type"].(string); ok {
+			if t, ok := childMap["type"].(string); ok {
 				isDir = (t == "folder")
-			} else if d, ok := childMap["is_dir"].(bool); ok {
-				isDir = d
 			}
 
 			// Get name from filepath or name field
@@ -451,12 +447,8 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 							for _, groupChild := range childrenArray {
 								if groupMap, ok := groupChild.(map[string]interface{}); ok {
 									groupIsDir := false
-									if d, ok := groupMap["is_directory"].(bool); ok {
-										groupIsDir = d
-									} else if t, ok := groupMap["type"].(string); ok {
+									if t, ok := groupMap["type"].(string); ok {
 										groupIsDir = (t == "folder")
-									} else if d, ok := groupMap["is_dir"].(bool); ok {
-										groupIsDir = d
 									}
 									if groupIsDir {
 										groupName := ""
@@ -3681,7 +3673,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	processLogsFolder = func(items []virtualtools.WorkspaceFolderItem) {
 		for _, item := range items {
 			name := filepath.Base(item.FilePath)
-			isDir := item.IsDirectory || item.Type == "folder"
+			isDir := item.Type == "folder"
 
 			if isDir && strings.HasPrefix(name, "step-") {
 				stepId := name
@@ -3689,7 +3681,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				if len(item.Children) > 0 {
 					for _, child := range item.Children {
 						childName := filepath.Base(child.FilePath)
-						childIsDir := child.IsDirectory || child.Type == "folder"
+						childIsDir := child.Type == "folder"
 
 						if !childIsDir && childName == "step_done.json" {
 							logPath := child.FilePath
@@ -3953,7 +3945,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 
 							for _, timestampFolder := range child.Children {
 								timestampName := filepath.Base(timestampFolder.FilePath)
-								timestampIsDir := timestampFolder.IsDirectory || timestampFolder.Type == "folder"
+								timestampIsDir := timestampFolder.Type == "folder"
 
 								if !timestampIsDir {
 									continue
@@ -4058,7 +4050,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 	processExecutionFolder = func(items []virtualtools.WorkspaceFolderItem) {
 		for _, item := range items {
 			name := filepath.Base(item.FilePath)
-			isDir := item.IsDirectory || item.Type == "folder"
+			isDir := item.Type == "folder"
 
 			// Case 1: Folder or File named after a step (e.g., execution/step-1/ or execution/step-1)
 			if strings.HasPrefix(name, "step-") {
@@ -4072,7 +4064,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 					if len(item.Children) > 0 {
 						for _, child := range item.Children {
 							childName := filepath.Base(child.FilePath)
-							childIsDir := child.IsDirectory || child.Type == "folder"
+							childIsDir := child.Type == "folder"
 
 							if childIsDir {
 								continue
@@ -4149,7 +4141,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 				// Each run folder contains archived step folders from decision step routing
 				for _, runFolder := range item.Children {
 					runFolderName := filepath.Base(runFolder.FilePath)
-					runFolderIsDir := runFolder.IsDirectory || runFolder.Type == "folder"
+					runFolderIsDir := runFolder.Type == "folder"
 
 					if !runFolderIsDir || !strings.HasPrefix(runFolderName, "run-") {
 						continue
@@ -4161,7 +4153,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 					// Process each archived step folder within this run
 					for _, archivedStepFolder := range runFolder.Children {
 						archivedStepName := filepath.Base(archivedStepFolder.FilePath)
-						archivedStepIsDir := archivedStepFolder.IsDirectory || archivedStepFolder.Type == "folder"
+						archivedStepIsDir := archivedStepFolder.Type == "folder"
 
 						if !archivedStepIsDir || !strings.HasPrefix(archivedStepName, "step-") {
 							continue
@@ -4189,7 +4181,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 						// Process files in the archived step folder
 						for _, archivedFile := range archivedStepFolder.Children {
 							archivedFileName := filepath.Base(archivedFile.FilePath)
-							archivedFileIsDir := archivedFile.IsDirectory || archivedFile.Type == "folder"
+							archivedFileIsDir := archivedFile.Type == "folder"
 
 							if archivedFileIsDir {
 								continue

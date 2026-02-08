@@ -237,7 +237,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           execution_llm: executionLLM || defaultAgentLLM,
           validation_llm: validationLLM || defaultAgentLLM,
           learning_llm: learningLLM || defaultAgentLLM,
-          phase_llm: phaseLLM || defaultAgentLLM,
+          phase_llm: phaseLLM || (llmAllocationMode === 'tiered' && tier1LLM ? tier1LLM : defaultAgentLLM),
           use_knowledgebase: useKnowledgebase,
           llm_allocation_mode: llmAllocationMode,
           ...(llmAllocationMode === 'tiered' && tier1LLM && tier2LLM && tier3LLM ? {
@@ -338,7 +338,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       >
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-2xl font-semibold">
-            {editingPreset ? 'Edit Preset' : 'Add New Preset'}
+            {effectiveAgentMode === 'workflow'
+              ? (editingPreset ? 'Edit Workflow' : 'Add Workflow')
+              : (editingPreset ? 'Edit Preset' : 'Add New Preset')}
           </h2>
           <div className="flex items-center gap-2">
             <Button
@@ -348,7 +350,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
               size="sm"
               disabled={!label.trim() || (effectiveAgentMode !== 'workflow' && !query.trim()) || (effectiveAgentMode === 'workflow' && !selectedFolder)}
             >
-              {editingPreset ? 'Update' : 'Save'} Preset
+              {editingPreset ? 'Update' : 'Save'} {effectiveAgentMode === 'workflow' ? 'Workflow' : 'Preset'}
             </Button>
             <Button
               type="button"
@@ -366,18 +368,18 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           {effectiveAgentMode === 'workflow' ? (
             /* Workflow Mode: Two Column Layout with LLM Config on Left */
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left Column - Preset Name and LLM Configuration */}
+              {/* Left Column - Workflow Name and LLM Configuration */}
               <div className="space-y-4">
-                {/* Preset Name */}
+                {/* Workflow Name */}
                 <div>
                   <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
-                    Preset Name
+                    Workflow Name
                   </label>
                   <Input
                     id="preset-label"
                     value={label}
                     onChange={(e) => setLabel(e.target.value)}
-                    placeholder="Enter preset name..."
+                    placeholder="Enter workflow name..."
                     required
                   />
                 </div>
@@ -504,7 +506,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Used for first-time execution, initial learning, phase agents, and new conditional evaluations.</p>
+                                  <p className="text-xs">Used for first-time execution (no learnings yet) and initial learning extraction.</p>
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
@@ -609,7 +611,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Handles planning, variable extraction, and other workflow phases. Falls back to Tier 1 if not set.</p>
+                                  <p className="text-xs">Independent LLM for all workflow phases: planning, variable extraction, evaluation design, anonymization, plan improvement, learning consolidation, and debugging. This is separate from the tiered execution/learning/validation assignments.</p>
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
@@ -631,16 +633,16 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             openDirection="down"
                           />
                           <div className="text-xs text-gray-500 mt-1">
-                            Handles planning, evaluation, anonymization, and other phases.
+                            Used for planning, evaluation design, anonymization, plan improvement, and debugging phases. Defaults to Tier 1 if not set.
                           </div>
                         </div>
                         {/* Info panel */}
                         <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700 space-y-1">
                           <div className="font-medium text-gray-600 dark:text-gray-400">Auto-selection rules:</div>
                           <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
-                          <div>Learning: Tier 1 → Tier 2 → Tier 3 (progressive)</div>
+                          <div>Learning: Tier 2 → Tier 3 (after 2+ runs)</div>
                           <div>Validation: Always Tier 3</div>
-                          <div>Phase agents: Uses configured Phase LLM (or Tier 1 fallback)</div>
+                          <div>Phase Agent: Independent — always uses the configured Phase LLM above</div>
                           <div className="text-yellow-600 dark:text-yellow-400 mt-1">Temp LLM overrides and per-step LLM configs are disabled in tiered mode</div>
                         </div>
                       </>
@@ -658,7 +660,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                             </TooltipTrigger>
                             <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Executes plan steps by calling MCP tools and performing actions.</p>
+                              <p className="text-xs">Executes each plan step by calling MCP tools, reading files, and performing actions. This is the main workhorse that carries out the plan.</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -693,7 +695,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                             </TooltipTrigger>
                             <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Checks if step execution succeeded by evaluating success criteria.</p>
+                              <p className="text-xs">Evaluates whether each step succeeded by checking the execution output against defined success criteria. Can be a lighter model since it only judges results.</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -728,7 +730,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                             </TooltipTrigger>
                             <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Extracts patterns from successful executions for future runs.</p>
+                              <p className="text-xs">Extracts reusable patterns and insights from execution results to improve future runs. Also handles plan improvement, tool optimization, and learning consolidation.</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -763,7 +765,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                             </TooltipTrigger>
                             <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Handles planning, variable extraction, and other workflow phases.</p>
+                              <p className="text-xs">Independent LLM for all workflow phases: planning, variable extraction, evaluation design, anonymization, plan improvement, learning consolidation, and debugging. This is separate from the execution/validation/learning agent LLMs.</p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
@@ -783,7 +785,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         openDirection="down"
                       />
                       <div className="text-xs text-gray-500 mt-1">
-                        Handles planning, variable extraction, anonymization, and other phases.
+                        Used for planning, evaluation design, anonymization, plan improvement, and debugging phases.
                       </div>
                     </div>
                     <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
@@ -829,7 +831,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <Folder className="w-5 h-5" />
                           <span className="font-medium">Select Workflow Folder</span>
                         </div>
-                        <p className="text-xs mt-1 text-red-400">Required for workflow presets</p>
+                        <p className="text-xs mt-1 text-red-400">Required for workflows</p>
                       </button>
                     )}
                   </div>

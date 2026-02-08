@@ -5,6 +5,7 @@ import { agentApi } from '../../services/api'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+import ImportProgressDialog from '../ui/ImportProgressDialog'
 
 interface WorkflowBackupSectionProps {
   minimized?: boolean
@@ -21,6 +22,8 @@ export default function WorkflowBackupSection({
   
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [importingFileName, setImportingFileName] = useState<string>('')
   const [exportError, setExportError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
@@ -81,6 +84,8 @@ export default function WorkflowBackupSection({
     }
 
     setIsImporting(true)
+    setUploadProgress(0)
+    setImportingFileName(file.name)
     setImportError(null)
     setImportSuccess(null)
 
@@ -90,7 +95,19 @@ export default function WorkflowBackupSection({
         'This will restore the workspace from the backup. Existing files may be overwritten. Continue?'
       )
 
-      const result = await agentApi.importWorkflowBackup(workspacePath, file, overwrite)
+      if (!overwrite) {
+        setIsImporting(false)
+        setImportingFileName('')
+        if (fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
+
+      const result = await agentApi.importWorkflowBackup(
+        workspacePath, 
+        file, 
+        true, // overwrite confirmed above
+        (progress) => setUploadProgress(progress)
+      )
       
       if (result.success) {
         setImportSuccess(`Successfully imported ${result.data?.files_extracted || 0} files`)
@@ -107,6 +124,8 @@ export default function WorkflowBackupSection({
       setImportError(error instanceof Error ? error.message : 'Failed to import backup')
     } finally {
       setIsImporting(false)
+      setUploadProgress(0)
+      setImportingFileName('')
       // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
@@ -162,6 +181,12 @@ export default function WorkflowBackupSection({
               <p>Import Workspace Backup</p>
             </TooltipContent>
           </Tooltip>
+          
+          <ImportProgressDialog 
+            isOpen={isImporting} 
+            progress={uploadProgress} 
+            fileName={importingFileName} 
+          />
         </div>
       </TooltipProvider>
     )
@@ -224,6 +249,12 @@ export default function WorkflowBackupSection({
               )}
             </button>
           </div>
+
+          <ImportProgressDialog 
+            isOpen={isImporting} 
+            progress={uploadProgress} 
+            fileName={importingFileName} 
+          />
 
           {/* Error Messages */}
           {exportError && (

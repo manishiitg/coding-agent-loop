@@ -453,7 +453,7 @@ func ListDocuments(c *gin.Context) {
 	var searchPath string
 	var err error
 	var isRootListing bool
-	if normalizedFolder != "" {
+	if normalizedFolder != "" && normalizedFolder != "." {
 		// Resolve with user isolation for per-user folders
 		searchPath, err = resolveUserPath(c, normalizedFolder)
 		if err != nil {
@@ -496,7 +496,7 @@ func ListDocuments(c *gin.Context) {
 	// Determine the logical root for path relativization.
 	// For per-user folders (Chats/, Downloads/), the physical path is under _users/{userID}/
 	// but the logical path should be relative to the user directory so that
-	// paths like "Chats/Delegations" appear correctly (not "_users/default-user/Chats/Delegations")
+	// paths like "Plans" appear correctly (not "_users/default-user/Plans")
 	logicalDocsDir := docsDir
 	if normalizedFolder != "" && utils.IsPerUserPath(normalizedFolder) {
 		logicalDocsDir = filepath.Join(docsDir, utils.UsersDirectory, userID)

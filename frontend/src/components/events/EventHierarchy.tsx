@@ -149,7 +149,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     setHasMoreOlderEvents(hasMore)
   }, [sessionId, eventMode])
   
-  // Compute live delegation stats from sub-agent events (tool calls, token usage)
+  // Compute live delegation stats from sub-agent events (tool calls, token usage, latest tool, completion)
   const delegationStats = useMemo(() => {
     const stats = new Map<string, DelegationStats>()
     for (const event of displayEvents) {
@@ -165,6 +165,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       if (event.type === 'tool_call_start') {
         s.toolCalls++
+        // Track latest tool name
+        const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
+        const toolName = (payload.tool_name as string) || undefined
+        if (toolName) {
+          s.latestToolName = toolName
+        }
       }
       if (event.type === 'token_usage') {
         const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
@@ -172,6 +178,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         s.outputTokens += (payload.output_tokens as number) || 0
       }
     }
+
+    // Check for delegation_end events to mark completed
+    for (const event of displayEvents) {
+      if (event.type !== 'delegation_end') continue
+      if (!event.data || typeof event.data !== 'object') continue
+      const data = event.data as Record<string, unknown>
+      const delegationData = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
+      const delegationId = (delegationData.delegation_id as string) || (data.correlation_id as string)
+      if (delegationId && stats.has(delegationId)) {
+        stats.get(delegationId)!.completed = true
+      }
+    }
+
     return stats
   }, [displayEvents])
 

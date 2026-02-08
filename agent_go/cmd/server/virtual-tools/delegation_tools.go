@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -41,15 +43,80 @@ const (
 	ReasoningLevelKey delegationContextKey = "reasoning_level"
 	// PlanEventEmitterKey is the context key for emitting workspace file events when plans are saved
 	PlanEventEmitterKey delegationContextKey = "plan_event_emitter"
-	// PlanFolderKey is the context key for the plan-specific output folder (e.g. "Chats/Delegations/{planID}")
+	// PlanFolderKey is the context key for the plan-specific output folder (e.g. "Plans/{planID}")
 	PlanFolderKey delegationContextKey = "plan_folder"
+	// CapabilitiesContextKey is the context key for available capabilities (MCP servers, skills, etc.)
+	CapabilitiesContextKey delegationContextKey = "capabilities_context"
+	// ToolModeKey is the context key for the tool mode of a delegated task ("simple", "code_execution", "tool_search")
+	ToolModeKey delegationContextKey = "tool_mode"
+	// PlanTrackerKey is the context key for tracking whether a plan has been created in this session
+	PlanTrackerKey delegationContextKey = "plan_tracker"
+	// PlanSessionStateKey is the context key for the session-level plan phase state
+	PlanSessionStateKey delegationContextKey = "plan_session_state"
+	// SessionEventEmitterKey is the context key for the session event emitter (used by confirm_plan_execution)
+	SessionEventEmitterKey delegationContextKey = "session_event_emitter"
 	// PlanFileFolderPath is the workspace folder for delegation plan files
-	PlanFileFolderPath = "Chats/Delegations"
+	PlanFileFolderPath = "Plans"
 )
 
 // PlanEventEmitter is the interface for emitting workspace file events when plans are saved
 type PlanEventEmitter interface {
 	EmitFileEvent(filepath string)
+}
+
+// SessionEventEmitter is the interface for emitting arbitrary events to the session event store
+type SessionEventEmitter interface {
+	EmitBlockingHumanFeedback(requestID, question string, yesNoOnly bool, yesLabel, noLabel string, options ...string)
+}
+
+// PlanSessionState tracks session-level plan state for multi-agent mode.
+// It replaces PlanTracker and adds phase tracking (planning vs execution).
+// Shared across tool calls within a session to enforce one-plan-per-conversation.
+type PlanSessionState struct {
+	mu         sync.Mutex
+	Phase      string // "planning" or "execution"
+	PlanID     string
+	PlanFolder string
+}
+
+// NewPlanSessionState creates a new plan session state for a session
+func NewPlanSessionState() *PlanSessionState {
+	return &PlanSessionState{Phase: "planning"}
+}
+
+// TryCreate atomically checks if a plan already exists. If not, records the new plan
+// and returns true. If a plan already exists, returns false with existing plan info.
+func (ps *PlanSessionState) TryCreate(planID, planFolder string) (existingPlanID, existingPlanFolder string, ok bool) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if ps.PlanID != "" {
+		return ps.PlanID, ps.PlanFolder, false
+	}
+	ps.PlanID = planID
+	ps.PlanFolder = planFolder
+	return "", "", true
+}
+
+// GetPhase returns the current phase (thread-safe)
+func (ps *PlanSessionState) GetPhase() string {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return ps.Phase
+}
+
+// SetPhase sets the current phase (thread-safe)
+func (ps *PlanSessionState) SetPhase(phase string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.Phase = phase
+}
+
+// PlanTracker is an alias for backward compatibility
+type PlanTracker = PlanSessionState
+
+// NewPlanTracker creates a new plan tracker (backward-compatible alias)
+func NewPlanTracker() *PlanTracker {
+	return NewPlanSessionState()
 }
 
 // DelegationTierConfig holds provider/model for each reasoning tier
@@ -65,40 +132,20 @@ type TierModel struct {
 	ModelID  string `json:"model_id"`
 }
 
-// DelegationPlan represents a structured plan with tasks for delegation
-type DelegationPlan struct {
-	PlanID    string           `json:"plan_id"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
-	Status    string           `json:"status"` // planning, in_progress, completed, failed
-	Objective string           `json:"objective"`
-	Strategy  string           `json:"strategy"`
-	Tasks     []DelegationTask `json:"tasks"`
+// CapabilitiesContext describes the available tools, servers, and skills for the planner
+type CapabilitiesContext struct {
+	EnabledServers []string       `json:"enabled_servers,omitempty"`
+	SelectedTools  []string       `json:"selected_tools,omitempty"` // "server:tool" format
+	Skills         []SkillSummary `json:"skills,omitempty"`
+	HasWorkspace   bool           `json:"has_workspace"`
+	HasBrowser     bool           `json:"has_browser"`
 }
 
-// DelegationTask represents a single task within a delegation plan
-type DelegationTask struct {
-	ID            string     `json:"id"`          // task-1, task-2, etc.
-	Title         string     `json:"title"`
-	Description   string     `json:"description"`
-	Priority      string     `json:"priority"`    // high, medium, low
-	Status        string     `json:"status"`      // pending, in_progress, completed, failed
-	Result        string     `json:"result,omitempty"`
-	Error         string     `json:"error,omitempty"`
-	Notes         string     `json:"notes,omitempty"`
-	ExecutionTime string     `json:"execution_time,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-}
-
-// DelegationResult represents the result of a delegated task execution
-type DelegationResult struct {
-	Success       bool      `json:"success"`
-	Result        string    `json:"result"`
-	Error         string    `json:"error,omitempty"`
-	ExecutionTime string    `json:"execution_time"`
-	CompletedAt   time.Time `json:"completed_at"`
-	Depth         int       `json:"depth"`
+// SkillSummary holds minimal info about a skill for the planner prompt
+type SkillSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	FolderName  string `json:"folder_name"`
 }
 
 // ExecuteDelegatedTaskFunc is the function signature for executing delegated tasks
@@ -109,12 +156,12 @@ type ExecuteDelegatedTaskFunc func(ctx context.Context, instruction string) (str
 func CreateDelegationTools() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 
-	// delegate tool - Execute a sub-agent to handle a task (quick one-off delegation)
+	// delegate tool - Execute a sub-agent to handle a task
 	delegateTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "delegate",
-			Description: "Delegate a task to a sub-agent for execution. Use for quick one-off tasks. For complex multi-step projects, prefer create_delegation_plan + execute_plan_task instead.",
+			Description: "Delegate a task to a sub-agent for execution. Provide comprehensive, self-contained instructions.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -127,6 +174,15 @@ func CreateDelegationTools() []llmtypes.Tool {
 						"enum":        []string{"high", "medium", "low"},
 						"description": "Optional reasoning tier for this task. 'high' for complex planning/architecture, 'medium' for standard implementation, 'low' for simple tasks like formatting/tests. If not specified, uses the parent agent's model.",
 					},
+					"plan_folder": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional plan folder path (e.g. 'Plans/{plan_id}'). When set, the worker's write access is restricted to this folder only. Always pass this when executing tasks from a plan.",
+					},
+					"tool_mode": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"simple", "code_execution", "tool_search"},
+						"description": "Tool access mode for the worker. 'simple' (default): normal direct tool calling. 'code_execution': worker writes Go code to call tools — best for data analysis, complex computations, multi-step processing. 'tool_search': worker discovers tools on-demand — best when many MCP servers/tools are available.",
+					},
 				},
 				"required": []string{"instruction"},
 			}),
@@ -134,123 +190,58 @@ func CreateDelegationTools() []llmtypes.Tool {
 	}
 	tools = append(tools, delegateTool)
 
-	// create_delegation_plan - Delegate planning to a sub-agent, then save the plan
+	// create_delegation_plan - Delegate planning to a sub-agent that writes plan.md
 	createPlanTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "create_delegation_plan",
-			Description: "Delegate planning to a sub-agent that analyzes the objective, creates a strategy, and breaks it into tasks. The plan is saved to workspace (Chats/Delegations/) for tracking. To update an existing plan, pass plan_id along with new context.",
+			Description: "Delegate planning to a sub-agent that analyzes the objective, creates a strategy, and writes a plan.md todo list to workspace. The plan file appears in Plans/{plan_name}/ for tracking. After the plan is created, read plan.md and delegate tasks from it using the delegate tool.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
+					"plan_name": map[string]interface{}{
+						"type":        "string",
+						"description": "Short kebab-case name for the plan folder (e.g. 'user-auth', 'api-refactor', 'bug-fix-login'). This becomes the folder name under Plans/. Keep it concise (2-4 words, kebab-case).",
+					},
 					"objective": map[string]interface{}{
 						"type":        "string",
-						"description": "What needs to be built or accomplished. The planner sub-agent will analyze this and create a task breakdown.",
+						"description": "What needs to be accomplished. The planner sub-agent will analyze this and create a task breakdown.",
 					},
 					"context": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional additional context for the planner: codebase structure, constraints, file paths, tech stack, or any information that helps create a better plan.",
+						"description": "Optional additional context for the planner: constraints, file paths, tech stack, or any information that helps create a better plan.",
 					},
-					"plan_id": map[string]interface{}{
+					"reasoning_level": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional. If provided, updates an existing plan instead of creating a new one. The planner sub-agent will receive the current plan and incorporate the new objective/context.",
+						"enum":        []string{"high", "medium", "low"},
+						"description": "Optional reasoning tier for the planner sub-agent. 'high' for complex multi-step projects, 'medium' for standard planning, 'low' for simple task breakdowns. If not specified, uses the parent agent's model.",
 					},
 				},
-				"required": []string{"objective"},
+				"required": []string{"plan_name", "objective"},
 			}),
 		},
 	}
 	tools = append(tools, createPlanTool)
 
-	// execute_plan_task - Execute a specific task from a plan
-	executePlanTaskTool := llmtypes.Tool{
+	// confirm_plan_execution - Blocking approval tool for plan execution
+	confirmPlanTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
-			Name:        "execute_plan_task",
-			Description: "Execute a specific task from a delegation plan by spawning a sub-agent. Automatically updates the plan file with status and results.",
+			Name:        "confirm_plan_execution",
+			Description: "Present the plan to the user for approval. This tool BLOCKS until the user responds. If approved, switches to Execution Mode. If rejected, returns the user's feedback so you can adjust the plan. Call this after creating a plan and summarizing it.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"plan_id": map[string]interface{}{
+					"plan_summary": map[string]interface{}{
 						"type":        "string",
-						"description": "The plan ID returned by create_delegation_plan.",
-					},
-					"task_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The task ID to execute (e.g., 'task-1').",
-					},
-					"additional_context": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional additional context or instructions to append to the task description.",
-					},
-					"reasoning_level": map[string]interface{}{
-						"type":        "string",
-						"enum":        []string{"high", "medium", "low"},
-						"description": "Optional reasoning tier. 'high' for complex planning/architecture, 'medium' for standard implementation, 'low' for simple tasks. If not specified, uses the parent agent's model.",
+						"description": "Brief summary of the plan to show the user (key phases, tasks, models used)",
 					},
 				},
-				"required": []string{"plan_id", "task_id"},
+				"required": []string{"plan_summary"},
 			}),
 		},
 	}
-	tools = append(tools, executePlanTaskTool)
-
-	// update_plan_task - Manually update a task's status/notes
-	updatePlanTaskTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "update_plan_task",
-			Description: "Manually update a task's status, notes, or result in a delegation plan without executing it. Useful for marking tasks as completed after manual verification, adding notes, or skipping tasks.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"plan_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The plan ID.",
-					},
-					"task_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The task ID to update (e.g., 'task-1').",
-					},
-					"status": map[string]interface{}{
-						"type":        "string",
-						"enum":        []string{"pending", "in_progress", "completed", "failed"},
-						"description": "New status for the task.",
-					},
-					"notes": map[string]interface{}{
-						"type":        "string",
-						"description": "Notes to add to the task.",
-					},
-					"result": map[string]interface{}{
-						"type":        "string",
-						"description": "Result text for the task.",
-					},
-				},
-				"required": []string{"plan_id", "task_id"},
-			}),
-		},
-	}
-	tools = append(tools, updatePlanTaskTool)
-
-	// get_plan_status - Get plan summary and next pending task
-	getPlanStatusTool := llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "get_plan_status",
-			Description: "Get the current status of a delegation plan including task progress summary and the next pending task.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"plan_id": map[string]interface{}{
-						"type":        "string",
-						"description": "The plan ID to check status for.",
-					},
-				},
-				"required": []string{"plan_id"},
-			}),
-		},
-	}
-	tools = append(tools, getPlanStatusTool)
+	tools = append(tools, confirmPlanTool)
 
 	return tools
 }
@@ -262,9 +253,7 @@ func CreateDelegationToolExecutors() map[string]func(ctx context.Context, args m
 
 	executors["delegate"] = handleDelegate
 	executors["create_delegation_plan"] = handleCreateDelegationPlan
-	executors["execute_plan_task"] = handleExecutePlanTask
-	executors["update_plan_task"] = handleUpdatePlanTask
-	executors["get_plan_status"] = handleGetPlanStatus
+	executors["confirm_plan_execution"] = handleConfirmPlanExecution
 
 	return executors
 }
@@ -277,8 +266,16 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		return "", fmt.Errorf("instruction is required")
 	}
 
-	// Extract optional reasoning_level
+	// Extract optional reasoning_level, plan_folder, and tool_mode
 	reasoningLevel, _ := args["reasoning_level"].(string)
+	if reasoningLevel != "" && reasoningLevel != "high" && reasoningLevel != "medium" && reasoningLevel != "low" {
+		reasoningLevel = "" // Ignore invalid values
+	}
+	planFolder, _ := args["plan_folder"].(string)
+	toolMode, _ := args["tool_mode"].(string)
+	if toolMode != "" && toolMode != "simple" && toolMode != "code_execution" && toolMode != "tool_search" {
+		toolMode = "" // Ignore invalid values
+	}
 
 	// Check delegation depth to prevent infinite recursion
 	currentDepth := 0
@@ -300,10 +297,16 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 
 	startTime := time.Now()
 
-	// Increment depth in context for the sub-agent and pass reasoning level
+	// Increment depth in context for the sub-agent and pass reasoning level + plan folder
 	subCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
 	if reasoningLevel != "" {
 		subCtx = context.WithValue(subCtx, ReasoningLevelKey, reasoningLevel)
+	}
+	if planFolder != "" {
+		subCtx = context.WithValue(subCtx, PlanFolderKey, planFolder)
+	}
+	if toolMode != "" {
+		subCtx = context.WithValue(subCtx, ToolModeKey, toolMode)
 	}
 
 	// Execute the delegated task
@@ -312,16 +315,16 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	executionTime := time.Since(startTime)
 
 	// Build result
-	delegationResult := DelegationResult{
-		Success:       err == nil,
-		Result:        result,
-		ExecutionTime: executionTime.String(),
-		CompletedAt:   time.Now(),
-		Depth:         currentDepth + 1,
+	delegationResult := map[string]interface{}{
+		"success":        err == nil,
+		"result":         result,
+		"execution_time": executionTime.String(),
+		"completed_at":   time.Now().Format(time.RFC3339),
+		"depth":          currentDepth + 1,
 	}
 
 	if err != nil {
-		delegationResult.Error = err.Error()
+		delegationResult["error"] = err.Error()
 		log.Printf("[DELEGATION] Delegated task failed at depth %d: %v", currentDepth+1, err)
 	} else {
 		log.Printf("[DELEGATION] Delegated task completed at depth %d in %s", currentDepth+1, executionTime)
@@ -331,38 +334,152 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	return string(resultJSON), nil
 }
 
-// plannerPrompt is the system instruction for the planner sub-agent
-const plannerPrompt = `You are a Technical Planner. Your job is to analyze an objective and produce a structured plan.
+// buildPlannerPrompt creates the system instruction for the planner sub-agent
+// It includes capabilities context so the planner knows what tools/servers/skills are available
+func buildPlannerPrompt(caps *CapabilitiesContext, planFolder string) string {
+	var sb strings.Builder
 
-You MUST respond with ONLY a valid JSON object (no markdown, no explanation, no code fences). The JSON must have this exact structure:
+	sb.WriteString(`You are a Planner. Your job is to analyze an objective and produce a structured plan as a markdown file.
 
-{
-  "strategy": "High-level approach description",
-  "tasks": [
-    {
-      "title": "Short task title",
-      "description": "Detailed self-contained instructions a developer can follow without any other context. Include file paths, requirements, and expected outcomes.",
-      "priority": "high|medium|low"
-    }
-  ]
+## Your Task
+1. Use your tools to **research and understand** the problem — read files, query data, explore the workspace, read skill instructions
+2. Break the objective into concrete, actionable tasks based on what you learned
+3. Write the plan as a markdown file to the output path specified below
+
+**IMPORTANT: You are ONLY planning, NOT executing.** Do not perform any of the plan steps yourself. Your only output is the plan.md file. Use tools solely for research and discovery to write a better plan.
+
+## Output File
+Write your plan to: ` + "`" + planFolder + `/plan.md` + "`" + `
+
+## Plan Format
+Write the plan as a structured markdown document with these sections:
+
+` + "```" + `markdown
+# Plan: {Short descriptive title}
+
+## Goal
+{Clear 1-2 sentence statement of what we're trying to achieve}
+
+## Constraints
+- {Known constraint 1 — e.g., environment, technology stack, data source}
+- {Known constraint 2 — e.g., file locations, API endpoints, dependencies}
+- {Known constraint 3 — e.g., business rules, limitations}
+
+## Key Knowledge
+- {Important finding from research — e.g., data schema, file structure}
+- {Hypothesis or approach rationale}
+- {Critical detail workers need to know}
+
+## Tasks
+
+### Phase 1 (parallel)
+- [ ] **task-1**: {Task title}
+  - {Detailed self-contained description. Include all context a worker needs.}
+  - Reasoning level: {high|medium|low}
+
+- [ ] **task-2**: {Task title}
+  - {Detailed description — independent of task-1, can run simultaneously}
+  - Reasoning level: {medium}
+
+### Phase 2 (parallel, after Phase 1)
+- [ ] **task-3**: {Task title}
+  - {Detailed description}
+  - Depends on: task-1
+  - Reasoning level: {medium}
+
+- [ ] **task-4**: {Task title}
+  - {Detailed description — independent of task-3, can run simultaneously}
+  - Depends on: task-2
+  - Reasoning level: {low}
+
+### Phase 3
+- [ ] **task-5**: {Task title}
+  - {Detailed description}
+  - Depends on: task-3, task-4
+  - Reasoning level: {low}
+
+## Notes
+{Workers append results, findings, and issues here as tasks complete}
+` + "```" + `
+
+## Guidelines
+- Break the objective into 3-10 concrete, actionable tasks
+- Each task description must be **self-contained** — a worker with no prior context will execute it
+- Include specific details: file paths, function names, requirements, expected outcomes
+- **Maximize parallelism**: Group independent tasks into phases. Tasks within a phase run simultaneously, so they MUST NOT depend on each other. The manager will delegate all tasks in a phase at once.
+- Use "### Phase N (parallel)" headings to group tasks. Add "(after Phase M)" when a phase depends on a previous one.
+- Add "Depends on: task-X, task-Y" on individual tasks to show which earlier tasks must complete first
+- Identify tasks that are truly independent (e.g., frontend + backend, different modules, tests + docs) and put them in the same phase
+- The **Constraints** section should capture environment details, technology stack, and known limitations
+- The **Key Knowledge** section should include insights from your research (file paths, schemas, patterns found)
+- Reasoning level recommendations:
+  - **high**: Complex architecture, system design, tricky algorithms, planning
+  - **medium**: Standard implementation, building features, writing code
+  - **low**: Simple tasks like formatting, config changes, running tests, documentation
+- The plan should be general-purpose — not limited to coding tasks
+`)
+
+	// Append capabilities section if available
+	if caps != nil {
+		sb.WriteString("\n## Available Capabilities\n")
+		sb.WriteString("The following capabilities are available to workers executing tasks:\n\n")
+
+		if caps.HasWorkspace {
+			sb.WriteString("- **Workspace**: File read/write access via workspace tools\n")
+		}
+		if caps.HasBrowser {
+			sb.WriteString("- **Browser**: Web browsing and automation capabilities\n")
+		}
+
+		if len(caps.EnabledServers) > 0 {
+			sb.WriteString("\n### MCP Servers\n")
+			sb.WriteString("Workers have access to these MCP servers (tool servers):\n")
+			for _, server := range caps.EnabledServers {
+				sb.WriteString(fmt.Sprintf("- `%s`\n", server))
+			}
+		}
+
+		if len(caps.SelectedTools) > 0 {
+			sb.WriteString("\n### Selected Tools\n")
+			sb.WriteString("Specifically enabled tools (server:tool format):\n")
+			for _, tool := range caps.SelectedTools {
+				sb.WriteString(fmt.Sprintf("- `%s`\n", tool))
+			}
+		}
+
+		if len(caps.Skills) > 0 {
+			sb.WriteString("\n### Skills (HIGH PRIORITY)\n")
+			sb.WriteString("The following skills are activated and contain detailed instructions, methodologies, and templates that workers MUST follow.\n")
+			sb.WriteString("Skills are stored at the workspace root under skills/<name>/SKILL.md.\n\n")
+			sb.WriteString("**Before writing the plan, you MUST read each skill file** using execute_shell_command(command: \"cat skills/<name>/SKILL.md\", working_directory: \".\") to understand the methodology, steps, and requirements.\n\n")
+			sb.WriteString("Available skills:\n")
+			for _, skill := range caps.Skills {
+				sb.WriteString(fmt.Sprintf("- **%s** (`skills/%s/SKILL.md`): %s\n", skill.Name, skill.FolderName, skill.Description))
+			}
+			sb.WriteString("\n**IMPORTANT**: When writing task descriptions in the plan, reference the relevant skill by name and path. Tell workers to read and follow the skill instructions. Skills contain detailed step-by-step guidance that is critical for task quality.\n")
+		}
+
+		sb.WriteString("\nConsider these capabilities when designing tasks — reference specific servers, tools, or skills where relevant.\n")
+	}
+
+	return sb.String()
 }
 
-Guidelines:
-- Break the objective into 3-10 concrete, actionable tasks
-- Each task must be self-contained (a sub-agent with no context will execute it)
-- Include specific file paths, function names, and technical details when possible
-- Priority: "high" for architecture/core logic, "medium" for standard implementation, "low" for tests/docs/formatting
-- Order tasks by dependency (tasks that others depend on should come first)
-- Strategy should be 1-2 sentences describing the overall approach`
-
-// handleCreateDelegationPlan spawns a planner sub-agent to create or update a plan
+// handleCreateDelegationPlan spawns a planner sub-agent that writes plan.md to workspace
 func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}) (string, error) {
+	planName, _ := args["plan_name"].(string)
+	if planName == "" {
+		return "", fmt.Errorf("plan_name is required")
+	}
 	objective, _ := args["objective"].(string)
 	if objective == "" {
 		return "", fmt.Errorf("objective is required")
 	}
 	additionalContext, _ := args["context"].(string)
-	existingPlanID, _ := args["plan_id"].(string)
+	reasoningLevel, _ := args["reasoning_level"].(string)
+	if reasoningLevel != "" && reasoningLevel != "high" && reasoningLevel != "medium" && reasoningLevel != "low" {
+		reasoningLevel = "" // Ignore invalid values
+	}
 
 	// Check delegation depth
 	currentDepth := 0
@@ -379,41 +496,66 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 		return "", fmt.Errorf("delegation execution function not available")
 	}
 
-	// Build the planner instruction
-	var plannerInstruction string
+	// Sanitize plan name to create plan ID (kebab-case, no special chars)
+	planID := sanitizePlanName(planName)
+	planFolder := fmt.Sprintf("%s/%s", PlanFileFolderPath, planID)
 
-	if existingPlanID != "" {
-		// Update mode: load existing plan and ask planner to revise it
-		existingPlan, err := loadPlanFromWorkspace(ctx, existingPlanID)
-		if err != nil {
-			return "", fmt.Errorf("failed to load existing plan %s: %w", existingPlanID, err)
-		}
-
-		existingPlanJSON, _ := json.MarshalIndent(existingPlan, "", "  ")
-		plannerInstruction = fmt.Sprintf(`%s
-
-## Current Plan (to be updated)
-%s
-
-## Update Request
-Objective: %s`, plannerPrompt, string(existingPlanJSON), objective)
-	} else {
-		// Create mode: fresh plan
-		plannerInstruction = fmt.Sprintf(`%s
-
-## Objective
-%s`, plannerPrompt, objective)
+	// Enforce one plan per conversation — if a plan was already created, reject with guidance
+	// Check both PlanSessionStateKey (new) and PlanTrackerKey (backward compat)
+	var tracker *PlanSessionState
+	if ps, ok := ctx.Value(PlanSessionStateKey).(*PlanSessionState); ok && ps != nil {
+		tracker = ps
+	} else if pt, ok := ctx.Value(PlanTrackerKey).(*PlanTracker); ok && pt != nil {
+		tracker = pt
 	}
+	if tracker != nil {
+		if existingID, existingFolder, ok := tracker.TryCreate(planID, planFolder); !ok {
+			return "", fmt.Errorf(
+				"a plan already exists in this conversation (plan_id: %s, folder: %s). "+
+					"Do not create a second plan. Read the existing plan.md and delegate tasks from it. "+
+					"If the plan needs changes, delegate a sub-agent to update it",
+				existingID, existingFolder,
+			)
+		}
+	}
+
+	// Create the plan folder eagerly via workspace API so the sidebar shows it immediately
+	if wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client); ok && wsClient != nil {
+		if err := wsClient.CreateFolder(ctx, planFolder); err != nil {
+			log.Printf("[DELEGATION PLAN] Warning: could not pre-create plan folder %s: %v", planFolder, err)
+			// Non-fatal — the planner will create it when writing plan.md
+		} else {
+			log.Printf("[DELEGATION PLAN] Pre-created plan folder: %s", planFolder)
+		}
+	}
+
+	// Emit file event early so workspace sidebar can focus on the folder
+	if emitter, ok := ctx.Value(PlanEventEmitterKey).(PlanEventEmitter); ok && emitter != nil {
+		emitter.EmitFileEvent(planFolder)
+	}
+
+	// Extract capabilities context
+	var caps *CapabilitiesContext
+	if c, ok := ctx.Value(CapabilitiesContextKey).(*CapabilitiesContext); ok {
+		caps = c
+	}
+
+	// Build the planner instruction
+	plannerInstruction := buildPlannerPrompt(caps, planFolder)
+	plannerInstruction += fmt.Sprintf("\n\n## Objective\n%s", objective)
 
 	if additionalContext != "" {
 		plannerInstruction += fmt.Sprintf("\n\n## Additional Context\n%s", additionalContext)
 	}
 
-	log.Printf("[DELEGATION PLAN] Spawning planner sub-agent for: %s", truncateString(objective, 80))
+	log.Printf("[DELEGATION PLAN] Spawning planner sub-agent for: %s (plan_id: %s)", truncateString(objective, 80), planID)
 
-	// Spawn planner sub-agent (use "high" reasoning for planning)
+	// Spawn planner sub-agent with optional reasoning level from LLM
 	subCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
-	subCtx = context.WithValue(subCtx, ReasoningLevelKey, "high")
+	if reasoningLevel != "" {
+		subCtx = context.WithValue(subCtx, ReasoningLevelKey, reasoningLevel)
+	}
+	subCtx = context.WithValue(subCtx, PlanFolderKey, planFolder)
 
 	startTime := time.Now()
 	plannerResult, err := executeFunc(subCtx, plannerInstruction)
@@ -423,617 +565,88 @@ Objective: %s`, plannerPrompt, string(existingPlanJSON), objective)
 		return "", fmt.Errorf("planner sub-agent failed: %w", err)
 	}
 
-	log.Printf("[DELEGATION PLAN] Planner completed in %s", planDuration)
+	log.Printf("[DELEGATION PLAN] Planner completed in %s for plan %s", planDuration, planID)
 
-	// Parse the planner's JSON response
-	// Try to extract JSON from the response (planner may include extra text)
-	planJSON := extractJSON(plannerResult)
-	if planJSON == "" {
-		return "", fmt.Errorf("planner did not return valid JSON. Raw response: %s", truncateString(plannerResult, 500))
+	// Emit file event for plan.md so the sidebar highlights it
+	planFilePath := fmt.Sprintf("%s/plan.md", planFolder)
+	if emitter, ok := ctx.Value(PlanEventEmitterKey).(PlanEventEmitter); ok && emitter != nil {
+		emitter.EmitFileEvent(planFilePath)
+		log.Printf("[DELEGATION PLAN] Emitted file event for plan: %s", planFilePath)
 	}
 
-	var plannerOutput struct {
-		Strategy string `json:"strategy"`
-		Tasks    []struct {
-			Title       string `json:"title"`
-			Description string `json:"description"`
-			Priority    string `json:"priority"`
-		} `json:"tasks"`
-	}
-	if err := json.Unmarshal([]byte(planJSON), &plannerOutput); err != nil {
-		return "", fmt.Errorf("failed to parse planner output: %w (raw: %s)", err, truncateString(planJSON, 500))
-	}
-
-	if len(plannerOutput.Tasks) == 0 {
-		return "", fmt.Errorf("planner returned zero tasks")
-	}
-
-	// Build the plan
-	now := time.Now()
-	var planID string
-	var createdAt time.Time
-
-	if existingPlanID != "" {
-		planID = existingPlanID
-		// Preserve original creation time
-		if existingPlan, err := loadPlanFromWorkspace(ctx, existingPlanID); err == nil {
-			createdAt = existingPlan.CreatedAt
-		} else {
-			createdAt = now
-		}
-	} else {
-		planID = generatePlanID(objective)
-		createdAt = now
-	}
-
-	var tasks []DelegationTask
-	for i, t := range plannerOutput.Tasks {
-		priority := t.Priority
-		if priority == "" {
-			priority = "medium"
-		}
-		tasks = append(tasks, DelegationTask{
-			ID:          fmt.Sprintf("task-%d", i+1),
-			Title:       t.Title,
-			Description: t.Description,
-			Priority:    priority,
-			Status:      "pending",
-			CreatedAt:   now,
+	// Read plan.md content via workspace API (handles per-user path resolution correctly)
+	// This avoids the mount namespace issue where shell cat can't find per-user files
+	var planContent string
+	if wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client); ok && wsClient != nil {
+		readResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
+			Filepath: planFilePath,
 		})
-	}
-
-	plan := &DelegationPlan{
-		PlanID:    planID,
-		CreatedAt: createdAt,
-		UpdatedAt: now,
-		Status:    "planning",
-		Objective: objective,
-		Strategy:  plannerOutput.Strategy,
-		Tasks:     tasks,
-	}
-
-	// Save to workspace
-	if err := savePlanToWorkspace(ctx, plan); err != nil {
-		return "", fmt.Errorf("failed to save plan: %w", err)
-	}
-
-	action := "Created"
-	if existingPlanID != "" {
-		action = "Updated"
-	}
-	log.Printf("[DELEGATION PLAN] %s plan %s with %d tasks: %s", action, planID, len(tasks), truncateString(objective, 80))
-
-	// Return summary
-	result := map[string]interface{}{
-		"plan_id":        planID,
-		"objective":      objective,
-		"strategy":       plannerOutput.Strategy,
-		"task_count":     len(tasks),
-		"status":         "planning",
-		"tasks":          tasks,
-		"planning_time":  planDuration.String(),
-		"message":        fmt.Sprintf("Plan %s with %d tasks. Use execute_plan_task to start executing tasks.", strings.ToLower(action), len(tasks)),
-	}
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-	return string(resultJSON), nil
-}
-
-// extractJSON tries to find and extract a JSON object from a string
-// The planner sub-agent should return pure JSON, but may include extra text
-func extractJSON(s string) string {
-	// Try the whole string first
-	s = strings.TrimSpace(s)
-	if json.Valid([]byte(s)) {
-		return s
-	}
-
-	// Try to find JSON between code fences
-	if idx := strings.Index(s, "```json"); idx != -1 {
-		start := idx + 7
-		if end := strings.Index(s[start:], "```"); end != -1 {
-			candidate := strings.TrimSpace(s[start : start+end])
-			if json.Valid([]byte(candidate)) {
-				return candidate
-			}
-		}
-	}
-	if idx := strings.Index(s, "```"); idx != -1 {
-		start := idx + 3
-		// Skip language identifier if on same line
-		if nl := strings.Index(s[start:], "\n"); nl != -1 {
-			start = start + nl + 1
-		}
-		if end := strings.Index(s[start:], "```"); end != -1 {
-			candidate := strings.TrimSpace(s[start : start+end])
-			if json.Valid([]byte(candidate)) {
-				return candidate
-			}
-		}
-	}
-
-	// Try to find first { and last }
-	firstBrace := strings.Index(s, "{")
-	lastBrace := strings.LastIndex(s, "}")
-	if firstBrace != -1 && lastBrace > firstBrace {
-		candidate := s[firstBrace : lastBrace+1]
-		if json.Valid([]byte(candidate)) {
-			return candidate
-		}
-	}
-
-	return ""
-}
-
-// handleExecutePlanTask executes a specific task from a plan via sub-agent
-func handleExecutePlanTask(ctx context.Context, args map[string]interface{}) (string, error) {
-	planID, _ := args["plan_id"].(string)
-	if planID == "" {
-		return "", fmt.Errorf("plan_id is required")
-	}
-	taskID, _ := args["task_id"].(string)
-	if taskID == "" {
-		return "", fmt.Errorf("task_id is required")
-	}
-	additionalContext, _ := args["additional_context"].(string)
-	reasoningLevel, _ := args["reasoning_level"].(string)
-
-	// Load the plan
-	plan, err := loadPlanFromWorkspace(ctx, planID)
-	if err != nil {
-		return "", fmt.Errorf("failed to load plan %s: %w", planID, err)
-	}
-
-	// Find the task
-	var task *DelegationTask
-	var taskIdx int
-	for i := range plan.Tasks {
-		if plan.Tasks[i].ID == taskID {
-			task = &plan.Tasks[i]
-			taskIdx = i
-			break
-		}
-	}
-	if task == nil {
-		return "", fmt.Errorf("task %s not found in plan %s", taskID, planID)
-	}
-
-	if task.Status == "completed" {
-		return "", fmt.Errorf("task %s is already completed", taskID)
-	}
-
-	// Mark task as in_progress and update plan status
-	plan.Tasks[taskIdx].Status = "in_progress"
-	plan.Status = "in_progress"
-	plan.UpdatedAt = time.Now()
-	if err := savePlanToWorkspace(ctx, plan); err != nil {
-		log.Printf("[DELEGATION PLAN] Warning: failed to save in_progress status: %v", err)
-	}
-
-	// Build instruction from task description + additional context
-	planFolder := fmt.Sprintf("%s/%s", PlanFileFolderPath, planID)
-	instruction := fmt.Sprintf("## Task: %s\n\n%s", task.Title, task.Description)
-	if additionalContext != "" {
-		instruction += fmt.Sprintf("\n\n## Additional Context\n%s", additionalContext)
-	}
-	instruction += fmt.Sprintf("\n\n## Output Location\nSave ALL output files to the folder: `%s/`\nDo NOT write files to `Chats/` root or any other location. Your workspace write access is restricted to this folder.", planFolder)
-
-	// Check delegation depth
-	currentDepth := 0
-	if depth, ok := ctx.Value(DelegationDepthKey).(int); ok {
-		currentDepth = depth
-	}
-	if currentDepth >= MaxDelegationDepth {
-		return "", fmt.Errorf("maximum delegation depth (%d) reached", MaxDelegationDepth)
-	}
-
-	// Get execution function
-	executeFunc, ok := ctx.Value(ExecuteDelegatedTaskKey).(ExecuteDelegatedTaskFunc)
-	if !ok || executeFunc == nil {
-		return "", fmt.Errorf("delegation execution function not available")
-	}
-
-	log.Printf("[DELEGATION PLAN] Executing task %s from plan %s: %s", taskID, planID, truncateString(task.Title, 60))
-
-	startTime := time.Now()
-
-	// Set up context with depth, reasoning level, and plan folder
-	subCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
-	subCtx = context.WithValue(subCtx, PlanFolderKey, planFolder)
-	if reasoningLevel != "" {
-		subCtx = context.WithValue(subCtx, ReasoningLevelKey, reasoningLevel)
-	}
-
-	// Execute
-	result, execErr := executeFunc(subCtx, instruction)
-
-	executionTime := time.Since(startTime)
-
-	// Reload plan (may have been modified concurrently) and update task
-	plan, err = loadPlanFromWorkspace(ctx, planID)
-	if err != nil {
-		log.Printf("[DELEGATION PLAN] Warning: failed to reload plan after execution: %v", err)
-	} else {
-		// Re-find task in reloaded plan
-		for i := range plan.Tasks {
-			if plan.Tasks[i].ID == taskID {
-				now := time.Now()
-				plan.Tasks[i].ExecutionTime = executionTime.String()
-				plan.Tasks[i].CompletedAt = &now
-
-				if execErr != nil {
-					plan.Tasks[i].Status = "failed"
-					plan.Tasks[i].Error = execErr.Error()
-				} else {
-					plan.Tasks[i].Status = "completed"
-					plan.Tasks[i].Result = truncateString(result, 2000)
-				}
-				break
-			}
-		}
-
-		// Update overall plan status
-		plan.UpdatedAt = time.Now()
-		allDone := true
-		anyFailed := false
-		for _, t := range plan.Tasks {
-			if t.Status != "completed" && t.Status != "failed" {
-				allDone = false
-			}
-			if t.Status == "failed" {
-				anyFailed = true
-			}
-		}
-		if allDone {
-			if anyFailed {
-				plan.Status = "failed"
-			} else {
-				plan.Status = "completed"
-			}
-		}
-
-		if saveErr := savePlanToWorkspace(ctx, plan); saveErr != nil {
-			log.Printf("[DELEGATION PLAN] Warning: failed to save task result: %v", saveErr)
-		}
-	}
-
-	// Return result
-	taskResult := map[string]interface{}{
-		"plan_id":        planID,
-		"task_id":        taskID,
-		"task_title":     task.Title,
-		"success":        execErr == nil,
-		"execution_time": executionTime.String(),
-	}
-	if execErr != nil {
-		taskResult["error"] = execErr.Error()
-	} else {
-		taskResult["result"] = result
-	}
-
-	resultJSON, _ := json.MarshalIndent(taskResult, "", "  ")
-	return string(resultJSON), nil
-}
-
-// handleUpdatePlanTask manually updates a task's status/notes/result
-func handleUpdatePlanTask(ctx context.Context, args map[string]interface{}) (string, error) {
-	planID, _ := args["plan_id"].(string)
-	if planID == "" {
-		return "", fmt.Errorf("plan_id is required")
-	}
-	taskID, _ := args["task_id"].(string)
-	if taskID == "" {
-		return "", fmt.Errorf("task_id is required")
-	}
-
-	// Load plan
-	plan, err := loadPlanFromWorkspace(ctx, planID)
-	if err != nil {
-		return "", fmt.Errorf("failed to load plan %s: %w", planID, err)
-	}
-
-	// Find and update task
-	found := false
-	for i := range plan.Tasks {
-		if plan.Tasks[i].ID == taskID {
-			found = true
-			if status, ok := args["status"].(string); ok && status != "" {
-				plan.Tasks[i].Status = status
-				if status == "completed" {
-					now := time.Now()
-					plan.Tasks[i].CompletedAt = &now
-				}
-			}
-			if notes, ok := args["notes"].(string); ok && notes != "" {
-				plan.Tasks[i].Notes = notes
-			}
-			if result, ok := args["result"].(string); ok && result != "" {
-				plan.Tasks[i].Result = result
-			}
-			break
-		}
-	}
-
-	if !found {
-		return "", fmt.Errorf("task %s not found in plan %s", taskID, planID)
-	}
-
-	// Update overall plan status
-	plan.UpdatedAt = time.Now()
-	allDone := true
-	anyFailed := false
-	for _, t := range plan.Tasks {
-		if t.Status != "completed" && t.Status != "failed" {
-			allDone = false
-		}
-		if t.Status == "failed" {
-			anyFailed = true
-		}
-	}
-	if allDone {
-		if anyFailed {
-			plan.Status = "failed"
+		if err != nil {
+			log.Printf("[DELEGATION PLAN] Warning: could not read plan.md content: %v", err)
 		} else {
-			plan.Status = "completed"
+			// Extract just the content field from the JSON response
+			var readData map[string]interface{}
+			if json.Unmarshal([]byte(readResult), &readData) == nil {
+				if content, ok := readData["content"].(string); ok {
+					planContent = content
+				}
+			}
 		}
-	} else {
-		plan.Status = "in_progress"
 	}
 
-	if err := savePlanToWorkspace(ctx, plan); err != nil {
-		return "", fmt.Errorf("failed to save plan: %w", err)
-	}
-
+	// Return summary to the manager with plan content included
 	result := map[string]interface{}{
-		"plan_id":     planID,
-		"task_id":     taskID,
-		"plan_status": plan.Status,
-		"message":     fmt.Sprintf("Task %s updated successfully", taskID),
+		"plan_id":       planID,
+		"plan_folder":   planFolder,
+		"plan_file":     planFilePath,
+		"objective":     objective,
+		"planning_time": planDuration.String(),
+		"result":        plannerResult,
+		"message":       fmt.Sprintf("Plan created at %s. Use delegate to execute tasks. Update checkboxes in plan.md as tasks complete.", planFilePath),
 	}
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
-	return string(resultJSON), nil
-}
-
-// handleGetPlanStatus returns the current status summary of a plan
-func handleGetPlanStatus(ctx context.Context, args map[string]interface{}) (string, error) {
-	planID, _ := args["plan_id"].(string)
-	if planID == "" {
-		return "", fmt.Errorf("plan_id is required")
+	if planContent != "" {
+		result["plan_content"] = planContent
 	}
-
-	plan, err := loadPlanFromWorkspace(ctx, planID)
-	if err != nil {
-		return "", fmt.Errorf("failed to load plan %s: %w", planID, err)
-	}
-
-	// Build summary
-	statusCounts := map[string]int{
-		"pending":     0,
-		"in_progress": 0,
-		"completed":   0,
-		"failed":      0,
-	}
-	var nextPendingTask *DelegationTask
-	for i := range plan.Tasks {
-		statusCounts[plan.Tasks[i].Status]++
-		if plan.Tasks[i].Status == "pending" && nextPendingTask == nil {
-			nextPendingTask = &plan.Tasks[i]
-		}
-	}
-
-	result := map[string]interface{}{
-		"plan_id":       plan.PlanID,
-		"objective":     plan.Objective,
-		"strategy":      plan.Strategy,
-		"status":        plan.Status,
-		"total_tasks":   len(plan.Tasks),
-		"pending":       statusCounts["pending"],
-		"in_progress":   statusCounts["in_progress"],
-		"completed":     statusCounts["completed"],
-		"failed":        statusCounts["failed"],
-		"created_at":    plan.CreatedAt.Format(time.RFC3339),
-		"updated_at":    plan.UpdatedAt.Format(time.RFC3339),
-		"tasks":         plan.Tasks,
-	}
-	if nextPendingTask != nil {
-		result["next_pending_task"] = map[string]interface{}{
-			"id":          nextPendingTask.ID,
-			"title":       nextPendingTask.Title,
-			"description": nextPendingTask.Description,
-			"priority":    nextPendingTask.Priority,
-		}
-	}
-
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
 }
 
 // --- Helper functions ---
 
-// generatePlanID creates a human-friendly plan ID from the objective
-func generatePlanID(objective string) string {
-	// Extract key words from objective, lowercase, kebab-case
-	words := strings.Fields(strings.ToLower(objective))
-	// Filter to meaningful words (skip short filler words)
-	skip := map[string]bool{"a": true, "an": true, "the": true, "to": true, "and": true, "or": true, "for": true, "of": true, "in": true, "on": true, "is": true, "it": true, "with": true, "that": true, "this": true, "be": true, "as": true, "at": true, "by": true, "from": true, "i": true, "we": true, "my": true, "our": true, "me": true}
+// sanitizePlanName sanitizes a plan name from LLM input into a safe folder name.
+// Converts to lowercase kebab-case, strips special characters, and adds a short
+// random suffix for uniqueness.
+func sanitizePlanName(name string) string {
+	// Lowercase and split into words
+	words := strings.Fields(strings.ToLower(name))
 	var parts []string
 	for _, w := range words {
-		// Strip non-alphanumeric
+		// Strip non-alphanumeric (keep hyphens between words)
 		cleaned := strings.Map(func(r rune) rune {
-			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 				return r
 			}
 			return -1
 		}, w)
-		if cleaned != "" && !skip[cleaned] && len(cleaned) > 1 {
-			parts = append(parts, cleaned)
-		}
-		if len(parts) >= 4 {
-			break
+		// Split on hyphens to get individual parts, then rejoin
+		for _, part := range strings.Split(cleaned, "-") {
+			if part != "" {
+				parts = append(parts, part)
+			}
 		}
 	}
 	if len(parts) == 0 {
 		parts = []string{"plan"}
+	}
+	// Cap at 5 parts to keep folder names reasonable
+	if len(parts) > 5 {
+		parts = parts[:5]
 	}
 	// Add short random suffix for uniqueness
 	b := make([]byte, 3)
 	rand.Read(b)
 	suffix := hex.EncodeToString(b)
 	return strings.Join(parts, "-") + "-" + suffix
-}
-
-// renderPlanToMarkdown renders a DelegationPlan as readable markdown
-func renderPlanToMarkdown(plan *DelegationPlan) string {
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("# Delegation Plan: %s\n\n", plan.Objective))
-	sb.WriteString(fmt.Sprintf("**Plan ID:** `%s`\n", plan.PlanID))
-	sb.WriteString(fmt.Sprintf("**Status:** %s\n", plan.Status))
-	sb.WriteString(fmt.Sprintf("**Created:** %s\n", plan.CreatedAt.Format(time.RFC3339)))
-	sb.WriteString(fmt.Sprintf("**Updated:** %s\n\n", plan.UpdatedAt.Format(time.RFC3339)))
-	sb.WriteString(fmt.Sprintf("## Strategy\n%s\n\n", plan.Strategy))
-
-	// Group tasks by status
-	sb.WriteString("## Tasks\n\n")
-
-	for _, task := range plan.Tasks {
-		checkbox := "[ ]"
-		statusBadge := ""
-		switch task.Status {
-		case "completed":
-			checkbox = "[x]"
-			statusBadge = " ✅"
-		case "in_progress":
-			checkbox = "[-]"
-			statusBadge = " 🔄"
-		case "failed":
-			checkbox = "[!]"
-			statusBadge = " ❌"
-		}
-
-		sb.WriteString(fmt.Sprintf("- %s **%s** - %s [%s]%s\n",
-			checkbox, task.ID, task.Title, task.Priority, statusBadge))
-
-		if task.Description != "" {
-			sb.WriteString(fmt.Sprintf("  - %s\n", truncateString(task.Description, 200)))
-		}
-		if task.Result != "" {
-			sb.WriteString(fmt.Sprintf("  - **Result:** %s\n", truncateString(task.Result, 200)))
-		}
-		if task.Error != "" {
-			sb.WriteString(fmt.Sprintf("  - **Error:** %s\n", task.Error))
-		}
-		if task.Notes != "" {
-			sb.WriteString(fmt.Sprintf("  - **Notes:** %s\n", task.Notes))
-		}
-		if task.ExecutionTime != "" {
-			sb.WriteString(fmt.Sprintf("  - **Time:** %s\n", task.ExecutionTime))
-		}
-	}
-
-	// Summary
-	pending, inProgress, completed, failed := 0, 0, 0, 0
-	for _, t := range plan.Tasks {
-		switch t.Status {
-		case "pending":
-			pending++
-		case "in_progress":
-			inProgress++
-		case "completed":
-			completed++
-		case "failed":
-			failed++
-		}
-	}
-	sb.WriteString(fmt.Sprintf("\n## Progress\n"))
-	sb.WriteString(fmt.Sprintf("- **Completed:** %d/%d\n", completed, len(plan.Tasks)))
-	if inProgress > 0 {
-		sb.WriteString(fmt.Sprintf("- **In Progress:** %d\n", inProgress))
-	}
-	if failed > 0 {
-		sb.WriteString(fmt.Sprintf("- **Failed:** %d\n", failed))
-	}
-	if pending > 0 {
-		sb.WriteString(fmt.Sprintf("- **Pending:** %d\n", pending))
-	}
-
-	// Embed plan data as hidden HTML comment for machine parsing
-	jsonData, err := json.Marshal(plan)
-	if err == nil {
-		sb.WriteString(fmt.Sprintf("\n<!-- PLAN_DATA:%s -->\n", string(jsonData)))
-	}
-
-	return sb.String()
-}
-
-// loadPlanFromWorkspace loads a plan from the workspace markdown file
-func loadPlanFromWorkspace(ctx context.Context, planID string) (*DelegationPlan, error) {
-	wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client)
-	if !ok || wsClient == nil {
-		return nil, fmt.Errorf("workspace client not available - plan tools require workspace access")
-	}
-
-	mdPath := fmt.Sprintf("%s/%s/plan.md", PlanFileFolderPath, planID)
-	result, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
-		Filepath: mdPath,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("plan not found: %w", err)
-	}
-
-	// The workspace client returns a JSON envelope with "content" field
-	content := result
-	var envelope struct {
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal([]byte(result), &envelope); err == nil && envelope.Content != "" {
-		content = envelope.Content
-	}
-
-	// Extract JSON from <!-- PLAN_DATA:{...} --> comment
-	const prefix = "<!-- PLAN_DATA:"
-	const suffix = " -->"
-	startIdx := strings.Index(content, prefix)
-	if startIdx == -1 {
-		return nil, fmt.Errorf("plan file does not contain PLAN_DATA marker")
-	}
-	startIdx += len(prefix)
-	endIdx := strings.Index(content[startIdx:], suffix)
-	if endIdx == -1 {
-		return nil, fmt.Errorf("malformed PLAN_DATA marker in plan file")
-	}
-
-	var plan DelegationPlan
-	if err := json.Unmarshal([]byte(content[startIdx:startIdx+endIdx]), &plan); err != nil {
-		return nil, fmt.Errorf("failed to parse plan data: %w", err)
-	}
-	return &plan, nil
-}
-
-// savePlanToWorkspace saves a plan as a single markdown file with embedded JSON data
-func savePlanToWorkspace(ctx context.Context, plan *DelegationPlan) error {
-	wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client)
-	if !ok || wsClient == nil {
-		return fmt.Errorf("workspace client not available - plan tools require workspace access")
-	}
-
-	mdContent := renderPlanToMarkdown(plan)
-	mdPath := fmt.Sprintf("%s/%s/plan.md", PlanFileFolderPath, plan.PlanID)
-	if _, err := wsClient.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{
-		Filepath: mdPath,
-		Content:  mdContent,
-	}); err != nil {
-		return fmt.Errorf("failed to write plan file: %w", err)
-	}
-
-	// Emit workspace file event so the sidebar highlights the plan file
-	if emitter, ok := ctx.Value(PlanEventEmitterKey).(PlanEventEmitter); ok && emitter != nil {
-		emitter.EmitFileEvent(mdPath)
-		log.Printf("[DELEGATION PLAN] Emitted file event for plan: %s", mdPath)
-	} else {
-		log.Printf("[DELEGATION PLAN] No plan event emitter in context for: %s", mdPath)
-	}
-
-	return nil
 }
 
 // truncateString truncates a string to maxLen characters, adding "..." if truncated
@@ -1047,72 +660,232 @@ func truncateString(s string, maxLen int) string {
 // GetDelegationInstructions returns system prompt instructions for delegation mode
 func GetDelegationInstructions() string {
 	return `
-## Delegation Mode - THE MANAGER PROTOCOL
+## Delegation — Sub-Agent Tools
 
-**YOUR IDENTITY**: You are the **Manager**. You do NOT plan, you do NOT code. You ONLY delegate and synthesize results.
+You have access to sub-agent delegation tools. You are a fully capable agent — you can do any task yourself using your tools. Delegation is an **additional capability** that lets you run work in parallel or offload tasks to focused sub-agents.
 
-### CORE RULE: NEVER PLAN YOURSELF
-Do not analyze requirements, break down tasks, or design architecture yourself. Use tools to delegate ALL work:
-- **Planning** → ` + "`create_delegation_plan`" + ` (a planner sub-agent does the thinking)
-- **Execution** → ` + "`execute_plan_task`" + ` or ` + "`delegate`" + ` (worker sub-agents do the work)
-- **Your job** → call the right tools and report results to the user
+### When to Delegate vs Do It Yourself
 
-### Decision Framework: SIMPLE vs STRUCTURED DELEGATION
+**Do it yourself** when:
+- The task is simple or quick (answering questions, small edits, running a command)
+- You need to explore or understand something before deciding what to do
+- The user is asking for your opinion, analysis, or explanation
+- It's a single focused task that doesn't benefit from parallelism
 
-**Use ` + "`delegate`" + ` (simple, one-off tasks):**
-- Quick independent tasks (single file changes, running tests, simple fixes)
-- Tasks that don't need progress tracking
-- Fire-and-forget: call it multiple times in parallel
+**Delegate** when:
+- You can split work into independent tasks that run **in parallel** (this is the main benefit)
+- The task is large and you want a sub-agent to focus on one piece while you handle another
+- You want to offload a well-defined subtask so you can move on to other work
 
-**Use ` + "`create_delegation_plan`" + ` + ` + "`execute_plan_task`" + ` (complex projects):**
-- Multi-step projects where you need organized task tracking
-- When the user needs visibility into progress (plan file appears in workspace)
-- When tasks build on each other and order matters
-- To update an existing plan: pass ` + "`plan_id`" + ` to ` + "`create_delegation_plan`" + `
+**Use ` + "`create_delegation_plan`" + `** when:
+- The project is complex with many interdependent steps
+- The user needs visibility into progress (plan.md appears in workspace Plans/ folder)
+- You want a structured breakdown before executing
 
-### THE FIRST RESPONSE RULE
-If the user's request is complex, you **MUST** delegate in your **FIRST** response.
-- **BAD**: Analyzing the request yourself, then delegating.
-- **GOOD**: Immediately calling ` + "`create_delegation_plan`" + ` with the objective and any context you have.
+### Delegation Tools
 
-### Reasoning Level Guide
-When executing tasks, pick the appropriate reasoning_level:
-- **"high"**: Complex architecture, system design, tricky algorithms
-- **"medium"**: Standard implementation, CRUD endpoints, UI components
-- **"low"**: Formatting, linting, simple tests, config changes
+**` + "`delegate`" + `** — Spawn a sub-agent for a task:
+- Provide comprehensive, self-contained instructions (sub-agents have no shared memory)
+- Call multiple times in one turn for **parallel execution** — this is the key advantage
+- Optional ` + "`reasoning_level`" + `: "high" (architecture, complex logic), "medium" (standard implementation), "low" (formatting, tests, config)
+- Optional ` + "`plan_folder`" + `: restricts worker writes to this folder (always pass when executing plan tasks)
 
-### Workflow A: Simple Parallel Delegation
+**` + "`create_delegation_plan`" + `** — Spawn a planner sub-agent that writes plan.md:
+- Planner researches the objective and creates a phased task breakdown
+- Returns plan_id, plan_folder, and plan_content directly
+- Then execute tasks phase by phase using ` + "`delegate`" + `
+
+### Tool Mode (optional, for ` + "`delegate`" + `):
+
+- **"simple"** (default): Worker gets all tools directly. Best for most tasks.
+- **"code_execution"**: Worker writes Go code to call tools. Best for data analysis, batch operations, loops over tool results.
+- **"tool_search"**: Worker discovers tools on-demand via search. Best when many MCP servers are available (20+).
+
+### Executing a Plan
+
 ` + "```" + `
-delegate(instruction: "Implement JWT auth...", reasoning_level: "high")
-delegate(instruction: "Create signup UI...", reasoning_level: "medium")
-delegate(instruction: "Add unit tests...", reasoning_level: "low")
-` + "```" + `
-
-### Workflow B: Structured Plan Delegation
-` + "```" + `
-1. create_delegation_plan(objective: "Build user auth system", context: "Express + React app...")
-   → Planner sub-agent creates the plan → returns plan_id + tasks
-2. execute_plan_task(plan_id, "task-1", reasoning_level: "high")
-3. execute_plan_task(plan_id, "task-2", reasoning_level: "medium")
-4. get_plan_status(plan_id) → check progress
-5. execute_plan_task(plan_id, "task-3", reasoning_level: "low")
-6. Summarize results to user
-` + "```" + `
-
-### Updating a Plan
-` + "```" + `
-create_delegation_plan(objective: "Also add OAuth support", plan_id: "plan-xxx", context: "Current plan needs OAuth...")
-   → Planner sub-agent revises the existing plan with new tasks
+1. create_delegation_plan(plan_name: "user-auth", objective: "Build user auth system", context: "...")
+   → Returns plan_id, plan_folder, plan_content
+2. Execute phase by phase:
+   - Phase 1: delegate ALL tasks simultaneously (multiple calls in one turn)
+   - Re-read plan.md to collect worker learnings (Key Knowledge, Notes)
+   - Phase 2: delegate all tasks, relaying learnings from Phase 1
+   - Continue until done
+3. Summarize results to user
 ` + "```" + `
 
-### Best Practices
-- **Parallelism**: For simple delegation, call ` + "`delegate`" + ` multiple times in one turn.
-- **Context is everything**: Pass file paths, tech stack, constraints to ` + "`create_delegation_plan`" + ` so the planner produces good tasks.
-- **You are the Quality Gate**: Verify results before telling the user it's done.
-- **Plan files are visible**: The user can see progress in Chats/Delegations/ folder.
+### Plan Management Rules
+- **One plan per conversation**: Never create a second plan. Update the existing plan.md instead.
+- **Re-read plan.md after each phase**: Workers write Key Knowledge and Notes into plan.md. Collect their discoveries before the next phase.
+- **Relay learnings**: Include relevant Key Knowledge in the next delegate instruction. Workers start fresh with no shared memory.
+- **Pass ` + "`plan_folder`" + `**: Always pass it when executing plan tasks to restrict worker writes.
+- **Self-contained instructions**: Each delegate call must include ALL context the worker needs.
+- **Verify results**: You are the quality gate — check results before reporting to the user.
 
 ### Limitations
-- **No Nested Delegation**: Sub-agents cannot delegate further.
-- **No Shared Context**: Sub-agents start fresh. The planner must write self-contained task descriptions.
+- Sub-agents cannot delegate further (max depth enforced).
+- Sub-agents start fresh — no shared context or conversation history.
 `
 }
+
+// handleConfirmPlanExecution handles the confirm_plan_execution tool — blocks until user approves or rejects
+func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Try PlanSessionStateKey first, fall back to PlanTrackerKey
+	var planState *PlanSessionState
+	if ps, ok := ctx.Value(PlanSessionStateKey).(*PlanSessionState); ok && ps != nil {
+		planState = ps
+	} else if pt, ok := ctx.Value(PlanTrackerKey).(*PlanTracker); ok && pt != nil {
+		planState = pt
+	}
+	if planState == nil {
+		return "", fmt.Errorf("no plan session state available")
+	}
+
+	planState.mu.Lock()
+	if planState.PlanID == "" {
+		planState.mu.Unlock()
+		return "", fmt.Errorf("no plan has been created yet. Use create_delegation_plan first")
+	}
+	currentPlanID := planState.PlanID
+	currentPlanFolder := planState.PlanFolder
+	planState.mu.Unlock()
+
+	planSummary, _ := args["plan_summary"].(string)
+	if planSummary == "" {
+		planSummary = "Plan is ready for review."
+	}
+
+	// Use HumanFeedbackStore to block until user responds
+	uniqueID := fmt.Sprintf("plan-approval-%s", currentPlanID)
+	feedbackStore := GetHumanFeedbackStore()
+
+	message := fmt.Sprintf("Plan Approval Required\n\n%s\n\nDo you want to execute this plan?", planSummary)
+
+	// Emit blocking_human_feedback event so the frontend renders the approval UI
+	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
+		emitter.EmitBlockingHumanFeedback(uniqueID, message, true, "Approve & Execute", "Request Changes")
+	}
+
+	// Create blocking request with Yes/No buttons
+	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, message, "", &services.ButtonOptions{
+		YesNoOnly: true,
+		YesLabel:  "Approve & Execute",
+		NoLabel:   "Request Changes",
+	}); err != nil {
+		return "", fmt.Errorf("failed to create approval request: %w", err)
+	}
+
+	// Block until user responds (10 minute timeout for plan review)
+	response, err := feedbackStore.WaitForResponse(uniqueID, 10*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("approval timed out or failed: %w", err)
+	}
+
+	// Check if approved
+	isApproved := response == "yes" || response == "Approve & Execute" ||
+		strings.EqualFold(response, "yes") || strings.EqualFold(response, "approve")
+
+	if isApproved {
+		planState.SetPhase("execution")
+		return fmt.Sprintf("Plan approved! Phase switched to Execution Mode.\nPlan: %s (folder: %s)\nUse `delegate` to execute plan tasks phase by phase.", currentPlanID, currentPlanFolder), nil
+	}
+
+	// User rejected — return their feedback
+	return fmt.Sprintf("User requested changes: %s\nPlease address the feedback and update the plan, then call confirm_plan_execution again.", response), nil
+}
+
+// GetPlanningModeInstructions returns system prompt for the planning phase of multi-agent mode
+func GetPlanningModeInstructions() string {
+	return `
+## Multi-Agent Planning Mode
+
+You are an **Orchestrator**. You plan and coordinate — you NEVER execute work yourself.
+
+Your role: Research → Plan → Get Approval → Delegate execution to sub-agents.
+
+**CRITICAL: You must NEVER directly create, edit, or write files. You must NEVER run shell commands to perform work (build, install, test, etc.). ALL work must be delegated to sub-agents via ` + "`delegate`" + `. You may only use workspace tools (read files, list files) and shell commands for RESEARCH purposes — reading, listing, and understanding the codebase.**
+
+### Your Workflow
+
+**Step 1: Understand & Clarify**
+- Read the user's request carefully
+- Use ` + "`human_feedback`" + ` to ask clarifying questions BEFORE doing anything else:
+  - What is the expected outcome? Any preferences on approach?
+  - Are there constraints, priorities, or specific requirements?
+  - Which parts are most important or time-sensitive?
+- Do NOT skip this step — a good plan requires clear requirements from the human
+
+**Step 2: Research & Analyze**
+- Use ` + "`execute_shell_command`" + ` for research: ` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + ` to read files and explore the workspace
+- Gather context needed for planning
+- Use ` + "`human_feedback`" + ` again if you discover ambiguities during research
+
+**Step 3: Create Plan**
+- Use ` + "`create_delegation_plan`" + ` with a clear objective and all context you gathered
+- The planner sub-agent will research further and write a structured plan.md
+
+**Step 4: Get Approval**
+- Call ` + "`confirm_plan_execution`" + ` with a plan summary (key phases, tasks, reasoning levels)
+- This BLOCKS until the user clicks "Approve & Execute" or "Request Changes"
+- If approved → phase switches to Execution Mode automatically
+- If rejected → read the feedback, adjust the plan, and call ` + "`confirm_plan_execution`" + ` again
+- Do NOT call ` + "`delegate`" + ` until plan is approved
+
+### When NOT to Plan
+- Simple questions, explanations, or opinions — answer directly (no plan needed)
+
+### Available Tools
+- ` + "`create_delegation_plan`" + ` — Create a structured plan with phased task breakdown
+- ` + "`delegate`" + ` — Spawn a sub-agent (available but use only after plan approval)
+- ` + "`human_feedback`" + ` — Ask the user questions during research/planning
+- ` + "`confirm_plan_execution`" + ` — Present plan for user approval, switches to Execution Mode
+- ` + "`execute_shell_command`" + ` — For research only (` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + `). NEVER use for executing work.
+
+### Plan Rules
+- One plan per conversation
+- Plan is saved to Plans/{plan_id}/plan.md
+- **Always ask the human** before creating the plan — use ` + "`human_feedback`" + ` to confirm requirements
+- NEVER execute plan tasks yourself — always delegate
+`
+}
+
+// GetExecutionModeInstructions returns system prompt for the execution phase of multi-agent mode
+func GetExecutionModeInstructions() string {
+	return `
+## Multi-Agent Execution Mode
+
+You are an **Orchestrator**. The plan has been approved. Delegate all work to sub-agents — you NEVER execute work yourself.
+
+**CRITICAL: You must NEVER directly create, edit, or write files. You must NEVER run shell commands to perform work (build, install, test, etc.). ALL work must be delegated to sub-agents via ` + "`delegate`" + `. You may only use workspace tools and shell commands to READ plan.md and verify results.**
+
+### Your Workflow
+1. Read plan.md from the Plans/ folder to get the full task breakdown
+2. Execute one phase at a time — call ` + "`delegate`" + ` for ALL tasks in a phase simultaneously
+3. After each phase completes, re-read plan.md to collect worker learnings (Key Knowledge, Notes)
+4. Relay relevant learnings to the next phase's workers via their delegate instructions
+5. Summarize results to the user when all phases are done
+
+### Available Tools
+- ` + "`delegate`" + ` — Spawn a sub-agent for a task (this is your PRIMARY tool)
+  - ` + "`reasoning_level`" + `: "high" (architecture, complex), "medium" (standard), "low" (formatting, config)
+  - ` + "`plan_folder`" + `: always pass to restrict worker writes
+  - ` + "`tool_mode`" + `: "simple" (default), "code_execution", "tool_search"
+- ` + "`human_feedback`" + ` — Ask the user questions if you are unsure about something
+- ` + "`execute_shell_command`" + ` — Read plan.md (` + "`cat Plans/{plan_id}/plan.md`" + `) to check progress and collect learnings
+- ` + "`create_delegation_plan`" + ` — Available but typically not needed (plan already exists)
+
+### Execution Rules
+- **NEVER do work yourself** — always delegate via ` + "`delegate`" + `
+- Execute one phase at a time — all tasks within a phase run in parallel
+- Call ` + "`delegate`" + ` multiple times in one turn for parallel execution
+- Pass ` + "`plan_folder`" + ` to every delegate call
+- Self-contained instructions: each worker starts fresh with no shared memory
+- Re-read plan.md after each phase to collect discoveries
+- You are the quality gate — review worker output and verify results before reporting to user
+
+### Limitations
+- Sub-agents cannot delegate further (max depth enforced)
+- Sub-agents start fresh — no shared context or conversation history
+`
+}
+

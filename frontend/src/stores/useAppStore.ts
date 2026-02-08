@@ -21,8 +21,8 @@ interface AppState {
   // Code execution mode (for chat mode when no preset is active)
   useCodeExecutionMode: boolean
 
-  // Delegation mode: 'off' = disabled, 'spawn' = simple delegate only, 'plan' = plan-driven delegation + delegate
-  delegationMode: 'off' | 'spawn' | 'plan'
+  // Delegation mode: 'off' = disabled, 'spawn' = simple delegate only (plan is now in multi-agent mode)
+  delegationMode: 'off' | 'spawn'
 
   // Actions
   setAgentMode: (mode: AgentMode) => void
@@ -43,7 +43,7 @@ interface AppState {
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
-  setDelegationMode: (mode: 'off' | 'spawn' | 'plan') => void
+  setDelegationMode: (mode: 'off' | 'spawn') => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -64,7 +64,7 @@ export const useAppStore = create<AppState>()(
           sidebarMinimized: false,
           workspaceMinimized: false,
           useCodeExecutionMode: true, // Default to enabled
-          delegationMode: 'off' as const, // Default to off (user enables via /spawn or /plan)
+          delegationMode: 'off' as const, // Default to off (user enables via /spawn)
           // Actions
           setAgentMode: (mode) => {
             const currentMode = get().agentMode
@@ -154,9 +154,19 @@ export const useAppStore = create<AppState>()(
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
         delegationMode: state.delegationMode
+        // delegationMode: persisted so /spawn survives page refresh
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: chat tabs have their own, workflow uses preset
-        })
+        }),
+        // Migrate old 'plan' delegationMode to 'off' (plan is now implicit in multi-agent mode)
+        version: 1,
+        migrate: (persistedState: unknown, version: number) => {
+          const state = persistedState as Record<string, unknown>
+          if (version === 0 && state.delegationMode === 'plan') {
+            state.delegationMode = 'off'
+          }
+          return state as AppState
+        }
       }
     ),
     {

@@ -117,7 +117,7 @@ func GetDefaultUserID() string {
 	if id := os.Getenv("DEFAULT_USER_ID"); id != "" {
 		return id
 	}
-	return "default-user"
+	return "default"
 }
 
 // GetAuthSecret returns the JWT signing secret

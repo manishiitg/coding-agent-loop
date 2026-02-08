@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { History, Loader2, Search } from 'lucide-react'
 import { useChatStore } from '../stores'
 import { useAppStore } from '../stores'
+import { useModeStore } from '../stores/useModeStore'
 import type { ChatHistorySummary } from '../services/api-types'
 import { truncateTabTitle } from '../utils/textUtils'
 
@@ -78,15 +79,32 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
 
     const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === session.session_id)
 
+    // Detect if this was a multi-agent session
+    const isMultiAgent = session.config?.delegation_mode === 'plan'
+    const tabMode = isMultiAgent ? 'multi-agent' as const : 'chat' as const
+
     if (existingTab) {
       chatStore.switchTab(existingTab.tabId)
     } else {
+      // Switch to multi-agent mode if restoring a multi-agent session
+      if (isMultiAgent) {
+        useModeStore.getState().setModeCategory('multi-agent')
+      }
+
       const newTabId = await chatStore.createChatTab(
         truncateTabTitle(session.title || 'Chat'),
-        { mode: 'chat' },
+        { mode: tabMode },
         session.session_id,
         'tiny'
       )
+
+      // Restore delegation tier config to the new tab if present
+      if (isMultiAgent && session.config?.delegation_tier_config) {
+        chatStore.setTabConfig(newTabId, {
+          delegationTierConfig: session.config.delegation_tier_config
+        })
+      }
+
       chatStore.switchTab(newTabId)
       appStore.setChatSessionId(session.session_id)
       appStore.setChatSessionTitle(session.title || '')

@@ -2,12 +2,11 @@ package models
 
 // ExecuteShellRequest represents the request to execute a shell command
 type ExecuteShellRequest struct {
-	Command          string   `json:"command" binding:"required"`           // Shell command to execute
-	Args             []string `json:"args,omitempty"`                       // Command arguments (ignored if use_shell is true)
-	WorkingDirectory string   `json:"working_directory,omitempty"`          // Relative working directory within docs-dir
-	Timeout          int      `json:"timeout,omitempty"`                    // Timeout in seconds (default: 60, max: 300)
-	UseShell         bool     `json:"use_shell,omitempty"`                  // Execute through shell (enables pipes, redirects, &&, ||, etc.)
-	
+	Command          string `json:"command" binding:"required"`             // Shell command to execute (single string with all arguments)
+	WorkingDirectory string `json:"working_directory" binding:"required"`   // Relative working directory within docs-dir (use "." for root)
+	Timeout          int    `json:"timeout,omitempty"`                      // Timeout in seconds (default: 60, max: 300)
+	UseShell         bool   `json:"use_shell,omitempty"`                    // Execute through shell (enables pipes, redirects, &&, ||, etc.)
+
 	// Folder guard configuration
 	FolderGuard *FolderGuardConfig `json:"folder_guard,omitempty"`
 }

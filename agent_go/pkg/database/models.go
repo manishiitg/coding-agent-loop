@@ -51,6 +51,8 @@ type ChatSessionConfig struct {
 	EnableWorkspaceAccess      *bool                `json:"enable_workspace_access,omitempty"`      // Workspace access setting
 	WorkflowMetadata           *WorkflowMetadata    `json:"workflow_metadata,omitempty"`            // Workflow-specific metadata (for background workflows)
 	SelectedSkills             []string             `json:"selected_skills,omitempty"`              // Selected skill folder names
+	DelegationMode             string               `json:"delegation_mode,omitempty"`              // Delegation mode: "spawn" or "plan"
+	DelegationTierConfig       json.RawMessage      `json:"delegation_tier_config,omitempty"`       // Delegation tier config (stored as-is)
 }
 
 // LLMConfigForStorage stores LLM config without sensitive API keys

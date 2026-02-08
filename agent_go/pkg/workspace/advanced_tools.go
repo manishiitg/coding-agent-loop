@@ -18,23 +18,18 @@ func shellToolDef() llmtypes.Tool {
 					// It is now hardcoded to true internally in ExecuteShellCommand.
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Shell command to execute. Supports complex commands with pipes, redirects, chaining, environment variables, and wildcards (e.g., 'ls | grep .md', 'cd dir && ls', 'VAR=value command').",
-					},
-					"args": map[string]interface{}{
-						"type":        "array",
-						"items":       map[string]interface{}{"type": "string"},
-						"description": "Command arguments as an array of strings (e.g., ['-l', '-a'] for 'ls -l -a'). These are appended to the command string.",
+						"description": "Shell command to execute as a single string including all arguments. Supports pipes, redirects, chaining, env vars, and wildcards (e.g., 'ls -la | grep .md', 'cat file.txt', 'python3 script.py'). Do NOT wrap with 'sh -c'.",
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
-						"description": "Relative directory path within workspace to execute command (default: root of workspace). Example: 'scripts' resolves to '/app/workspace-docs/scripts'. Sets the current working directory (CWD) for command execution, allowing relative paths in commands to resolve relative to this directory.",
+						"description": "Relative directory path within workspace to execute command. Example: 'scripts' resolves to '/app/workspace-docs/scripts'. Use '.' for workspace root.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",
 						"description": "Timeout in seconds (default: 60, max: 300)",
 					},
 				},
-				"required": []string{"command"},
+				"required": []string{"command", "working_directory"},
 			}),
 		},
 	}
@@ -147,12 +142,46 @@ func GetPDFToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{pdfToolDef()}
 }
 
-// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, web, PDF). No duplication: built from the single-tool getters.
+// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, web, PDF, diff_patch). No duplication: built from the single-tool getters.
 func GetAdvancedToolDefinitions() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 	tools = append(tools, GetShellToolDefinitions()...)
 	tools = append(tools, GetImageToolDefinitions()...)
 	tools = append(tools, GetWebToolDefinitions()...)
 	tools = append(tools, GetPDFToolDefinitions()...)
+	tools = append(tools, GetDiffPatchToolDefinitions()...)
 	return tools
+}
+
+// GetDiffPatchToolDefinitions returns the diff_patch_workspace_file tool definition.
+func GetDiffPatchToolDefinitions() []llmtypes.Tool {
+	return []llmtypes.Tool{diffPatchToolDef()}
+}
+
+func diffPatchToolDef() llmtypes.Tool {
+	return llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "diff_patch_workspace_file",
+			Description: "Apply a unified diff patch to a workspace file. Use execute_shell_command to 'cat' the file first to see its exact content, then generate a diff using 'diff -U0' format with perfect context matching. Use for targeted, surgical changes to specific file sections.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"filepath": map[string]interface{}{
+						"type":        "string",
+						"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'Plans/plan-123/plan.md')",
+					},
+					"diff": map[string]interface{}{
+						"type":        "string",
+						"description": "Unified diff format string to apply:\n\n**FORMAT (like 'diff -U0'):**\n- Headers: --- a/file.md and +++ b/file.md\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (SPACE + content - MUST match file exactly)\n- Removals: '-' prefix (MINUS + content)\n- Additions: '+' prefix (PLUS + content)\n- MUST end with newline character\n\nContext lines start with SPACE ( ), NOT minus (-). Example:\n--- a/plan.md\n+++ b/plan.md\n@@ -5,1 +5,1 @@\n-- [ ] **task-1**: Do something\n+- [x] **task-1**: Do something\n",
+					},
+					"commit_message": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional commit message for version control",
+					},
+				},
+				"required": []string{"filepath", "diff"},
+			}),
+		},
+	}
 }

@@ -599,6 +599,7 @@ type DelegationStartEventData struct {
 	Instruction    string `json:"instruction"`
 	ReasoningLevel string `json:"reasoning_level,omitempty"`
 	ModelID        string `json:"model_id,omitempty"`
+	ToolMode       string `json:"tool_mode,omitempty"`
 	Timestamp      string `json:"timestamp"`
 }
 

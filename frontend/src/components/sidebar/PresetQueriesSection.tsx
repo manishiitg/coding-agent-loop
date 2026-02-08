@@ -61,14 +61,14 @@ export default function PresetQueriesSection({
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
           <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-            Available Presets
+            Available Workflows
           </span>
         </div>
         <div className="flex items-center gap-1">
           <button
             onClick={() => setTriggerAddPreset(true)}
             className="flex items-center justify-center w-6 h-6 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-            title="Add Preset"
+            title="Add Workflow"
           >
             <span className="text-sm font-medium">+</span>
           </button>

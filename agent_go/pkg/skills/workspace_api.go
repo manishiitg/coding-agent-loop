@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 )
 
@@ -21,13 +22,9 @@ func getWorkspaceAPIURL() string {
 
 // WorkspaceFile represents a file from the workspace API
 type WorkspaceFile struct {
-	FilePath    string `json:"filepath"`
-	Folder      string `json:"folder,omitempty"`
-	Type        string `json:"type"` // "file" or "folder"
-	IsDirectory bool   `json:"is_directory,omitempty"`
-	Size        int64  `json:"size,omitempty"`
-	ModifiedAt  string `json:"modified_at,omitempty"`
-	Content     string `json:"content,omitempty"`
+	FilePath string `json:"filepath"`
+	Type    string `json:"type"` // "file" or "folder"
+	Content string `json:"content,omitempty"`
 	Name        string `json:"-"` // Computed from filepath
 	IsDir       bool   `json:"-"` // Computed from type
 }
@@ -200,10 +197,14 @@ func ListFiles(folderPath string) ([]WorkspaceFile, error) {
 			f.Name = parts[len(parts)-1]
 		}
 		// Set IsDir based on type
-		f.IsDir = f.Type == "folder" || f.IsDirectory
+		f.IsDir = f.Type == "folder"
 
 		// Only include direct children of the requested folder
-		if f.Folder == folderPath || (folderPath == "" && f.Folder == "") {
+		parentDir := path.Dir(f.FilePath)
+		if parentDir == "." {
+			parentDir = ""
+		}
+		if parentDir == folderPath || (folderPath == "" && parentDir == "") {
 			files = append(files, f)
 		}
 	}

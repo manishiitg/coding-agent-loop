@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # Caddy Reverse Proxy (Automatic HTTPS)
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - workspace-api
+      - agent
+
+  # Frontend Service
+  frontend:
+    image: mcpagentacr.azurecr.io/mcp-agent-frontend:latest
+    restart: always
+    environment:
+      - VITE_API_BASE_URL=/api
+      - VITE_WORKSPACE_API_URL=/workspace/api
+
+  # Workspace API Service (Needs Privileged Mode for Isolation)
+  workspace-api:
+    image: mcpagentacr.azurecr.io/workspace-api:latest
+    restart: always
+    privileged: true  # CRITICAL: Enables unshare/mount for isolation
+    cap_add:
+      - SYS_ADMIN
+    volumes:
+      # Persistent Workspace Data (Mounted Data Disk)
+      - /data/docs:/app/workspace-docs
+      - /data/workspace-db:/app/data
+    environment:
+      - PORT=8080
+      - DOCS_DIR=/app/workspace-docs
+      - DB_PATH=/app/data/workspace.db
+      - ENABLE_SEMANTIC_SEARCH=false
+
+  # Agent Service
+  agent:
+    image: mcpagentacr.azurecr.io/mcp-agent:latest
+    restart: always
+    # Override CMD to use the injected config file (mcp_config.json -> mcp_servers_clean_user.json)
+    command: ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_clean_user.json", "--db-type", "postgres"]
+    volumes:
+      # Share workspace docs with agent (Mounted Data Disk)
+      - /data/docs:/app/workspace-docs
+      - /data/logs:/app/logs
+      # Persistent Data Directory (for any local file requirements)
+      - /data/agent-db:/app/agent-data
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - WORKSPACE_API_URL=http://workspace-api:8080
+      - LOG_LEVEL=debug
+    depends_on:
+      - workspace-api
+
+volumes:
+  caddy_data:
+  caddy_config:

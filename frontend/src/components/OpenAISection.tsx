@@ -24,7 +24,9 @@ export function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, ap
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
   const [publishError, setPublishError] = useState<string | null>(null)
-  const { availableOpenAIModels, customOpenAIModels, addCustomOpenAIModel, removeCustomOpenAIModel, refreshAvailableLLMs, saveLLM, testAPIKey: testAPIKeyFromStore } = useLLMStore()
+  const { availableOpenAIModels, customOpenAIModels, addCustomOpenAIModel, removeCustomOpenAIModel, refreshAvailableLLMs, saveLLM, testAPIKey: testAPIKeyFromStore, lockedProviders, llmConfigLocked } = useLLMStore()
+  
+  const isLocked = llmConfigLocked || lockedProviders.includes('openai')
 
   useEffect(() => {
     if (config.api_key) setApiKey(config.api_key)
@@ -139,11 +141,22 @@ export function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, ap
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-foreground">OpenAI Configuration</h3>
+        {isLocked && (
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded text-yellow-600 dark:text-yellow-500 text-xs font-medium">
+            <Key className="w-3.5 h-3.5" />
+            Locked by Admin
+          </div>
+        )}
       </div>
       
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-4">Model Selection</h4>
         <div className="space-y-4">
+          {isLocked && (
+            <div className="text-xs text-muted-foreground bg-secondary/30 p-2 rounded border border-border/50 mb-2">
+              Configuration for this provider is managed by your administrator and cannot be changed.
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-muted-foreground mb-2">Primary Model</label>
             <ModelSelector
@@ -152,12 +165,14 @@ export function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, ap
               models={allModels}
               metadata={metadata || []}
               placeholder="Select an OpenAI model"
+              disabled={isLocked}
             />
             <ModelOptionsConfig 
               metadata={currentModelMetadata} 
               options={config.options || {}} 
               temperature={config.temperature}
               onChange={handleOptionsChange}
+              disabled={isLocked}
             />
           </div>
 
@@ -166,86 +181,92 @@ export function OpenAISection({ config, onUpdate, onTestAPIKey, apiKeyStatus, ap
               <Key className="w-4 h-4 text-muted-foreground" />
               <h5 className="text-sm font-medium text-foreground">API Key</h5>
             </div>
-            {apiKey && <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md"><div className="flex items-center gap-2"><CheckCircle className="w-4 h-4" /><span>API key loaded from environment variables</span></div></div>}
+            {apiKey && !isLocked && <div className="text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md"><div className="flex items-center gap-2"><CheckCircle className="w-4 h-4" /><span>API key loaded from environment variables</span></div></div>}
             <div className="space-y-2">
               <div className="flex gap-2">
-                <input type="password" value={apiKey} onChange={(e) => handleAPIKeyChange(e.target.value)} placeholder="Enter your OpenAI API key" className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary" />
-                <Button onClick={() => onTestAPIKey(apiKey, config.model_id, config.options, config.temperature)} disabled={!apiKey.trim() || apiKeyStatus === 'testing'} size="sm" variant="outline">
-                  {apiKeyStatus === 'testing' ? <Loader2 className="w-4 h-4 animate-spin" /> : apiKeyStatus === 'valid' ? <CheckCircle className="w-4 h-4 text-green-500" /> : apiKeyStatus === 'invalid' ? <AlertCircle className="w-4 h-4 text-red-500" /> : 'Test'}
-                </Button>
+                <input type="password" value={apiKey} onChange={(e) => handleAPIKeyChange(e.target.value)} placeholder={isLocked ? "••••••••••••••••" : "Enter your OpenAI API key"} className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary" disabled={isLocked} />
+                {!isLocked && (
+                  <Button onClick={() => onTestAPIKey(apiKey, config.model_id, config.options, config.temperature)} disabled={!apiKey.trim() || apiKeyStatus === 'testing'} size="sm" variant="outline">
+                    {apiKeyStatus === 'testing' ? <Loader2 className="w-4 h-4 animate-spin" /> : apiKeyStatus === 'valid' ? <CheckCircle className="w-4 h-4 text-green-500" /> : apiKeyStatus === 'invalid' ? <AlertCircle className="w-4 h-4 text-red-500" /> : 'Test'}
+                  </Button>
+                )}
               </div>
-              {apiKey && <div className="text-xs text-muted-foreground"><button onClick={() => handleAPIKeyChange('')} className="text-primary hover:underline">Clear and enter new key</button></div>}
-              {apiKeyStatus === 'valid' && <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle className="w-4 h-4" />API key is valid</div>}
-              {apiKeyStatus === 'invalid' && <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'API key is invalid'}</div>}
+              {apiKey && !isLocked && <div className="text-xs text-muted-foreground"><button onClick={() => handleAPIKeyChange('')} className="text-primary hover:underline">Clear and enter new key</button></div>}
+              {!isLocked && apiKeyStatus === 'valid' && <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1"><CheckCircle className="w-4 h-4" />API key is valid</div>}
+              {!isLocked && apiKeyStatus === 'invalid' && <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1"><AlertCircle className="w-4 h-4" />{apiKeyError || 'API key is invalid'}</div>}
             </div>
           </div>
 
-          <div className="border-t border-border pt-4">
-            {isPublishing ? (
-              <div className="space-y-3">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={publishName}
-                    onChange={(e) => { setPublishName(e.target.value); setPublishError(null) }}
-                    placeholder="Enter configuration name..."
-                    className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
-                    autoFocus
-                    onKeyPress={(e) => e.key === 'Enter' && handlePublishToLibrary()}
-                  />
-                  <Button onClick={handlePublishToLibrary} size="sm" disabled={!publishName.trim() || isSubmitting}>
-                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
-                  </Button>
-                  <Button onClick={() => { setIsPublishing(false); setPublishName(''); setPublishError(null) }} size="sm" variant="ghost" disabled={isSubmitting}>Cancel</Button>
+          {!isLocked && (
+            <div className="border-t border-border pt-4">
+              {isPublishing ? (
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={publishName}
+                      onChange={(e) => { setPublishName(e.target.value); setPublishError(null) }}
+                      placeholder="Enter configuration name..."
+                      className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+                      autoFocus
+                      onKeyPress={(e) => e.key === 'Enter' && handlePublishToLibrary()}
+                    />
+                    <Button onClick={handlePublishToLibrary} size="sm" disabled={!publishName.trim() || isSubmitting}>
+                      {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                    </Button>
+                    <Button onClick={() => { setIsPublishing(false); setPublishName(''); setPublishError(null) }} size="sm" variant="ghost" disabled={isSubmitting}>Cancel</Button>
+                  </div>
+                  {publishError && (
+                    <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                      <AlertCircle className="w-4 h-4" />
+                      {publishError}
+                    </div>
+                  )}
                 </div>
-                {publishError && (
-                  <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-                    <AlertCircle className="w-4 h-4" />
-                    {publishError}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <Button 
-                onClick={() => {
-                  setPublishName(generateDefaultName())
-                  setIsPublishing(true)
-                }} 
-                size="sm" 
-                variant="outline"
-                disabled={!config.model_id}
-                className="w-full"
-              >
-                <BookOpen className="w-4 h-4 mr-2" />
-                Publish
-              </Button>
-            )}
-          </div>
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
-        <div className="space-y-3">
-          <div className="flex gap-2">
-            <input type="text" value={newCustomModel} onChange={(e) => setNewCustomModel(e.target.value)} placeholder="Enter custom model ID" className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary" onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()} />
-            <Button onClick={handleAddCustomModel} disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())} size="sm" variant="outline"><Plus className="w-4 h-4" /></Button>
-          </div>
-          {customOpenAIModels.length > 0 && (
-            <div className="space-y-2">
-              <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
-              <div className="space-y-1">
-                {customOpenAIModels.map((model) => (
-                  <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
-                    <span className="text-sm text-foreground font-mono">{model}</span>
-                    <Button onClick={() => handleRemoveCustomModel(model)} size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"><Trash2 className="w-4 h-4" /></Button>
-                  </div>
-                ))}
-              </div>
+              ) : (
+                <Button 
+                  onClick={() => {
+                    setPublishName(generateDefaultName())
+                    setIsPublishing(true)
+                  }} 
+                  size="sm" 
+                  variant="outline"
+                  disabled={!config.model_id}
+                  className="w-full"
+                >
+                  <BookOpen className="w-4 h-4 mr-2" />
+                  Publish
+                </Button>
+              )}
             </div>
           )}
         </div>
       </Card>
+
+      {!isLocked && (
+        <Card className="p-4">
+          <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <input type="text" value={newCustomModel} onChange={(e) => setNewCustomModel(e.target.value)} placeholder="Enter custom model ID" className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary" onKeyPress={(e) => e.key === 'Enter' && handleAddCustomModel()} />
+              <Button onClick={handleAddCustomModel} disabled={!newCustomModel.trim() || allModels.includes(newCustomModel.trim())} size="sm" variant="outline"><Plus className="w-4 h-4" /></Button>
+            </div>
+            {customOpenAIModels.length > 0 && (
+              <div className="space-y-2">
+                <h5 className="text-sm font-medium text-muted-foreground">Custom Models:</h5>
+                <div className="space-y-1">
+                  {customOpenAIModels.map((model) => (
+                    <div key={model} className="flex items-center justify-between bg-muted/50 p-2 rounded-md">
+                      <span className="text-sm text-foreground font-mono">{model}</span>
+                      <Button onClick={() => handleRemoveCustomModel(model)} size="sm" variant="ghost" className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20"><Trash2 className="w-4 h-4" /></Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
     </div>
   )
 }

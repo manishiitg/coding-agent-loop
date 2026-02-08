@@ -742,8 +742,8 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 	// Create a separate LLM logger that writes to llm_debug.log
 	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
 	var v2LoggerForLLM loggerv2.Logger
-	llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
-	if err != nil {
+	                llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "debug", "text", true)
+	                if err != nil {
 		// Fallback to the provided logger if LLM logger creation fails
 		if logger != nil {
 			v2LoggerForLLM = logger

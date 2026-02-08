@@ -17,7 +17,6 @@ type DocumentResponse struct {
 	Data    struct {
 		Filepath string `json:"filepath"`
 		Content  string `json:"content"`
-		Folder   string `json:"folder,omitempty"`
 		Type     string `json:"type,omitempty"`
 		IsImage  bool   `json:"is_image,omitempty"`
 	} `json:"data,omitempty"`
@@ -58,9 +57,6 @@ func (c *Client) ReadWorkspaceFile(ctx context.Context, params ReadWorkspaceFile
 	resultData := map[string]interface{}{
 		"filepath": apiResp.Data.Filepath,
 		"content":  apiResp.Data.Content,
-	}
-	if apiResp.Data.Folder != "" {
-		resultData["folder"] = apiResp.Data.Folder
 	}
 	if apiResp.Data.Type != "" {
 		resultData["type"] = apiResp.Data.Type

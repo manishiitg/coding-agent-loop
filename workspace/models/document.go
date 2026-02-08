@@ -4,15 +4,11 @@ import "time"
 
 // Document represents a markdown document
 type Document struct {
-	FilePath    string     `json:"filepath"`
-	Content     string     `json:"content"` // Always included (empty string for list endpoints, populated for single file reads)
-	Folder      string     `json:"folder,omitempty"`
-	Type        string     `json:"type,omitempty"`         // "file" or "folder"
-	Children    []Document `json:"children,omitempty"`     // For hierarchical structure
-	IsImage     bool       `json:"is_image,omitempty"`     // Whether file is an image
-	Size        int64      `json:"size,omitempty"`         // File size in bytes
-	ModifiedAt  time.Time  `json:"modified_at,omitempty"`  // File modification time
-	IsDirectory bool       `json:"is_directory,omitempty"` // Whether this is a directory
+	FilePath string     `json:"filepath"`
+	Content  string     `json:"content,omitempty"`  // Omitted in list endpoints, populated for single file reads
+	Type     string     `json:"type,omitempty"`     // "file" or "folder"
+	Children []Document `json:"children,omitempty"` // For hierarchical structure
+	IsImage  bool       `json:"is_image,omitempty"` // Whether file is an image
 }
 
 // CreateDocumentRequest represents the request to create a document

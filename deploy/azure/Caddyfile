@@ -1,0 +1,31 @@
+{
+    email your-email@example.com
+}
+
+# Replace with your domain or IP
+mcpagent-vm-v2.swedencentral.cloudapp.azure.com {
+    # Reverse proxy for Workspace API
+    # Maps /workspace/api/... to workspace-api:8080/api/...
+    handle_path /workspace* {
+        reverse_proxy workspace-api:8080
+    }
+
+    # Reverse proxy for Agent API
+    handle /api* {
+        reverse_proxy agent:8000
+    }
+
+    # Reverse proxy for Agent WebSockets
+    handle /ws* {
+        reverse_proxy agent:8000
+    }
+
+    # Reverse proxy for Frontend
+    handle /* {
+        reverse_proxy frontend:80
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+    }
+}

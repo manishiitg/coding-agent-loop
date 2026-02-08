@@ -333,7 +333,7 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 		}
 
 		// Check if it's a directory
-		if fileInfo.IsDirectory {
+		if fileInfo.Type == "folder" {
 			dirsToDelete = append(dirsToDelete, filepath)
 			bo.GetLogger().Info(fmt.Sprintf("📁 Found directory to delete: %s", filepath))
 		} else {
@@ -519,7 +519,7 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 		}
 
 		// Check if it's a directory
-		if !fileInfo.IsDirectory {
+		if fileInfo.Type != "folder" {
 			continue
 		}
 

@@ -364,8 +364,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Construct execution folder path
       const executionPath = `${workspacePath}/runs/${selectedRunFolder}/execution`
 
-      // Refresh files first to ensure the folder exists in the tree
-      fetchFiles().then(() => {
+      // Refresh files scoped to the workflow folder to ensure the execution folder exists in the tree
+      fetchFiles(workspacePath || undefined).then(() => {
         // Small delay to ensure files are loaded before highlighting
         setTimeout(() => {
           highlightFile(executionPath)

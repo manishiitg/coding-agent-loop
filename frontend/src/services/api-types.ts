@@ -160,6 +160,8 @@ export interface LLMDefaultsResponse {
   default_published_llms?: SavedLLM[]
   /** When true, default published LLMs list is locked (no add/delete/edit) */
   default_published_llms_locked?: boolean
+  /** List of provider names that are locked (read-only) because they are fully configured via server env */
+  locked_providers?: string[]
 }
 
 // API Key Validation Request/Response

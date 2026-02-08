@@ -609,9 +609,10 @@ type StreamingAPI struct {
 
 // QueryRequest represents an agent query request
 type QueryRequest struct {
-	Query          string                  `json:"query"`
-	Servers        []string                `json:"servers,omitempty"`
-	EnabledServers []string                `json:"enabled_servers,omitempty"`
+        Query          string                  `json:"query"`
+        Message        string                  `json:"message,omitempty"` // Alias for Query (used by frontend)
+        Servers        []string                `json:"servers,omitempty"`
+                EnabledServers []string                `json:"enabled_servers,omitempty"`
 	SelectedTools  []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
 	Provider       string                  `json:"provider,omitempty"`
 	ModelID        string                  `json:"model_id,omitempty"`
@@ -746,8 +747,16 @@ func runServer(cmd *cobra.Command, args []string) {
 	if agentModel == "" {
 		agentModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Use .env configuration
 	}
-	fmt.Printf("\U0001F916 Agent:   %s | Model: %s\n", agentProvider, agentModel)
-
+	        fmt.Printf("\U0001F916 Agent:   %s | Model: %s\n", agentProvider, agentModel)
+	
+	        // Apply environment overrides to config (ensure Terraform env vars take precedence)
+	        if val := os.Getenv("AGENT_PROVIDER"); val != "" {
+	                config.Provider = val
+	        }
+	        // Also apply model override if set (and not just falling back to defaults)
+	        if agentModel != "" && (os.Getenv("AGENT_MODEL") != "" || os.Getenv("BEDROCK_PRIMARY_MODEL") != "") {
+	                config.ModelID = agentModel
+	        }
 	// Show cross-provider fallback configuration
 	bedrockOpenAIFallback := os.Getenv("BEDROCK_OPENAI_FALLBACK_MODELS")
 	if bedrockOpenAIFallback != "" {
@@ -778,6 +787,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Printf("📊 Tracing: %s\n", tracingProvider)
 
 	fmt.Printf("🌐 CORS Origins: %v\n", config.CORSOrigins)
+	fmt.Printf("🔒 LLM Config Locked: %v (Env: %s)\n", isGlobalLLMConfigLocked(), os.Getenv("LLM_CONFIG_LOCKED"))
+	fmt.Printf("📋 Supported Providers: %s\n", os.Getenv("SUPPORTED_LLM_PROVIDERS"))
 	fmt.Printf("📁 Config: %s\n", config.MCPConfigPath)
 
 	// Create streaming API server
@@ -954,8 +965,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Public shared session access (no auth required)
 	apiRouter.HandleFunc("/shared/{share_token}", api.handleGetSharedSession).Methods("GET")
-	apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
+	        apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
+	        apiRouter.HandleFunc("/chat", api.handleQuery).Methods("POST", "OPTIONS")
+	                apiRouter.HandleFunc("/chat/stream", api.handleQuery).Methods("POST", "OPTIONS")
+	                apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
@@ -1179,11 +1192,11 @@ func (api *StreamingAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 		tracingProvider = "noop"
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status": "healthy",
-		"time":   time.Now(),
-		"config": map[string]interface{}{
-			"provider":         api.config.Provider,
+	        json.NewEncoder(w).Encode(map[string]interface{}{
+	                "status":  "healthy",
+	                "time":    time.Now(),
+	                "version": "1.0.0",
+	                "config": map[string]interface{}{			"provider":         api.config.Provider,
 			"model":            api.config.ModelID,
 			"temperature":      api.config.Temperature,
 			"max_turns":        api.config.MaxTurns,
@@ -1258,9 +1271,41 @@ func getSupportedProviders() []string {
 	return supported
 }
 
-// isLLMConfigLocked returns true when LLM configuration is locked by admin (server uses env only).
-func isLLMConfigLocked() bool {
-	return os.Getenv("LLM_CONFIG_LOCKED") == "true" || os.Getenv("LLM_CONFIG_LOCKED") == "1"
+// isGlobalLLMConfigLocked returns true if all LLM configuration is locked
+func isGlobalLLMConfigLocked() bool {
+	val := os.Getenv("LLM_CONFIG_LOCKED")
+	return val == "true" || val == "1"
+}
+
+// getLockedProviders returns a list of locked providers from the environment variable
+func getLockedProviders() []string {
+	val := os.Getenv("LLM_CONFIG_LOCKED")
+	if val == "true" || val == "1" {
+		return []string{"all"}
+	}
+	if val == "" || val == "false" || val == "0" {
+		return []string{}
+	}
+	// Split by comma
+	parts := strings.Split(val, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(strings.ToLower(parts[i]))
+	}
+	return parts
+}
+
+// isProviderLocked returns true if the specific provider is locked
+func isProviderLocked(provider string) bool {
+	if provider == "" {
+		return false
+	}
+	locked := getLockedProviders()
+	for _, p := range locked {
+		if p == "all" || p == strings.ToLower(provider) {
+			return true
+		}
+	}
+	return false
 }
 
 // isAllowedDefaultLLM returns true when (provider, modelID) is in the default published LLMs list (for locked mode).
@@ -1269,6 +1314,20 @@ func isAllowedDefaultLLM(provider, modelID string) bool {
 		return false
 	}
 	defaults := llm.GetLLMDefaults()
+	// Only restrict to defaults if the *specific* provider is locked
+	if !isProviderLocked(provider) {
+		return true
+	}
+
+	// Allow any model listed in AvailableModels for this provider
+	if models, ok := defaults.AvailableModels[provider]; ok {
+		for _, m := range models {
+			if m == modelID {
+				return true
+			}
+		}
+	}
+
 	list := getDefaultPublishedLLMs(true, defaults.PrimaryConfig)
 	for _, entry := range list {
 		p, _ := entry["provider"].(string)
@@ -1365,8 +1424,9 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	if s := os.Getenv("DEFAULT_PUBLISHED_LLMS"); s != "" {
 		var list []map[string]interface{}
 		if err := json.Unmarshal([]byte(s), &list); err == nil && len(list) > 0 {
-			if locked {
-				for i := range list {
+			for i := range list {
+				provider, _ := list[i]["provider"].(string)
+				if locked || isProviderLocked(provider) {
 					stripEntrySecrets(list[i])
 				}
 			}
@@ -1378,8 +1438,9 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 		if data, err := os.ReadFile(path); err == nil {
 			var list []map[string]interface{}
 			if err := json.Unmarshal(data, &list); err == nil && len(list) > 0 {
-				if locked {
-					for i := range list {
+				for i := range list {
+					provider, _ := list[i]["provider"].(string)
+					if locked || isProviderLocked(provider) {
 						stripEntrySecrets(list[i])
 					}
 				}
@@ -1387,7 +1448,37 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 			}
 		}
 	}
-	// 3) Build one entry from primary config
+
+	// 3) Auto-generate defaults from AvailableModels for locked providers
+	var entries []map[string]interface{}
+	defaults := llm.GetLLMDefaults()
+	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex"}
+
+	for _, p := range providers {
+		// If provider is locked (or global lock is on), include its available models
+		if isProviderLocked(p) || locked {
+			if models, ok := defaults.AvailableModels[p]; ok {
+				for _, m := range models {
+					entry := map[string]interface{}{
+						"id":       "default-" + p + "-" + strings.ReplaceAll(m, "/", "-"),
+						"name":     m, // Simple name
+						"provider": p,
+						"model_id": m,
+					}
+					// Secrets are stripped by default since we don't add them here
+					entries = append(entries, entry)
+				}
+			}
+		}
+	}
+
+	if len(entries) > 0 {
+		// Also ensure the primary config is included if not already
+		// (Optional, but good for safety. For now, let's just return the generated list as it covers available models)
+		return entries
+	}
+
+	// 4) Fallback: Build one entry from primary config if nothing else found
 	var provider, modelID string
 	if pc, ok := primaryConfig.(map[string]interface{}); ok {
 		if p, _ := pc["provider"].(string); p != "" {
@@ -1409,8 +1500,10 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 		"provider": provider,
 		"model_id": modelID,
 	}
-	if !locked {
-		// Only include api_key when not locked (server still won't send it in locked response path)
+	
+	isLocked := locked || isProviderLocked(provider)
+	
+	if !isLocked {
 		if key := os.Getenv("OPENROUTER_API_KEY"); provider == "openrouter" && key != "" {
 			entry["api_key"] = key
 		} else if key := os.Getenv("OPENAI_API_KEY"); provider == "openai" && key != "" {
@@ -1423,12 +1516,13 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 }
 
 // handleGetLLMDefaults returns default LLM configurations from environment variables.
-// When LLM_CONFIG_LOCKED=true, api_key and endpoint (e.g. Azure tenant URL) are stripped from all configs and default_published_llms.
+// When LLM_CONFIG_LOCKED=true (or specific provider is locked), api_key and endpoint are stripped.
 func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Received request for LLM defaults")
-
 	defaults := llm.GetLLMDefaults()
-	locked := isLLMConfigLocked()
+
+	globalLocked := isGlobalLLMConfigLocked()
+	lockedProviders := getLockedProviders()
 
 	// Build response (same shape as before)
 	response := map[string]interface{}{
@@ -1436,31 +1530,50 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"openrouter_config":   defaults.OpenrouterConfig,
 		"bedrock_config":      defaults.BedrockConfig,
 		"openai_config":       defaults.OpenaiConfig,
+		"anthropic_config":    defaults.AnthropicConfig,
+		"azure_config":        defaults.AzureConfig,
 		"available_models":    defaults.AvailableModels,
 		"supported_providers": getSupportedProviders(),
+		"locked_providers":    lockedProviders,
 	}
 
-	if locked {
-		// Marshal then unmarshal to map so we can strip api_key from any nested structure
-		bytes, err := json.Marshal(response)
-		if err != nil {
-			log.Printf("Failed to marshal LLM defaults: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
+	// Helper to safely strip secrets from a specific config map
+	stripSecrets := func(configKey string) {
+		if cfg, ok := response[configKey].(map[string]interface{}); ok {
+			// Marshal/unmarshal to deep copy/clean if needed, but direct map manipulation is fine for simple removal
+			delete(cfg, "api_key")
+			delete(cfg, "endpoint")
+			response[configKey] = cfg
 		}
-		var clean map[string]interface{}
-		if err := json.Unmarshal(bytes, &clean); err != nil {
-			log.Printf("Failed to unmarshal LLM defaults: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		stripSecretsFromMap(clean)
-		response = clean
 	}
 
-	response["llm_config_locked"] = locked
-	response["default_published_llms"] = getDefaultPublishedLLMs(locked, defaults.PrimaryConfig)
-	response["default_published_llms_locked"] = locked
+	// Strip secrets based on locking status
+	if globalLocked {
+		// Strip from all
+		stripSecretsFromMap(response)
+	} else {
+		// Strip from specifically locked providers
+		for _, p := range lockedProviders {
+			switch p {
+			case "openrouter":
+				stripSecrets("openrouter_config")
+			case "bedrock":
+				stripSecrets("bedrock_config")
+			case "openai":
+				stripSecrets("openai_config")
+			case "anthropic":
+				stripSecrets("anthropic_config")
+			case "azure":
+				stripSecrets("azure_config")
+			case "vertex":
+				stripSecrets("vertex_config")
+			}
+		}
+	}
+
+	response["llm_config_locked"] = globalLocked
+	response["default_published_llms"] = getDefaultPublishedLLMs(globalLocked, defaults.PrimaryConfig)
+	response["default_published_llms_locked"] = globalLocked
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -1485,8 +1598,7 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 
 // Query endpoint - handles POST requests to start agent streaming
 func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
+        if r.Method == "OPTIONS" {		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -1500,9 +1612,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate required fields
-	if req.Query == "" {
-		errorMsg := "Query is required"
+	        // Handle alias: Map Message to Query if Query is empty
+	        if req.Query == "" && req.Message != "" {
+	                req.Query = req.Message
+	        }
+	
+	        // Validate required fields
+	        if req.Query == "" {		errorMsg := "Query is required"
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
 	}
@@ -1642,7 +1758,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// If LLM config is locked and not provided by frontend, use server defaults from env
-			if config.LLMConfig == nil && isLLMConfigLocked() {
+			if config.LLMConfig == nil && isGlobalLLMConfigLocked() {
 				provider, modelID := getPrimaryProviderAndModelFromDefaults()
 				if provider != "" && modelID != "" {
 					config.LLMConfig = &database.LLMConfigForStorage{
@@ -1786,7 +1902,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var finalModelID string
 	var fallbacks []agent.FallbackModel
 
-	if isLLMConfigLocked() {
+	if isGlobalLLMConfigLocked() {
 		// Locked mode: use server env for API keys; allow provider/model only if in default_published_llms
 		if req.LLMConfig != nil && req.LLMConfig.Primary.Provider != "" && req.LLMConfig.Primary.ModelID != "" {
 			p, m := req.LLMConfig.Primary.Provider, req.LLMConfig.Primary.ModelID
@@ -2592,18 +2708,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				return nil
 			}(),
-			// Convert API keys from request to LLM format (when locked, use env only)
+			// Convert API keys from request to LLM format (respecting locked providers)
 			APIKeys: func() *llm.ProviderAPIKeys {
-				if isLLMConfigLocked() {
-					return buildProviderAPIKeysFromEnv()
-				}
+				// 1. Start with keys from request (if available)
+				llmKeys := &llm.ProviderAPIKeys{}
 				if req.LLMConfig != nil && req.LLMConfig.APIKeys != nil {
-					llmKeys := &llm.ProviderAPIKeys{
-						OpenRouter: req.LLMConfig.APIKeys.OpenRouter,
-						OpenAI:     req.LLMConfig.APIKeys.OpenAI,
-						Anthropic:  req.LLMConfig.APIKeys.Anthropic,
-						Vertex:     req.LLMConfig.APIKeys.Vertex,
-					}
+					llmKeys.OpenRouter = req.LLMConfig.APIKeys.OpenRouter
+					llmKeys.OpenAI = req.LLMConfig.APIKeys.OpenAI
+					llmKeys.Anthropic = req.LLMConfig.APIKeys.Anthropic
+					llmKeys.Vertex = req.LLMConfig.APIKeys.Vertex
+					
 					if req.LLMConfig.APIKeys.Bedrock != nil {
 						llmKeys.Bedrock = &llm.BedrockConfig{
 							Region: req.LLMConfig.APIKeys.Bedrock.Region,
@@ -2617,9 +2731,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							Region:     req.LLMConfig.APIKeys.Azure.Region,
 						}
 					}
-					return llmKeys
 				}
-				return nil
+
+				// 2. Get keys from environment
+				envKeys := buildProviderAPIKeysFromEnv()
+				globalLocked := isGlobalLLMConfigLocked()
+
+				// 3. Override if provider is locked or global lock is on
+				if globalLocked || isProviderLocked("openrouter") {
+					llmKeys.OpenRouter = envKeys.OpenRouter
+				}
+				if globalLocked || isProviderLocked("openai") {
+					llmKeys.OpenAI = envKeys.OpenAI
+				}
+				if globalLocked || isProviderLocked("anthropic") {
+					llmKeys.Anthropic = envKeys.Anthropic
+				}
+				if globalLocked || isProviderLocked("vertex") {
+					llmKeys.Vertex = envKeys.Vertex
+				}
+				if globalLocked || isProviderLocked("bedrock") {
+					llmKeys.Bedrock = envKeys.Bedrock
+				}
+				if globalLocked || isProviderLocked("azure") {
+					llmKeys.Azure = envKeys.Azure
+				}
+
+				return llmKeys
 			}(),
 			// Context summarization configuration
 			// Priority: Request > Environment Variable > Default (matches orchestrator defaults)
@@ -4337,10 +4475,34 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		serverName = strings.Join(parentReq.Servers, ",")
 	}
 
-	// Convert API keys from parent request to LLM format (when locked, use env only)
-	var apiKeys *llm.ProviderAPIKeys
-	if isLLMConfigLocked() {
-		apiKeys = buildProviderAPIKeysFromEnv()
+	// Convert API keys from parent request to LLM format (respecting locked providers)
+	var apiKeys *llm.ProviderAPIKeys = &llm.ProviderAPIKeys{}
+	
+	// 1. Start with keys from parent request
+	if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
+		apiKeys.OpenRouter = parentReq.LLMConfig.APIKeys.OpenRouter
+		apiKeys.OpenAI = parentReq.LLMConfig.APIKeys.OpenAI
+		apiKeys.Anthropic = parentReq.LLMConfig.APIKeys.Anthropic
+		apiKeys.Vertex = parentReq.LLMConfig.APIKeys.Vertex
+		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
+			apiKeys.Bedrock = &llm.BedrockConfig{Region: parentReq.LLMConfig.APIKeys.Bedrock.Region}
+		}
+		if parentReq.LLMConfig.APIKeys.Azure != nil {
+			apiKeys.Azure = &llm.AzureAPIConfig{
+				Endpoint:   parentReq.LLMConfig.APIKeys.Azure.Endpoint,
+				APIKey:     parentReq.LLMConfig.APIKeys.Azure.APIKey,
+				APIVersion: parentReq.LLMConfig.APIKeys.Azure.APIVersion,
+				Region:     parentReq.LLMConfig.APIKeys.Azure.Region,
+			}
+		}
+	}
+
+	// 2. Override if global lock is on OR specific provider is locked
+	envKeys := buildProviderAPIKeysFromEnv()
+	globalLocked := isGlobalLLMConfigLocked()
+
+	if globalLocked {
+		// Force single provider if global lock is on
 		provStr, modelStr := getPrimaryProviderAndModelFromDefaults()
 		supported := getSupportedProviders()
 		if len(supported) > 0 {
@@ -4355,26 +4517,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 		provider = llm.Provider(provStr)
 		modelID = modelStr
-	} else if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
-		apiKeys = &llm.ProviderAPIKeys{
-			OpenRouter: parentReq.LLMConfig.APIKeys.OpenRouter,
-			OpenAI:     parentReq.LLMConfig.APIKeys.OpenAI,
-			Anthropic:  parentReq.LLMConfig.APIKeys.Anthropic,
-			Vertex:     parentReq.LLMConfig.APIKeys.Vertex,
-		}
-		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
-			apiKeys.Bedrock = &llm.BedrockConfig{
-				Region: parentReq.LLMConfig.APIKeys.Bedrock.Region,
-			}
-		}
-		if parentReq.LLMConfig.APIKeys.Azure != nil {
-			apiKeys.Azure = &llm.AzureAPIConfig{
-				Endpoint:   parentReq.LLMConfig.APIKeys.Azure.Endpoint,
-				APIKey:     parentReq.LLMConfig.APIKeys.Azure.APIKey,
-				APIVersion: parentReq.LLMConfig.APIKeys.Azure.APIVersion,
-				Region:     parentReq.LLMConfig.APIKeys.Azure.Region,
-			}
-		}
+		// Use all env keys for simplicity/security in global lock mode
+		apiKeys = envKeys
+	} else {
+		// Partial locking: override keys for locked providers
+		if isProviderLocked("openrouter") { apiKeys.OpenRouter = envKeys.OpenRouter }
+		if isProviderLocked("openai") { apiKeys.OpenAI = envKeys.OpenAI }
+		if isProviderLocked("anthropic") { apiKeys.Anthropic = envKeys.Anthropic }
+		if isProviderLocked("vertex") { apiKeys.Vertex = envKeys.Vertex }
+		if isProviderLocked("bedrock") { apiKeys.Bedrock = envKeys.Bedrock }
+		if isProviderLocked("azure") { apiKeys.Azure = envKeys.Azure }
 	}
 
 	// Get user ID from context for per-user OAuth token isolation

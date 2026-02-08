@@ -9,6 +9,7 @@ import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { ChatHeader } from '../ChatHeader'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
 import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/useRunningWorkflowsStore'
+import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
 
@@ -255,6 +256,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
   // Track the previous preset ID for auto-minimize on preset switch
   const previousPresetIdRef = useRef<string | null>(null)
+  // --- Workspace fetch optimization ---
+  // When the workspace panel is minimized, we skip fetchFiles() calls entirely and set a
+  // "stale" flag. When the user reopens the workspace, a single fetchFiles() catches up.
+  // This avoids wasted ~2MB fetches while the panel is hidden.
+  const workspaceStaleRef = useRef(false)
+  // Debounce timer: step_progress_updated events fire rapidly during execution — coalesce
+  // multiple events into a single fetchFiles() call (500ms window)
+  const fetchFilesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get selected run folder and workspace functions (defined early for use in useEffect)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
@@ -263,6 +272,28 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
   const variablesManifest = useWorkflowStore(state => state.variablesManifest)
   const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
+  // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
+  const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
+
+  // Debounced fetchFiles: coalesces rapid step_progress_updated events into one fetch
+  const debouncedFetchFiles = useCallback((folder?: string) => {
+    console.log('[WORKSPACE_DEBUG] debouncedFetchFiles queued with folder:', folder)
+    if (fetchFilesTimerRef.current) clearTimeout(fetchFilesTimerRef.current)
+    fetchFilesTimerRef.current = setTimeout(() => {
+      fetchFilesTimerRef.current = null
+      console.log('[WORKSPACE_DEBUG] debouncedFetchFiles FIRING with folder:', folder)
+      fetchFiles(folder).catch(err =>
+        logger.error('WorkflowLayout', 'Failed to refresh workspace files:', err)
+      )
+    }, 500)
+  }, [fetchFiles])
+
+  // Clean up debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (fetchFilesTimerRef.current) clearTimeout(fetchFilesTimerRef.current)
+    }
+  }, [])
 
   // Get active workflow preset
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -291,8 +322,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
   useEffect(() => {
     if (selectedRunFolder && selectedRunFolder !== 'new' && workspacePath) {
+      // Skip fetch when workspace panel is minimized — no point fetching files the user
+      // can't see. Mark stale so we catch up when they reopen the panel.
+      if (workspaceMinimized) {
+        workspaceStaleRef.current = true
+        return
+      }
       // Fetch files first to ensure folder exists, then expand
-      fetchFiles().then(() => {
+      fetchFiles(workspacePath || undefined).then(() => {
         // Collapse all other iteration folders first
         const workspaceStore = useWorkspaceStore.getState()
         const expandedFolders = workspaceStore.expandedFolders
@@ -372,7 +409,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         logger.error('WorkflowLayout', 'Failed to fetch files for auto-expansion:', error)
       })
     }
-  }, [selectedRunFolder, selectedGroupIds, workspacePath, variablesManifest, fetchFiles, setExpandedFolders])
+  }, [selectedRunFolder, selectedGroupIds, workspacePath, variablesManifest, fetchFiles, setExpandedFolders, workspaceMinimized])
 
   // Callback ref that gets called when ChatArea mounts/unmounts
   const chatAreaCallbackRef = useCallback((node: ChatAreaRef | null) => {
@@ -511,17 +548,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
           // Auto-focus disabled - running step name is now shown in StepLegend instead
           // This prevents the canvas from jumping around during workflow execution
-          
-          // Refresh workspace files to show new execution files
-          fetchFiles().catch((err) => {
-            logger.error('WorkflowLayout', 'Failed to refresh workspace files:', err)
-          })
+
+          // Refresh workspace files to show new execution files.
+          // Optimization: skip when workspace is minimized (mark stale for later),
+          // and debounce when visible to avoid N fetches for N rapid events.
+          if (workspaceMinimized) {
+            workspaceStaleRef.current = true
+          } else {
+            debouncedFetchFiles(workspacePath || undefined)
+          }
           
           lastProcessedStepProgressIndexRef.current = i
         }
       }
     }
-  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, fetchFiles, updateStepProgressFromEvent, plan])
+  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, debouncedFetchFiles, updateStepProgressFromEvent, plan, workspaceMinimized])
+
+  // Catch-up fetch: when the user reopens the workspace panel after it was minimized
+  // during active execution, we do a single fetchFiles() to sync up with any files that
+  // were created/modified while the panel was hidden.
+  useEffect(() => {
+    if (!workspaceMinimized && workspaceStaleRef.current) {
+      workspaceStaleRef.current = false
+      fetchFiles(workspacePath || undefined).catch(err =>
+        logger.error('WorkflowLayout', 'Failed to refresh workspace files on reopen:', err)
+      )
+    }
+  }, [workspaceMinimized, fetchFiles, workspacePath])
 
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)

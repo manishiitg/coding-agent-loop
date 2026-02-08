@@ -1,0 +1,54 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+disk_setup:
+  /dev/disk/azure/scsi1/lun0:
+    table_type: gpt
+    layout: true
+    overwrite: false
+
+fs_setup:
+  - label: data_disk
+    filesystem: ext4
+    device: /dev/disk/azure/scsi1/lun0
+    partition: auto
+
+mounts:
+  - [ /dev/disk/azure/scsi1/lun0-part1, /data, "auto", "defaults,nofail", "0", "2" ]
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - software-properties-common
+  - gnupg
+  - lsb-release
+
+write_files:
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+
+runcmd:
+  # Install Docker
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io
+  # Allow default user to run docker
+  - usermod -aG docker appuser
+  # Persistent data permissions
+  - mkdir -p /data/docs /data/workspace-db /data/agent-db /data/logs
+  - chown -R appuser:appuser /data
+  # Install Docker Compose (plugin)
+  - apt-get install -y docker-compose-plugin
+  # Create app directory
+  - mkdir -p /home/appuser/mcp-agent
+  - chown appuser:appuser /home/appuser/mcp-agent

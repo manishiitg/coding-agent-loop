@@ -33,6 +33,7 @@ interface ConversationData {
 
 interface ConversationViewerProps {
   content: string // Raw JSON string
+  searchQuery?: string
 }
 
 // Role-based styling configuration
@@ -287,7 +288,7 @@ const MessageDisplay: React.FC<{
 }
 
 // Main ConversationViewer component
-export const ConversationViewer: React.FC<ConversationViewerProps> = ({ content }) => {
+export const ConversationViewer: React.FC<ConversationViewerProps> = ({ content, searchQuery }) => {
   const [showRawJson, setShowRawJson] = useState(false)
 
   // Parse the conversation JSON
@@ -302,6 +303,26 @@ export const ConversationViewer: React.FC<ConversationViewerProps> = ({ content 
       return { messages: null, parseError: `Failed to parse conversation: ${e}` }
     }
   }, [content])
+
+  // Filter messages based on search query
+  const filteredMessages = useMemo(() => {
+    if (!messages || !searchQuery) return messages
+    const lowerQuery = searchQuery.toLowerCase()
+    
+    return messages.filter(msg => {
+      // Check if any part matches
+      return msg.Parts.some(part => {
+        if (part.Text?.toLowerCase().includes(lowerQuery)) return true
+        if (part.FunctionCall) {
+          if (part.FunctionCall.Name.toLowerCase().includes(lowerQuery)) return true
+          if (part.FunctionCall.Arguments.toLowerCase().includes(lowerQuery)) return true
+        }
+        if (part.Content?.toLowerCase().includes(lowerQuery)) return true
+        if (part.Name?.toLowerCase().includes(lowerQuery)) return true
+        return false
+      })
+    })
+  }, [messages, searchQuery])
 
   // If parsing failed, show raw JSON with error message
   if (parseError || !messages) {
@@ -336,10 +357,15 @@ export const ConversationViewer: React.FC<ConversationViewerProps> = ({ content 
           {content}
         </pre>
       ) : (
-        <div className="max-h-80 overflow-y-auto pr-1">
-          {messages.map((message, index) => (
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
+          {filteredMessages?.map((message, index) => (
             <MessageDisplay key={index} message={message} index={index} />
           ))}
+          {filteredMessages?.length === 0 && searchQuery && (
+             <div className="text-center py-8 text-muted-foreground text-xs italic">
+               No messages match "{searchQuery}"
+             </div>
+          )}
         </div>
       )}
     </div>

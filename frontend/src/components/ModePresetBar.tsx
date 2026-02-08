@@ -148,13 +148,13 @@ export const ModePresetBar: React.FC = () => {
 
   const handleDeletePreset = useCallback(async (presetId: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (confirm('Are you sure you want to delete this workflow preset? This action cannot be undone.')) {
+    if (confirm('Are you sure you want to delete this workflow? This action cannot be undone.')) {
       try {
         await deletePreset(presetId)
         setShowPresetDropdown(false)
       } catch (error) {
         console.error('Failed to delete preset:', error)
-        alert('Failed to delete workflow preset. Please try again.')
+        alert('Failed to delete workflow. Please try again.')
       }
     }
   }, [deletePreset])
@@ -169,7 +169,7 @@ export const ModePresetBar: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to duplicate preset:', error)
-      alert('Failed to duplicate preset. Please try again.')
+      alert('Failed to duplicate workflow. Please try again.')
     }
   }, [duplicatePreset, handlePresetClick])
 
@@ -336,7 +336,7 @@ export const ModePresetBar: React.FC = () => {
                             <>
                               <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
                               <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
-                                Select Preset
+                                Select Workflow
                               </span>
                             </>
                           )}
@@ -352,7 +352,7 @@ export const ModePresetBar: React.FC = () => {
                               setWorkspaceMinimized(true)
                             }}
                             className="px-2 py-1 border-l border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors"
-                            title="Edit preset"
+                            title="Edit workflow"
                           >
                             <Settings className="w-3 h-3 text-gray-400" />
                           </button>
@@ -370,7 +370,7 @@ export const ModePresetBar: React.FC = () => {
                       {showPresetDropdown && (
                         <div className="preset-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50">
                           <div className="p-2 space-y-1 max-h-96 overflow-y-auto">
-                            {/* Add New Preset Option */}
+                            {/* Add New Workflow Option */}
                             <button
                               onClick={() => {
                                 setEditingPreset(null)
@@ -382,25 +382,25 @@ export const ModePresetBar: React.FC = () => {
                             >
                               <div className="flex items-center gap-2">
                                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                                <span className="font-medium">+ Add New Preset</span>
+                                <span className="font-medium">+ Add Workflow</span>
                               </div>
                             </button>
 
                             {/* Loading state */}
                             {presetsLoading && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
-                                Loading presets...
+                                Loading workflows...
                               </div>
                             )}
 
-                            {/* No presets message */}
+                            {/* No workflows message */}
                             {!presetsLoading && presetsForMode.length === 0 && (
                               <div className="p-2 text-sm text-gray-500 dark:text-gray-400 text-center">
-                                No workflow presets available. Create one to get started.
+                                No workflows available. Create one to get started.
                               </div>
                             )}
 
-                            {/* Available Presets */}
+                            {/* Available Workflows */}
                             {!presetsLoading && presetsForMode.length > 0 && presetsForMode
                               .map((preset: CustomPreset | PredefinedPreset) => (
                                 <div key={preset.id} className="flex items-center gap-1">
@@ -436,7 +436,7 @@ export const ModePresetBar: React.FC = () => {
                                             setWorkspaceMinimized(true)
                                           }}
                                           className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                                          title="Edit preset"
+                                          title="Edit workflow"
                                         >
                                           <Settings className="w-3 h-3" />
                                         </button>
@@ -444,14 +444,14 @@ export const ModePresetBar: React.FC = () => {
                                       <button
                                         onClick={(e) => handleDuplicatePreset(preset.id, e)}
                                         className="p-1 rounded hover:bg-blue-100 dark:hover:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
-                                        title="Duplicate preset"
+                                        title="Duplicate workflow"
                                       >
                                         <Copy className="w-3 h-3" />
                                       </button>
                                       <button
                                         onClick={(e) => handleDeletePreset(preset.id, e)}
                                         className="p-1 rounded hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
-                                        title="Delete workflow preset"
+                                        title="Delete workflow"
                                       >
                                         <Trash2 className="w-3 h-3" />
                                       </button>

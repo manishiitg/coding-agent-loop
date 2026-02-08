@@ -1,3 +1,4 @@
+console.log('Cache bust: 2026-02-08-150000');
 import axios from 'axios'
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -81,7 +82,7 @@ export type {
 } from './api-types'
 
 // Resolve API base URL: use build-time env if set; in production (non-localhost) use same origin so it works even with cached builds
-function getApiBaseUrl(): string {
+export function getApiBaseUrl(): string {
   const env = import.meta.env.VITE_API_BASE_URL
   if (env) return env
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return ''

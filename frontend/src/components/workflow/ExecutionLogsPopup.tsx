@@ -21,7 +21,8 @@ import {
   Filter,
   RefreshCw,
   ListTodo,
-  Archive
+  Archive,
+  Search
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { ExecutionLogsResponse } from '../../services/api-types'
@@ -216,6 +217,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
   const [expandedArchived, setExpandedArchived] = useState<Set<string>>(new Set())
   const [selectedRunFolder, setSelectedRunFolder] = useState<string>(initialRunFolder || '')
+  const [stepSearchQueries, setStepSearchQueries] = useState<Record<string, string>>({})
   
   // State for inline file viewing
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
@@ -361,21 +363,45 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const renderStepContent = (stepId: string, stepLogs: any) => {
       const validations = stepLogs.validations || []
+      const searchQuery = stepSearchQueries[stepId] || ''
+      
+      const matchesSearch = (item: unknown) => {
+        if (!searchQuery) return true
+        return JSON.stringify(item).toLowerCase().includes(searchQuery.toLowerCase())
+      }
       
       return (
         <div className="border-t border-border divide-y divide-border">
+          {/* Local Search Input */}
+          <div className="px-4 py-2 bg-muted/10 border-b border-border flex items-center gap-2 sticky top-0 z-10 backdrop-blur-sm">
+            <Search className="w-3.5 h-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search logs in this step..."
+              value={searchQuery}
+              onChange={(e) => setStepSearchQueries(prev => ({ ...prev, [stepId]: e.target.value }))}
+              className="text-xs bg-transparent border-none focus:outline-none focus:ring-0 w-full placeholder:text-muted-foreground/70 text-foreground"
+              autoFocus
+            />
+            {searchQuery && (
+                <button onClick={() => setStepSearchQueries(prev => { const n = {...prev}; delete n[stepId]; return n })} className="text-muted-foreground hover:text-foreground p-1">
+                    <X className="w-3 h-3" />
+                </button>
+            )}
+          </div>
+
           {/* Step Metadata (Description & Success Criteria) */}
           <StepMetadata 
             description={stepLogs.description} 
             successCriteria={stepLogs.success_criteria}
           />
           {/* Executions Section */}
-          {stepLogs.executions.length > 0 && (
+          {stepLogs.executions.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-background">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Execution Logs</h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.executions.map((exec: any, idx: number) => {
+                {stepLogs.executions.filter(matchesSearch).map((exec: any, idx: number) => {
                   const execId = `${stepId}-exec-${exec.attempt}-${exec.iteration}`
                   const isExecExpanded = expandedExecutions.has(execId)
                   const result = exec.content?.execution_result
@@ -432,7 +458,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                 Conversation History
                               </div>
                               {fileContents[exec.conversation_path] ? (
-                                <ConversationViewer content={fileContents[exec.conversation_path]} />
+                                <ConversationViewer content={fileContents[exec.conversation_path]} searchQuery={searchQuery} />
                               ) : (
                                 <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
                                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -443,11 +469,11 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                           )}
 
                           <div className="font-semibold text-foreground mb-1">Execution Result:</div>
-                          <div className="max-h-60 overflow-y-auto mb-3">
+                          <div className="max-h-[60vh] overflow-y-auto mb-3">
                             <MarkdownRenderer content={result || ''} className="!text-[11px] [&_p]:!text-[11px] [&_li]:!text-[11px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_code]:!text-[10px]" />
                           </div>
                           <div className="font-semibold text-foreground mb-1">Full JSON:</div>
-                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-40 overflow-y-auto">
+                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto">
                             {JSON.stringify(exec.content, null, 2)}
                           </pre>
                         </div>
@@ -460,7 +486,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Step Output Section */}
-          {(stepLogs.output_content || stepLogs.context_output) && (
+          {(stepLogs.output_content || stepLogs.context_output) && (!searchQuery || matchesSearch(stepLogs.output_content)) && (
             <div className="p-4 bg-muted/30">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <FileText className="w-3.5 h-3.5" />
@@ -471,7 +497,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               </h4>
               {stepLogs.output_content ? (
                 <div className="bg-background rounded border border-border overflow-hidden">
-                  <div className="p-3 max-h-64 overflow-auto">
+                  <div className="p-3 max-h-[60vh] overflow-auto">
                     {stepLogs.output_content.is_json ? (
                       <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words">
                         {JSON.stringify(stepLogs.output_content.content, null, 2)}
@@ -493,7 +519,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Artifacts Section */}
-          {stepLogs.artifacts && stepLogs.artifacts.length > 0 && (
+          {stepLogs.artifacts && stepLogs.artifacts.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-gray-50 dark:bg-gray-900/30">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <FileText className="w-3.5 h-3.5" />
@@ -501,7 +527,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               </h4>
               <div className="space-y-2">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.artifacts.map((artifact: any, idx: number) => {
+                {stepLogs.artifacts.filter(matchesSearch).map((artifact: any, idx: number) => {
                   const isFileExpanded = expandedFiles.has(artifact.file_path)
                   return (
                     <div key={idx} className="bg-background rounded border border-border overflow-hidden">
@@ -521,7 +547,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       {isFileExpanded && (
                         <div className="p-3 border-t border-border bg-muted/20">
                           {fileContents[artifact.file_path] ? (
-                            <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground max-h-96 overflow-auto">
+                            <pre className="text-[10px] font-mono whitespace-pre-wrap text-muted-foreground max-h-[60vh] overflow-auto">
                               {fileContents[artifact.file_path]}
                             </pre>
                           ) : !loadingFiles.has(artifact.file_path) && (
@@ -540,12 +566,12 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Validations Section */}
-          {validations.length > 0 && (
+          {validations.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-muted/30">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Validations</h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {validations.map((val: any, idx: number) => {
+                {validations.filter(matchesSearch).map((val: any, idx: number) => {
                   const valId = `${stepId}-val-${val.attempt}`
                   const isValExpanded = expandedValidations.has(valId)
                   const valStatus = val.content?.execution_status
@@ -589,7 +615,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                             </div>
                           )}
                           <div className="font-semibold text-foreground mb-1">Full Response:</div>
-                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto">
+                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto">
                             {JSON.stringify(val.content, null, 2)}
                           </pre>
                         </div>
@@ -602,14 +628,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Learnings Section */}
-          {stepLogs.learnings && stepLogs.learnings.length > 0 && (
+          {stepLogs.learnings && stepLogs.learnings.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-background border-t border-border">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <BookOpen className="w-4 h-4" /> Learning Logs
               </h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.learnings.map((log: any, idx: number) => (
+                {stepLogs.learnings.filter(matchesSearch).map((log: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`px-2 py-0.5 rounded text-xs uppercase font-medium ${
@@ -650,7 +676,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                     {log.result && (
                         <div className="mt-2 text-xs">
                             <div className="font-semibold text-foreground mb-1">Extracted Learning:</div>
-                            <pre className="p-2 bg-muted/50 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-40 overflow-y-auto">
+                            <pre className="p-2 bg-muted/50 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-[40vh] overflow-y-auto">
                                 {log.result}
                             </pre>
                         </div>
@@ -678,7 +704,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                     Learning Conversation History
                                   </div>
                                   {fileContents[log.conversation_path!] ? (
-                                    <ConversationViewer content={fileContents[log.conversation_path!]} />
+                                    <ConversationViewer content={fileContents[log.conversation_path!]} searchQuery={searchQuery} />
                                   ) : (
                                     <div className="flex items-center gap-2 py-4 justify-center text-muted-foreground">
                                       <Loader2 className="w-4 h-4 animate-spin" />
@@ -701,15 +727,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           )}
           {/* Orchestration Section */}
-          {stepLogs.orchestration && stepLogs.orchestration.length > 0 && (
+          {stepLogs.orchestration && stepLogs.orchestration.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-muted/30 border-t border-border">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <Network className="w-4 h-4" /> Orchestration Logs
               </h4>
               <div className="space-y-6">
                 {Object.entries(
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  stepLogs.orchestration.reduce((acc: Record<number, any[]>, log: any) => {
+                  stepLogs.orchestration.filter(matchesSearch).reduce((acc: Record<number, any[]>, log: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
                     const iter = log.iteration || 1
                     if (!acc[iter]) acc[iter] = []
                     // Skip main_step as it's redundant with routing
@@ -815,7 +840,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                             <Terminal className="w-3 h-3 text-primary" />
                                             Instructions to Sub-Agent
                                         </div>
-                                        <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-60 overflow-y-auto text-[11px] leading-relaxed">
+                                        <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-[60vh] overflow-y-auto text-[11px] leading-relaxed">
                                             {log.orchestration_response.instructions_to_sub_agent}
                                         </div>
                                     </div>
@@ -856,7 +881,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                   <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
                                   View Raw JSON
                                 </summary>
-                                <pre className="mt-2 text-[10px] font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted/50 p-2 rounded max-h-40 overflow-y-auto border border-border">
+                                <pre className="mt-2 text-[10px] font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted/50 p-2 rounded max-h-[40vh] overflow-y-auto border border-border">
                                     {JSON.stringify(log, null, 2)}
                                 </pre>
                             </details>
@@ -870,7 +895,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           )}
           {/* Todo Task Section */}
-          {stepLogs.todo_task && stepLogs.todo_task.length > 0 && (
+          {stepLogs.todo_task && stepLogs.todo_task.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-muted/30 border-t border-border">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <ListTodo className="w-4 h-4" /> Todo Task Logs
@@ -878,7 +903,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               <div className="space-y-6">
                 {Object.entries(
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  stepLogs.todo_task.reduce((acc: Record<number, any[]>, log: any) => {
+                  stepLogs.todo_task.filter(matchesSearch).reduce((acc: Record<number, any[]>, log: any) => {
                     const iter = log.iteration || 1
                     if (!acc[iter]) acc[iter] = []
                     acc[iter].push(log)
@@ -1031,7 +1056,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                       <Terminal className="w-3 h-3 text-purple-500" />
                                       Instructions to Sub-Agent
                                     </div>
-                                    <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-60 overflow-y-auto text-[11px] leading-relaxed">
+                                    <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-[60vh] overflow-y-auto text-[11px] leading-relaxed">
                                       {log.todo_task_response.instructions_to_sub_agent}
                                     </div>
                                   </div>
@@ -1093,7 +1118,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                 <ChevronRight className="w-3 h-3 transition-transform group-open:rotate-90" />
                                 View Raw JSON
                               </summary>
-                              <pre className="mt-2 text-[10px] font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted/50 p-2 rounded max-h-40 overflow-y-auto border border-border">
+                              <pre className="mt-2 text-[10px] font-mono whitespace-pre-wrap overflow-x-auto text-muted-foreground bg-muted/50 p-2 rounded max-h-[40vh] overflow-y-auto border border-border">
                                 {JSON.stringify(log, null, 2)}
                               </pre>
                             </details>
@@ -1108,14 +1133,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           )}
           {/* Conditionals Section */}
-          {stepLogs.conditionals && stepLogs.conditionals.length > 0 && (
+          {stepLogs.conditionals && stepLogs.conditionals.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-muted/30 border-t border-border">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <GitBranch className="w-4 h-4" /> Conditional Logs
               </h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.conditionals.map((cond: any, idx: number) => (
+                {stepLogs.conditionals.filter(matchesSearch).map((cond: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cond.condition_result ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
@@ -1135,14 +1160,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Decisions Section */}
-          {stepLogs.decisions && stepLogs.decisions.length > 0 && (
+          {stepLogs.decisions && stepLogs.decisions.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-muted/30 border-t border-border">
               <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <GitBranch className="w-4 h-4" /> Decision Logs
               </h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.decisions.map((dec: any, idx: number) => (
+                {stepLogs.decisions.filter(matchesSearch).map((dec: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${dec.decision_result ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
@@ -1158,14 +1183,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Archived Logs Section (Previous Runs) */}
-          {stepLogs.archived_logs && stepLogs.archived_logs.length > 0 && (
+          {stepLogs.archived_logs && stepLogs.archived_logs.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-amber-500/5 border-t border-amber-500/20">
               <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <History className="w-4 h-4" /> Previous Runs ({stepLogs.archived_logs.length})
+                <History className="w-4 h-4" /> Previous Runs ({stepLogs.archived_logs.filter(matchesSearch).length})
               </h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.archived_logs.map((archive: any, archiveIdx: number) => {
+                {stepLogs.archived_logs.filter(matchesSearch).map((archive: any, archiveIdx: number) => {
                   const archiveId = `${stepId}-archive-${archiveIdx}`
                   const isArchiveExpanded = expandedArchived.has(archiveId)
                   const totalLogs = (archive.validations?.length || 0) + (archive.executions?.length || 0) +
@@ -1237,7 +1262,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                                                             {expandedFiles.has(exec.conversation_path) && (
                                                                               <div className="mt-2 pt-2 border-t border-border">
                                                                                 {fileContents[exec.conversation_path] ? (
-                                                                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto font-mono text-[10px]">
+                                                                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto font-mono text-[10px]">
                                                                                     {fileContents[exec.conversation_path]}
                                                                                   </pre>
                                                                                 ) : (
@@ -1307,7 +1332,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                                                             {expandedFiles.has(learning.conversation_path!) && (
                                                                               <div className="mt-2 pt-2 border-t border-border">
                                                                                 {fileContents[learning.conversation_path!] ? (
-                                                                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto font-mono text-[10px]">
+                                                                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto font-mono text-[10px]">
                                                                                     {fileContents[learning.conversation_path!]}
                                                                                   </pre>
                                                                                 ) : (
@@ -1415,14 +1440,14 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           )}
 
           {/* Archived Execution Runs Section (from decision step routing) */}
-          {stepLogs.archived_executions && stepLogs.archived_executions.length > 0 && (
+          {stepLogs.archived_executions && stepLogs.archived_executions.filter(matchesSearch).length > 0 && (
             <div className="p-4 bg-blue-500/5 border-t border-blue-500/20">
               <h4 className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Archive className="w-4 h-4" /> Archived Execution Runs ({stepLogs.archived_executions.length})
+                <Archive className="w-4 h-4" /> Archived Execution Runs ({stepLogs.archived_executions.filter(matchesSearch).length})
               </h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                {stepLogs.archived_executions.map((archive: any, archiveIdx: number) => {
+                {stepLogs.archived_executions.filter(matchesSearch).map((archive: any, archiveIdx: number) => {
                   const archiveId = `${stepId}-archived-exec-${archiveIdx}`
                   const isArchiveExpanded = expandedArchived.has(archiveId)
                   const hasOutput = !!archive.output_content
@@ -1468,7 +1493,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                   </button>
                                 </div>
                                 {expandedFiles.has(archive.output_content.file_path) && (
-                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto font-mono text-[10px] mt-2 pt-2 border-t border-border">
+                                  <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto font-mono text-[10px] mt-2 pt-2 border-t border-border">
                                     {archive.output_content.is_json
                                       ? JSON.stringify(archive.output_content.content, null, 2)
                                       : String(archive.output_content.content)}
@@ -1503,7 +1528,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                                     {expandedFiles.has(artifact.file_path) && (
                                       <div className="mt-2 pt-2 border-t border-border">
                                         {fileContents[artifact.file_path] ? (
-                                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-60 overflow-y-auto font-mono text-[10px]">
+                                          <pre className="whitespace-pre-wrap overflow-x-auto text-muted-foreground max-h-[60vh] overflow-y-auto font-mono text-[10px]">
                                             {fileContents[artifact.file_path]}
                                           </pre>
                                         ) : (
@@ -1535,7 +1560,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col border border-border relative">
+      <div className="bg-background rounded-lg shadow-xl w-full max-w-[90vw] h-[95vh] flex flex-col border border-border relative">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex-1 min-w-0">

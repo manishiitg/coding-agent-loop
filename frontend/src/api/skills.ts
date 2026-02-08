@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getAuthToken } from '../services/api';
+import { getApiBaseUrl, getAuthToken } from '../services/api';
 import type {
   Skill,
   ImportSkillRequest,
@@ -10,7 +10,7 @@ import type {
   ListSkillsResponse,
 } from '../types/skills';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = getApiBaseUrl();
 
 const api = axios.create({
   baseURL: API_BASE_URL,

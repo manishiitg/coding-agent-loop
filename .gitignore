@@ -109,3 +109,13 @@ workspace/workspace
 # SQLite temporary files
 *.db-shm
 *.db-wal
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+.terraformrc
+terraform.rc

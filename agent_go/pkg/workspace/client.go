@@ -217,3 +217,10 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 
 	return respBody, nil
 }
+
+// CreateFolder creates a folder via the workspace API: POST /api/folders
+func (c *Client) CreateFolder(ctx context.Context, folderPath string) error {
+	body := map[string]string{"folder_path": folderPath}
+	_, err := c.request(ctx, "POST", "/api/folders", body)
+	return err
+}

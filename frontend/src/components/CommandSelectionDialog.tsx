@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, ClipboardList } from 'lucide-react'
+import { Terminal, FileText, Lightbulb, Download, Server, Cpu, History, GitBranch } from 'lucide-react'
 
 interface Command {
   command: string
@@ -47,11 +47,6 @@ const AVAILABLE_COMMANDS: Command[] = [
     command: 'spawn',
     description: 'Enable simple sub-agent delegation (fire-and-forget)',
     icon: <GitBranch className="w-4 h-4" />
-  },
-  {
-    command: 'plan',
-    description: 'Enable plan-driven delegation with multi-LLM tiers',
-    icon: <ClipboardList className="w-4 h-4" />
   },
   {
     command: 'nospawn',

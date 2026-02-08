@@ -733,8 +733,8 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat mode
-    if (selectedModeCategory !== 'chat') {
+    // Only create default tab for chat and multi-agent modes (workflow tabs are created by WorkflowLayout)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
       return
     }
     
@@ -768,7 +768,8 @@ function App() {
       )
       if (currentModeTabs.length === 0) {
         try {
-          await chatStore.createChatTab('Chat 1', { mode: selectedModeCategory })
+          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
+          await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
         } catch (error) {
           console.error('Failed to create default tab:', error)
           // Reset flag on error so it can retry
@@ -786,8 +787,8 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only run for chat mode
-    if (selectedModeCategory !== 'chat') {
+    // Only run for chat and multi-agent modes (workflow handles its own tab selection)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
       return
     }
     
@@ -824,8 +825,8 @@ function App() {
           if (!result.success) {
             console.error('[APP] Failed to restore preset:', result.error)
           }
-        } else if (selectedModeCategory === 'chat') {
-          // For chat mode, if there's no active preset, clear any stale preset server state
+        } else if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
+          // For chat/multi-agent mode, if there's no active preset, clear any stale preset server state
           // This prevents old preset servers from persisting when no preset is selected
           const { setCurrentPresetServers } = useGlobalPresetStore.getState()
           setCurrentPresetServers([])
@@ -880,7 +881,7 @@ function App() {
         clearActivePreset(selectedModeCategory)
       }
     } else {
-      // For other modes (chat), clear preset state as before
+      // For other modes (chat, multi-agent), clear preset state as before
       setSelectedPresetId(null); // Clear selected preset filter
       if (selectedModeCategory) {
         clearActivePreset(selectedModeCategory); // Also clear in global store

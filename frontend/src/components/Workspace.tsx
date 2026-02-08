@@ -235,6 +235,8 @@ export default function Workspace({
   const autoExpandedWorkflowRef = useRef<string | null>(null)
   // Track whether we've auto-expanded Chats/ for chat mode
   const autoExpandedChatRef = useRef(false)
+  // Track whether we've auto-expanded Plans/ for multi-agent mode
+  const autoExpandedMultiAgentRef = useRef(false)
   
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
@@ -424,7 +426,7 @@ export default function Workspace({
   // Legacy function name for backward compatibility
   const getFullFilePath = getOriginalFilePath
 
-  // Simple filter: show all folders, filter only files
+  // Filter by query: match file names and folder names; hide folders with no match and no matching descendants
   const filterFiles = (files: PlannerFile[], query: string): PlannerFile[] => {
     if (!query.trim()) return files
     
@@ -433,16 +435,20 @@ export default function Workspace({
     const filterRecursive = (fileList: PlannerFile[]): PlannerFile[] => {
       return fileList.map(file => {
         if (file.type === 'folder') {
-          // For folders: always show them, filter their children
+          const filteredChildren = file.children ? filterRecursive(file.children) : []
+          const folderName = file.filepath.split('/').filter(Boolean).pop() || file.filepath
+          const folderMatches = folderName.toLowerCase().includes(lowercaseQuery) ||
+            file.filepath.toLowerCase().includes(lowercaseQuery)
+          const keepFolder = folderMatches || filteredChildren.length > 0
+          if (!keepFolder) return null
           return {
             ...file,
-            children: file.children ? filterRecursive(file.children) : []
+            children: filteredChildren
           }
         } else {
-          // For files: only show if they match
           const fileName = file.filepath.split('/').pop() || file.filepath
-          const matches = fileName.toLowerCase().includes(lowercaseQuery) || 
-                        file.filepath.toLowerCase().includes(lowercaseQuery)
+          const matches = fileName.toLowerCase().includes(lowercaseQuery) ||
+            file.filepath.toLowerCase().includes(lowercaseQuery)
           return matches ? file : null
         }
       }).filter(Boolean) as PlannerFile[]
@@ -476,6 +482,12 @@ export default function Workspace({
       // Adjust filepaths to show workflow folder as root (remove the workflow folder path prefix)
       // Store original path in originalFilepath for API calls
       result = adjustFilePathsRecursive(result, workflowFolderPath)
+    } else if (selectedModeCategory === 'multi-agent') {
+      // Multi Agent Chat mode: show Plans/, Chats/ and skills/ folders
+      result = files.filter(f => {
+        const topFolder = f.filepath.split('/')[0]
+        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'skills'
+      })
     } else if (selectedModeCategory === 'chat') {
       // Chat mode: show only Chats/ and skills/ top-level folders
       result = files.filter(f => {
@@ -557,6 +569,19 @@ export default function Workspace({
       }
     } else if (selectedModeCategory !== 'chat') {
       autoExpandedChatRef.current = false
+    }
+  }, [selectedModeCategory, filteredFiles, setExpandedFolders])
+
+  // In multi-agent mode, auto-expand Plans/ folder by default
+  useEffect(() => {
+    if (selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedMultiAgentRef.current) {
+      const hasPlansFolder = filteredFiles.some(f => f.filepath === 'Plans' || f.filepath === 'Plans/')
+      if (hasPlansFolder) {
+        autoExpandedMultiAgentRef.current = true
+        setExpandedFolders(new Set(['Plans']))
+      }
+    } else if (selectedModeCategory !== 'multi-agent') {
+      autoExpandedMultiAgentRef.current = false
     }
   }, [selectedModeCategory, filteredFiles, setExpandedFolders])
   

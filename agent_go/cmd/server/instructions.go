@@ -112,20 +112,29 @@ func buildSkillPrompt(selectedSkills []string) string {
 ## Active Skills
 
 ### What is a Skill?
-A skill is a reusable set of instructions that guides you on how to handle specific tasks or workflows. Skills are stored in the workspace under the "skills/" folder. Each skill contains:
-- **SKILL.md**: The main instruction file with detailed guidance on how to perform a specific task
-- **Additional files**: Some skills may include reference files, templates, or examples
+A skill is a reusable set of instructions stored in the workspace. Each skill contains:
+- **SKILL.md**: The main instruction file with detailed guidance
+- **Additional files**: Reference files, templates, or examples
+
+### Workspace Folder Layout
+The workspace has this structure:
+- skills/          — Skill definitions (read-only reference)
+- Chats/           — Chat history
+- Plans/           — Delegation plans and sub-agent outputs
+- Workspace/       — User documents and files
+- Downloads/       — Downloaded files
+
+Skills are at the **workspace root** (e.g., skills/my-skill/SKILL.md).
+Your plan folder (if any) is under Plans/.
+These are different locations — always use working_directory: "." (workspace root) when accessing skills.
 
 ### How to Use Skills:
-**BEST PRACTICE**: Always read the official skill guide at ` + "`docs/skills.md`" + ` for the latest standards and implementation tips.
+1. **Read the skill**: execute_shell_command(command: "cat skills/<skill-name>/SKILL.md", working_directory: ".")
+2. **List skill files**: execute_shell_command(command: "ls -R skills/<skill-name>/", working_directory: ".")
+3. **Read supporting files**: If the skill has additional files, read them too for full context
+4. **Follow the instructions**: Apply the skill's methodology to the user's request
 
-1. **Read the skill first**: Use execute_shell_command with "cat skills/<skill-name>/SKILL.md" to read the skill instructions
-2. **Follow the instructions**: The SKILL.md contains step-by-step guidance - follow it carefully
-3. **Check for additional files**: Use "ls -R skills/<skill-name>/" to see ALL files in the skill folder (recursively)
-4. **Read context**: If you see other files (scripts, templates, configs), read them too so you understand the full context
-5. **Apply to user's request**: Use the skill's methodology to address what the user is asking for
-
-**IMPORTANT: Before responding to the user's request, you MUST first read and understand the skill instructions and its supporting files.**
+**IMPORTANT: You MUST read the skill instructions BEFORE responding to the user's request.**
 
 ### Activated Skills:
 `)
@@ -150,10 +159,10 @@ A skill is a reusable set of instructions that guides you on how to handle speci
 
 	promptParts = append(promptParts, `
 
-**Action Required:** Before proceeding, use execute_shell_command to:
-1. "cat" the SKILL.md for each skill
-2. "ls -R" the skill directory to find supporting files
-3. Read any relevant supporting files found
+**Action Required:** Before proceeding, use execute_shell_command with working_directory: "." to:
+1. Read each SKILL.md (e.g., command: "cat skills/<name>/SKILL.md")
+2. List skill files (e.g., command: "ls -R skills/<name>/")
+3. Read any supporting files found
 `)
 
 	return strings.Join(promptParts, "\n")

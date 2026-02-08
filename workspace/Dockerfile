@@ -48,9 +48,9 @@ WORKDIR /app
 # Copy binary from builder stage
 COPY --from=builder /app/planner .
 
-# Create docs and data directories; empty workspace-docs structure (Downloads, Chats, Workspace)
+# Create docs and data directories; empty workspace-docs structure (Downloads, Chats, Plans)
 RUN mkdir -p /app/workspace-docs /app/data \
-  /app/workspace-docs/Downloads /app/workspace-docs/Chats /app/workspace-docs/Workspace
+  /app/workspace-docs/Downloads /app/workspace-docs/Chats /app/workspace-docs/Plans
 
 # NOTE: Running as root to allow unshare with mount namespaces (requires CAP_SYS_ADMIN)
 # The application itself uses BuildSafeEnvironment() to prevent secret leakage

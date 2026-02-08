@@ -614,6 +614,8 @@ export interface ChatSessionConfig {
   enable_workspace_access?: boolean;
   workflow_metadata?: WorkflowMetadata; // Workflow-specific metadata (for background workflows)
   selected_skills?: string[]; // Selected skill folder names
+  delegation_mode?: 'spawn' | 'plan'; // Delegation mode for multi-agent sessions
+  delegation_tier_config?: DelegationTierConfig; // Delegation tier model config
 }
 
 // Chat History API types

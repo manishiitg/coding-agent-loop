@@ -102,29 +102,26 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       return
     }
     
-    if (selectedModeCategory === 'chat') {
-      // Create a new chat tab
-      logger.debug('ChatTabs', 'Creating new chat tab...')
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
+      const isMultiAgent = selectedModeCategory === 'multi-agent'
+      const mode = selectedModeCategory
+      logger.debug('ChatTabs', `Creating new ${mode} tab...`)
       const chatStore = useChatStore.getState()
-      const allChatTabs = Object.values(chatTabs).filter(tab =>
-        tab.metadata?.mode === 'chat'
+      const allModeTabs = Object.values(chatTabs).filter(tab =>
+        tab.metadata?.mode === mode
       )
-      const chatNumber = allChatTabs.length + 1
-      const tabName = `Chat ${chatNumber}`
+      const tabNumber = allModeTabs.length + 1
+      const tabName = isMultiAgent ? `Agent Chat ${tabNumber}` : `Chat ${tabNumber}`
 
-      logger.debug('ChatTabs', `Tab name: ${tabName}, existing tabs: ${allChatTabs.length}`)
+      logger.debug('ChatTabs', `Tab name: ${tabName}, existing tabs: ${allModeTabs.length}`)
 
       try {
-        logger.debug('ChatTabs', `Creating new tab: ${tabName} in mode: chat`)
-        const newTabId = await chatStore.createChatTab(tabName, { mode: 'chat' })
+        logger.debug('ChatTabs', `Creating new tab: ${tabName} in mode: ${mode}`)
+        const newTabId = await chatStore.createChatTab(tabName, { mode })
         logger.debug('ChatTabs', `createChatTab returned tab ID: ${newTabId}`)
-        
-        // Note: Tab creation is verified inside createChatTab itself
-        // The tab should now be active and visible in the UI
-        // React will re-render and show the new tab automatically via the useChatStore hook
         logger.debug('ChatTabs', `Tab creation completed. Tab ID: ${newTabId}`)
       } catch (error) {
-        logger.error('ChatTabs', 'Failed to create new chat tab:', error)
+        logger.error('ChatTabs', 'Failed to create new tab:', error)
         if (error instanceof Error) {
           logger.error('ChatTabs', 'Error details:', {
             name: error.name,
@@ -173,9 +170,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     return 'bg-gray-400'
   }
   
-  // Show tabs bar only in chat mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
-  // In workflow mode, ChatTabs should not be visible at all
-  const shouldShowTabsBar = selectedModeCategory === 'chat'
+  // Show tabs bar in chat and multi-agent modes (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
+  const shouldShowTabsBar = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
   const hasTabs = modeTabs.length > 0
   
   // In workflow mode, don't show ChatTabs at all
@@ -268,16 +264,16 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
           )
         })}
       
-      {/* New Tab Button - Only show in chat mode (workflow phases are started from WorkflowToolbar) */}
-      {selectedModeCategory === 'chat' && (
+      {/* New Tab Button - Show in chat and multi-agent modes (workflow phases are started from WorkflowToolbar) */}
+      {(selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && (
         <button
           onClick={handleNewTab}
           data-testid="new-chat-button"
           className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="New chat"
+          title={selectedModeCategory === 'multi-agent' ? 'New agent chat' : 'New chat'}
         >
           <Plus className="w-4 h-4" />
-          <span className="text-xs">New Chat</span>
+          <span className="text-xs">{selectedModeCategory === 'multi-agent' ? 'New Agent Chat' : 'New Chat'}</span>
         </button>
       )}
       

@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -24,6 +24,7 @@ import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
 
 interface ChatInputProps {
@@ -100,7 +101,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setWorkspaceMinimized,
     delegationMode
   } = useAppStore()
-  
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  // For plan features, treat multi-agent as always 'plan'
+  const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
+
+  // Detect plan phase from events (planning → execution after confirm_plan_execution succeeds)
+  // We'll compute this from tabEvents below after they're defined
+
   // Use selectors to subscribe only to specific values, reducing re-renders
   const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
@@ -130,6 +138,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!tabSessionId) return EMPTY_EVENTS
     return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
   }, [tabSessionId, allTabEvents])
+
+  // Detect plan phase from events: check if confirm_plan_execution completed successfully
+  const planPhase = useMemo(() => {
+    if (!isMultiAgentMode) return null
+    // Look for a successful tool_call_end for confirm_plan_execution
+    for (let i = tabEvents.length - 1; i >= 0; i--) {
+      const event = tabEvents[i]
+      if (event.type === 'tool_call_end') {
+        const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined
+        const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name
+        if (toolName === 'confirm_plan_execution') {
+          return 'execution'
+        }
+      }
+    }
+    return 'planning'
+  }, [isMultiAgentMode, tabEvents])
 
   // Find the latest token usage (optimized with backward iteration)
   const { contextUsagePercent, latestTokenUsage } = useMemo(() => {
@@ -1152,29 +1177,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         )
         break
       }
-      case 'plan': {
-        // Check if delegation tier config exists in localStorage
-        const tierConfig = useLLMStore.getState().delegationTierConfig
-        const hasTierConfig = tierConfig && (tierConfig.high || tierConfig.medium || tierConfig.low)
-
-        useAppStore.getState().setDelegationMode('plan')
-
-        if (!hasTierConfig) {
-          // First time - open left sidebar and expand delegation tiers section
-          useAppStore.getState().setSidebarMinimized(false)
-          openDialog('delegationTiers')
-          addToast(
-            'Plan delegation enabled - Configure your delegation tier models in the sidebar',
-            'info'
-          )
-        } else {
-          addToast(
-            'Plan delegation enabled - Agent will create plans and delegate with multi-LLM tiers',
-            'success'
-          )
-        }
-        break
-      }
       case 'nospawn': {
         useAppStore.getState().setDelegationMode('off')
         addToast(
@@ -1340,6 +1342,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 
                 {/* Agent Mode Selector - Only show when no preset is active */}
                 {!chatActivePreset && (
+                  effectiveDelegationMode === 'plan' ? (
+                    /* In plan mode, agent auto-picks tool mode per task */
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-0.5 px-2 py-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 cursor-default">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <Code2 className="w-3.5 h-3.5" />
+                          <Search className="w-3.5 h-3.5" />
+                          <span className="text-[10px] font-medium ml-0.5">Auto</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        <p>Plan mode: agent picks tool mode per task (simple, code exec, tool search)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
                   <div className="flex items-center gap-1">
                     {/* Simple Mode */}
                     <button
@@ -1402,6 +1420,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </span>
                     </button>
                   </div>
+                  )
                 )}
                 
                 {/* Server and LLM Selection - only show when no preset is active */}
@@ -1427,8 +1446,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         />
                       </>
                     
-                    {/* Hide LLM dropdown in plan mode - show tier summary chip instead */}
-                    {delegationMode === 'plan' ? (
+                    {/* Hide LLM dropdown in plan/multi-agent mode - show tier summary chip instead */}
+                    {effectiveDelegationMode === 'plan' ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
@@ -1544,20 +1563,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div className="flex items-center gap-1">
-                      {/* Delegation mode indicator */}
-                      {delegationMode !== 'off' && (
+                      {/* Delegation mode indicator - show for spawn in chat mode only (multi-agent mode is self-evident) */}
+                      {!isMultiAgentMode && delegationMode !== 'off' && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className={`p-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-default ${
-                              delegationMode === 'plan' ? 'text-blue-500 dark:text-blue-400' : 'text-purple-500 dark:text-purple-400'
-                            }`}>
+                            <div className="p-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-default text-purple-500 dark:text-purple-400">
                               <GitBranch className="w-3.5 h-3.5" />
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>{delegationMode === 'plan' ? 'Plan delegation enabled' : 'Simple delegation enabled'} (/nospawn to disable)</p>
+                            <p>Simple delegation enabled (/nospawn to disable)</p>
                           </TooltipContent>
                         </Tooltip>
+                      )}
+
+                      {/* Multi-agent phase indicator */}
+                      {isMultiAgentMode && planPhase && (
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${
+                          planPhase === 'execution'
+                            ? 'border-green-300 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                            : 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                        }`}>
+                          {planPhase === 'execution' ? <Play className="w-3 h-3" /> : <FileSearch className="w-3 h-3" />}
+                          <span>{planPhase === 'execution' ? 'Executing' : 'Planning'}</span>
+                        </div>
                       )}
 
                       {isStreaming ? (

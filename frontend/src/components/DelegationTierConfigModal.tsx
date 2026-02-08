@@ -1,9 +1,19 @@
 import { X } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
+import { useChatStore } from '../stores'
 import type { DelegationTierConfig, TierModel } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
+
+// Helper: sync delegation tier config to the active multi-agent tab
+const syncTierConfigToActiveTab = (newConfig: DelegationTierConfig | null) => {
+  const chatStore = useChatStore.getState()
+  const activeTab = chatStore.getActiveTab()
+  if (activeTab?.metadata?.mode === 'multi-agent') {
+    chatStore.setTabConfig(activeTab.tabId, { delegationTierConfig: newConfig ?? undefined })
+  }
+}
 
 interface DelegationTierConfigModalProps {
   isOpen: boolean
@@ -68,7 +78,9 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                         const newConfig: DelegationTierConfig = { ...delegationTierConfig }
                         delete newConfig[key]
                         const hasAny = newConfig.high || newConfig.medium || newConfig.low
-                        setDelegationTierConfig(hasAny ? newConfig : null)
+                        const finalConfig = hasAny ? newConfig : null
+                        setDelegationTierConfig(finalConfig)
+                        syncTierConfigToActiveTab(finalConfig)
                       }}
                       className="text-xs text-red-400 hover:text-red-600"
                     >
@@ -83,6 +95,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                     const newTier: TierModel = { provider: llm.provider, model_id: llm.model }
                     const newConfig: DelegationTierConfig = { ...delegationTierConfig, [key]: newTier }
                     setDelegationTierConfig(newConfig)
+                    syncTierConfigToActiveTab(newConfig)
                   }}
                   inModal={true}
                   openDirection="down"

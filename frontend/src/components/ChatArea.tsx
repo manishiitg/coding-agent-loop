@@ -143,7 +143,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
     // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
-    const tabSelectedServers = (selectedModeCategory === 'chat' && activeTab?.config) 
+    const isChatLike = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
+    const tabSelectedServers = (isChatLike && activeTab?.config)
       ? activeTab.config.selectedServers 
       : selectedServers
     
@@ -178,7 +179,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     // Get workspace access setting from tab config (default: true)
-    const enableWorkspaceAccess = (selectedModeCategory === 'chat' && activeTab?.config) 
+    const enableWorkspaceAccess = ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && activeTab?.config)
       ? (activeTab.config.enableWorkspaceAccess ?? true)
       : true // Default to enabled for workflow mode or if no tab config
     
@@ -876,9 +877,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const pollEvents = useCallback(async () => {
     const chatStore = useChatStore.getState()
 
+    // Read mode from store directly to avoid stale closure from setInterval capture
+    const currentModeCategory = useModeStore.getState().selectedModeCategory
+
     // Get all tabs that should be polled (all tabs in current mode)
     const allTabs = Object.values(chatStore.chatTabs).filter(tab => {
-      return tab.metadata?.mode === selectedModeCategory
+      // If mode category is null (not yet selected), poll all non-workflow tabs
+      if (!currentModeCategory) {
+        return tab.metadata?.mode !== 'workflow'
+      }
+      return tab.metadata?.mode === currentModeCategory
     })
     
     // CRITICAL: Only poll tabs that are:
@@ -1130,12 +1138,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             const agentEvent = event.data as Record<string, unknown> | undefined
             const innerData = agentEvent?.data as Record<string, unknown> | undefined
             const rawComponent = innerData?.component ?? agentEvent?.component
-            // Also check hierarchy_level as a robust fallback for sub-agent detection
-            // Sub-agents always have hierarchy_level > 0 (set by DelegationEventObserver)
-            const rawHierarchyLevel = innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
-            
-            const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-')) || 
-                                    (typeof rawHierarchyLevel === 'number' && rawHierarchyLevel > 0)
+            const isSubAgentEvent = typeof rawComponent === 'string' && rawComponent.startsWith('delegation-')
 
             // Intercept streaming events - accumulate text in store, don't add to event list
             // IMPORTANT: Only process streaming from parent agent, skip sub-agent streaming
@@ -1328,7 +1331,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Continue polling other observers even if one fails
       }
     }
-  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedModeCategory read from store directly inside callback to avoid stale setInterval closure
+  }, [getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -1377,15 +1381,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const agentMode = s.agent_mode?.toLowerCase()
           const isWorkflow = agentMode === 'workflow'
 
-          // Filter by current mode
-          if (selectedModeCategory === 'chat') {
-            // In chat mode, skip workflow sessions
+          // Filter by current mode (chat and multi-agent both use simple agent mode)
+          if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
+            // In chat/multi-agent mode, skip workflow sessions
             if (isWorkflow) {
-              console.log(`[AutoRestore] Skipping ${agentMode} session in chat mode: ${s.session_id}`)
+              console.log(`[AutoRestore] Skipping ${agentMode} session in ${selectedModeCategory} mode: ${s.session_id}`)
               return false
             }
           } else {
-            // Should not happen as effect only runs for chat
+            // Workflow mode handles its own session restore
             return false
           }
           
@@ -1533,6 +1537,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   configUpdate.selectedSkills = config.selected_skills
                 }
 
+                // Restore delegation tier config (for multi-agent sessions)
+                if (config.delegation_tier_config) {
+                  configUpdate.delegationTierConfig = config.delegation_tier_config
+                }
+
                 // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(newTabId, configUpdate)
@@ -1592,8 +1601,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
     }
     
-    // Restore in chat mode
-    if (selectedModeCategory === 'chat') {
+    // Restore in chat and multi-agent modes (workflow handles its own restore)
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
       restoreActiveSessions()
     }
   }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
@@ -1892,6 +1901,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   configUpdate.selectedSkills = config.selected_skills
                 }
 
+                // Restore delegation tier config (for multi-agent sessions)
+                if (config.delegation_tier_config) {
+                  configUpdate.delegationTierConfig = config.delegation_tier_config
+                }
+
                 // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(newTabId, configUpdate)
@@ -1983,6 +1997,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // Restore selected skills
               if (config.selected_skills && Array.isArray(config.selected_skills)) {
                 configUpdate.selectedSkills = config.selected_skills
+              }
+
+              // Restore delegation tier config (for multi-agent sessions)
+              if (config.delegation_tier_config) {
+                configUpdate.delegationTierConfig = config.delegation_tier_config
               }
 
               // Update tab config
@@ -2189,6 +2208,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     configUpdate.selectedSkills = config.selected_skills
                   }
 
+                  // Restore delegation tier config (for multi-agent sessions)
+                  if (config.delegation_tier_config) {
+                    configUpdate.delegationTierConfig = config.delegation_tier_config
+                  }
+
                   // Update tab config
                   if (Object.keys(configUpdate).length > 0) {
                     chatStore.setTabConfig(newTabId, configUpdate)
@@ -2280,6 +2304,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 // Restore selected skills
                 if (config.selected_skills && Array.isArray(config.selected_skills)) {
                   configUpdate.selectedSkills = config.selected_skills
+                }
+
+                // Restore delegation tier config (for multi-agent sessions)
+                if (config.delegation_tier_config) {
+                  configUpdate.delegationTierConfig = config.delegation_tier_config
                 }
 
                 // Update tab config
@@ -2446,6 +2475,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       console.error('[STOP] Failed to stop session:', error)
     }
 
+    // Mark tab as completed so queued messages get auto-sent
+    if (activeTab) {
+      chatStore.setTabCompleted(activeTab.tabId, true)
+    }
+
     // DO NOT reset global event polling index - preserve it for multi-turn conversations
     // Only reset when starting a completely new chat (via handleNewChat)
     console.log('[STOP] Preserving event polling index for multi-turn conversation')
@@ -2493,16 +2527,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
     // Get or create current tab - use fresh state from store
     let currentTab = freshActiveTab
-    if (!currentTab && selectedModeCategory === 'chat') {
+    if (!currentTab && (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent')) {
       const chatStore = useChatStore.getState()
-      const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
+      const chatTabs = Object.values(chatStore.chatTabs).filter(tab =>
         tab.metadata?.mode === selectedModeCategory
       )
-      
+
       if (chatTabs.length === 0) {
         console.log(`[SUBMIT] No ${selectedModeCategory} tab exists, creating one automatically...`)
         try {
-          const newTabId = await chatStore.createChatTab('Chat 1', { mode: selectedModeCategory })
+          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
+          const newTabId = await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
           currentTab = chatStore.getTab(newTabId)
           console.log(`[SUBMIT] Created new ${selectedModeCategory} tab: ${newTabId}`)
         } catch (error) {
@@ -2537,7 +2572,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Use tab's file context in chat mode, preset's selectedFolder in workflow mode
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
-    if (selectedModeCategory === 'chat' && currentTab?.config) {
+    if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     } else if (selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder) {
       // Convert preset's selectedFolder to FileContextItem format
@@ -2687,7 +2722,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         } else {
           // No preset, use tab's config value (user's manual control via ChatInput toggle)
           // Default to false if not set (explicitly send false to API)
-          if (selectedModeCategory === 'chat' && currentTab?.config) {
+          if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config) {
             useCodeExecutionMode = currentTab.config.useCodeExecutionMode ?? false
           } else {
             // Fallback to false if no tab config available
@@ -2712,7 +2747,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         } else {
           // No preset, use tab's config value (user's manual control via ChatInput toggle)
           // Default to false if not set (explicitly send false to API)
-          if (selectedModeCategory === 'chat' && currentTab?.config) {
+          if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config) {
             useToolSearchMode = currentTab.config.useToolSearchMode ?? false
           } else {
             // Fallback to false if no tab config available
@@ -2739,10 +2774,20 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         finalType: typeof useCodeExecutionMode
       })
       
+      const isChatMode = selectedModeCategory === 'chat'
+      const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+      const isChatLikeMode = isChatMode || isMultiAgentMode
+
       // Use tab's LLM config in chat mode, global config otherwise
-      const effectiveLLMConfig = (selectedModeCategory === 'chat' && currentTab?.config)
-        ? currentTab.config.llmConfig 
+      const baseLLMConfig = ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config)
+        ? currentTab.config.llmConfig
         : llmConfig
+
+      // In multi-agent mode, use the high tier model for the main agent (manager)
+      const tierConfig = useLLMStore.getState().delegationTierConfig
+      const effectiveLLMConfig = (isMultiAgentMode && tierConfig?.high?.provider && tierConfig?.high?.model_id)
+        ? { ...baseLLMConfig, provider: tierConfig.high.provider, model_id: tierConfig.high.model_id }
+        : baseLLMConfig
       
       // Build llm_config with API keys from provider configs
       const llmConfigWithApiKeys = {
@@ -2767,8 +2812,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         sessionId: tabSessionId,
         tabId: currentTab.tabId
       })
-      
-      const isChatMode = selectedModeCategory === 'chat'
 
       const requestPayload = {
         query: queryWithContext,
@@ -2788,28 +2831,30 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
         // Execution options from frontend (for workflow execution phase)
         execution_options: executionOptionsRef.current,
-        // Context summarization: Enable by default for chat mode
-        enable_context_summarization: isChatMode ? true : undefined,
-        summarize_on_max_turns: isChatMode ? true : undefined,
-        summary_keep_last_messages: isChatMode ? 8 : undefined,
+        // Context summarization: Enable by default for chat-like modes (chat + multi-agent)
+        enable_context_summarization: isChatLikeMode ? true : undefined,
+        summarize_on_max_turns: isChatLikeMode ? true : undefined,
+        summary_keep_last_messages: isChatLikeMode ? 8 : undefined,
         // Workspace access: Send the setting from tab config (default: true)
-        enable_workspace_access: isChatMode
+        enable_workspace_access: isChatLikeMode
           ? (currentTab?.config?.enableWorkspaceAccess ?? true)
           : undefined,
         // Browser access: Send the setting from tab config (default: false)
-        enable_browser_access: isChatMode
+        enable_browser_access: isChatLikeMode
           ? (currentTab?.config?.enableBrowserAccess ?? false)
           : undefined,
-        // Delegation mode: Send the mode setting (persisted across sessions)
-        delegation_mode: isChatMode && useAppStore.getState().delegationMode !== 'off'
-          ? useAppStore.getState().delegationMode as 'spawn' | 'plan'
-          : undefined,
-        // Delegation tier config: Send tier assignments for multi-LLM delegation (only for plan mode)
-        delegation_tier_config: isChatMode && useAppStore.getState().delegationMode === 'plan'
-          ? (useLLMStore.getState().delegationTierConfig ?? undefined)
+        // Delegation mode: Always 'plan' for multi-agent, or from appStore for chat
+        delegation_mode: isMultiAgentMode
+          ? 'plan' as const
+          : (isChatMode && useAppStore.getState().delegationMode !== 'off'
+            ? useAppStore.getState().delegationMode as 'spawn'
+            : undefined),
+        // Delegation tier config: Read from tab config (with global fallback), only for multi-agent
+        delegation_tier_config: isMultiAgentMode
+          ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)
           : undefined,
         // Selected skills: Include skill folder names from tab config
-        selected_skills: isChatMode && currentTab?.config?.selectedSkills?.length
+        selected_skills: isChatLikeMode && currentTab?.config?.selectedSkills?.length
           ? currentTab.config.selectedSkills
           : undefined,
         // Context editing: Read from active workflow preset's llmConfig

@@ -313,6 +313,11 @@ export const agentApi = {
     })
   },
 
+  // Dismiss session so it won't be auto-restored on page refresh
+  dismissSession: async (sessionId: string): Promise<void> => {
+    await api.post(`/api/sessions/${sessionId}/dismiss`)
+  },
+
   // Clear session/conversation history (for new chat)
   clearSession: async (sessionId: string): Promise<void> => {
     await api.post('/api/session/clear', {}, {

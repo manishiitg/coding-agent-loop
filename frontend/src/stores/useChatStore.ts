@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
-import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary } from '../services/api-types'
+import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary, DelegationTierConfig } from '../services/api-types'
 import { shouldShowEventByMode } from '../components/events/eventModeUtils'
 import type { EventMode } from '../components/events/EventContext'
 import type { StoreActions } from './types'
@@ -91,6 +91,7 @@ export interface ChatTabConfig {
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
+  delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
@@ -111,23 +112,23 @@ export interface ChatTab {
   metadata?: {
     phaseId?: string  // For workflow mode: phase ID
     phaseName?: string  // For workflow mode: phase name
-    mode?: 'chat' | 'workflow'  // Which mode this tab belongs to
+    mode?: 'chat' | 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
   }
 }
 
 // Helper function to get default tab config from current global state
 // Uses mode-specific configs for LLM and server selections
-const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig => {
+const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
 
-  // Get mode-specific server selection
+  // Get mode-specific server selection (multi-agent uses chat settings)
   const selectedServers = mode === 'workflow'
     ? (mcpStore?.workflowSelectedServers || mcpStore?.selectedServers || [])
     : (mcpStore?.chatSelectedServers || mcpStore?.selectedServers || [])
 
-  // Get mode-specific LLM config
+  // Get mode-specific LLM config (multi-agent uses chat settings)
   const llmConfig = mode === 'workflow'
     ? (llmStore?.workflowPrimaryConfig || llmStore?.primaryConfig)
     : (llmStore?.chatPrimaryConfig || llmStore?.primaryConfig)
@@ -152,6 +153,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' = 'chat'): ChatTabConfig 
     enableContextSummarization: false,
     enableWorkspaceAccess: true,  // Enable workspace access by default
     enableBrowserAccess: false,  // Disable browser access by default (user must enable via checkbox)
+    delegationTierConfig: mode === 'multi-agent' ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
     queuedMessages: [],  // No queued messages by default
     autoRun: false  // Do not auto-run by default
   }
@@ -989,6 +991,16 @@ export const useChatStore = create<ChatState>()(
           }
         }
 
+        // Dismiss session so it won't be auto-restored on page refresh (fire-and-forget)
+        if (tab.sessionId) {
+          logger.info('SessionStore', `Dismissing session ${tab.sessionId} (stopSession=${stopSession})`)
+          agentApi.dismissSession(tab.sessionId).catch(error => {
+            logger.error('SessionStore', `Failed to dismiss session ${tab.sessionId}:`, error)
+          })
+        } else {
+          logger.info('SessionStore', `Tab ${tabId} has no sessionId, skipping dismiss`)
+        }
+
         // Clear tab's events (by sessionId) unless keepEvents is true (e.g., for background workflows)
         let newTabEvents = state.tabEvents
         let newTabEventIndices = state.tabEventIndices
@@ -1575,10 +1587,10 @@ export const useChatStore = create<ChatState>()(
       {
         name: 'chat-store',
         partialize: (state) => ({
-          // Only persist workflow tabs (for reconnection), not chat tabs (ephemeral)
+          // Persist workflow and multi-agent tabs (for reconnection), not chat tabs (ephemeral)
           chatTabs: Object.fromEntries(
             Object.entries(state.chatTabs)
-              .filter(([, tab]) => tab.metadata?.mode === 'workflow') // Only persist workflow tabs
+              .filter(([, tab]) => tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent')
               .map(([tabId, tab]) => [
               tabId,
               {
@@ -1602,10 +1614,10 @@ export const useChatStore = create<ChatState>()(
               }
             ])
           ),
-          // Only persist activeTabId if it's a workflow tab
+          // Only persist activeTabId if it's a workflow or multi-agent tab
           activeTabId: (() => {
             const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-            return activeTab?.metadata?.mode === 'workflow' ? state.activeTabId : null
+            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
           })()
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         })

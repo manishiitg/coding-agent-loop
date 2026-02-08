@@ -5,9 +5,10 @@ interface ModelOptionsConfigProps {
   options: Record<string, unknown>
   temperature?: number
   onChange: (opts: Record<string, unknown>, temp?: number) => void
+  disabled?: boolean
 }
 
-export function ModelOptionsConfig({ metadata, options, temperature, onChange }: ModelOptionsConfigProps) {
+export function ModelOptionsConfig({ metadata, options, temperature, onChange, disabled }: ModelOptionsConfigProps) {
   const updateOption = (key: string, value: string | number) => {
     onChange({ ...options, [key]: value }, temperature)
   }
@@ -32,7 +33,8 @@ export function ModelOptionsConfig({ metadata, options, temperature, onChange }:
           <select 
             value={currentTemp.toString()}
             onChange={(e) => updateTemperature(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+            disabled={disabled}
+            className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {temperatureOptions.map(temp => (
               <option key={temp} value={temp.toString()}>
@@ -48,7 +50,8 @@ export function ModelOptionsConfig({ metadata, options, temperature, onChange }:
             <select 
               value={(options.reasoning_effort as string) || 'medium'} 
               onChange={(e) => updateOption('reasoning_effort', e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+              disabled={disabled}
+              className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {(metadata.reasoning_effort_levels || ['low', 'medium', 'high']).map(level => (
                 <option key={level} value={level}>{level.charAt(0).toUpperCase() + level.slice(1)}</option>
@@ -63,7 +66,8 @@ export function ModelOptionsConfig({ metadata, options, temperature, onChange }:
             <select 
               value={(options.thinking_level as string) || 'high'} 
               onChange={(e) => updateOption('thinking_level', e.target.value)}
-              className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+              disabled={disabled}
+              className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {(metadata.thinking_levels || ['low', 'high']).map(level => (
                 <option key={level} value={level}>{level.charAt(0).toUpperCase() + level.slice(1)}</option>
@@ -79,7 +83,8 @@ export function ModelOptionsConfig({ metadata, options, temperature, onChange }:
               type="number"
               value={(options.thinking_budget as number) || 1024} 
               onChange={(e) => updateOption('thinking_budget', parseInt(e.target.value))}
-              className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+              disabled={disabled}
+              className="w-full px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
               min={1024}
               step={1024}
             />

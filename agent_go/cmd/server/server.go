@@ -1195,7 +1195,7 @@ func (api *StreamingAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 	        json.NewEncoder(w).Encode(map[string]interface{}{
 	                "status":  "healthy",
 	                "time":    time.Now(),
-	                "version": "1.0.0",
+	                "version": llmtypes.VERSION,
 	                "config": map[string]interface{}{			"provider":         api.config.Provider,
 			"model":            api.config.ModelID,
 			"temperature":      api.config.Temperature,

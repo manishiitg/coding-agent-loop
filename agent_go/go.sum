@@ -150,8 +150,8 @@ github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/manishiitg/mcpagent v1.2.6-0.20260207055328-423e77a04a34 h1:UtQP7ww7DkW+Xgnht5ZXYUcuU/pCTTG5bJN68f+RF4c=
 github.com/manishiitg/mcpagent v1.2.6-0.20260207055328-423e77a04a34/go.mod h1:orSK8bw3r8lWWWPEmUiaxXd40PypJALR86j6daZSyEI=
-github.com/manishiitg/multi-llm-provider-go v0.3.2 h1:bA7614SarfRU12oUVylckzelbzFpFlWvsESXzn6+iVA=
-github.com/manishiitg/multi-llm-provider-go v0.3.2/go.mod h1:roTv+RtW1fmyIt9+ltdfXcfoe6RI1PJFXpTGeYnEM9U=
+github.com/manishiitg/multi-llm-provider-go v0.3.3-0.20260208035017-6b16cf6cbdf3 h1:9Albt2+cwOhfuYAkjqtKLN5UOjcNtnsa6mtK+yt+Rts=
+github.com/manishiitg/multi-llm-provider-go v0.3.3-0.20260208035017-6b16cf6cbdf3/go.mod h1:roTv+RtW1fmyIt9+ltdfXcfoe6RI1PJFXpTGeYnEM9U=
 github.com/mark3labs/mcp-go v0.44.0-beta.1 h1:96+eeCyywh4gpaJCaXKfkO5BkSNUThGbLgo3yQqvGHg=
 github.com/mark3labs/mcp-go v0.44.0-beta.1/go.mod h1:YnJfOL382MIWDx1kMY+2zsRHU/q78dBg9aFb8W6Thdw=
 github.com/mattn/go-isatty v0.0.20 h1:xfD0iDuEKnDkl03q4limB+vH+GxLEtL/jb4xVJSWWEY=

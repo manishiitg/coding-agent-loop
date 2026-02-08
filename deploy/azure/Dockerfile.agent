@@ -1,0 +1,64 @@
+# =============================================================================
+# Azure agent image - uses shared base (Dockerfile.base) so only app layer is pushed.
+# Build context: workspace/, agent_go/, multi-llm-provider-go/, and mcpagent/ (local deps).
+# =============================================================================
+ARG BASE_IMAGE=mcpagentacr.azurecr.io/mcp-agent-base:latest
+FROM ${BASE_IMAGE} AS runtime
+
+# Build stage - Debian so the binary links against glibc and runs on the base
+FROM golang:1.24-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates gcc libc6-dev && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY workspace/go.mod workspace/go.sum ./workspace/
+COPY workspace/ ./workspace/
+
+COPY agent_go/go.mod agent_go/go.sum ./agent_go/
+
+COPY multi-llm-provider-go/go.mod multi-llm-provider-go/go.sum ./multi-llm-provider-go/
+COPY multi-llm-provider-go/ ./multi-llm-provider-go/
+
+COPY mcpagent/go.mod mcpagent/go.sum ./mcpagent/
+COPY mcpagent/ ./mcpagent/
+
+# Use local workspace + multi-llm-provider-go + mcpagent via go.work
+RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n\t./multi-llm-provider-go\n\t./mcpagent\n)\n' > /app/go.work
+ENV GOWORK=/app/go.work
+# RUN go work sync - removed to force local module usage
+
+COPY agent_go/ ./agent_go/
+
+RUN cd /app && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
+
+# Runtime: use shared base (only copy app artifacts here)
+FROM runtime
+
+# Copy the binary from builder stage
+COPY --from=builder /app/agent_go/mcp-agent .
+
+# Copy Go from builder for code execution mode (run Go snippets)
+COPY --from=builder /usr/local/go /usr/local/go
+ENV GOROOT=/usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+RUN go version
+
+# Copy configuration files
+COPY --from=builder /app/agent_go/configs ./configs
+
+# Copy database migration files (required for schema creation on startup)
+COPY --from=builder /app/agent_go/pkg/database/migrations ./pkg/database/migrations
+COPY --from=builder /app/agent_go/pkg/database/migrations_postgres ./pkg/database/migrations_postgres
+
+# Create reports and logs directories
+RUN mkdir -p reports logs && chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8000
+
+# Set default command
+CMD ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_simple.json"]

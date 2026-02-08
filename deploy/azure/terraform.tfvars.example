@@ -10,9 +10,16 @@ acr_name            = "mcpagentacr"   # Must be globally unique, alphanumeric on
 # skip_acr_managed_identity = true
 # acr_admin_password = ""   # Get from: az acr credential show -n <acr_name> -o tsv --query "passwords[0].value"
 
+# Authentication: false = single-user (no login); true = multi-user JWT (configure AUTH_* in agent_env)
+# multi_user_mode = false
+
 # Optional: API keys and env (use TF_VAR_* or a secret backend; do not commit)
 # openai_api_key = ""
-# agent_env = {}
+# agent_env = {
+#   "AZURE_AVAILABLE_MODELS" = "gpt-5.2,gpt-5.2-codex,gpt-4.1-mini"
+#   "LLM_CONFIG_LOCKED"      = "azure"
+#   "AZURE_PRIMARY_MODEL"    = "gpt-5.2"
+# }
 # workspace_api_env = {}
 
 # Optional: custom FQDNs (leave empty to use default *.azurecontainerapps.io)

@@ -16,7 +16,7 @@ Deploy MCP Agent Builder to Kubernetes with Gemini and OpenRouter providers.
 
 ## Configuration
 
-### Secrets (deployments/k8s/.env)
+### Secrets (deploy/k8s/.env)
 
 ```bash
 GEMINI_API_KEY=<your-gemini-api-key>
@@ -45,24 +45,24 @@ LANGFUSE_HOST=<langfuse-host>
 
 ### MCP servers (agent/mcp_config.json)
 
-Place your MCP server config at **`deployments/k8s/agent/mcp_config.json`**. When you run the deploy script (with or without `--build`), this file is applied to the cluster as ConfigMap `mcpagent-agent-config` and the agent is restarted so it loads the new config. Format: `{"mcpServers":{"server-name":{...},...}}`. If the file is missing, the existing ConfigMap is left unchanged.
+Place your MCP server config at **`deploy/k8s/agent/mcp_config.json`**. When you run the deploy script (with or without `--build`), this file is applied to the cluster as ConfigMap `mcpagent-agent-config` and the agent is restarted so it loads the new config. Format: `{"mcpServers":{"server-name":{...},...}}`. If the file is missing, the existing ConfigMap is left unchanged.
 
 ## Deploy
 
 ```bash
 # Deploy all services
-./deployments/scripts/deploy-k8s.sh
+./deploy/k8s/scripts/deploy-k8s.sh
 
 # Build and deploy all
-./deployments/scripts/deploy-k8s.sh --build
+./deploy/k8s/scripts/deploy-k8s.sh --build
 
 # Deploy specific service
-./deployments/scripts/deploy-k8s.sh agent
-./deployments/scripts/deploy-k8s.sh frontend
-./deployments/scripts/deploy-k8s.sh workspace-api
+./deploy/k8s/scripts/deploy-k8s.sh agent
+./deploy/k8s/scripts/deploy-k8s.sh frontend
+./deploy/k8s/scripts/deploy-k8s.sh workspace-api
 
 # Build and deploy specific service
-./deployments/scripts/deploy-k8s.sh --build agent
+./deploy/k8s/scripts/deploy-k8s.sh --build agent
 ```
 
 ## Verify

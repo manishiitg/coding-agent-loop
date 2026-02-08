@@ -35,10 +35,28 @@ variable "postgres_admin_password" {
   description = "Admin password for the Azure PostgreSQL Flexible Server"
 }
 
+# Allow Terraform runner IP to connect to PostgreSQL so uuid-ossp CREATE EXTENSION can run during apply
+variable "allow_terraform_runner_ip" {
+  type        = bool
+  default     = true
+  description = "If true, add a firewall rule for the machine running terraform apply (so CREATE EXTENSION can run)"
+}
+
+variable "terraform_runner_public_ip" {
+  type        = string
+  default     = ""
+  description = "Optional: public IP for Terraform runner (if unset and allow_terraform_runner_ip=true, fetched from ifconfig.me)"
+}
+
 variable "skip_acr_managed_identity" {
   type        = bool
   default     = false
   description = "If true, use ACR admin credentials instead of managed identity (set when you lack role assignment permission)"
+
+  validation {
+    condition     = !var.skip_acr_managed_identity || var.acr_admin_password != ""
+    error_message = "When skip_acr_managed_identity is true, acr_admin_password must be set (e.g. in terraform.tfvars or TF_VAR_acr_admin_password)."
+  }
 }
 
 # Image tags (default to latest; override for releases)
@@ -86,6 +104,13 @@ variable "anthropic_api_key" {
   default     = ""
   sensitive   = true
   description = "Anthropic API key (for agent LLM configuration defaults)"
+}
+
+# Single-user: no login, default user ID. Multi-user: JWT auth (see docs/multi_user_authentication.md).
+variable "multi_user_mode" {
+  type        = bool
+  default     = false
+  description = "Set to true for JWT multi-user auth; false for single-user (no login)"
 }
 
 variable "agent_env" {

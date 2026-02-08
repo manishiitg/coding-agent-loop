@@ -15,11 +15,11 @@ if [ -z "$ACR_NAME" ]; then
 fi
 
 echo "Getting ACR password for $ACR_NAME..."
-export TF_VAR_acr_admin_password
 TF_VAR_acr_admin_password="$(az acr credential show -n "$ACR_NAME" -o tsv --query 'passwords[0].value' 2>/dev/null)" || {
   echo "Failed to get ACR password. Run 'az login' and ensure you have access to ACR $ACR_NAME."
   exit 1
 }
+export TF_VAR_acr_admin_password
 
 echo "Running terraform apply..."
 exec terraform apply "$@"

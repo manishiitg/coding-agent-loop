@@ -108,6 +108,12 @@ cd "$SCRIPT_DIR" || {
 }
 echo "📁 Working directory: $(pwd)"
 
+# Use repo go.work so the server uses local multi-llm-provider-go (Azure streaming fix, etc.)
+if [ -f "${SCRIPT_DIR}/../go.work" ]; then
+    export GOWORK="${SCRIPT_DIR}/../go.work"
+    echo "🔧 GOWORK=$GOWORK (using local multi-llm-provider-go)"
+fi
+
 # Explicitly set single-user mode (no authentication required)
 export MULTI_USER_MODE="false"
 
@@ -153,16 +159,17 @@ export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
 
 # Set agent provider environment variable (used by server.go for internal operations)
 # Note: Actual agent execution uses Published LLMs from frontend with their own API keys
-export AGENT_PROVIDER="bedrock"
-export AGENT_MODEL="global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+export AGENT_PROVIDER="${AGENT_PROVIDER:-azure}"
+export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 
 # Set available models for each provider
 export BEDROCK_AVAILABLE_MODELS="global.anthropic.claude-sonnet-4-5-20250929-v1:0,us.anthropic.claude-sonnet-4-20250514-v1:0,us.anthropic.claude-3-7-sonnet-20250219-v1:0"
 export OPENROUTER_AVAILABLE_MODELS="x-ai/grok-code-fast-1,x-ai/grok-4-fast"
 export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
+export AZURE_AVAILABLE_MODELS="gpt-5.2,gpt-5.2-codex,gpt-4.1-mini"
 
 # Supported LLM providers (controls which providers appear in the UI)
-export SUPPORTED_LLM_PROVIDERS="azure,anthropic,vertex"
+export SUPPORTED_LLM_PROVIDERS="${SUPPORTED_LLM_PROVIDERS:-azure}"
 
 # Obsidian configuration removed - now using workspace tools
 
@@ -211,6 +218,7 @@ echo "- Main LLM Temperature: $DEEP_SEARCH_MAIN_LLM_TEMPERATURE" >> "$LOG_PATH"
 echo "- Available Bedrock Models: $BEDROCK_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Available OpenRouter Models: $OPENROUTER_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Available OpenAI Models: $OPENAI_AVAILABLE_MODELS" >> "$LOG_PATH"
+echo "- Available Azure Models: $AZURE_AVAILABLE_MODELS" >> "$LOG_PATH"
 echo "- Workspace tools: Enabled" >> "$LOG_PATH"
 echo "- Workspace Semantic Search: $WORKSPACE_ENABLE_SEMANTIC_SEARCH" >> "$LOG_PATH"
 echo "- Context Summarization: $ENABLE_CONTEXT_SUMMARIZATION" >> "$LOG_PATH"

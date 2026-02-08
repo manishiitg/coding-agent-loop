@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import MCPConfigEditor from './MCPConfigEditor';
 import { OAuthStatusBadge } from './OAuthStatusBadge';
 import { useMCPStore } from '../stores';
+import type { AgentMode } from '../stores/types';
 
 interface ServerSelectionDropdownProps {
   availableServers: string[];
@@ -16,6 +17,7 @@ interface ServerSelectionDropdownProps {
   onSelectAll: () => void;
   onClearAll: () => void;
   disabled?: boolean;
+  agentMode?: AgentMode;
 }
 
 export default function ServerSelectionDropdown({

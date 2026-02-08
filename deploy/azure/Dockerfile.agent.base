@@ -1,0 +1,54 @@
+# =============================================================================
+# Agent base image: OS + runtime deps (Debian, Node, Python, Chromium, etc.).
+# Rebuild rarely (e.g. when upgrading Node/Chromium or adding system packages).
+# Push once to ACR; then Dockerfile.agent only adds binary + configs (small pushes).
+# Build: docker build -f deploy/azure/Dockerfile.agent.base -t <acr>.azurecr.io/mcp-agent-base:latest .
+# Context: repo root (or any; this file has no COPY of app code).
+# =============================================================================
+
+FROM debian:bookworm-slim
+
+# Base + MCP runtime: curl/wget/bash, jq/ripgrep, Python+uv, gettext-base, gnupg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    wget \
+    bash \
+    jq \
+    ripgrep \
+    python3 \
+    python3-pip \
+    python3-venv \
+    gettext-base \
+    gnupg \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends chromium \
+    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# agent-browser for browser automation
+RUN npm install -g agent-browser
+
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+
+RUN pip3 install --break-system-packages uv
+
+RUN which npx && which docker && npm --version && npx --version && docker --version
+RUN which rg && which jq && rg --version && jq --version
+
+# Non-root user
+RUN groupadd -g 1001 appgroup && useradd -m -u 1001 -g appgroup appuser
+
+WORKDIR /app
+RUN mkdir -p reports logs && chown -R appuser:appgroup /app
+
+USER appuser
+EXPOSE 8000
+
+# No CMD; the agent image will add binary and set CMD

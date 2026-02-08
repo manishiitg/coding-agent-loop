@@ -103,5 +103,9 @@ Workflow/*
 agent_go/Workflow/
 
 # K8s deployment secrets
-deployments/k8s/.env
+deploy/k8s/.env
 workspace/workspace
+
+# SQLite temporary files
+*.db-shm
+*.db-wal

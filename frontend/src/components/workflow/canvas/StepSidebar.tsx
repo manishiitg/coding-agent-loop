@@ -43,6 +43,7 @@ interface StepSidebarProps {
   plan?: PlanningResponse | null
   completedStepIndices?: number[]  // Deprecated: no longer used (all steps can run)
   isCompact?: boolean  // When true, use narrower width (400px instead of 600px)
+  showChatArea?: boolean
 }
 
 export const StepSidebar: React.FC<StepSidebarProps> = ({

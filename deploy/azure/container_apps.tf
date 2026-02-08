@@ -50,7 +50,7 @@ resource "azurerm_container_app" "agent" {
   dynamic "secret" {
     for_each = nonsensitive(var.agent_env)
     content {
-      name  = "agent-env-${replace(secret.key, ".", "-")}"
+      name  = "agent-env-${lower(replace(secret.key, "/[._]/", "-"))}"
       value = secret.value
     }
   }
@@ -62,7 +62,7 @@ resource "azurerm_container_app" "agent" {
 
   registry {
     server               = local.acr_login_server
-    username             = local.use_acr_admin ? local.acr_username : null
+    username             = (local.use_acr_admin && var.acr_admin_password != "") ? local.acr_username : null
     password_secret_name = (local.use_acr_admin && var.acr_admin_password != "") ? "acr-password" : null
     identity             = local.use_acr_admin ? null : azurerm_user_assigned_identity.acr_pull[0].id
   }
@@ -83,7 +83,8 @@ resource "azurerm_container_app" "agent" {
       cpu     = 1.0
       memory  = "2Gi"
       command = ["./mcp-agent", "server"]
-      args    = ["--host", "0.0.0.0", "--port", "8000", "--mcp-config", "/home/appuser/.config/mcpagent/mcp_config.json", "--db-type", "postgres"]
+      # MCP config baked into image from deploy/azure/mcp_config.json (same idea as K8s ConfigMap from deploy/k8s/agent/mcp_config.json)
+      args    = ["--host", "0.0.0.0", "--port", "8000", "--mcp-config", "/app/configs/mcp_servers_clean_user.json", "--db-type", "postgres"]
 
       env {
         name  = "PORT"
@@ -108,6 +109,15 @@ resource "azurerm_container_app" "agent" {
       env {
         name  = "SUPPORTED_LLM_PROVIDERS"
         value = "azure,anthropic"
+      }
+      # Single-user: no login (default user). Multi-user: set multi_user_mode = true and configure AUTH_* (see docs/multi_user_authentication.md).
+      env {
+        name  = "MULTI_USER_MODE"
+        value = tostring(var.multi_user_mode)
+      }
+      env {
+        name  = "DEFAULT_USER_ID"
+        value = "default-user"
       }
       # Hack: The 'value' above is a template. We need to construct the full string inside the container 
       # or use a secret for the whole URL. 
@@ -139,7 +149,7 @@ resource "azurerm_container_app" "agent" {
         for_each = nonsensitive(var.agent_env)
         content {
           name          = env.key
-          secret_name   = "agent-env-${replace(env.key, ".", "-")}"
+          secret_name   = "agent-env-${lower(replace(env.key, "/[._]/", "-"))}"
         }
       }
 
@@ -209,14 +219,14 @@ resource "azurerm_container_app" "workspace_api" {
   dynamic "secret" {
     for_each = nonsensitive(var.workspace_api_env)
     content {
-      name  = "workspace-env-${replace(secret.key, ".", "-")}"
+      name  = "workspace-env-${lower(replace(secret.key, "/[._]/", "-"))}"
       value = secret.value
     }
   }
 
   registry {
     server               = local.acr_login_server
-    username             = local.use_acr_admin ? local.acr_username : null
+    username             = (local.use_acr_admin && var.acr_admin_password != "") ? local.acr_username : null
     password_secret_name = (local.use_acr_admin && var.acr_admin_password != "") ? "acr-password" : null
     identity             = local.use_acr_admin ? null : azurerm_user_assigned_identity.acr_pull[0].id
   }
@@ -262,7 +272,7 @@ resource "azurerm_container_app" "workspace_api" {
         for_each = nonsensitive(var.workspace_api_env)
         content {
           name          = env.key
-          secret_name   = "workspace-env-${replace(env.key, ".", "-")}"
+          secret_name   = "workspace-env-${lower(replace(env.key, "/[._]/", "-"))}"
         }
       }
 
@@ -336,7 +346,7 @@ resource "azurerm_container_app" "frontend" {
 
   registry {
     server               = local.acr_login_server
-    username             = local.use_acr_admin ? local.acr_username : null
+    username             = (local.use_acr_admin && var.acr_admin_password != "") ? local.acr_username : null
     password_secret_name = (local.use_acr_admin && var.acr_admin_password != "") ? "acr-password" : null
     identity             = local.use_acr_admin ? null : azurerm_user_assigned_identity.acr_pull[0].id
   }

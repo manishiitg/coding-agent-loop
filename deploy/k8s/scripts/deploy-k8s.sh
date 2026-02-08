@@ -8,10 +8,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Get script directory and project root
+# Get script directory and project root (script lives in deploy/k8s/scripts/)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-K8S_DIR="$PROJECT_ROOT/deployments/k8s"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+K8S_DIR="$PROJECT_ROOT/deploy/k8s"
 NAMESPACE="prod-mcpagent"
 
 # Configuration
@@ -271,12 +271,12 @@ extract_env_value() {
     grep "^${key}" "$env_file" | sed 's/^[^=]*[[:space:]]*=[[:space:]]*//' | sed "s/^['\"]//;s/['\"]$//" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -1
 }
 
-# Create/update secret from deployments/k8s/.env
+# Create/update secret from deploy/k8s/.env
 SECRET_NAME="prod-mcpagent-secret"
 ENV_FILE="$K8S_DIR/.env"
 
 if [ -f "$ENV_FILE" ]; then
-    echo -e "${BLUE}Reading secrets from deployments/k8s/.env for ${SECRET_NAME}...${NC}"
+    echo -e "${BLUE}Reading secrets from deploy/k8s/.env for ${SECRET_NAME}...${NC}"
 
     # Gemini/Vertex Configuration
     GEMINI_API_KEY=$(extract_env_value "GEMINI_API_KEY" "$ENV_FILE")
@@ -324,7 +324,7 @@ if [ -f "$ENV_FILE" ]; then
     echo -e "${GREEN}✓ Secret ${SECRET_NAME} created/updated${NC}"
 else
     if ! kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &> /dev/null; then
-        echo -e "${YELLOW}No deployments/k8s/.env and secret ${SECRET_NAME} not found. Create it manually:${NC}"
+        echo -e "${YELLOW}No deploy/k8s/.env and secret ${SECRET_NAME} not found. Create it manually:${NC}"
         echo -e "  kubectl create secret generic ${SECRET_NAME} \\"
         echo -e "    --from-literal=GEMINI_API_KEY=\"<key>\" \\"
         echo -e "    --from-literal=OPENROUTER_API_KEY=\"<key>\" \\"
@@ -350,7 +350,7 @@ deploy_service() {
 
     echo -e "${BLUE}Deploying $service...${NC}"
 
-    # Agent: sync MCP ConfigMap from deployments/k8s/agent/mcp_config.json if present
+    # Agent: sync MCP ConfigMap from deploy/k8s/agent/mcp_config.json if present
     if [ "$service" = "agent" ] && [ -f "$K8S_DIR/agent/mcp_config.json" ]; then
         echo -e "${BLUE}Updating MCP config from agent/mcp_config.json...${NC}"
         if kubectl create configmap mcpagent-agent-config \

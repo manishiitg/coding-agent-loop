@@ -1,0 +1,3 @@
+=== Agent app: mcpagent-agent (RG: code-analysis-phase-1) ===
+Looking for: response is nil | choice.Content is empty | DeploymentNotFound | 404 | all LLMs failed
+

@@ -86,7 +86,7 @@ resource "azurerm_container_app_environment_storage" "agent_data" {
   access_mode                  = "ReadWrite"
 }
 
-# User-assigned managed identity for pulling images from ACR (skip when using admin credentials)
+# User-assigned managed identity for pulling images from ACR (only when not using admin credentials)
 resource "azurerm_user_assigned_identity" "acr_pull" {
   count               = var.skip_acr_managed_identity ? 0 : 1
   name                = "${var.project_name}-acr-pull"
@@ -151,4 +151,44 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
   server_id        = azurerm_postgresql_flexible_server.db.id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
+}
+
+# Allow uuid-ossp extension (required for agent migrations)
+resource "azurerm_postgresql_flexible_server_configuration" "uuid_ossp" {
+  name      = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = "uuid-ossp"
+}
+
+# Allow Terraform runner's public IP so local-exec can run CREATE EXTENSION
+data "http" "runner_ip" {
+  count = var.allow_terraform_runner_ip ? 1 : 0
+  url   = "https://ifconfig.me/ip"
+}
+resource "azurerm_postgresql_flexible_server_firewall_rule" "terraform_runner" {
+  count            = var.allow_terraform_runner_ip ? 1 : 0
+  name             = "allow-terraform-runner"
+  server_id        = azurerm_postgresql_flexible_server.db.id
+  start_ip_address = trimspace(var.terraform_runner_public_ip != "" ? var.terraform_runner_public_ip : data.http.runner_ip[0].response_body)
+  end_ip_address   = trimspace(var.terraform_runner_public_ip != "" ? var.terraform_runner_public_ip : data.http.runner_ip[0].response_body)
+}
+
+# Create uuid-ossp extension in mcpagent (runs on machine executing terraform apply; requires psql)
+resource "null_resource" "postgres_uuid_ossp" {
+  depends_on = [
+    azurerm_postgresql_flexible_server_database.mcpagent,
+    azurerm_postgresql_flexible_server_configuration.uuid_ossp,
+    azurerm_postgresql_flexible_server_firewall_rule.terraform_runner,
+  ]
+
+  triggers = {
+    server_id = azurerm_postgresql_flexible_server.db.id
+  }
+
+  provisioner "local-exec" {
+    command     = "psql \"host=${azurerm_postgresql_flexible_server.db.fqdn} port=5432 dbname=mcpagent user=pgadmin sslmode=require\" -c 'CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";'"
+    environment = {
+      PGPASSWORD = var.postgres_admin_password
+    }
+  }
 }

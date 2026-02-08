@@ -58,7 +58,7 @@ terraform plan
 
 ## 2. Deploy infrastructure
 
-When **`skip_acr_managed_identity = true`**, Azure requires both ACR username and password for the container apps. Either:
+When **`skip_acr_managed_identity = true`** (default when you lack permission to assign AcrPull to a managed identity), Azure requires both ACR username and password for the container apps. Use one of the following for **initial deploy and any later `terraform apply`**:
 
 **Option A – apply without putting the password in a file (recommended):**
 
@@ -68,7 +68,7 @@ chmod +x apply-with-acr-password.sh
 ./apply-with-acr-password.sh -auto-approve
 ```
 
-This script fetches the ACR password with `az acr credential show` and runs `terraform apply` with `TF_VAR_acr_admin_password` set so the password is never written to disk.
+`apply-with-acr-password.sh` fetches the ACR password with `az acr credential show` and runs `terraform apply` with `TF_VAR_acr_admin_password` set so the password is never written to disk. Use it whenever you run Terraform (first apply or subsequent changes). You can pass any Terraform args, e.g. `./apply-with-acr-password.sh -auto-approve` or `./apply-with-acr-password.sh` (prompts for confirm).
 
 **Option B – set the password in tfvars:**
 
@@ -106,6 +106,20 @@ cd deploy/azure
 ./deploy.sh frontend --local
 ```
 
+### Shared base image (agent + workspace)
+
+Agent and workspace use a **shared base image** (`mcp-agent-base:latest`) so most layers are reused and only app layers (binary, configs) are pushed on each deploy. Build and push the base **once** (or when you change OS/runtime deps), then deploy as usual:
+
+```bash
+# One-time (or when base deps change): build and push the shared base
+./deploy.sh base --local
+
+# Then deploy app images (only small layers are pushed)
+./deploy.sh all --local
+```
+
+Without building the base first, agent and workspace builds will fail (they `FROM` the base). Targets: `agent` | `workspace` | `frontend` | `all` | `base`.
+
 > **Note:** Remote builds (without `--local`) are available but much slower as they upload your entire source code to Azure for every build.
 
 ## 4. Test the deployment
@@ -135,6 +149,31 @@ chmod +x healthcheck.sh
 ./healthcheck.sh
 ```
 
+### Viewing Azure Container App logs
+
+To see what happened (e.g. for "all LLMs failed" or other errors), stream or show recent logs:
+
+```bash
+cd deploy/azure
+
+# Quick check: last 200 lines and highlight known LLM/API errors (response is nil, DeploymentNotFound, etc.)
+./agent-logs.sh
+./agent-logs.sh --tail 500          # more lines
+./agent-logs.sh --follow            # stream live
+
+# Or manually (resource group and app name from Terraform):
+RG="$(terraform output -raw resource_group_name)"
+AGENT_APP="$(terraform output -raw agent_container_app_name)"
+az containerapp logs show --name "$AGENT_APP" --resource-group "$RG" --follow
+az containerapp logs show --name "$AGENT_APP" --resource-group "$RG" --tail 100
+```
+
+**What to look for in agent logs when Azure fails with “same config” as local:**
+- **`response is nil`** or **`choice.Content is empty`** → server is likely on an **old agent image** (without the multi-llm-provider-go streaming fixes). Rebuild and redeploy the agent (e.g. `./deploy.sh agent --local`) and ensure the new revision is active.
+- **`DeploymentNotFound`** or **404** → deployment name or resource mismatch; compare deployment name and endpoint in logs with Azure OpenAI Studio and with what works locally.
+
+Or in **Azure Portal**: open the Container App → **Log stream** or **Logs** (Log Analytics).
+
 ## 5. Test locally first (optional)
 
 Run the full stack locally with production-style images:
@@ -160,6 +199,13 @@ Then open http://localhost:5173 (frontend), http://localhost:8000 (agent), http:
 | `openai_api_key` | Optional; set via TF_VAR or tfvars (sensitive) |
 | `agent_env` | Optional map of env vars for agent |
 | `workspace_api_env` | Optional map of env vars for workspace-api |
+| `multi_user_mode` | `false` = single-user (no login); `true` = JWT multi-user (see [multi_user_authentication.md](../../docs/multi_user_authentication.md)) |
+
+**Authentication:** By default the deployment is **single-user** (`multi_user_mode = false`): no login, all requests use default user. Set `multi_user_mode = true` and configure `AUTH_*` in `agent_env` for JWT multi-user. See [docs/multi_user_authentication.md](../../docs/multi_user_authentication.md).
+
+### MCP server config (like K8s)
+
+The agent image uses an MCP config file baked in at build time. Optionally create **`deploy/azure/mcp_config.json`** (same idea as **`deploy/k8s/agent/mcp_config.json`**): copy from **`agent_go/configs/mcp_servers_clean_user.json`** and edit. If `mcp_config.json` is missing, the build uses `agent_go/configs/mcp_servers_clean_user.json`. The container runs with `--mcp-config /app/configs/mcp_servers_clean_user.json`. The file is in `.gitignore` so you can keep local edits uncommitted.
 
 ## Database (PostgreSQL)
 
@@ -188,6 +234,16 @@ The `agent` container app is automatically configured with:
 ### Access
 
 The database is configured to allow access from Azure Services (Container Apps). It also has `public_network_access_enabled = true` to allow connections from your local machine if you whitelist your IP, but the firewall rule defaults to Azure-internal only.
+
+### Enable uuid-ossp extension (required for agent migrations)
+
+Agent migrations need the `uuid-ossp` extension. Terraform handles this automatically:
+
+1. **Allowlist** – `azurerm_postgresql_flexible_server_configuration.uuid_ossp` sets `azure.extensions = uuid-ossp`.
+2. **Firewall (optional)** – If `allow_terraform_runner_ip` is true (default), a firewall rule is added for the machine running `terraform apply` so it can connect to PostgreSQL.
+3. **CREATE EXTENSION** – A `null_resource` runs `psql ... -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";'` during apply (requires `psql` and `postgres_admin_password` in tfvars or `TF_VAR_postgres_admin_password`). If apply runs from a network that cannot reach the DB (e.g. CI), this step may time out; the agent’s migration 000 also runs `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"` on startup, so once the extension is allow-listed, restarting the agent is enough.
+
+**Manual fallback** – From `deploy/azure`, run `./create_uuid_extension.sh` (prompts for password or uses `TF_VAR_postgres_admin_password`). Then restart the agent (new revision or `./deploy.sh agent --local`).
 
 ## Workspace API: empty workspace-docs on deploy
 

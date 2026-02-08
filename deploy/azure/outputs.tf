@@ -3,6 +3,11 @@ output "resource_group_name" {
   description = "Resource group name (existing)"
 }
 
+output "agent_container_app_name" {
+  value       = azurerm_container_app.agent.name
+  description = "Container App name for the agent (use with az containerapp logs show)"
+}
+
 output "acr_login_server" {
   value       = azurerm_container_registry.acr.login_server
   description = "ACR login server (use for docker push)"

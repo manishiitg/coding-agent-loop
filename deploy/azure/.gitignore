@@ -10,3 +10,6 @@ override.tf
 override.tf.json
 *.tfvars
 !terraform.tfvars.example
+
+# MCP server config (edit locally; copy from agent_go/configs/mcp_servers_clean_user.json if missing)
+mcp_config.json

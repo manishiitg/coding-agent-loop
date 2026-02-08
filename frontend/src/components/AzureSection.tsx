@@ -37,7 +37,19 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
   const [isFetchingModels, setIsFetchingModels] = useState(false)
   const [endpointCorrectionMessage, setEndpointCorrectionMessage] = useState<string | null>(null)
 
-  const { availableAzureModels, customAzureModels, addCustomAzureModel, removeCustomAzureModel, refreshAvailableLLMs, saveLLM, testAPIKey: testAPIKeyFromStore } = useLLMStore()
+  const { 
+    availableAzureModels, 
+    customAzureModels, 
+    addCustomAzureModel, 
+    removeCustomAzureModel, 
+    refreshAvailableLLMs, 
+    saveLLM, 
+    testAPIKey: testAPIKeyFromStore,
+    lockedProviders,
+    llmConfigLocked
+  } = useLLMStore()
+
+  const isLocked = llmConfigLocked || lockedProviders.includes('azure')
 
   useEffect(() => {
     if (config.api_key) setApiKey(config.api_key)
@@ -256,12 +268,23 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-foreground">Azure AI Configuration</h3>
+        {isLocked && (
+          <div className="flex items-center gap-1.5 px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 rounded text-yellow-600 dark:text-yellow-500 text-xs font-medium">
+            <Key className="w-3.5 h-3.5" />
+            Locked by Admin
+          </div>
+        )}
       </div>
 
       {/* Step 1: Azure Credentials */}
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-4">Azure Credentials</h4>
         <div className="space-y-4">
+          {isLocked && (
+            <div className="text-xs text-muted-foreground bg-secondary/30 p-2 rounded border border-border/50 mb-2">
+              Configuration for this provider is managed by your administrator and cannot be changed.
+            </div>
+          )}
           {/* Endpoint */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
@@ -272,13 +295,15 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
               type="text"
               value={endpoint}
               onChange={(e) => handleEndpointChange(e.target.value)}
-              placeholder="https://your-resource.services.ai.azure.com"
+              placeholder={isLocked ? "••••••••••••••••" : "https://your-resource.services.ai.azure.com"}
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-              disabled={isAuthenticating}
+              disabled={isAuthenticating || isLocked}
             />
-            <p className="text-xs text-muted-foreground">
-              Azure AI Services endpoint (e.g., https://your-resource.services.ai.azure.com)
-            </p>
+            {!isLocked && (
+              <p className="text-xs text-muted-foreground">
+                Azure AI Services endpoint (e.g., https://your-resource.services.ai.azure.com)
+              </p>
+            )}
           </div>
 
           {/* API Key */}
@@ -291,9 +316,9 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
               type="password"
               value={apiKey}
               onChange={(e) => handleAPIKeyChange(e.target.value)}
-              placeholder="Enter your Azure API key"
+              placeholder={isLocked ? "••••••••••••••••" : "Enter your Azure API key"}
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-              disabled={isAuthenticating}
+              disabled={isAuthenticating || isLocked}
             />
           </div>
 
@@ -309,11 +334,13 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
               onChange={(e) => handleRegionChange(e.target.value)}
               placeholder="e.g., eastus, westeurope"
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-              disabled={isAuthenticating}
+              disabled={isAuthenticating || isLocked}
             />
-            <p className="text-xs text-muted-foreground">
-              Azure region for reference (usually embedded in endpoint URL)
-            </p>
+            {!isLocked && (
+              <p className="text-xs text-muted-foreground">
+                Azure region for reference (usually embedded in endpoint URL)
+              </p>
+            )}
           </div>
 
           {/* API Version */}
@@ -328,35 +355,39 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
               onChange={(e) => handleApiVersionChange(e.target.value)}
               placeholder="v1"
               className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary"
-              disabled={isAuthenticating}
+              disabled={isAuthenticating || isLocked}
             />
-            <p className="text-xs text-muted-foreground">
-              API version for Azure AI Foundry (use "v1" for Responses API, or specific version like "2024-10-21")
-            </p>
+            {!isLocked && (
+              <p className="text-xs text-muted-foreground">
+                API version for Azure AI Foundry (use "v1" for Responses API, or specific version like "2024-10-21")
+              </p>
+            )}
           </div>
 
           {/* Authenticate Button */}
-          <div className="pt-2">
-            <Button
-              onClick={handleAuthenticate}
-              disabled={!endpoint.trim() || !apiKey.trim() || isAuthenticating}
-              className="w-full"
-            >
-              {isAuthenticating ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Authenticating...
-                </>
-              ) : isAuthenticated ? (
-                <>
-                  <CheckCircle className="w-4 h-4 mr-2 text-green-500" />
-                  Authenticated - {azureModels.length} models found
-                </>
-              ) : (
-                'Authenticate & Fetch Models'
-              )}
-            </Button>
-          </div>
+          {!isLocked && (
+            <div className="pt-2">
+              <Button
+                onClick={handleAuthenticate}
+                disabled={!endpoint.trim() || !apiKey.trim() || isAuthenticating}
+                className="w-full"
+              >
+                {isAuthenticating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Authenticating...
+                  </>
+                ) : isAuthenticated ? (
+                  <>
+                    <CheckCircle className="w-4 h-4 mr-2 text-green-500" />
+                    Authenticated - {azureModels.length} models found
+                  </>
+                ) : (
+                  'Authenticate & Fetch Models'
+                )}
+              </Button>
+            </div>
+          )}
 
           {/* Auth Error */}
           {authError && (
@@ -377,22 +408,24 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
       </Card>
 
       {/* Step 2: Model Selection (only shown after authentication) */}
-      {isAuthenticated && (
+      {(isAuthenticated || isLocked) && (
         <Card className="p-4">
           <div className="flex items-center justify-between mb-4">
             <h4 className="font-medium text-foreground">Model Selection</h4>
-            <Button
-              onClick={handleRefreshModels}
-              disabled={isFetchingModels}
-              size="sm"
-              variant="outline"
-            >
-              {isFetchingModels ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-            </Button>
+            {!isLocked && (
+              <Button
+                onClick={handleRefreshModels}
+                disabled={isFetchingModels}
+                size="sm"
+                variant="outline"
+              >
+                {isFetchingModels ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
+              </Button>
+            )}
           </div>
           <div className="space-y-4">
             <div>
@@ -403,113 +436,119 @@ export function AzureSection({ config, onUpdate, onTestAPIKey, apiKeyStatus, api
                 models={allModels}
                 metadata={metadata || []}
                 placeholder="Select an Azure model"
+                disabled={isLocked && allModels.length <= 1}
               />
               <ModelOptionsConfig
                 metadata={currentModelMetadata}
                 options={config.options || {}}
                 temperature={config.temperature}
                 onChange={handleOptionsChange}
+                disabled={isLocked}
               />
             </div>
 
             {/* Test Model */}
-            <div className="border-t border-border pt-4 space-y-3">
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => onTestAPIKey(apiKey, config.model_id, { ...config.options, endpoint, region, api_version: apiVersion }, config.temperature)}
-                  disabled={!config.model_id || apiKeyStatus === 'testing'}
-                  size="sm"
-                  variant="outline"
-                  className="flex-1"
-                >
-                  {apiKeyStatus === 'testing' ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Testing...
-                    </>
-                  ) : apiKeyStatus === 'valid' ? (
-                    <>
-                      <CheckCircle className="w-4 h-4 mr-2 text-green-500" />
-                      Model Working
-                    </>
-                  ) : apiKeyStatus === 'invalid' ? (
-                    <>
-                      <AlertCircle className="w-4 h-4 mr-2 text-red-500" />
-                      Test Failed
-                    </>
-                  ) : (
-                    'Test Model'
-                  )}
-                </Button>
+            {!isLocked && (
+              <div className="border-t border-border pt-4 space-y-3">
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => onTestAPIKey(apiKey, config.model_id, { ...config.options, endpoint, region, api_version: apiVersion }, config.temperature)}
+                    disabled={!config.model_id || apiKeyStatus === 'testing'}
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    {apiKeyStatus === 'testing' ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Testing...
+                      </>
+                    ) : apiKeyStatus === 'valid' ? (
+                      <>
+                        <CheckCircle className="w-4 h-4 mr-2 text-green-500" />
+                        Model Working
+                      </>
+                    ) : apiKeyStatus === 'invalid' ? (
+                      <>
+                        <AlertCircle className="w-4 h-4 mr-2 text-red-500" />
+                        Test Failed
+                      </>
+                    ) : (
+                      'Test Model'
+                    )}
+                  </Button>
+                </div>
+                {apiKeyStatus === 'valid' && (
+                  <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
+                    <CheckCircle className="w-4 h-4" />
+                    Model is working correctly
+                  </div>
+                )}
+                {endpointCorrectionMessage && (
+                  <div className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md">
+                    <CheckCircle className="w-4 h-4" />
+                    {endpointCorrectionMessage}
+                  </div>
+                )}
+                {apiKeyStatus === 'invalid' && (
+                  <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />
+                    {apiKeyError || 'Model test failed'}
+                  </div>
+                )}
               </div>
-              {apiKeyStatus === 'valid' && (
-                <div className="text-sm text-green-600 dark:text-green-400 flex items-center gap-1">
-                  <CheckCircle className="w-4 h-4" />
-                  Model is working correctly
-                </div>
-              )}
-              {endpointCorrectionMessage && (
-                <div className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md">
-                  <CheckCircle className="w-4 h-4" />
-                  {endpointCorrectionMessage}
-                </div>
-              )}
-              {apiKeyStatus === 'invalid' && (
-                <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4" />
-                  {apiKeyError || 'Model test failed'}
-                </div>
-              )}
-            </div>
+            )}
 
             {/* Publish to Library */}
-            <div className="border-t border-border pt-4">
-              {isPublishing ? (
-                <div className="space-y-3">
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={publishName}
-                      onChange={(e) => { setPublishName(e.target.value); setPublishError(null) }}
-                      placeholder="Enter configuration name..."
-                      className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
-                      autoFocus
-                      onKeyPress={(e) => e.key === 'Enter' && handlePublishToLibrary()}
-                    />
-                    <Button onClick={handlePublishToLibrary} size="sm" disabled={!publishName.trim() || isSubmitting}>
-                      {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
-                    </Button>
-                    <Button onClick={() => { setIsPublishing(false); setPublishName(''); setPublishError(null) }} size="sm" variant="ghost" disabled={isSubmitting}>Cancel</Button>
-                  </div>
-                  {publishError && (
-                    <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
-                      <AlertCircle className="w-4 h-4" />
-                      {publishError}
+            {!isLocked && (
+              <div className="border-t border-border pt-4">
+                {isPublishing ? (
+                  <div className="space-y-3">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={publishName}
+                        onChange={(e) => { setPublishName(e.target.value); setPublishError(null) }}
+                        placeholder="Enter configuration name..."
+                        className="flex-1 px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:ring-1 focus:ring-primary focus:border-primary"
+                        autoFocus
+                        onKeyPress={(e) => e.key === 'Enter' && handlePublishToLibrary()}
+                      />
+                      <Button onClick={handlePublishToLibrary} size="sm" disabled={!publishName.trim() || isSubmitting}>
+                        {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save'}
+                      </Button>
+                      <Button onClick={() => { setIsPublishing(false); setPublishName(''); setPublishError(null) }} size="sm" variant="ghost" disabled={isSubmitting}>Cancel</Button>
                     </div>
-                  )}
-                </div>
-              ) : (
-                <Button
-                  onClick={() => {
-                    setPublishName(generateDefaultName())
-                    setIsPublishing(true)
-                  }}
-                  size="sm"
-                  variant="outline"
-                  disabled={!config.model_id}
-                  className="w-full"
-                >
-                  <BookOpen className="w-4 h-4 mr-2" />
-                  Publish to Library
-                </Button>
-              )}
-            </div>
+                    {publishError && (
+                      <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                        <AlertCircle className="w-4 h-4" />
+                        {publishError}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <Button
+                    onClick={() => {
+                      setPublishName(generateDefaultName())
+                      setIsPublishing(true)
+                    }}
+                    size="sm"
+                    variant="outline"
+                    disabled={!config.model_id}
+                    className="w-full"
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" />
+                    Publish to Library
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </Card>
       )}
 
       {/* Custom Models (only shown after authentication) */}
-      {isAuthenticated && (
+      {!isLocked && isAuthenticated && (
         <Card className="p-4">
           <h4 className="font-medium text-foreground mb-4">Custom Models</h4>
           <div className="space-y-3">

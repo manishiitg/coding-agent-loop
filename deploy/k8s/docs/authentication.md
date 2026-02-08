@@ -147,7 +147,7 @@ AWS_REGION: "ap-south-1"
 ### Step 5: Deploy
 
 ```bash
-./deployments/scripts/deploy-k8s.sh --build agent frontend
+./deploy/k8s/scripts/deploy-k8s.sh --build agent frontend
 ```
 
 ---

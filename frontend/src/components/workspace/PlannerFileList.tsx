@@ -32,6 +32,7 @@ interface PlannerFileListProps {
   workflowFolderPath?: string | null
   isExporting?: boolean
   isImporting?: boolean
+  importProgress?: number
   isSelectionMode?: boolean
   selectedFiles?: Set<string>
   onToggleFileSelection?: (file: PlannerFile) => void
@@ -66,6 +67,7 @@ export default function PlannerFileList({
   workflowFolderPath,
   isExporting = false,
   isImporting = false,
+  importProgress = 0,
   isSelectionMode = false,
   selectedFiles = new Set(),
   onToggleFileSelection,
@@ -293,11 +295,7 @@ export default function PlannerFileList({
                           disabled={isImporting}
                           className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {isImporting ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Upload className="w-3 h-3" />
-                          )}
+                          <Upload className="w-3 h-3" />
                           Import Backup
                         </button>
                       </>

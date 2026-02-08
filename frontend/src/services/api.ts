@@ -591,7 +591,7 @@ export const agentApi = {
     return response.data
   },
 
-  importWorkflowBackup: async (workspacePath: string, file: File, overwrite: boolean = false): Promise<{ success: boolean; message: string; data?: { workspace_path: string; files_extracted: number; extracted_files: string[] } }> => {
+  importWorkflowBackup: async (workspacePath: string, file: File, overwrite: boolean = false, onProgress?: (progress: number) => void): Promise<{ success: boolean; message: string; data?: { workspace_path: string; files_extracted: number; extracted_files: string[] } }> => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('workspace_path', workspacePath)
@@ -600,6 +600,12 @@ export const agentApi = {
     const response = await workspaceApi.post('/api/workspace/import', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total)
+          onProgress(progress)
+        }
       },
     })
     return response.data

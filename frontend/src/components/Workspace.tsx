@@ -10,6 +10,7 @@ import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
 import RenameFileDialog from './workspace/RenameFileDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
+import ImportProgressDialog from './ui/ImportProgressDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -98,6 +99,8 @@ export default function Workspace({
   // Export/Import backup state
   const [isExporting, setIsExporting] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState(0)
+  const [importingFileName, setImportingFileName] = useState<string>('')
   const [exportError, setExportError] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
@@ -1525,6 +1528,8 @@ export default function Workspace({
     }
 
     setIsImporting(true)
+    setImportProgress(0)
+    setImportingFileName(file.name)
     setImportError(null)
     setImportSuccess(null)
 
@@ -1541,7 +1546,19 @@ export default function Workspace({
         'This will restore the workspace from the backup. Existing files may be overwritten. Continue?'
       )
 
-      const result = await agentApi.importWorkflowBackup(fullPath, file, overwrite)
+      if (!overwrite) {
+        setIsImporting(false)
+        setImportingFileName('')
+        if (backupFileInputRef.current) backupFileInputRef.current.value = ''
+        return
+      }
+
+      const result = await agentApi.importWorkflowBackup(
+        fullPath, 
+        file, 
+        true, // overwrite confirmed above
+        (progress) => setImportProgress(progress)
+      )
       
       if (result.success) {
         setImportSuccess(`Successfully imported ${result.data?.files_extracted || 0} files`)
@@ -1567,6 +1584,8 @@ export default function Workspace({
       setImportError(error instanceof Error ? error.message : 'Failed to import backup')
     } finally {
       setIsImporting(false)
+      setImportProgress(0)
+      setImportingFileName('')
       // Reset file input
       if (backupFileInputRef.current) {
         backupFileInputRef.current.value = ''
@@ -1904,6 +1923,7 @@ export default function Workspace({
                 workflowFolderPath={workflowFolderPath}
                 isExporting={isExporting}
                 isImporting={isImporting}
+                importProgress={importProgress}
                 isSelectionMode={isSelectionMode}
                 selectedFiles={selectedFiles}
                 onToggleFileSelection={toggleFileSelection}
@@ -2273,6 +2293,12 @@ export default function Workspace({
           </div>
         </div>
       )}
+
+      <ImportProgressDialog 
+        isOpen={isImporting} 
+        progress={importProgress} 
+        fileName={importingFileName} 
+      />
       </div>
     </TooltipProvider>
   )

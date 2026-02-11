@@ -170,7 +170,7 @@ export const useAppStore = create<AppState>()(
           if (version === 0 && state.delegationMode === 'plan') {
             state.delegationMode = 'off'
           }
-          return state as AppState
+          return state as unknown as AppState
         }
       }
     ),

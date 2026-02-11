@@ -33,7 +33,7 @@ spec:
         - name: agent
           securityContext:
             {}
-          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-agent:latest
+          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-agent:v1.9.0
           imagePullPolicy: Always
           command: ["./mcp-agent"]
           # db-type postgres uses DATABASE_URL from secret; mcp_servers.json comes from agent ConfigMap (synced from deploy/k8s/agent/mcp_config.json).

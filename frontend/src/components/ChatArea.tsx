@@ -1104,12 +1104,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Check multiple locations: event top-level, event.data (AgentEvent), event.data.data (inner)
             const agentEvent = event.data as Record<string, unknown> | undefined
             const innerData = agentEvent?.data as Record<string, unknown> | undefined
-            const rawComponent = (event as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
-            const rawCorrelationId = (event as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
-            const rawHierarchyLevel = (event as Record<string, unknown>).hierarchy_level ?? innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
+            const rawComponent = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
+            const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
+            const rawHierarchyLevel = (event as unknown as Record<string, unknown>).hierarchy_level ?? innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
             const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
               || (typeof rawCorrelationId === 'string' && rawCorrelationId.startsWith('delegation-'))
-              || (typeof rawHierarchyLevel === 'number' && rawHierarchyLevel > 0 && typeof rawComponent === 'string' && rawComponent !== '')
+              || (typeof rawHierarchyLevel === 'number' && (rawHierarchyLevel as number) > 0 && typeof rawComponent === 'string' && rawComponent !== '')
 
             // Intercept streaming events - accumulate text in store, don't add to event list
             // Parent agent streaming → streamingText[sessionId]

@@ -72,7 +72,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       activePresetIds: {
         'chat': null,
-        'workflow': null
+        'workflow': null,
+        'multi-agent': null
       },
       
       currentPresetServers: [],
@@ -1116,7 +1117,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           currentQuery: '',
           activePresetIds: {
             'chat': null,
-            'workflow': null
+            'workflow': null,
+            'multi-agent': null
           }
         })
       },

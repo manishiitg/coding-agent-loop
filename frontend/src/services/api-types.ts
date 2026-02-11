@@ -110,6 +110,8 @@ export interface AgentQueryRequest {
   enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
   selected_skills?: string[] // Array of skill folder names
+  // Selected sub-agent templates for delegation
+  selected_subagents?: string[] // Array of sub-agent template folder names
   // Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, undefined/absent = disabled
   delegation_mode?: 'spawn' | 'plan'
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs

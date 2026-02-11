@@ -32,7 +32,7 @@ spec:
             capabilities:
               add: ["SYS_ADMIN"]
             allowPrivilegeEscalation: false
-          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-workspace-api:latest
+          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-workspace-api:v1.9.0
           imagePullPolicy: Always
           command: ["./planner"]
           args: ["server", "--port", "8080", "--docs-dir", "/app/workspace-docs"]

@@ -160,8 +160,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const isSubAgentEvent = useCallback((event: PollingEvent): boolean => {
     const agentEvent = event.data as Record<string, unknown> | undefined
     const innerData = agentEvent?.data as Record<string, unknown> | undefined
-    const comp = (event as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
-    const corrId = (event as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
+    const comp = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
+    const corrId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
     return (typeof comp === 'string' && comp.startsWith('delegation-'))
       || (typeof corrId === 'string' && corrId.startsWith('delegation-'))
   }, [])

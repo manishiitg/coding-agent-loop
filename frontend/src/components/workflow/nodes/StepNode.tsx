@@ -46,6 +46,26 @@ const statusIcons: Record<string, ReactElement | null> = {
   failed: <XCircle className="w-4 h-4 text-red-500" />
 }
 
+const providerBadgeStyles: Record<string, { bg: string; text: string }> = {
+  anthropic: { bg: 'bg-orange-100 dark:bg-orange-900/40', text: 'text-orange-700 dark:text-orange-300' },
+  openai: { bg: 'bg-emerald-100 dark:bg-emerald-900/40', text: 'text-emerald-700 dark:text-emerald-300' },
+  openrouter: { bg: 'bg-purple-100 dark:bg-purple-900/40', text: 'text-purple-700 dark:text-purple-300' },
+  bedrock: { bg: 'bg-amber-100 dark:bg-amber-900/40', text: 'text-amber-700 dark:text-amber-300' },
+  vertex: { bg: 'bg-blue-100 dark:bg-blue-900/40', text: 'text-blue-700 dark:text-blue-300' }
+}
+
+const getFileName = (path: string): string => path.split('/').pop() || path
+
+// Helper to parse tool entry: "category:tool" or "category:*"
+const parseToolEntry = (entry: string): { category: string; tool: string } | null => {
+  const colonIndex = entry.indexOf(':')
+  if (colonIndex === -1 || colonIndex === 0) return null
+  return { 
+    category: entry.substring(0, colonIndex), 
+    tool: entry.substring(colonIndex + 1) 
+  }
+}
+
 // Check if category is enabled (empty array means all enabled by default)
 const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
   if (enabledTools.length === 0) return true // Default: all enabled

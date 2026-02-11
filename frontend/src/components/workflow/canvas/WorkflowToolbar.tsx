@@ -2572,10 +2572,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         isOpen={showBulkStepConfigModal}
         onClose={() => setShowBulkStepConfigModal(false)}
         plan={plan || null}
-        workspacePath={workspacePath || null}
         stepOverride={stepOverride || null}
         onSaveStepOverride={onSaveStepOverride || (async () => {})}
-        onBulkUpdate={onBulkUpdateSteps}
       />
     )}
 

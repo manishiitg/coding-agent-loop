@@ -711,7 +711,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             customPresets: state.customPresets.filter(preset => preset.id !== id),
             activePresetIds: {
               chat: state.activePresetIds.chat === id ? null : state.activePresetIds.chat,
-              workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow
+              workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow,
+              'multi-agent': state.activePresetIds['multi-agent'] === id ? null : state.activePresetIds['multi-agent']
             }
           }))
         } catch (error) {

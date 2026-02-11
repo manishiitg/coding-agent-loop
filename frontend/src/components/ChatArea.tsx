@@ -1149,7 +1149,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
 
               // Debug: Log if this chunk might actually be from a sub-agent (has hierarchy metadata)
-              if (rawHierarchyLevel && rawHierarchyLevel > 0) {
+              if (typeof rawHierarchyLevel === 'number' && rawHierarchyLevel > 0) {
                 logger.warn('ChatArea', `streaming_chunk routed to parent but has hierarchy_level=${rawHierarchyLevel}, component=${rawComponent}, correlation_id=${rawCorrelationId}`)
               }
 

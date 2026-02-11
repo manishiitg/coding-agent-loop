@@ -62,22 +62,16 @@ interface BulkStepConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
   plan: PlanningResponse | null;
-  workspacePath: string | null;
   stepOverride: AgentConfigs | null;
   onSaveStepOverride: (agentConfigs: AgentConfigs | null) => Promise<void>;
-  onBulkUpdate: (
-    updates: Array<{ stepId: string; updates: Partial<PlanStep> }>
-  ) => Promise<void>;
 }
 
 export default function BulkStepConfigModal({
   isOpen,
   onClose,
   plan,
-  workspacePath,
   stepOverride,
   onSaveStepOverride,
-  onBulkUpdate,
 }: BulkStepConfigModalProps) {
   const { availableLLMs, refreshAvailableLLMs } = useLLMStore();
   const { capabilities } = useCapabilitiesStore();
@@ -309,17 +303,6 @@ export default function BulkStepConfigModal({
     collectSteps(plan.steps);
     return allSteps;
   }, [plan]);
-
-  // Helper function to check if a tool is enabled in enabled_custom_tools
-  const isToolEnabled = (enabledTools: string[], toolName: string, category: "workspace_tools" | "human_tools"): boolean => {
-    if (enabledTools.length === 0) {
-      return true;
-    }
-    if (enabledTools.includes(`${category}:*`)) {
-      return true;
-    }
-    return enabledTools.includes(`${category}:${toolName}`);
-  };
 
   // Derive current override status from stepOverride
   const overrideStatus = useMemo(() => {

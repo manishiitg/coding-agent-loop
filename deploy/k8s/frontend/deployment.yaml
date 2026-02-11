@@ -28,7 +28,7 @@ spec:
         - name: frontend
           securityContext:
             {}
-          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-frontend:v1.9.0
+          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-frontend:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 80

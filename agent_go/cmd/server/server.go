@@ -706,10 +706,11 @@ type StreamingAPI struct {
 	mcpConfig     *mcpclient.MCPConfig
 
 	// Background tool discovery
-	discoveryRunning bool
-	discoveryMux     sync.RWMutex
-	lastDiscovery    time.Time
-	discoveryTicker  *time.Ticker
+	discoveryRunning       bool
+	discoveryMux           sync.RWMutex
+	lastDiscovery          time.Time
+	discoveryTicker        *time.Ticker
+	discoveryFailedServers map[string]string // serverName -> error reason (skipped on subsequent discovery cycles)
 
 	// Per-server install/connection logs
 	serverLogs    map[string][]ServerLogEntry
@@ -890,6 +891,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		config.ModelID = llm.GetDefaultModel(llmProvider)
 	}
 
+	// In multi-user mode, AUTH_SECRET must be explicitly set for secure JWT signing.
+	// In single-user mode, auth is bypassed entirely so AUTH_SECRET is not needed.
+	if IsMultiUserMode() && os.Getenv("AUTH_SECRET") == "" {
+		log.Fatal("[AUTH] FATAL: AUTH_SECRET env var must be set when MULTI_USER_MODE=true. Generate a random secret and add it to your deployment configuration.")
+	}
+
 	fmt.Printf("🚀 Starting Streaming API Server\n")
 	fmt.Printf("📡 Host: %s:%d\n", config.Host, config.Port)
 	fmt.Printf("🤖 Primary Provider: %s | Model: %s\n", config.Provider, config.ModelID)
@@ -1037,9 +1044,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		serverLogs:                   make(map[string][]ServerLogEntry),
 		logger:                       createServerLogger(),
 		// Initialize background discovery fields
-		discoveryRunning: false,
-		lastDiscovery:    time.Time{},
-		discoveryTicker:  nil,
+		discoveryRunning:       false,
+		lastDiscovery:          time.Time{},
+		discoveryTicker:        nil,
+		discoveryFailedServers: make(map[string]string),
 		// Initialize active session tracking
 		activeSessions: make(map[string]*ActiveSessionInfo),
 		// Initialize plan session state tracking for multi-agent mode
@@ -2807,16 +2815,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
 		}
 
-		// In plan delegation mode, the orchestrator should NEVER use code execution or tool search mode.
+		// In plan delegation mode, the orchestrator should NEVER use code execution mode.
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
+		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
+		// so the orchestrator can efficiently discover tools for research.
 		if req.DelegationMode == "plan" {
 			if useCodeExecutionMode {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
-			if useToolSearchMode {
-				log.Printf("[TOOL_SEARCH] Disabling tool search mode for orchestrator in plan delegation mode")
+			// Count real servers (exclude "all" and "NO_SERVERS" sentinels)
+			realServerCount := 0
+			for _, s := range selectedServers {
+				if s != "all" && s != mcpclient.NoServers {
+					realServerCount++
+				}
+			}
+			if realServerCount > 3 && !useToolSearchMode {
+				log.Printf("[TOOL_SEARCH] Auto-enabling tool search mode for orchestrator — %d MCP servers selected (>3)", realServerCount)
+				useToolSearchMode = true
+			} else if useToolSearchMode && realServerCount <= 3 {
+				log.Printf("[TOOL_SEARCH] Disabling tool search mode for orchestrator in plan delegation mode (%d servers)", realServerCount)
 				useToolSearchMode = false
 			}
 		}
@@ -3473,6 +3493,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			// Create custom tools for chat mode (workspace_advanced only: shell, image, web fetch, PDF)
 			allTools, allExecutors, toolCategories := createCustomTools(false) // Chat mode: workspace_advanced only
+
+			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
+			// createCustomTools(false) only returns workspace_advanced; human tools need to be added explicitly
+			if req.DelegationMode == "plan" {
+				humanCategory := virtualtools.GetHumanToolCategory()
+				for _, tool := range virtualtools.CreateHumanTools() {
+					allTools = append(allTools, tool)
+					if tool.Function != nil {
+						toolCategories[tool.Function.Name] = humanCategory
+					}
+				}
+				for name, executor := range virtualtools.CreateHumanToolExecutors() {
+					allExecutors[name] = executor
+				}
+			}
 
 			// Register each custom tool with the agent
 			// This will trigger code generation and update the registry

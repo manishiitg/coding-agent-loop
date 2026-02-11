@@ -385,6 +385,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig, setChatSelectedServers])
 
+  // Auto-enable tool search mode in chat mode when more than 2 MCP servers are selected
+  useEffect(() => {
+    if (selectedModeCategory !== 'chat' || !activeTabId) return
+    const realServers = manualSelectedServers.filter(s => s !== 'NO_SERVERS')
+    if (realServers.length > 2 && !useToolSearchMode) {
+      setTabConfig(activeTabId, { useToolSearchMode: true })
+    }
+  }, [manualSelectedServers, selectedModeCategory, activeTabId, useToolSearchMode, setTabConfig])
+
   // Use tab-specific skills - memoize to prevent re-renders
   const selectedSkills = useMemo(() => tabConfig?.selectedSkills || [], [tabConfig?.selectedSkills])
 

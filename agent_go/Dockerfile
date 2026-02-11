@@ -82,8 +82,36 @@ RUN which npx && which docker && npm --version && npx --version && docker --vers
 # Verify ripgrep and jq
 RUN which rg && which jq && rg --version && jq --version
 
-# Create non-root user
+# Create non-root user BEFORE pre-warming so caches land in the correct home directory.
+# At runtime the container runs as appuser, so caches must be in /home/appuser/.cache/
 RUN groupadd -g 1001 appgroup && useradd -m -u 1001 -g appgroup appuser
+
+# =============================================================================
+# Pre-warm MCP server packages at build time as appuser so the uv/npm caches
+# are in the right home directory and reused at runtime (no re-install on pod start).
+# =============================================================================
+USER appuser
+
+# Pre-warm Python (uvx) MCP servers — caches into /home/appuser/.cache/uv/
+RUN uvx awslabs.aws-api-mcp-server@latest --help 2>/dev/null || true \
+    && uvx awslabs.aws-pricing-mcp-server@latest --help 2>/dev/null || true \
+    && uvx awslabs.cost-explorer-mcp-server@latest --help 2>/dev/null || true \
+    && uvx awslabs.cloudwatch-mcp-server@latest --help 2>/dev/null || true \
+    && uvx awslabs.billing-cost-management-mcp-server@latest --help 2>/dev/null || true \
+    && uvx awslabs.aws-documentation-mcp-server@latest --help 2>/dev/null || true
+
+# Pre-warm Node (npx) MCP servers — caches into /home/appuser/.npm/
+RUN npx --yes @sylphx/pdf-reader-mcp --help 2>/dev/null || true \
+    && npx --yes mcp-remote --help 2>/dev/null || true \
+    && npx --yes @negokaz/excel-mcp-server --help 2>/dev/null || true \
+    && npx --yes kubernetes-mcp-server@latest --help 2>/dev/null || true \
+    && npx --yes @leval/mcp-grafana --help 2>/dev/null || true
+
+# Pre-warm Python (uv run) MCP servers
+RUN uv run --with mcp-clickhouse --python 3.13 mcp-clickhouse --help 2>/dev/null || true
+
+# Switch back to root for remaining setup steps (copy binary, chown, etc.)
+USER root
 
 # Set working directory
 WORKDIR /app

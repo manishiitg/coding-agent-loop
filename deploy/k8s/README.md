@@ -19,14 +19,29 @@ Deploy MCP Agent Builder to Kubernetes with Gemini and OpenRouter providers.
 ### Secrets (deploy/k8s/.env)
 
 ```bash
+# Authentication (REQUIRED when MULTI_USER_MODE=true)
+# Generate with: openssl rand -base64 32
+# Server will refuse to start without this in multi-user mode.
+# Changing this value invalidates all existing JWTs (users must re-login).
+AUTH_SECRET=<random-secret-for-jwt-signing>
+
+# LLM Provider Keys
 GEMINI_API_KEY=<your-gemini-api-key>
 OPENROUTER_API_KEY=<your-openrouter-api-key>
 VERTEX_PROJECT_ID=<gcp-project-id>
 VERTEX_LOCATION_ID=<gcp-location>
+
+# Database
 DATABASE_URL=<postgres-connection-string>
+
+# Observability (Langfuse)
 LANGFUSE_PUBLIC_KEY=<langfuse-public-key>
 LANGFUSE_SECRET_KEY=<langfuse-secret-key>
 LANGFUSE_HOST=<langfuse-host>
+
+# GitHub Sync (optional)
+GITHUB_TOKEN=<github-token>
+GITHUB_REPO=<owner/repo>
 ```
 
 ### ConfigMap (shared/configmap.yaml)
@@ -95,6 +110,20 @@ The application supports multiple authentication providers. See [docs/authentica
 | `supabase` | `SUPABASE_*` env vars | Supabase Auth |
 | `simple` | `AUTH_USERS` env var | Username/password |
 
+### AUTH_SECRET
+
+**Required** when `MULTI_USER_MODE=true`. This is the JWT signing key used to sign/verify tokens after the OAuth provider (Cognito/Supabase) authenticates users.
+
+- In **single-user mode**: Not needed. Auth middleware is bypassed entirely.
+- In **multi-user mode**: Server will **refuse to start** (`log.Fatal`) if not set.
+- Generate: `openssl rand -base64 32`
+- Changing it invalidates all existing JWTs — users must re-login via OAuth.
+- Add to `deploy/k8s/.env` or directly to the k8s secret:
+  ```bash
+  kubectl patch secret prod-mcpagent-secret -n prod-mcpagent \
+    --type merge -p '{"stringData":{"AUTH_SECRET":"<your-secret>"}}'
+  ```
+
 ### Current Setup (AWS Cognito + Google Workspace SSO)
 
 ```yaml
@@ -142,4 +171,43 @@ aws cognito-idp admin-set-user-password \
 aws cognito-idp list-users \
   --user-pool-id ap-south-1_YhXWOPgST \
   --region ap-south-1
+```
+
+## MCP Server Discovery
+
+On startup, the agent runs **background tool discovery** — connecting to each MCP server in `mcp_config.json` to discover available tools.
+
+**Key behaviors:**
+- Each server gets its own **5-minute timeout** (one slow server won't block others)
+- Servers that fail with **auth errors** (401/403/OAuth) are marked as permanently failed and **not retried** on the 24-hour refresh cycle
+- Saving MCP config via the UI **clears the failed list** so servers can be retried with new credentials
+- Discovery connections are **closed after extracting tool metadata** to avoid duplicate subprocesses and OOM
+- Tool metadata is cached to disk — on restart, cached servers load instantly without reconnecting
+
+**Common issues:**
+- Smithery-hosted servers (`server.smithery.ai/*`) require OAuth tokens — they'll show as failed until configured
+- URL-based servers with `"command": ""` need a `"url"` field and proper auth headers
+
+## Troubleshooting
+
+### Pod OOMKilled
+The agent spawns MCP server subprocesses (Python/Node). Each uses 70-350MB RAM. With 15+ servers, total memory can exceed the pod limit.
+- Check: `kubectl top pod -n prod-mcpagent`
+- Check: `kubectl exec <pod> -n prod-mcpagent -- ps aux --sort=-rss | head -20`
+- Fix: Increase memory limit in `agent/deployment.yaml` or disable unused MCP servers
+
+### AUTH_SECRET warning spam
+`[AUTH] WARNING: Using default AUTH_SECRET` on every request means `AUTH_SECRET` is not set in the k8s secret. See [AUTH_SECRET](#auth_secret) section above.
+
+### pprof (memory/CPU profiling)
+pprof is available at `/debug/pprof/` on the agent pod:
+```bash
+# Heap profile
+kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/heap?debug=1'
+
+# Goroutine dump
+kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/goroutine?debug=1'
+
+# CPU profile (30s)
+kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/profile?seconds=30' > cpu.prof
 ```

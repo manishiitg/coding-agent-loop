@@ -16,6 +16,16 @@ export interface MCPConfigResponse {
   servers?: number;
 }
 
+export interface ServerLogEntry {
+  timestamp: string;
+  level: string;  // "info" | "error" | "warn" | "debug"
+  message: string;
+}
+
+export interface ServerLogsResponse {
+  logs: Record<string, ServerLogEntry[]>;
+}
+
 export interface MCPConfigStatus {
   config_path: string;
   total_servers: number;
@@ -83,6 +93,20 @@ export class MCPConfigApi {
       throw new Error(errorData.message || `Failed to start discovery: ${response.statusText}`);
     }
 
+    return response.json();
+  }
+
+  /**
+   * Get server install/connection logs
+   */
+  async getServerLogs(serverName?: string): Promise<ServerLogsResponse> {
+    const params = serverName ? `?server_name=${encodeURIComponent(serverName)}` : '';
+    const response = await fetch(`${this.baseUrl}/api/mcp-config/logs${params}`, {
+      headers: getAuthHeaders()
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to get server logs: ${response.statusText}`);
+    }
     return response.json();
   }
 

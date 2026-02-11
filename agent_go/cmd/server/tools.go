@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -182,6 +183,20 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 
 	api.appendServerLog(serverName, "info", "Connection established")
 	api.appendServerLog(serverName, "info", "Discovering tools...")
+
+	// Close MCP connections after extracting tool metadata.
+	// Background discovery only needs tool names/schemas (metadata), not live connections.
+	// Leaving connections open spawns subprocess per server that stays resident,
+	// doubling memory usage and causing OOM.
+	defer func() {
+		for srvName, client := range result.Clients {
+			if client != nil {
+				if err := client.Close(); err != nil {
+					api.logger.Debug(fmt.Sprintf("Failed to close MCP client for %s: %v", srvName, err))
+				}
+			}
+		}
+	}()
 
 	// Extract tools for this specific server
 	serverTools := api.extractServerTools(result.Tools, result.ToolToServer, serverName)
@@ -694,10 +709,6 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 
 	api.logger.Info("🔄 Starting background tool discovery using mcpcache service...")
 
-	// Use a longer timeout for background discovery (5 minutes)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-
 	// Get cache manager
 	cacheManager := mcpcache.GetCacheManager(api.logger)
 
@@ -722,6 +733,13 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 
 	discoveredServers := 0
 	for serverName := range cfg.MCPServers {
+		// Skip servers that previously failed with permanent errors (auth, unauthorized)
+		// These won't recover without config changes, so don't waste time retrying
+		if reason, failed := api.discoveryFailedServers[serverName]; failed {
+			api.logger.Debug(fmt.Sprintf("⏭️ Skipping previously failed server %s: %s", serverName, reason))
+			continue
+		}
+
 		// Get server configuration for cache key generation
 		serverConfig, err := cfg.GetServer(serverName)
 		if err != nil {
@@ -744,11 +762,55 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 		api.logger.Info(fmt.Sprintf("🔍 Discovering tools for server: %s", serverName))
 		api.appendServerLog(serverName, "info", "Starting background discovery...")
 
-		// Use the existing discoverServerToolsDetailed function
-		result, err := api.discoverServerToolsDetailed(ctx, serverName)
+		// Each server gets its own 5-minute timeout so one slow server
+		// cannot starve subsequent servers of connection time.
+		serverCtx, serverCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		result, err := api.discoverServerToolsDetailed(serverCtx, serverName)
+		serverCancel()
 		if err != nil {
+			errMsg := err.Error()
 			api.appendServerLog(serverName, "error", fmt.Sprintf("Discovery failed: %v", err))
 			api.logger.Warn(fmt.Sprintf("⚠️ Failed to discover tools for server %s: %v", serverName, err))
+
+			// Mark servers with permanent errors so they're not retried on subsequent cycles.
+			// Auth/unauthorized errors won't resolve without config changes.
+			if strings.Contains(errMsg, "unauthorized") || strings.Contains(errMsg, "401") ||
+				strings.Contains(errMsg, "OAuth") || strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "403") {
+				api.discoveryFailedServers[serverName] = errMsg
+				api.logger.Info(fmt.Sprintf("🚫 Server %s marked as permanently failed (auth error), will not retry", serverName))
+			}
+
+			// Store the error in toolStatus so the UI shows the failure
+			api.toolStatusMux.Lock()
+			api.toolStatus[serverName] = ToolStatus{
+				Name:   serverName,
+				Server: serverName,
+				Status: "error",
+				Error:  errMsg,
+			}
+			api.toolStatusMux.Unlock()
+			continue
+		}
+
+		// Check if discovery returned an error status (e.g. OAuth required, auth failed).
+		// discoverServerToolsDetailed returns (toolStatus, nil) for these — the error
+		// is in result.Status/result.Error, not in the Go error return value.
+		if result.Status == "error" {
+			errMsg := result.Error
+			api.appendServerLog(serverName, "error", fmt.Sprintf("Discovery returned error status: %s", errMsg))
+			api.logger.Warn(fmt.Sprintf("⚠️ Server %s discovery returned error: %s", serverName, errMsg))
+
+			if result.RequiresOAuth ||
+				strings.Contains(errMsg, "unauthorized") || strings.Contains(errMsg, "401") ||
+				strings.Contains(errMsg, "OAuth") || strings.Contains(errMsg, "forbidden") || strings.Contains(errMsg, "403") {
+				api.discoveryFailedServers[serverName] = errMsg
+				api.logger.Info(fmt.Sprintf("🚫 Server %s marked as permanently failed (auth error), will not retry", serverName))
+			}
+
+			// Store the error in toolStatus so the UI shows the failure
+			api.toolStatusMux.Lock()
+			api.toolStatus[serverName] = *result
+			api.toolStatusMux.Unlock()
 			continue
 		}
 

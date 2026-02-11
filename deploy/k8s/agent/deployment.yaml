@@ -33,7 +33,7 @@ spec:
         - name: agent
           securityContext:
             {}
-          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-agent:v1.9.0
+          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-agent:latest
           imagePullPolicy: Always
           command: ["./mcp-agent"]
           # db-type postgres uses DATABASE_URL from secret; mcp_servers.json comes from agent ConfigMap (synced from deploy/k8s/agent/mcp_config.json).
@@ -53,7 +53,7 @@ spec:
               memory: "2Gi"
             limits:
               cpu: "2"
-              memory: "4Gi"
+              memory: "6Gi"
           volumeMounts:
             # Persistent chat history and DB; RWO so only one pod can attach (use Recreate strategy).
             - name: agent-db

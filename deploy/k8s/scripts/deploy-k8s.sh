@@ -296,6 +296,9 @@ if [ -f "$ENV_FILE" ]; then
     GITHUB_TOKEN=$(extract_env_value "GITHUB_TOKEN" "$ENV_FILE")
     GITHUB_REPO=$(extract_env_value "GITHUB_REPO" "$ENV_FILE")
 
+    # Authentication (required for MULTI_USER_MODE=true)
+    AUTH_SECRET=$(extract_env_value "AUTH_SECRET" "$ENV_FILE")
+
     if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &> /dev/null; then
         echo -e "${YELLOW}Secret ${SECRET_NAME} exists. Updating...${NC}"
         kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE" 2>/dev/null || true
@@ -319,6 +322,7 @@ if [ -f "$ENV_FILE" ]; then
     [ -n "$LANGFUSE_HOST" ] && SECRET_CMD="$SECRET_CMD --from-literal=LANGFUSE_HOST=\"$LANGFUSE_HOST\""
     [ -n "$GITHUB_TOKEN" ] && SECRET_CMD="$SECRET_CMD --from-literal=GITHUB_TOKEN=\"$GITHUB_TOKEN\""
     [ -n "$GITHUB_REPO" ] && SECRET_CMD="$SECRET_CMD --from-literal=GITHUB_REPO=\"$GITHUB_REPO\""
+    [ -n "$AUTH_SECRET" ] && SECRET_CMD="$SECRET_CMD --from-literal=AUTH_SECRET=\"$AUTH_SECRET\""
 
     eval $SECRET_CMD
     echo -e "${GREEN}✓ Secret ${SECRET_NAME} created/updated${NC}"
@@ -369,6 +373,16 @@ deploy_service() {
         fi
     done
 
+    # Ensure deployment image tag matches IMAGE_TAG (prevents hardcoded tag drift in YAML)
+    local image_name
+    image_name=$(get_image_for_service "$service")
+    if [ -n "$image_name" ]; then
+        local deployment_name
+        deployment_name=$(get_deployment_name "$service")
+        local full_image="${ECR_REGISTRY}/${image_name}:${IMAGE_TAG}"
+        kubectl set image "deployment/${deployment_name}" "${service}=${full_image}" -n "$NAMESPACE" 2>/dev/null || true
+    fi
+
     echo -e "${GREEN}✓ $service deployed${NC}\n"
 }
 
@@ -413,6 +427,15 @@ if [ "$BUILD" = true ] || [ "$MCP_CONFIG_UPDATED" = true ]; then
         fi
     done
 fi
+
+# Clean up stale pods (Evicted, Failed, ContainerStatusUnknown) left behind by dead nodes
+echo -e "${BLUE}Cleaning up stale pods...${NC}"
+kubectl delete pods --field-selector=status.phase=Failed -n "$NAMESPACE" 2>/dev/null && echo -e "${GREEN}✓ Cleaned failed/evicted pods${NC}" || true
+kubectl delete pods --field-selector=status.phase=Succeeded -n "$NAMESPACE" 2>/dev/null && echo -e "${GREEN}✓ Cleaned completed pods${NC}" || true
+# Clean ContainerStatusUnknown pods (orphaned by dead nodes)
+for pod in $(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -i "unknown\|ContainerStatusUnknown" | awk '{print $1}'); do
+    kubectl delete pod "$pod" -n "$NAMESPACE" --grace-period=0 --force 2>/dev/null && echo -e "${GREEN}✓ Force-deleted orphan pod $pod${NC}" || true
+done
 
 # Show status
 echo -e "${GREEN}=== Deployment Status ===${NC}"

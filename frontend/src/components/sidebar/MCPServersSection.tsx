@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Server, Loader2, AlertCircle, Settings } from 'lucide-react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import MCPConfigPopup from '../MCPConfigPopup'
@@ -56,8 +57,41 @@ export default function MCPServersSection() {
     setShowApiTester,
     getServerGroups,
     loadToolDetails,
-    refreshTools
+    refreshTools,
+    serverLogs,
+    fetchServerLogs
   } = useMCPStore()
+
+  const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set())
+  const [loadingLogs, setLoadingLogs] = useState<Set<string>>(new Set())
+
+  const toggleLogs = async (serverName: string) => {
+    const newExpanded = new Set(expandedLogs)
+    if (newExpanded.has(serverName)) {
+      newExpanded.delete(serverName)
+      setExpandedLogs(newExpanded)
+    } else {
+      newExpanded.add(serverName)
+      setExpandedLogs(newExpanded)
+      setLoadingLogs(prev => new Set([...prev, serverName]))
+      await fetchServerLogs(serverName)
+      setLoadingLogs(prev => {
+        const next = new Set(prev)
+        next.delete(serverName)
+        return next
+      })
+    }
+  }
+
+  const refreshLogs = async (serverName: string) => {
+    setLoadingLogs(prev => new Set([...prev, serverName]))
+    await fetchServerLogs(serverName)
+    setLoadingLogs(prev => {
+      const next = new Set(prev)
+      next.delete(serverName)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-2">
@@ -164,6 +198,21 @@ export default function MCPServersSection() {
                   </div>
                   
                   <div className="flex items-center gap-2">
+                    {/* Logs Button */}
+                    <button
+                      onClick={() => toggleLogs(serverName)}
+                      className={`flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-colors ${
+                        expandedLogs.has(serverName)
+                          ? 'text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50'
+                          : 'text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      <span className="text-xs">
+                        {expandedLogs.has(serverName) ? '▼' : '▶'}
+                      </span>
+                      <span>Logs</span>
+                    </button>
+
                     {/* Show/Hide Tools Button */}
                     {tools[0].function_names && tools[0].function_names.length > 0 && (
                       <button
@@ -211,6 +260,55 @@ export default function MCPServersSection() {
                   </div>
                 </div>
                 
+                {/* Connection Logs Panel */}
+                {expandedLogs.has(serverName) && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center justify-between mb-2">
+                      <h5 className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
+                        Connection Logs
+                      </h5>
+                      <button
+                        onClick={() => refreshLogs(serverName)}
+                        disabled={loadingLogs.has(serverName)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-colors disabled:opacity-50"
+                      >
+                        {loadingLogs.has(serverName) ? (
+                          <div className="w-3 h-3 border border-gray-300 border-t-blue-500 rounded-full animate-spin"></div>
+                        ) : (
+                          <span>↻</span>
+                        )}
+                        <span>Refresh</span>
+                      </button>
+                    </div>
+                    <div className="bg-gray-900 dark:bg-black rounded-md p-3 max-h-48 overflow-y-auto font-mono text-xs">
+                      {loadingLogs.has(serverName) && !serverLogs[serverName]?.length ? (
+                        <div className="text-gray-400 flex items-center gap-2">
+                          <div className="w-3 h-3 border border-gray-500 border-t-blue-400 rounded-full animate-spin"></div>
+                          Loading logs...
+                        </div>
+                      ) : serverLogs[serverName]?.length ? (
+                        serverLogs[serverName].map((log, i) => (
+                          <div key={i} className="flex gap-2 py-0.5">
+                            <span className="text-gray-500 whitespace-nowrap shrink-0">
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                            <span className={
+                              log.level === 'error' ? 'text-red-400' :
+                              log.level === 'warn' ? 'text-yellow-400' :
+                              log.level === 'debug' ? 'text-gray-500' :
+                              'text-green-400'
+                            }>
+                              {log.message}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-gray-500">No logs available yet.</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Expanded Tools Section */}
                 {expandedServers.has(serverName) && tools[0].function_names && tools[0].function_names.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">

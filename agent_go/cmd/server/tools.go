@@ -18,6 +18,40 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// --- SERVER LOG TYPES ---
+
+// ServerLogEntry represents a single log entry for an MCP server
+type ServerLogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"`   // "info", "error", "warn", "debug"
+	Message   string    `json:"message"`
+}
+
+// maxServerLogEntries is the maximum number of log entries kept per server
+const maxServerLogEntries = 100
+
+// serverLogs stores per-server log entries (managed on StreamingAPI)
+// serverLogsMux protects concurrent access to serverLogs
+
+// appendServerLog adds a log entry for a server, capping at maxServerLogEntries
+func (api *StreamingAPI) appendServerLog(serverName, level, message string) {
+	api.serverLogsMux.Lock()
+	defer api.serverLogsMux.Unlock()
+
+	entry := ServerLogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+	}
+
+	logs := api.serverLogs[serverName]
+	logs = append(logs, entry)
+	if len(logs) > maxServerLogEntries {
+		logs = logs[len(logs)-maxServerLogEntries:]
+	}
+	api.serverLogs[serverName] = logs
+}
+
 // --- TOOL MANAGEMENT TYPES ---
 
 // ToolStatus represents the status of a tool
@@ -66,9 +100,12 @@ type RemoveServerRequest struct {
 
 // discoverServerToolsDetailed connects to a specific MCP server and returns detailed tool information using mcpcache
 func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, serverName string) (*ToolStatus, error) {
+	api.appendServerLog(serverName, "info", "Loading configuration...")
+
 	// Load merged config to get server details
 	cfg, err := api.loadMergedConfig()
 	if err != nil {
+		api.appendServerLog(serverName, "error", fmt.Sprintf("Failed to load merged config: %v", err))
 		api.logger.Error(fmt.Sprintf("Failed to load merged config: %v", err), err)
 		// Fallback to base config only
 		api.mcpConfig.ReloadConfig(api.mcpConfigPath, api.logger)
@@ -78,8 +115,19 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	// Get server configuration
 	srvCfg, err := cfg.GetServer(serverName)
 	if err != nil {
+		api.appendServerLog(serverName, "error", fmt.Sprintf("Server not found in configuration: %s", serverName))
 		return nil, fmt.Errorf("server not found: %s", serverName)
 	}
+
+	// Determine protocol for logging
+	protocol := "stdio"
+	if srvCfg.URL != "" {
+		protocol = "http"
+		if srvCfg.Protocol == mcpclient.ProtocolSSE {
+			protocol = "sse"
+		}
+	}
+	api.appendServerLog(serverName, "info", fmt.Sprintf("Connecting to server (protocol: %s)...", protocol))
 
 	// Create temporary merged config file for mcpcache
 	tmpConfigPath, err := api.createTempMergedConfig()
@@ -105,6 +153,8 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		nil,   // No runtime overrides for tool discovery
 	)
 	if err != nil {
+		api.appendServerLog(serverName, "error", fmt.Sprintf("Connection failed: %v", err))
+
 		// Check if this is an OAuth error - try to auto-discover OAuth endpoints
 		toolStatus := &ToolStatus{
 			Name:         serverName,
@@ -121,6 +171,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 				toolStatus.RequiresOAuth = true
 				toolStatus.OAuthEndpoints = endpoints
 				toolStatus.Error = "OAuth authentication required"
+				api.appendServerLog(serverName, "warn", "OAuth authentication required")
 				api.logger.Info(fmt.Sprintf("✅ Auto-detected OAuth for %s: auth=%s, token=%s",
 					serverName, endpoints.AuthURL, endpoints.TokenURL))
 			}
@@ -128,6 +179,9 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 
 		return toolStatus, nil
 	}
+
+	api.appendServerLog(serverName, "info", "Connection established")
+	api.appendServerLog(serverName, "info", "Discovering tools...")
 
 	// Extract tools for this specific server
 	serverTools := api.extractServerTools(result.Tools, result.ToolToServer, serverName)
@@ -173,6 +227,8 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 			toolDetails = append(toolDetails, toolDetail)
 		}
 	}
+
+	api.appendServerLog(serverName, "info", fmt.Sprintf("Found %d tools", len(serverTools)))
 
 	return &ToolStatus{
 		Name:          serverName,
@@ -361,9 +417,11 @@ func (api *StreamingAPI) handleAddServer(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := api.mcpConfig.AddServer(req.Name, req.Server, api.mcpConfigPath); err != nil {
+		api.appendServerLog(req.Name, "error", fmt.Sprintf("Failed to add server: %v", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	api.appendServerLog(req.Name, "info", "Server added to configuration")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok"})
 }
@@ -684,10 +742,12 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 
 		// No valid cache, discover fresh data
 		api.logger.Info(fmt.Sprintf("🔍 Discovering tools for server: %s", serverName))
+		api.appendServerLog(serverName, "info", "Starting background discovery...")
 
 		// Use the existing discoverServerToolsDetailed function
 		result, err := api.discoverServerToolsDetailed(ctx, serverName)
 		if err != nil {
+			api.appendServerLog(serverName, "error", fmt.Sprintf("Discovery failed: %v", err))
 			api.logger.Warn(fmt.Sprintf("⚠️ Failed to discover tools for server %s: %v", serverName, err))
 			continue
 		}

@@ -711,6 +711,10 @@ type StreamingAPI struct {
 	lastDiscovery    time.Time
 	discoveryTicker  *time.Ticker
 
+	// Per-server install/connection logs
+	serverLogs    map[string][]ServerLogEntry
+	serverLogsMux sync.RWMutex
+
 	// Logger for structured logging
 	logger loggerv2.Logger
 }
@@ -1030,6 +1034,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		toolStatus:                   make(map[string]ToolStatus),
 		enabledTools:                 make(map[string][]string),
 		mcpConfig:                    mcpConfig,
+		serverLogs:                   make(map[string][]ServerLogEntry),
 		logger:                       createServerLogger(),
 		// Initialize background discovery fields
 		discoveryRunning: false,
@@ -1108,6 +1113,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp-config", api.handleSaveMCPConfig).Methods("POST")
 	apiRouter.HandleFunc("/mcp-config/discover", api.handleDiscoverServers).Methods("POST")
 	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config/logs", api.handleGetServerLogs).Methods("GET")
 
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")

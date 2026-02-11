@@ -81,12 +81,14 @@ export type {
   EvaluationStepScore,
 } from './api-types'
 
-// Resolve API base URL: use build-time env if set; in production (non-localhost) use same origin so it works even with cached builds
+// Resolve API base URL: use build-time env if set; otherwise fallback based on mode
 export function getApiBaseUrl(): string {
   const env = import.meta.env.VITE_API_BASE_URL
   if (env) return env
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return ''
-  return 'http://localhost:8000'
+  // Only fallback to localhost:8000 in DEV mode
+  if (import.meta.env.DEV) return 'http://localhost:8000'
+  // In production (including preview/docker), use relative path (same origin)
+  return ''
 }
 
 function getWorkspaceApiBaseUrl(): string {

@@ -2,8 +2,6 @@ package virtualtools
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -49,6 +47,8 @@ const (
 	CapabilitiesContextKey delegationContextKey = "capabilities_context"
 	// ToolModeKey is the context key for the tool mode of a delegated task ("simple", "code_execution", "tool_search")
 	ToolModeKey delegationContextKey = "tool_mode"
+	// AgentTemplateKey is the context key for the sub-agent template folder name
+	AgentTemplateKey delegationContextKey = "agent_template"
 	// PlanTrackerKey is the context key for tracking whether a plan has been created in this session
 	PlanTrackerKey delegationContextKey = "plan_tracker"
 	// PlanSessionStateKey is the context key for the session-level plan phase state
@@ -66,7 +66,7 @@ type PlanEventEmitter interface {
 
 // SessionEventEmitter is the interface for emitting arbitrary events to the session event store
 type SessionEventEmitter interface {
-	EmitBlockingHumanFeedback(requestID, question string, yesNoOnly bool, yesLabel, noLabel string, options ...string)
+	EmitBlockingHumanFeedback(requestID, question, context string, yesNoOnly bool, yesLabel, noLabel string, options ...string)
 }
 
 // PlanSessionState tracks session-level plan state for multi-agent mode.
@@ -85,11 +85,20 @@ func NewPlanSessionState() *PlanSessionState {
 }
 
 // TryCreate atomically checks if a plan already exists. If not, records the new plan
-// and returns true. If a plan already exists, returns false with existing plan info.
+// and returns true. During execution phase, allows creating a new plan for follow-up tasks
+// (resets state back to planning). If a plan already exists during planning phase,
+// returns false with existing plan info.
 func (ps *PlanSessionState) TryCreate(planID, planFolder string) (existingPlanID, existingPlanFolder string, ok bool) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.PlanID != "" {
+		if ps.Phase == "execution" {
+			// Allow follow-up: reset and create new plan
+			ps.PlanID = planID
+			ps.PlanFolder = planFolder
+			ps.Phase = "planning"
+			return "", "", true
+		}
 		return ps.PlanID, ps.PlanFolder, false
 	}
 	ps.PlanID = planID
@@ -134,11 +143,12 @@ type TierModel struct {
 
 // CapabilitiesContext describes the available tools, servers, and skills for the planner
 type CapabilitiesContext struct {
-	EnabledServers []string       `json:"enabled_servers,omitempty"`
-	SelectedTools  []string       `json:"selected_tools,omitempty"` // "server:tool" format
-	Skills         []SkillSummary `json:"skills,omitempty"`
-	HasWorkspace   bool           `json:"has_workspace"`
-	HasBrowser     bool           `json:"has_browser"`
+	EnabledServers    []string                  `json:"enabled_servers,omitempty"`
+	SelectedTools     []string                  `json:"selected_tools,omitempty"` // "server:tool" format
+	Skills            []SkillSummary            `json:"skills,omitempty"`
+	SubAgentTemplates []SubAgentTemplateSummary `json:"subagent_templates,omitempty"`
+	HasWorkspace      bool                      `json:"has_workspace"`
+	HasBrowser        bool                      `json:"has_browser"`
 }
 
 // SkillSummary holds minimal info about a skill for the planner prompt
@@ -146,6 +156,17 @@ type SkillSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	FolderName  string `json:"folder_name"`
+}
+
+// SubAgentTemplateSummary holds minimal info about a sub-agent template for the planner prompt
+type SubAgentTemplateSummary struct {
+	Name                  string   `json:"name"`
+	Description           string   `json:"description"`
+	FolderName            string   `json:"folder_name"`
+	DefaultReasoningLevel string   `json:"default_reasoning_level,omitempty"`
+	DefaultToolMode       string   `json:"default_tool_mode,omitempty"`
+	Skills                []string `json:"skills,omitempty"`  // Skill folder names to auto-activate
+	Servers               []string `json:"servers,omitempty"` // MCP server names to enable
 }
 
 // ExecuteDelegatedTaskFunc is the function signature for executing delegated tasks
@@ -181,7 +202,11 @@ func CreateDelegationTools() []llmtypes.Tool {
 					"tool_mode": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"simple", "code_execution", "tool_search"},
-						"description": "Tool access mode for the worker. 'simple' (default): normal direct tool calling. 'code_execution': worker writes Go code to call tools — best for data analysis, complex computations, multi-step processing. 'tool_search': worker discovers tools on-demand — best when many MCP servers/tools are available.",
+						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Go code that calls MCP tools programmatically — use ONLY for batch MCP tool operations (e.g., fetching data from 50 APIs in a loop, processing MCP tool results with complex logic). NOT for writing Python/Bash scripts or general coding. 'tool_search': worker discovers tools on-demand via search — use ONLY when 30+ MCP tools are available and the worker needs to find the right ones.",
+					},
+					"agent_template": map[string]interface{}{
+						"type":        "string",
+						"description": "Sub-agent template folder name from subagents/. Loads specialized instructions, default reasoning level, default tool mode, and auto-activates the template's configured skills and MCP servers for the sub-agent.",
 					},
 				},
 				"required": []string{"instruction"},
@@ -276,6 +301,7 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	if toolMode != "" && toolMode != "simple" && toolMode != "code_execution" && toolMode != "tool_search" {
 		toolMode = "" // Ignore invalid values
 	}
+	agentTemplate, _ := args["agent_template"].(string)
 
 	// Check delegation depth to prevent infinite recursion
 	currentDepth := 0
@@ -307,6 +333,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 	if toolMode != "" {
 		subCtx = context.WithValue(subCtx, ToolModeKey, toolMode)
+	}
+	if agentTemplate != "" {
+		subCtx = context.WithValue(subCtx, AgentTemplateKey, agentTemplate)
 	}
 
 	// Execute the delegated task
@@ -459,7 +488,24 @@ Write the plan as a structured markdown document with these sections:
 			sb.WriteString("\n**IMPORTANT**: When writing task descriptions in the plan, reference the relevant skill by name and path. Tell workers to read and follow the skill instructions. Skills contain detailed step-by-step guidance that is critical for task quality.\n")
 		}
 
-		sb.WriteString("\nConsider these capabilities when designing tasks — reference specific servers, tools, or skills where relevant.\n")
+		if len(caps.SubAgentTemplates) > 0 {
+			sb.WriteString("\n### Sub-Agent Templates\n")
+			sb.WriteString("Reusable sub-agent profiles are available. Use the `agent_template` parameter on `delegate` to load a template's specialized instructions and defaults.\n\n")
+			sb.WriteString("Available templates:\n")
+			for _, tmpl := range caps.SubAgentTemplates {
+				line := fmt.Sprintf("- **%s** (`subagents/%s/`): %s", tmpl.Name, tmpl.FolderName, tmpl.Description)
+				if tmpl.DefaultReasoningLevel != "" {
+					line += fmt.Sprintf(" [reasoning: %s]", tmpl.DefaultReasoningLevel)
+				}
+				if tmpl.DefaultToolMode != "" {
+					line += fmt.Sprintf(" [tool_mode: %s]", tmpl.DefaultToolMode)
+				}
+				sb.WriteString(line + "\n")
+			}
+			sb.WriteString("\nWhen a template matches a task, pass `agent_template: \"<folder_name>\"` in the delegate call. The template's instructions, default reasoning level, tool mode, skills, and MCP servers are automatically applied.\n")
+		}
+
+		sb.WriteString("\nConsider these capabilities when designing tasks — reference specific servers, tools, skills, or sub-agent templates where relevant.\n")
 	}
 
 	return sb.String()
@@ -614,8 +660,10 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 // --- Helper functions ---
 
 // sanitizePlanName sanitizes a plan name from LLM input into a safe folder name.
-// Converts to lowercase kebab-case, strips special characters, and adds a short
-// random suffix for uniqueness.
+// Converts to lowercase kebab-case, strips special characters.
+// No random suffix — the LLM-provided name is descriptive enough and TryCreate
+// prevents duplicates within a session. This allows resuming chats to reuse
+// existing plan folders.
 func sanitizePlanName(name string) string {
 	// Lowercase and split into words
 	words := strings.Fields(strings.ToLower(name))
@@ -642,11 +690,7 @@ func sanitizePlanName(name string) string {
 	if len(parts) > 5 {
 		parts = parts[:5]
 	}
-	// Add short random suffix for uniqueness
-	b := make([]byte, 3)
-	rand.Read(b)
-	suffix := hex.EncodeToString(b)
-	return strings.Join(parts, "-") + "-" + suffix
+	return strings.Join(parts, "-")
 }
 
 // truncateString truncates a string to maxLen characters, adding "..." if truncated
@@ -689,6 +733,7 @@ You have access to sub-agent delegation tools. You are a fully capable agent —
 - Call multiple times in one turn for **parallel execution** — this is the key advantage
 - Optional ` + "`reasoning_level`" + `: "high" (architecture, complex logic), "medium" (standard implementation), "low" (formatting, tests, config)
 - Optional ` + "`plan_folder`" + `: restricts worker writes to this folder (always pass when executing plan tasks)
+- Optional ` + "`agent_template`" + `: sub-agent template folder name (e.g. "code-review"). Loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
 
 **` + "`create_delegation_plan`" + `** — Spawn a planner sub-agent that writes plan.md:
 - Planner researches the objective and creates a phased task breakdown
@@ -697,9 +742,11 @@ You have access to sub-agent delegation tools. You are a fully capable agent —
 
 ### Tool Mode (optional, for ` + "`delegate`" + `):
 
-- **"simple"** (default): Worker gets all tools directly. Best for most tasks.
-- **"code_execution"**: Worker writes Go code to call tools. Best for data analysis, batch operations, loops over tool results.
+- **"simple"** (default): Worker gets all tools directly. Best for most tasks, including **writing Python/Bash scripts** — use workspace shell tools (` + "`execute_shell_command`" + `) to create and run scripts.
+- **"code_execution"**: Worker writes Go code to call tools programmatically. Best for **data analysis with MCP tools** — e.g., fetching data from MCP servers, transforming responses, batch operations, loops over tool results. NOT recommended for simple script writing.
 - **"tool_search"**: Worker discovers tools on-demand via search. Best when many MCP servers are available (20+).
+
+**Guideline**: For writing Python scripts, shell scripts, or any file-based work, always prefer **"simple"** mode with workspace shell tools. Use **"code_execution"** only when you need to programmatically orchestrate multiple MCP tool calls and analyze their responses.
 
 ### Executing a Plan
 
@@ -759,18 +806,40 @@ func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}
 	uniqueID := fmt.Sprintf("plan-approval-%s", currentPlanID)
 	feedbackStore := GetHumanFeedbackStore()
 
-	message := fmt.Sprintf("Plan Approval Required\n\n%s\n\nDo you want to execute this plan?", planSummary)
+	message := fmt.Sprintf("**%s** — Plan is ready. Approve to start execution, or type feedback in the chat.", currentPlanFolder)
 
-	// Emit blocking_human_feedback event so the frontend renders the approval UI
-	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
-		emitter.EmitBlockingHumanFeedback(uniqueID, message, true, "Approve & Execute", "Request Changes")
+	// Read plan.md content to show in the approval UI
+	planContent := ""
+	if wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client); ok && wsClient != nil {
+		planFilePath := currentPlanFolder + "/plan.md"
+		if resultJSON, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: planFilePath}); err == nil {
+			// Parse the JSON response to extract raw content
+			var result map[string]interface{}
+			if jsonErr := json.Unmarshal([]byte(resultJSON), &result); jsonErr == nil {
+				if content, ok := result["content"].(string); ok {
+					planContent = content
+				}
+			}
+		} else {
+			log.Printf("[PLAN APPROVAL] Could not read plan.md from %s: %v", planFilePath, err)
+		}
 	}
 
-	// Create blocking request with Yes/No buttons
+	// Emit workspace_file_operation to highlight plan.md in the workspace sidebar
+	if planEmitter, ok := ctx.Value(PlanEventEmitterKey).(PlanEventEmitter); ok && planEmitter != nil {
+		planEmitter.EmitFileEvent(currentPlanFolder + "/plan.md")
+	}
+
+	// Emit blocking_human_feedback event — approve-only button, plan content as context
+	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
+		emitter.EmitBlockingHumanFeedback(uniqueID, message, planContent, true, "Approve & Execute", "")
+	}
+
+	// Create blocking request — yes/no mode but with empty noLabel so frontend hides reject button
 	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, message, "", &services.ButtonOptions{
 		YesNoOnly: true,
 		YesLabel:  "Approve & Execute",
-		NoLabel:   "Request Changes",
+		NoLabel:   "",
 	}); err != nil {
 		return "", fmt.Errorf("failed to create approval request: %w", err)
 	}
@@ -787,7 +856,22 @@ func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}
 
 	if isApproved {
 		planState.SetPhase("execution")
-		return fmt.Sprintf("Plan approved! Phase switched to Execution Mode.\nPlan: %s (folder: %s)\nUse `delegate` to execute plan tasks phase by phase.", currentPlanID, currentPlanFolder), nil
+		return fmt.Sprintf(`APPROVED — You are now in Execution Mode.
+Plan: %s (folder: %s)
+
+INSTRUCTIONS (follow these exactly):
+1. Read plan.md from %s/plan.md
+2. Execute one phase at a time — call delegate for ALL tasks in a phase simultaneously (multiple delegate calls in one turn)
+3. After each phase, re-read plan.md to collect worker learnings
+4. Relay learnings to next phase workers
+5. When ALL phases are done, summarize results to the user
+
+RULES:
+- NEVER call confirm_plan_execution again — the plan is already approved
+- NEVER show the plan to the user again — they already approved it
+- NEVER do work yourself — always delegate
+- Pass plan_folder to every delegate call
+- Each delegate call must have self-contained instructions (workers have no shared memory)`, currentPlanID, currentPlanFolder, currentPlanFolder), nil
 	}
 
 	// User rejected — return their feedback
@@ -831,6 +915,14 @@ Your role: Research → Plan → Get Approval → Delegate execution to sub-agen
 - If rejected → read the feedback, adjust the plan, and call ` + "`confirm_plan_execution`" + ` again
 - Do NOT call ` + "`delegate`" + ` until plan is approved
 
+### Resuming an Existing Plan
+If the user references an existing plan file (e.g., via @ mention of a Plans/ folder or plan.md file):
+1. **Do NOT create a new plan** — read the existing plan.md using ` + "`execute_shell_command`" + `
+2. Review the plan content and task statuses (checked = done, unchecked = pending)
+3. Call ` + "`confirm_plan_execution`" + ` to get approval to resume execution
+4. Once approved, continue executing from where the plan left off — only delegate unchecked tasks
+5. The plan_folder is the folder containing the plan.md (e.g., "Plans/my-plan")
+
 ### When NOT to Plan
 - Simple questions, explanations, or opinions — answer directly (no plan needed)
 
@@ -842,10 +934,16 @@ Your role: Research → Plan → Get Approval → Delegate execution to sub-agen
 - ` + "`execute_shell_command`" + ` — For research only (` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + `). NEVER use for executing work.
 
 ### Plan Rules
-- One plan per conversation
 - Plan is saved to Plans/{plan_id}/plan.md
 - **Always ask the human** before creating the plan — use ` + "`human_feedback`" + ` to confirm requirements
 - NEVER execute plan tasks yourself — always delegate
+- After execution completes and you report results, you can create a new plan for follow-up requests
+
+### IMPORTANT: After Plan Approval
+- Once ` + "`confirm_plan_execution`" + ` returns "APPROVED", you are in Execution Mode
+- **DO NOT** call ` + "`confirm_plan_execution`" + ` again — the plan is already approved
+- **DO NOT** show the plan to the user again — they already approved it
+- Immediately start delegating tasks phase by phase using ` + "`delegate`" + `
 `
 }
 
@@ -869,7 +967,8 @@ You are an **Orchestrator**. The plan has been approved. Delegate all work to su
 - ` + "`delegate`" + ` — Spawn a sub-agent for a task (this is your PRIMARY tool)
   - ` + "`reasoning_level`" + `: "high" (architecture, complex), "medium" (standard), "low" (formatting, config)
   - ` + "`plan_folder`" + `: always pass to restrict worker writes
-  - ` + "`tool_mode`" + `: "simple" (default), "code_execution", "tool_search"
+  - ` + "`tool_mode`" + `: "simple" (default) for most tasks including writing scripts, coding, file work. "code_execution" ONLY for batch MCP tool operations (loops over API calls). "tool_search" ONLY when 30+ MCP tools available
+  - ` + "`agent_template`" + `: sub-agent template folder name — loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
 - ` + "`human_feedback`" + ` — Ask the user questions if you are unsure about something
 - ` + "`execute_shell_command`" + ` — Read plan.md (` + "`cat Plans/{plan_id}/plan.md`" + `) to check progress and collect learnings
 - ` + "`create_delegation_plan`" + ` — Available but typically not needed (plan already exists)
@@ -882,6 +981,11 @@ You are an **Orchestrator**. The plan has been approved. Delegate all work to su
 - Self-contained instructions: each worker starts fresh with no shared memory
 - Re-read plan.md after each phase to collect discoveries
 - You are the quality gate — review worker output and verify results before reporting to user
+
+### Follow-Up Tasks
+- After all phases are done and you've reported results, the user may ask follow-up questions
+- For follow-ups that need new work: call ` + "`create_delegation_plan`" + ` to create a new plan — this automatically resets back to Planning Mode
+- For simple follow-up questions: answer directly without a plan
 
 ### Limitations
 - Sub-agents cannot delegate further (max depth enforced)

@@ -231,6 +231,11 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
+                    {session.config?.delegation_mode === 'plan' && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
+                        Multi Agent
+                      </span>
+                    )}
                     <span className={`text-xs px-1.5 py-0.5 rounded ${
                       session.status === 'active' || session.status === 'running'
                         ? 'bg-green-500/15 text-green-600 dark:text-green-400'
@@ -240,6 +245,11 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
                     }`}>
                       {session.status || 'completed'}
                     </span>
+                    {session.config?.plan_folder && (
+                      <span className="text-xs text-muted-foreground truncate max-w-[120px]">
+                        {session.config.plan_folder}
+                      </span>
+                    )}
                     {session.total_turns > 0 && (
                       <span className="text-xs text-muted-foreground">
                         {session.total_turns} turns

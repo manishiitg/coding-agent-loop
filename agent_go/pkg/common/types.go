@@ -20,7 +20,7 @@ const (
 	FolderGuardWritePathsKey ContextKey = "folder_guard_write_paths"
 	// FolderGuardBlockedPathsKey is the context key for blocked paths (deny list)
 	FolderGuardBlockedPathsKey ContextKey = "folder_guard_blocked_paths"
-	// FolderGuardAllowedWriteFolderKey is the context key for the only folder allowed for writes (chat mode)
+	// FolderGuardAllowedWriteFolderKey is the context key for allowed write folders ([]string) in chat/plan mode
 	FolderGuardAllowedWriteFolderKey ContextKey = "folder_guard_allowed_write_folder"
 	// UserIDKey is the context key for the user ID (used for per-user workspace isolation)
 	UserIDKey ContextKey = "user_id"

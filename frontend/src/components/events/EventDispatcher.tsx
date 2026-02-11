@@ -118,6 +118,28 @@ import {
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
+import { useChatStore } from '../../stores/useChatStore'
+import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+
+// Sub-agent live streaming text display (subscribes to delegation streaming store independently)
+const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegationId }) => {
+  const text = useChatStore(state => state.delegationStreamingText[delegationId] || '')
+  if (!text) return null
+  return (
+    <div className="mt-2 border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded p-2">
+      <div className="flex items-center gap-1.5 mb-1">
+        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">
+          Sub-agent generating...
+        </span>
+      </div>
+      <div className="text-xs">
+        <MarkdownRenderer content={text} className="text-xs" />
+        <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+      </div>
+    </div>
+  )
+}
 
 export interface DelegationStats {
   toolCalls: number
@@ -1043,6 +1065,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                   <span>Elapsed: <ElapsedTimer startTimestamp={event.timestamp} className="font-mono" /></span>
                 )}
               </div>
+            )}
+            {delegationId && !isCompleted && (
+              <DelegationStreamingCard delegationId={delegationId} />
             )}
           </div>
         </details>

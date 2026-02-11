@@ -8,9 +8,8 @@ import (
 )
 
 type UpdateWorkspaceFileParams struct {
-	Filepath      string  `json:"filepath"`
-	Content       string  `json:"content"`
-	CommitMessage *string `json:"commit_message,omitempty"`
+	Filepath string `json:"filepath"`
+	Content  string `json:"content"`
 }
 
 // UpdateWorkspaceFile creates or updates a file using the REST API: PUT /api/documents/{filepath}
@@ -32,12 +31,9 @@ func (c *Client) UpdateWorkspaceFile(ctx context.Context, params UpdateWorkspace
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	// Build request body (only content and optional commit_message)
+	// Build request body
 	requestBody := map[string]interface{}{
 		"content": params.Content,
-	}
-	if params.CommitMessage != nil && *params.CommitMessage != "" {
-		requestBody["commit_message"] = *params.CommitMessage
 	}
 
 	// Use PUT to /api/documents/{filepath} for update/create

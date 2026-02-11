@@ -176,6 +176,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // State for enabled custom tools in unified format: "category:tool" or "category:*"
+  // Default: advanced + human tools only (matches backend default)
   const [enabledCustomTools, setEnabledCustomTools] = useState<string[]>(() => {
     const configs = step.agent_configs || {};
     // Check if already in new format
@@ -184,11 +185,13 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       if (firstEntry.includes(':')) {
         return configs.enabled_custom_tools;
       }
+      // Convert from old format (backward compatibility)
+      const oldCategories = configs.enabled_custom_tool_categories;
+      const oldTools = configs.enabled_custom_tools;
+      return convertOldFormatToNew(oldCategories, oldTools);
     }
-    // Convert from old format (backward compatibility)
-    const oldCategories = configs.enabled_custom_tool_categories;
-    const oldTools = configs.enabled_custom_tools;
-    return convertOldFormatToNew(oldCategories, oldTools);
+    // Default: advanced + human tools only (matches backend prepareCustomTools default)
+    return ['workspace_advanced:*', 'human_tools:*'];
   });
 
   // State for expanded tool categories (to show individual tools)
@@ -292,8 +295,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
           setEnabledCustomTools(convertOldFormatToNew(oldCategories, oldTools));
         }
       } else {
-        // No tools specified - empty array (all tools enabled by default)
-        setEnabledCustomTools([]);
+        // No tools specified - default to advanced + human tools only (matches backend default)
+        setEnabledCustomTools(['workspace_advanced:*', 'human_tools:*']);
       }
 
       // Reset expanded categories when step changes (keep workspace_tools expanded by default)
@@ -2458,6 +2461,37 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
                   Enable Context Offloading Virtual Tools
                   <span className="text-gray-500 dark:text-gray-500 ml-1">
                     (read_large_output, search_large_output, query_large_output)
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Parallel Tool Execution Toggle */}
+            <div className="border-t border-gray-200 dark:border-gray-700"></div>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                Parallel Tool Execution
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`parallel-tool-exec-${stepIndex}`}
+                  checked={agentConfigs.disable_parallel_tool_execution !== true}
+                  onChange={(e) => {
+                    setAgentConfigs((prev) => ({
+                      ...prev,
+                      disable_parallel_tool_execution: !e.target.checked || undefined,
+                    }));
+                  }}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label
+                  htmlFor={`parallel-tool-exec-${stepIndex}`}
+                  className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
+                >
+                  Enable Parallel Tool Execution
+                  <span className="text-gray-500 dark:text-gray-500 ml-1">
+                    (allows concurrent execution of multiple independent tool calls)
                   </span>
                 </label>
               </div>

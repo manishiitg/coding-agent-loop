@@ -39,7 +39,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-slate-700">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Delegation Tier Models</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Sub-Agent Models</h2>
           <button
             onClick={onClose}
             className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"

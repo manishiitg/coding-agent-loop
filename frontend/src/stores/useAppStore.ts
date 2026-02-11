@@ -83,12 +83,17 @@ export const useAppStore = create<AppState>()(
             // Only sync if not already syncing to prevent circular updates
             if (!isSyncing) {
               isSyncing = true
-              const { getModeCategoryFromAgentMode, setModeCategory } = useModeStore.getState()
-              const category = getModeCategoryFromAgentMode(mode)
-              
-              // Update ModeStore if category would be different
-              if (category && category !== useModeStore.getState().selectedModeCategory) {
-                setModeCategory(category)
+              const { getModeCategoryFromAgentMode, getAgentModeFromCategory, setModeCategory } = useModeStore.getState()
+              const currentCategory = useModeStore.getState().selectedModeCategory
+
+              // Don't override if the current category already maps to the same agent mode.
+              // This prevents 'multi-agent' (which maps to 'simple') from being overwritten to 'chat'.
+              const currentCategoryAgentMode = currentCategory ? getAgentModeFromCategory(currentCategory) : null
+              if (currentCategoryAgentMode !== mode) {
+                const category = getModeCategoryFromAgentMode(mode)
+                if (category && category !== currentCategory) {
+                  setModeCategory(category)
+                }
               }
               isSyncing = false
             }

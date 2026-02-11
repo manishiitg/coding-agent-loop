@@ -10,9 +10,8 @@ import (
 
 // DiffPatchWorkspaceFileParams contains parameters for the diff_patch_workspace_file tool
 type DiffPatchWorkspaceFileParams struct {
-	Filepath      string `json:"filepath"`
-	Diff          string `json:"diff"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	Filepath string `json:"filepath"`
+	Diff     string `json:"diff"`
 }
 
 // DiffPatchWorkspaceFile applies a unified diff patch to a file
@@ -35,9 +34,6 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	// Prepare request body
 	requestBody := map[string]interface{}{
 		"diff": params.Diff,
-	}
-	if params.CommitMessage != "" {
-		requestBody["commit_message"] = params.CommitMessage
 	}
 
 	jsonBody, err := json.Marshal(requestBody)

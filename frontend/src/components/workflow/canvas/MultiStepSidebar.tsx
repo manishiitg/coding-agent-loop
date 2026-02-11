@@ -148,6 +148,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
         use_tool_search_mode: configs.use_tool_search_mode,
         learning_detail_level: configs.learning_detail_level,
         enable_context_offloading: configs.enable_context_offloading,
+        disable_parallel_tool_execution: configs.disable_parallel_tool_execution,
       })
 
       // Initialize servers/tools from first step or fall back to preset
@@ -420,6 +421,13 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
           newAgentConfigs.enable_context_offloading = false
         } else {
           newAgentConfigs.enable_context_offloading = undefined
+        }
+
+        // Handle parallel tool execution
+        if (agentConfigs.disable_parallel_tool_execution === true) {
+          newAgentConfigs.disable_parallel_tool_execution = true
+        } else {
+          newAgentConfigs.disable_parallel_tool_execution = undefined
         }
 
         const stepUpdates: Partial<PlanStep> = { agent_configs: newAgentConfigs }
@@ -1187,6 +1195,36 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                       Enable Context Offloading Virtual Tools
                       <span className="text-gray-500 dark:text-gray-500 ml-1">
                         (read_large_output, search_large_output, query_large_output)
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Parallel Tool Execution Toggle */}
+                <div className="border-t border-gray-200 dark:border-gray-700 pt-4 space-y-2">
+                  <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
+                    Parallel Tool Execution
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="parallel-tool-exec-multi"
+                      checked={agentConfigs.disable_parallel_tool_execution !== true}
+                      onChange={(e) => {
+                        setAgentConfigs((prev) => ({
+                          ...prev,
+                          disable_parallel_tool_execution: !e.target.checked,
+                        }))
+                      }}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <label
+                      htmlFor="parallel-tool-exec-multi"
+                      className="text-xs text-gray-600 dark:text-gray-400 cursor-pointer flex-1"
+                    >
+                      Enable Parallel Tool Execution
+                      <span className="text-gray-500 dark:text-gray-500 ml-1">
+                        (allows concurrent execution of multiple independent tool calls)
                       </span>
                     </label>
                   </div>

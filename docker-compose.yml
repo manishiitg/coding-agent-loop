@@ -88,7 +88,7 @@ services:
       - MCP_CACHE_TTL_MINUTES=${MCP_CACHE_TTL_MINUTES:-10080}
       # Semantic Search Configuration
       - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
-      - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-false}
+      - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-true}
     volumes:
       - ./workspace-docs:/app/workspace-docs
       - workspace_data:/app/data

@@ -4,6 +4,7 @@ import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
+import { SubAgentsSection } from './subagents'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
@@ -120,7 +121,7 @@ export default function WorkspaceSidebar({
               minimized={minimized}
             />
 
-            {/* Delegation Tier Models - Visible in Multi Agent Chat mode */}
+            {/* Sub-Agent Models - Visible in Multi Agent Chat mode */}
             {selectedModeCategory === 'multi-agent' && (
               <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
                 <button
@@ -130,7 +131,7 @@ export default function WorkspaceSidebar({
                   <div className="flex items-center gap-2 min-w-0">
                     <Layers className="w-4 h-4 text-indigo-500 flex-shrink-0" />
                     <div className="min-w-0">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Delegation Models</span>
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Sub-Agent Models</span>
                       {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
                         <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
                           {[
@@ -161,6 +162,9 @@ export default function WorkspaceSidebar({
 
             {/* Skills */}
             <SkillsSection />
+
+            {/* Sub-Agent Templates */}
+            <SubAgentsSection />
 
             {/* Running Workflows */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 p-1">

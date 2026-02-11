@@ -103,10 +103,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Content to write to the file (will create new file or replace entire existing file)",
 					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
 				},
 				"required": []string{"filepath", "content"},
 			}),
@@ -213,10 +209,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Full file path of the file to delete (e.g., 'docs/example.md', 'configs/settings.json')",
 					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
 				},
 				"required": []string{"filepath"},
 			}),
@@ -239,10 +231,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 					"destination_filepath": map[string]interface{}{
 						"type":        "string",
 						"description": "New file path where the file should be moved (e.g., 'archive/old-file.md', 'settings/config.json')",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
 					},
 				},
 				"required": []string{"source_filepath", "destination_filepath"},

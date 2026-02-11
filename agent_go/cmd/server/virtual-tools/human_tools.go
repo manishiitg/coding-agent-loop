@@ -88,7 +88,7 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	// Emit blocking_human_feedback event so the frontend renders the proper UI
 	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
 		hasOptions := len(options) > 0
-		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, hasOptions, "", "", options...)
+		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, "", hasOptions, "", "", options...)
 	}
 
 	// Build button options for notifications (Slack, etc.)

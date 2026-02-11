@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 )
 
 // DeleteWorkspaceFileParams contains parameters for the delete_workspace_file tool
 type DeleteWorkspaceFileParams struct {
-	Filepath      string `json:"filepath"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	Filepath string `json:"filepath"`
 }
 
 // DeleteWorkspaceFile deletes a file from the workspace
@@ -27,9 +25,6 @@ func (c *Client) DeleteWorkspaceFile(ctx context.Context, params DeleteWorkspace
 
 	// Build API URL with confirm parameter
 	apiURL := c.BaseURL + "/api/documents/" + params.Filepath + "?confirm=true"
-	if params.CommitMessage != "" {
-		apiURL += "&commit_message=" + url.QueryEscape(params.CommitMessage)
-	}
 
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
@@ -60,9 +55,6 @@ func (c *Client) DeleteWorkspaceFile(ctx context.Context, params DeleteWorkspace
 	resultJSON := map[string]interface{}{
 		"filepath": params.Filepath,
 		"deleted":  true,
-	}
-	if params.CommitMessage != "" {
-		resultJSON["commit_message"] = params.CommitMessage
 	}
 
 	jsonBytes, err := json.Marshal(resultJSON)

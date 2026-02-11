@@ -45,7 +45,13 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const options = event.data.options || []
   const hasMultipleOptions = options.length > 0
   const yesLabel = event.data.yes_label || 'Approve'
-  const noLabel = event.data.no_label || 'Reject'
+  const noLabel = event.data.no_label || ''
+
+  const triggerScrollCallback = () => {
+    if (onFeedbackSubmitted) {
+      setTimeout(() => onFeedbackSubmitted(), 100)
+    }
+  }
 
   const handleSubmitFeedback = async () => {
     if (event.data.request_id && feedback.trim() && onSubmitFeedback) {
@@ -54,15 +60,8 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         await onSubmitFeedback(event.data.request_id, feedback.trim())
         setSubmittedFeedback(feedback.trim())
         setHasSubmitted(true)
-        setFeedback('') // Clear feedback after submission
-        
-        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
-        if (onFeedbackSubmitted) {
-          // Use setTimeout to ensure the UI has updated before scrolling
-          setTimeout(() => {
-            onFeedbackSubmitted()
-          }, 100)
-        }
+        setFeedback('')
+        triggerScrollCallback()
       } catch (error) {
         console.error('Failed to submit feedback:', error)
       } finally {
@@ -75,25 +74,13 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     if (event.data.request_id) {
       setIsSubmittingFeedback(true)
       try {
-        // Submit "Approve" as feedback
         if (onSubmitFeedback) {
           await onSubmitFeedback(event.data.request_id, "Approve")
         }
-        // Then proceed with approval
-        onApprove(event.data.request_id, { 
-          ...event.data, 
-          feedback: "Approve"
-        })
-        setSubmittedFeedback("Approve")
+        onApprove(event.data.request_id, { ...event.data, feedback: "Approve" })
+        setSubmittedFeedback(yesLabel || "Approved")
         setHasSubmitted(true)
-        
-        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
-        if (onFeedbackSubmitted) {
-          // Use setTimeout to ensure the UI has updated before scrolling
-          setTimeout(() => {
-            onFeedbackSubmitted()
-          }, 100)
-        }
+        triggerScrollCallback()
       } catch (error) {
         console.error('Failed to approve:', error)
       } finally {
@@ -109,20 +96,10 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         if (onSubmitFeedback) {
           await onSubmitFeedback(event.data.request_id, "Reject")
         }
-        onApprove(event.data.request_id, { 
-          ...event.data, 
-          feedback: "Reject"
-        })
+        onApprove(event.data.request_id, { ...event.data, feedback: "Reject" })
         setSubmittedFeedback("Reject")
         setHasSubmitted(true)
-        
-        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
-        if (onFeedbackSubmitted) {
-          // Use setTimeout to ensure the UI has updated before scrolling
-          setTimeout(() => {
-            onFeedbackSubmitted()
-          }, 100)
-        }
+        triggerScrollCallback()
       } catch (error) {
         console.error('Failed to reject:', error)
       } finally {
@@ -139,14 +116,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         await onSubmitFeedback(event.data.request_id, optionValue)
         setSubmittedFeedback(options[index] || optionValue)
         setHasSubmitted(true)
-        
-        // Call onFeedbackSubmitted callback to re-enable auto-scroll and scroll to bottom
-        if (onFeedbackSubmitted) {
-          // Use setTimeout to ensure the UI has updated before scrolling
-          setTimeout(() => {
-            onFeedbackSubmitted()
-          }, 100)
-        }
+        triggerScrollCallback()
       } catch (error) {
         console.error(`Failed to select option ${index}:`, error)
       } finally {
@@ -164,181 +134,143 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     }
   }
 
-  // Show submitted state if feedback has been submitted
+  // Submitted state — compact confirmation + keep plan toggle
   if (hasSubmitted) {
     return (
-      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md p-4 my-3">
-        <div className="flex items-start gap-3">
-          <div className="flex-shrink-0 w-8 h-8 bg-green-100 dark:bg-green-800 rounded-full flex items-center justify-center">
-            <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <div className="flex-1">
-            <h3 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-2">
-              ✅ Feedback Submitted
-            </h3>
-            
-            <div className="text-xs text-green-700 dark:text-green-300 mb-3">
-              <MarkdownRenderer content={question} className="text-xs" />
-            </div>
-
-            {/* Context Information */}
-            {context && (
-              <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border">
-                <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-2">
-                  Context:
-                </h4>
-                <div className="text-xs text-gray-700 dark:text-gray-300">
-                  <MarkdownRenderer content={context} className="text-xs" />
-                </div>
-              </div>
-            )}
-
-            {/* Submitted Feedback */}
-            <div className="mb-4 p-3 bg-green-100 dark:bg-green-800/50 rounded border border-green-200 dark:border-green-700">
-              <h4 className="text-xs font-medium text-green-900 dark:text-green-100 mb-2">
-                Your Response:
-              </h4>
-              <div className="text-xs text-green-800 dark:text-green-200 font-medium">
-                "{submittedFeedback}"
-              </div>
-            </div>
-
-            <div className="text-xs text-green-600 dark:text-green-400 italic">
-              Processing your feedback...
-            </div>
-          </div>
+      <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-md px-3 py-2 my-2">
+        <div className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="text-xs font-medium text-green-800 dark:text-green-200">
+            {submittedFeedback}
+          </span>
+          <span className="text-[10px] text-green-600 dark:text-green-400 italic ml-auto">
+            Processing...
+          </span>
         </div>
+        {context && (
+          <details className="mt-2 group">
+            <summary className="text-[10px] text-green-600 dark:text-green-400 cursor-pointer font-medium flex items-center gap-1">
+              <span className="group-open:hidden">+ Show plan</span>
+              <span className="hidden group-open:inline">− Hide plan</span>
+            </summary>
+            <div className="mt-1.5 p-3 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded">
+              <MarkdownRenderer content={context} className="text-xs" />
+            </div>
+          </details>
+        )}
       </div>
     )
   }
 
+  // Waiting state
   return (
-    <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4 my-3">
-      <div className="flex items-start gap-3">
-        <div className="flex-shrink-0 w-8 h-8 bg-yellow-100 dark:bg-yellow-800 rounded-full flex items-center justify-center">
-          <svg className="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-          </svg>
-        </div>
-        <div className="flex-1">
-          <h3 className="text-sm font-semibold text-yellow-900 dark:text-yellow-100 mb-2">
-            Human Feedback Required
-          </h3>
-          
-          <div className="text-xs text-yellow-700 dark:text-yellow-300 mb-3">
+    <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-md px-3 py-2.5 my-2">
+      <div className="flex items-center gap-3">
+        {/* Question text */}
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-indigo-700 dark:text-indigo-300">
             <MarkdownRenderer content={question} className="text-xs" />
           </div>
+        </div>
 
-          {/* Context Information */}
-          {context && (
-            <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded border">
-              <h4 className="text-xs font-medium text-gray-900 dark:text-gray-100 mb-2">
-                Context:
-              </h4>
-              <div className="text-xs text-gray-700 dark:text-gray-300">
-                <MarkdownRenderer content={context} className="text-xs" />
-              </div>
-            </div>
-          )}
-          
-          {/* Feedback Input - hide when yesNoOnly is true or hasMultipleOptions is true */}
-          {!yesNoOnly && !hasMultipleOptions && (
-            <div className="mb-4">
-              <label htmlFor="feedback-input" className="block text-xs font-medium text-yellow-900 dark:text-yellow-100 mb-1">
-                Your feedback:
-              </label>
-              <textarea
-                id="feedback-input"
-                value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Type your feedback here... (Enter to submit, Shift+Enter for newline)"
-                className="w-full px-3 py-2 text-xs border border-yellow-200 dark:border-yellow-700 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500 resize-none"
-                rows={4}
-                disabled={isApproving || isSubmittingFeedback}
-              />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-[10px] font-mono">Enter</kbd> to submit. Describe any issues to stop execution, or just "Approve".
-              </p>
-            </div>
-          )}
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {hasMultipleOptions ? (
+            // Multiple-choice mode
+            options.map((optionLabel, index) => {
+              const colorClasses = [
+                'bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50',
+                'bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 disabled:opacity-50',
+                'bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 disabled:opacity-50',
+                'bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50',
+              ]
+              const colorClass = colorClasses[index % colorClasses.length]
 
-          {/* Action Buttons */}
-          <div className="flex justify-end gap-2 flex-wrap">
-            {hasMultipleOptions ? (
-              // Multiple-choice mode - show buttons dynamically from options array
-              <>
-                {options.map((optionLabel, index) => {
-                  // Use different colors for variety
-                  const colorClasses = [
-                    'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400',
-                    'bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400',
-                    'bg-green-600 hover:bg-green-700 disabled:bg-green-400',
-                    'bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400',
-                    'bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400',
-                    'bg-pink-600 hover:bg-pink-700 disabled:bg-pink-400',
-                  ]
-                  const colorClass = colorClasses[index % colorClasses.length] || 'bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400'
-                  
-                  return (
-                    <button
-                      key={index}
-                      onClick={() => handleOption(index)}
-                      disabled={isApproving || isSubmittingFeedback}
-                      className={`px-4 py-2 ${colorClass} text-white text-xs font-medium rounded transition-colors`}
-                    >
-                      {isSubmittingFeedback ? '⏳ Processing...' : optionLabel}
-                    </button>
-                  )
-                })}
-              </>
-            ) : yesNoOnly ? (
-              // Yes/No only mode - show two buttons
-              <>
+              return (
+                <button
+                  key={index}
+                  onClick={() => handleOption(index)}
+                  disabled={isApproving || isSubmittingFeedback}
+                  className={`px-3 py-1.5 ${colorClass} text-white text-xs font-medium rounded transition-colors`}
+                >
+                  {isSubmittingFeedback ? 'Processing...' : optionLabel}
+                </button>
+              )
+            })
+          ) : yesNoOnly ? (
+            // Yes/No mode — hide reject button when noLabel is empty
+            <>
+              {noLabel && (
                 <button
                   onClick={handleReject}
                   disabled={isApproving || isSubmittingFeedback}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-xs font-medium rounded transition-colors"
+                  className="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs font-medium rounded transition-colors disabled:opacity-50"
                 >
-                  {isSubmittingFeedback ? '⏳ Processing...' : `❌ ${noLabel}`}
+                  {isSubmittingFeedback ? 'Processing...' : noLabel}
                 </button>
-                <button
-                  onClick={handleApprove}
-                  disabled={isApproving || isSubmittingFeedback}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
-                >
-                  {isApproving ? '⏳ Processing...' : `✅ ${yesLabel}`}
-                </button>
-              </>
-            ) : (
-              // Normal mode - show textarea with approve/submit buttons
-              <>
-                {/* Only show approve button if no feedback is typed */}
-                {!feedback.trim() && (
-                  <button
-                    onClick={handleApprove}
-                    disabled={isApproving || isSubmittingFeedback}
-                    className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white text-xs font-medium rounded transition-colors"
-                  >
-                    {isApproving ? '⏳ Processing...' : '✅ Approve & Continue'}
-                  </button>
-                )}
-                {feedback.trim() && (
-                  <button
-                    onClick={handleSubmitFeedback}
-                    disabled={isSubmittingFeedback || isApproving || !feedback.trim()}
-                    className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-yellow-400 text-white text-xs font-medium rounded transition-colors"
-                  >
-                    {isSubmittingFeedback ? '⏳ Submitting...' : '📝 Submit Feedback'}
-                  </button>
-                )}
-              </>
+              )}
+              <button
+                onClick={handleApprove}
+                disabled={isApproving || isSubmittingFeedback}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
+              >
+                {isApproving || isSubmittingFeedback ? 'Processing...' : yesLabel}
+              </button>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Feedback textarea + buttons — below the main row, only in normal mode */}
+      {!yesNoOnly && !hasMultipleOptions && (
+        <div className="mt-2">
+          <textarea
+            id="feedback-input"
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type feedback here if changes are needed... (Enter to submit)"
+            className="w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800/80 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+            rows={5}
+            disabled={isApproving || isSubmittingFeedback}
+          />
+          <div className="flex justify-end gap-2 mt-1.5">
+            {!feedback.trim() && (
+              <button
+                onClick={handleApprove}
+                disabled={isApproving || isSubmittingFeedback}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
+              >
+                {isApproving ? 'Processing...' : yesLabel || 'Approve & Continue'}
+              </button>
+            )}
+            {feedback.trim() && (
+              <button
+                onClick={handleSubmitFeedback}
+                disabled={isSubmittingFeedback || isApproving || !feedback.trim()}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
+              >
+                {isSubmittingFeedback ? 'Submitting...' : 'Submit Feedback'}
+              </button>
             )}
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Context / Plan content — collapsible details below */}
+      {context && (
+        <details className="mt-2 group">
+          <summary className="text-[10px] text-indigo-500 dark:text-indigo-400 cursor-pointer font-medium flex items-center gap-1">
+            <span className="group-open:hidden">+ Show plan</span>
+            <span className="hidden group-open:inline">− Hide plan</span>
+          </summary>
+          <div className="mt-1.5 p-3 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded">
+            <MarkdownRenderer content={context} className="text-xs" />
+          </div>
+        </details>
+      )}
     </div>
   )
 }

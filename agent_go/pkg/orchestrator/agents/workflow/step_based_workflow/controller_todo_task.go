@@ -571,12 +571,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		},
 		HasLoop: false,
 		// Configure to disable learning and validation, but inherit execution modes
-		AgentConfigs: &AgentConfigs{
-			DisableLearning:      boolPtr(true), // No learning for generic agent
-			DisableValidation:    boolPtr(true), // No validation for generic agent
-			UseToolSearchMode:    useToolSearchMode,
-			UseCodeExecutionMode: useCodeExecutionMode,
-		},
+		AgentConfigs: func() *AgentConfigs {
+			// Inherit parallel tool execution setting from parent step
+			var disableParallelToolExec *bool
+			if parentConfig := getAgentConfigs(step); parentConfig != nil {
+				disableParallelToolExec = parentConfig.DisableParallelToolExecution
+			}
+			return &AgentConfigs{
+				DisableLearning:              boolPtr(true), // No learning for generic agent
+				DisableValidation:            boolPtr(true), // No validation for generic agent
+				UseToolSearchMode:            useToolSearchMode,
+				UseCodeExecutionMode:         useCodeExecutionMode,
+				DisableParallelToolExecution: disableParallelToolExec, // inherit from parent
+			}
+		}(),
 	}
 
 	// Build generic step path

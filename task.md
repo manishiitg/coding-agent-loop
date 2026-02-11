@@ -1,8 +1,22 @@
-I have implemented the progress bar for workspace backup imports in the frontend.
+4. we need a way to see logs for mcp installation and tool testing in ui
 
-Key changes:
-1.  Modified `frontend/src/services/api.ts` to support an `onProgress` callback in `importWorkflowBackup`.
-2.  Updated `frontend/src/components/sidebar/WorkflowBackupSection.tsx` to track and display upload progress with a progress bar.
-3.  Updated `frontend/src/components/Workspace.tsx` and `frontend/src/components/workspace/PlannerFileList.tsx` to show import progress in the main workspace view as well.
+4. chain builder?
 
-You can now test the import functionality and see the progress bar for large files.
+will index data
+i) prompt tempaltes, need to check variables on compile time
+
+48. in ui its not clear how many times validation has failed
+
+51. summization in chat mode is not ux friendly
+
+9. if we have a tool for slack notification
+
+14. for new workflows we should not have all workspace tools selected
+
+16. able to share chats 
+
+17. able to write to a workflow via chat if selected by @
+
+18. add a workflow-builder slash command
+
+19. memories?

@@ -4,14 +4,15 @@ import "time"
 
 // SyncStatus represents the GitHub sync status
 type SyncStatus struct {
-	IsConnected    bool         `json:"is_connected"`
-	LastSync       time.Time    `json:"last_sync,omitempty"`
-	PendingChanges int          `json:"pending_changes"`
-	PendingFiles   []string     `json:"pending_files,omitempty"`
-	FileStatuses   []FileStatus `json:"file_statuses,omitempty"`
-	Conflicts      []Conflict   `json:"conflicts,omitempty"`
-	Repository     string       `json:"repository"`
-	Branch         string       `json:"branch"`
+	IsConnected      bool         `json:"is_connected"`
+	LastSync         time.Time    `json:"last_sync,omitempty"`
+	PendingChanges   int          `json:"pending_changes"`
+	UnpushedCommits  int          `json:"unpushed_commits"`
+	PendingFiles     []string     `json:"pending_files,omitempty"`
+	FileStatuses     []FileStatus `json:"file_statuses,omitempty"`
+	Conflicts        []Conflict   `json:"conflicts,omitempty"`
+	Repository       string       `json:"repository"`
+	Branch           string       `json:"branch"`
 }
 
 // FileStatus represents the status of a file in Git

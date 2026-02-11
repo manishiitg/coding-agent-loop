@@ -85,14 +85,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const HIDDEN_STREAMING_EVENTS = ['streaming_start', 'streaming_chunk', 'streaming_end'];
     allEvents = allEvents.filter(event => !HIDDEN_STREAMING_EVENTS.includes(event.type || ''));
 
-    // Filter out tool_call events for "delegate" tool - we show delegation_start/delegation_end instead
+    // Filter out tool_call events for delegation tools - we show delegation_start/delegation_end
+    // and blocking_human_feedback instead of raw tool_call events
     const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
+    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution'];
     allEvents = allEvents.filter(event => {
       if (!DELEGATE_TOOL_EVENTS.includes(event.type || '')) return true;
-      // Check if this is a delegate tool call
       const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
       const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;
-      return toolName !== 'delegate';
+      return !toolName || !HIDDEN_DELEGATION_TOOLS.includes(toolName);
     });
 
     // Filter out "Total Token Usage" and "Context Offloading" events in tiny/micro mode

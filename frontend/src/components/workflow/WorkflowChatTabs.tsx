@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect } from 'react'
+import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { X, ArrowDown, Square, Maximize2, Minimize2 } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
@@ -7,6 +7,8 @@ import { EventModeToggle } from '../events'
 import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { agentApi } from '../../services/api'
 import { logger } from '../../utils/logger'
+import { computeNewEventCount } from '../../utils/chatSubmitHelpers'
+import type { PollingEvent } from '../../services/api-types'
 
 /**
  * Mini ChatTabs component for workflow mode chat area
@@ -35,13 +37,46 @@ export const WorkflowChatTabs: React.FC = () => {
     return Object.values(chatTabs)
       .filter(tab =>
         tab.metadata?.mode === 'workflow' &&
-        (tab.sessionId || tab.isStreaming) // Only show active tabs
+        (tab.sessionId || tab.isStreaming)
       )
       .sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs])
 
-  // Close chat area when all workflow tabs are closed
+  // Skip auto-close on initial mount
+  const hasRenderedRef = useRef(false)
+
+  const handleTabClick = useCallback((tabId: string) => {
+    switchTab(tabId)
+  }, [switchTab])
+
+  const handleTabClose = useCallback(async (e: React.MouseEvent, tabId: string) => {
+    e.stopPropagation()
+    await closeTab(tabId)
+  }, [closeTab])
+
+  const handleStopSession = useCallback(async (e: React.MouseEvent, tab: ChatTab) => {
+    e.stopPropagation()
+
+    if (!tab.sessionId) {
+      logger.warn('WorkflowChatTabs', 'No session ID to stop for tab:', tab.tabId)
+      return
+    }
+
+    try {
+      await agentApi.stopSession(tab.sessionId)
+      logger.debug('WorkflowChatTabs', `Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
+      setTabStreaming(tab.tabId, false)
+    } catch (error) {
+      logger.error('WorkflowChatTabs', 'Failed to stop session:', error)
+    }
+  }, [setTabStreaming])
+
+  // Close chat area when all workflow tabs are closed (but not on first render)
   useEffect(() => {
+    if (!hasRenderedRef.current) {
+      hasRenderedRef.current = true
+      return
+    }
     if (activeWorkflowTabs.length === 0) {
       setShowChatArea(false)
     }
@@ -52,245 +87,197 @@ export const WorkflowChatTabs: React.FC = () => {
     return null
   }
 
-  const handleTabClick = (tabId: string) => {
-    switchTab(tabId)
-  }
-
-  const handleTabClose = async (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation()
-    await closeTab(tabId)
-  }
-
-  const handleStopSession = async (e: React.MouseEvent, tab: ChatTab) => {
-    e.stopPropagation()
-
-    if (!tab.sessionId) {
-      logger.warn('WorkflowChatTabs', 'No session ID to stop for tab:', tab.tabId)
-      return
-    }
-
-    try {
-      // Stop the session via API
-      await agentApi.stopSession(tab.sessionId)
-      logger.debug('WorkflowChatTabs', `Stopped session ${tab.sessionId} for tab ${tab.tabId}`)
-
-      // Update tab's streaming status
-      setTabStreaming(tab.tabId, false)
-    } catch (error) {
-      logger.error('WorkflowChatTabs', 'Failed to stop session:', error)
-    }
-  }
-
   // Get tab color/indicator based on session status
   const getTabIndicator = (tab: ChatTab) => {
     const sessionStatus = tabSessionStatus[tab.tabId]
 
-    // Priority: streaming > session status > completed > default
     if (tab.isStreaming) {
-      return 'bg-green-500 animate-pulse' // Streaming
+      return 'bg-green-500 animate-pulse'
     }
 
     if (sessionStatus?.status) {
       switch (sessionStatus.status) {
         case 'running':
-          return 'bg-blue-500' // Active/running
+          return 'bg-blue-500'
         case 'paused':
-          return 'bg-yellow-500' // Paused
+          return 'bg-yellow-500'
         case 'completed':
-          return 'bg-gray-400' // Completed
+          return 'bg-gray-400'
         case 'stopped':
-          return 'bg-gray-500' // Stopped
+          return 'bg-gray-500'
         case 'error':
-          return 'bg-red-500' // Error
+          return 'bg-red-500'
         default:
-          return 'bg-gray-400' // Unknown status
+          return 'bg-gray-400'
       }
     }
 
     if (tab.isCompleted) {
-      return 'bg-gray-400' // Completed
+      return 'bg-gray-400'
     }
 
-    // Default: no session or unknown
     return 'bg-gray-400'
   }
 
-    return (
-      <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto">      {activeWorkflowTabs.map((tab) => {
+  return (
+    <div className="flex items-center gap-1 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2 py-1 overflow-x-auto">
+      {activeWorkflowTabs.map((tab) => {
         const isActive = tab.tabId === activeTabId
         const indicatorColor = getTabIndicator(tab)
         const isTabStreaming = getTabStreamingStatus(tab.tabId)
         const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
+        const newEventCount = computeNewEventCount(
+          tab, isActive, tabEvents as Record<string, PollingEvent[]>, shouldShowEventByMode
+        )
 
-          // Calculate new event count for inactive tabs using per-mode filtering
-          // This ensures the badge count matches what the user sees in the current event mode
-          const newEventCount = (() => {
-            if (isActive || !tab.sessionId) return 0
+        return (
+          <div
+            key={tab.tabId}
+            onClick={() => handleTabClick(tab.tabId)}
+            onKeyDown={(e) => e.key === 'Enter' && handleTabClick(tab.tabId)}
+            role="button"
+            tabIndex={0}
+            className={`
+              flex items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
+              ${isActive
+                ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
+              }
+            `}
+          >
+            {/* Status Indicator */}
+            <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
 
-            // Get all events for this tab's session
-            const allEvents = tabEvents[tab.sessionId] || []
+            {/* Tab Name */}
+            <span className="whitespace-nowrap">{tab.name}</span>
 
-            // Filter events by the tab's current event mode
-            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type, tab.eventMode))
+            {/* New Events Badge - show for inactive tabs with new events */}
+            {!isActive && newEventCount > 0 && (
+              <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
+                {newEventCount > 99 ? '99+' : newEventCount}
+              </span>
+            )}
 
-            // Get the last viewed count for this mode (with fallback for migration)
-            const lastViewedCount = tab.lastViewedEventCounts?.[tab.eventMode] ?? tab.lastViewedEventCount ?? 0
+            {/* Event Mode Toggle - show inside active tab header */}
+            {isActive && (
+              <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
+                <EventModeToggle />
+              </div>
+            )}
 
-            // New events = current visible count - last viewed count for this mode
-            const newCount = Math.max(0, visibleEvents.length - lastViewedCount)
-            return newCount
-          })()
-
-          return (
-            <div
-              key={tab.tabId}
-              onClick={() => handleTabClick(tab.tabId)}
-              onKeyDown={(e) => e.key === 'Enter' && handleTabClick(tab.tabId)}
-              role="button"
-              tabIndex={0}
-              className={`
-                flex items-center gap-1.5 px-2 py-1 rounded-t-md text-xs font-medium transition-colors cursor-pointer outline-none
-                ${isActive
-                  ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-b-2 border-blue-500'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100'
-                }
-              `}
-            >
-              {/* Status Indicator */}
-              <div className={`w-1.5 h-1.5 rounded-full ${indicatorColor}`} />
-
-              {/* Tab Name */}
-              <span className="whitespace-nowrap">{tab.name}</span>
-
-              {/* New Events Badge - show for inactive tabs with new events */}
-              {!isActive && newEventCount > 0 && (
-                <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
-                  {newEventCount > 99 ? '99+' : newEventCount}
-                </span>
-              )}
-
-              {/* Event Mode Toggle - show inside active tab header */}
-              {isActive && (
-                <div className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
-                  <EventModeToggle />
-                </div>
-              )}
-
-              {/* Stop Button - show for tabs with sessionId that are streaming/running */}
-              {canStop && (
-                <button
-                  onClick={(e) => handleStopSession(e, tab)}
-                  className={`
-                    ml-0.5 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30
-                    ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
-                    transition-opacity
-                  `}
-                  title="Stop session"
-                >
-                  <Square className="w-3 h-3 text-red-600 dark:text-red-400" fill="currentColor" />
-                </button>
-              )}
-
-              {/* Close Button */}
+            {/* Stop Button - show for tabs with sessionId that are streaming/running */}
+            {canStop && (
               <button
-                onClick={(e) => handleTabClose(e, tab.tabId)}
+                onClick={(e) => handleStopSession(e, tab)}
                 className={`
-                  ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
+                  ml-0.5 p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30
                   ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
                   transition-opacity
                 `}
-                title="Close tab"
+                title="Stop session"
               >
-                <X className="w-3 h-3" />
+                <Square className="w-3 h-3 text-red-600 dark:text-red-400" fill="currentColor" />
               </button>
-            </div>
-          )
-        })}
+            )}
 
-        {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
-        {activeWorkflowTabs.length > 0 && (
-          <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
+            {/* Close Button */}
             <button
-              onClick={(e) => {
-                e.stopPropagation()
-                const newAutoScrollState = !autoScroll
-                setAutoScroll(newAutoScrollState)
-
-                // If enabling auto-scroll (switching from Manual to Auto-scroll), scroll to bottom
-                if (newAutoScrollState) {
-                  // Find the chat content scrollable element and scroll to bottom
-                  setTimeout(() => {
-                    const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
-                    if (chatAreaContainer) {
-                      const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
-                      if (scrollableElement) {
-                        scrollableElement.scrollTo({
-                          top: scrollableElement.scrollHeight,
-                          behavior: 'smooth'
-                        })
-                      }
-                    }
-                  }, 50)
-                }
-              }}
+              onClick={(e) => handleTabClose(e, tab.tabId)}
               className={`
-                flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
-                ${autoScroll
-                  ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
-                }
-                hover:bg-gray-200 dark:hover:bg-gray-700
+                ml-0.5 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600
+                ${isActive ? 'opacity-70 hover:opacity-100' : 'opacity-0 hover:opacity-70'}
+                transition-opacity
               `}
+              title="Close tab"
             >
-              <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
-              <span className="hidden sm:inline">
-                {autoScroll ? 'Auto-scroll' : 'Manual'}
-              </span>
+              <X className="w-3 h-3" />
             </button>
-
-            {/* Expand/Collapse Button */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setChatAreaExpanded(!chatAreaExpanded)
-                  }}
-                  className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
-                  title={chatAreaExpanded ? "Restore width" : "Expand width"}
-                >
-                  {chatAreaExpanded ? (
-                    <Minimize2 className="w-3.5 h-3.5" />
-                  ) : (
-                    <Maximize2 className="w-3.5 h-3.5" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{chatAreaExpanded ? "Restore width" : "Expand width"}</p>
-              </TooltipContent>
-            </Tooltip>
-
-            {/* Close Button - closes the entire chat area panel */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setShowChatArea(false)
-                  }}
-                  className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
-                  title="Close chat area"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Close chat area</p>
-              </TooltipContent>
-            </Tooltip>
           </div>
-        )}
-      </div>
+        )
+      })}
+
+      {/* Auto-scroll Toggle and Close Button - only show when there are workflow tabs */}
+      {activeWorkflowTabs.length > 0 && (
+        <div className="ml-auto flex items-center gap-1 border-l border-gray-200 dark:border-gray-700 pl-2">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              const newAutoScrollState = !autoScroll
+              setAutoScroll(newAutoScrollState)
+
+              if (newAutoScrollState) {
+                setTimeout(() => {
+                  const chatAreaContainer = document.querySelector('[data-testid="chat-area-container"]')
+                  if (chatAreaContainer) {
+                    const scrollableElement = chatAreaContainer.querySelector('.overflow-y-auto')
+                    if (scrollableElement) {
+                      scrollableElement.scrollTo({
+                        top: scrollableElement.scrollHeight,
+                        behavior: 'smooth'
+                      })
+                    }
+                  }
+                }, 50)
+              }
+            }}
+            className={`
+              flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors
+              ${autoScroll
+                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+              }
+              hover:bg-gray-200 dark:hover:bg-gray-700
+            `}
+          >
+            <ArrowDown className={`w-3.5 h-3.5 ${autoScroll ? 'opacity-70' : 'opacity-40'}`} />
+            <span className="hidden sm:inline">
+              {autoScroll ? 'Auto-scroll' : 'Manual'}
+            </span>
+          </button>
+
+          {/* Expand/Collapse Button */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setChatAreaExpanded(!chatAreaExpanded)
+                }}
+                className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
+                title={chatAreaExpanded ? "Restore width" : "Expand width"}
+              >
+                {chatAreaExpanded ? (
+                  <Minimize2 className="w-3.5 h-3.5" />
+                ) : (
+                  <Maximize2 className="w-3.5 h-3.5" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{chatAreaExpanded ? "Restore width" : "Expand width"}</p>
+            </TooltipContent>
+          </Tooltip>
+
+          {/* Close Button - closes the entire chat area panel */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowChatArea(false)
+                }}
+                className="flex items-center justify-center p-1.5 rounded text-xs font-medium transition-colors bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100"
+                title="Close chat area"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Close chat area</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+      )}
+    </div>
   )
 }

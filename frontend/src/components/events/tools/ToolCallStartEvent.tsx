@@ -1,6 +1,6 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../generated/event-types'
-import { WorkspaceToolCallDisplay, HumanFeedbackToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallDisplay, HumanFeedbackToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay } from './ToolCallSpecialRender'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
 
@@ -46,6 +46,11 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return toolName === 'search_tools' || toolName === 'add_tool'
   }
 
+  // Check if this is a delegation tool
+  const isDelegationTool = (toolName: string): boolean => {
+    return toolName === 'create_delegation_plan' || toolName === 'confirm_plan_execution'
+  }
+
   // If it's a workspace tool, use the specialized component
   if (event.tool_name && isWorkspaceTool(event.tool_name)) {
     return <WorkspaceToolCallDisplay event={event} />
@@ -64,6 +69,11 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
   // If it's a tool search tool, use the specialized component
   if (event.tool_name && isToolSearchTool(event.tool_name)) {
     return <ToolSearchToolCallDisplay event={event} />
+  }
+
+  // If it's a delegation tool, use the specialized component
+  if (event.tool_name && isDelegationTool(event.tool_name)) {
+    return <DelegationToolCallDisplay event={event} />
   }
 
   // Simple JSON formatting function for regular tools

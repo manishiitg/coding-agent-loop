@@ -40,6 +40,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/logger"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
+	"mcp-agent-builder-go/agent_go/pkg/subagents"
 
 	"github.com/joho/godotenv"
 
@@ -69,6 +70,65 @@ func extractWorkspacePathFromObjective(objective string) string {
 		return strings.TrimSpace(objective[start : start+end])
 	}
 	return ""
+}
+
+// extractFileContextWriteFolders parses "📁 Files in context: path1, path2" from query string
+// and returns paths that should be granted write access in the FolderGuard.
+// Files (last component contains '.') are returned as-is (exact match).
+// Folders are returned as-is (prefix match in isPathAllowed).
+// Skips _users/, Chats/ (already handled), and root-level files (no '/' in path).
+func extractFileContextWriteFolders(query string) []string {
+	prefix := "📁 Files in context: "
+	idx := strings.Index(query, prefix)
+	if idx == -1 {
+		return nil
+	}
+
+	start := idx + len(prefix)
+	end := strings.Index(query[start:], "\n")
+	var line string
+	if end == -1 {
+		line = strings.TrimSpace(query[start:])
+	} else {
+		line = strings.TrimSpace(query[start : start+end])
+	}
+
+	if line == "" {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var result []string
+
+	parts := strings.Split(line, ",")
+	for _, part := range parts {
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
+		}
+		// Clean the path
+		p = filepath.Clean(p)
+
+		// Skip protected/already-handled paths
+		pLower := strings.ToLower(p)
+		if strings.HasPrefix(pLower, "_users") || strings.HasPrefix(pLower, "chats") {
+			continue
+		}
+
+		// Skip root-level files (no directory component) — don't grant root write access
+		if !strings.Contains(p, string(filepath.Separator)) && !strings.Contains(p, "/") {
+			continue
+		}
+
+		// Deduplicate
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		result = append(result, p)
+	}
+
+	return result
 }
 
 // extractRootCauseError returns the raw error message without any processing
@@ -246,6 +306,41 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 	return originalDescription + accessInfo.String()
 }
 
+// enhanceToolDescriptionForPlanMode augments workspace tool descriptions for multi-agent plan mode.
+// Tells the LLM that its primary write folder is Plans/ (not Chats/).
+func enhanceToolDescriptionForPlanMode(toolName, originalDescription string) string {
+	specialTools := map[string]bool{
+		"sync_workspace_to_github":    true,
+		"get_workspace_github_status": true,
+		"human_feedback":              true,
+		"fetch_web_content":           true,
+	}
+	if specialTools[toolName] {
+		return originalDescription
+	}
+
+	writeTools := map[string]bool{
+		"update_workspace_file":     true,
+		"diff_patch_workspace_file": true,
+		"delete_workspace_file":     true,
+		"write_workspace_file":      true,
+		"move_workspace_file":       true,
+		"execute_shell_command":     true,
+	}
+
+	var accessInfo strings.Builder
+	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (MULTI-AGENT MODE):**")
+
+	if writeTools[toolName] {
+		accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can write to 'Plans/' (primary) and 'Chats/' folders. All other folders are read-only.")
+		accessInfo.WriteString("\nSave plan outputs inside the plan folder (e.g. 'Plans/{plan_id}/output.txt').")
+	} else {
+		accessInfo.WriteString("\n\nYou have READ access to all workspace folders. WRITE access is restricted to 'Plans/' and 'Chats/' folders.")
+	}
+
+	return originalDescription + accessInfo.String()
+}
+
 // wrapExecutorsWithChatModeFolderGuard wraps workspace tool executors to restrict chat mode writes.
 // By default, only Chats/ is writable. Pass additionalWriteFolders to allow extra folders (e.g. "skills/custom/").
 // This creates a wrapper that:
@@ -263,8 +358,18 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	allowedWriteFolders := []string{"Chats/"}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
-	// For shell sandboxing, use the first folder (Chats/) as the primary
-	shellAllowedFolder := "Chats/"
+	// For shell sandboxing, pass all allowed write folders
+	shellAllowedFolders := make([]string, len(allowedWriteFolders))
+	copy(shellAllowedFolders, allowedWriteFolders)
+
+	// Check if any allowed write folder grants Workflow/ access (case-insensitive)
+	hasWorkflowAccess := false
+	for _, f := range allowedWriteFolders {
+		if strings.HasPrefix(strings.ToLower(filepath.Clean(f)), "workflow") {
+			hasWorkflowAccess = true
+			break
+		}
+	}
 
 	// Write tools that should be restricted
 	writeTools := map[string]bool{
@@ -347,21 +452,23 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 							}
 						}
 
-						// Check if shell command references Workflow/ folder (blocked for shell in chat mode)
-						workflowLower := "workflow"
-						if strings.Contains(cmdLower, workflowLower+"/") ||
-							strings.Contains(cmdLower, workflowLower+" ") ||
-							strings.Contains(cmdLower, " "+workflowLower) ||
-							strings.Contains(cmdLower, "/"+workflowLower) ||
-							strings.HasSuffix(cmdLower, workflowLower) {
-							log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing Workflow/: %s", cmdStr)
-							return "", fmt.Errorf("access denied: shell commands cannot reference 'Workflow/' folder in chat mode")
+						// Check if shell command references Workflow/ folder (blocked unless @context grants access)
+						if !hasWorkflowAccess {
+							workflowLower := "workflow"
+							if strings.Contains(cmdLower, workflowLower+"/") ||
+								strings.Contains(cmdLower, workflowLower+" ") ||
+								strings.Contains(cmdLower, " "+workflowLower) ||
+								strings.Contains(cmdLower, "/"+workflowLower) ||
+								strings.HasSuffix(cmdLower, workflowLower) {
+								log.Printf("[CHAT MODE FOLDER GUARD] Blocked shell command referencing Workflow/: %s", cmdStr)
+								return "", fmt.Errorf("access denied: shell commands cannot reference 'Workflow/' folder in chat mode")
+							}
 						}
 					}
 				}
-				// Inject allowed write folder for kernel-level sandboxing
-				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolder)
-				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%s for %s\n", shellAllowedFolder, toolNameCopy)
+				// Inject allowed write folders for kernel-level sandboxing
+				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
+				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%v for %s\n", shellAllowedFolders, toolNameCopy)
 			}
 
 			// For WRITE tools, ONLY allow writes to allowed folders
@@ -402,7 +509,8 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 	allowedWriteFolders := []string{planFolderWithSlash}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
-	shellAllowedFolder := planFolderWithSlash
+	shellAllowedFolders := make([]string, len(allowedWriteFolders))
+	copy(shellAllowedFolders, allowedWriteFolders)
 
 	writeTools := map[string]bool{
 		"update_workspace_file":     true,
@@ -445,7 +553,7 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if toolNameCopy == "execute_shell_command" {
-				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolder)
+				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
 			}
 
 			if writeTools[toolNameCopy] {
@@ -646,6 +754,8 @@ type QueryRequest struct {
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
+	// Selected sub-agent templates to make available for delegation
+	SelectedSubAgents []string `json:"selected_subagents,omitempty"` // Array of sub-agent template folder names
 	// Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, '' = disabled
 	DelegationMode string `json:"delegation_mode,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
@@ -1077,9 +1187,14 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/batch-update-steps", api.handleBatchUpdateSteps).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/delete-step", api.handleDeleteStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleGetStepOverride).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleUpdateStepOverride).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
+
+	// Sub-agent template API routes (from subagent_routes.go)
+	RegisterSubAgentRoutes(apiRouter, api)
 
 	// pprof routes for profiling (must be before static file serving)
 	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
@@ -1145,7 +1260,9 @@ func (api *StreamingAPI) GetAPIURL() string {
 	return fmt.Sprintf("http://%s:%d", host, api.config.Port)
 }
 
-// getOrCreatePlanSessionState returns the session-level plan state, creating one if needed
+// getOrCreatePlanSessionState returns the session-level plan state, creating one if needed.
+// On first access for a session, it restores plan state from the database if available,
+// allowing resumed sessions to pick up existing plans.
 func (api *StreamingAPI) getOrCreatePlanSessionState(sessionID string) *virtualtools.PlanSessionState {
 	api.planSessionStatesMux.Lock()
 	defer api.planSessionStatesMux.Unlock()
@@ -1153,6 +1270,22 @@ func (api *StreamingAPI) getOrCreatePlanSessionState(sessionID string) *virtualt
 		return state
 	}
 	state := virtualtools.NewPlanSessionState()
+
+	// Try to restore plan state from database session config
+	if api.chatDB != nil {
+		if chatSession, err := api.chatDB.GetChatSession(context.Background(), sessionID); err == nil && chatSession != nil {
+			if config, err := chatSession.GetConfig(); err == nil && config != nil && config.PlanID != "" {
+				state.PlanID = config.PlanID
+				state.PlanFolder = config.PlanFolder
+				if config.PlanPhase != "" {
+					state.Phase = config.PlanPhase
+				}
+				log.Printf("[PLAN STATE] Restored plan state from DB for session %s: plan=%s folder=%s phase=%s",
+					sessionID, config.PlanID, config.PlanFolder, state.Phase)
+			}
+		}
+	}
+
 	api.planSessionStates[sessionID] = state
 	return state
 }
@@ -1711,13 +1844,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Build typed config from request
 		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || req.DelegationMode != ""
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != ""
 		if hasConfig {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
 				EnabledServers:       req.EnabledServers,
 				UseCodeExecutionMode: req.UseCodeExecutionMode,
 				SelectedSkills:       req.SelectedSkills,
+				SelectedSubAgents:    req.SelectedSubAgents,
 				EnableContextSummarization: func() *bool {
 					if req.EnableContextSummarization != nil {
 						val := *req.EnableContextSummarization
@@ -1817,13 +1951,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// 3. Update config if skills or other settings changed
 		// This ensures selected_skills and other settings are persisted on each query
-		hasConfigToUpdate := len(req.SelectedSkills) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.LLMConfig != nil
+		hasConfigToUpdate := len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.LLMConfig != nil
 		if hasConfigToUpdate {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
 				EnabledServers:       req.EnabledServers,
 				UseCodeExecutionMode: req.UseCodeExecutionMode,
 				SelectedSkills:       req.SelectedSkills,
+				SelectedSubAgents:    req.SelectedSubAgents,
 				EnableContextSummarization: func() *bool {
 					if req.EnableContextSummarization != nil {
 						val := *req.EnableContextSummarization
@@ -2277,8 +2412,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
 				if err == nil && preset != nil {
 					// Use preset's Query field as the objective (the actual workflow objective)
-					workflowObjective = preset.Query
-					log.Printf("[WORKFLOW EXECUTION] Using preset objective: %s", workflowObjective)
+					// Fall back to req.Query if preset query is empty (e.g. workflow builder sets empty preset query)
+					if preset.Query != "" {
+						workflowObjective = preset.Query
+					}
+					log.Printf("[WORKFLOW EXECUTION] Using objective: %s (preset.Query=%q, req.Query=%q)", workflowObjective, preset.Query, req.Query)
 
 					// Extract workspace path from preset's selected folder
 					if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
@@ -2663,6 +2801,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
 		}
 
+		// In plan delegation mode, the orchestrator should NEVER use code execution or tool search mode.
+		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
+		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
+		if req.DelegationMode == "plan" {
+			if useCodeExecutionMode {
+				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
+				useCodeExecutionMode = false
+			}
+			if useToolSearchMode {
+				log.Printf("[TOOL_SEARCH] Disabling tool search mode for orchestrator in plan delegation mode")
+				useToolSearchMode = false
+			}
+		}
+
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v, UseToolSearchMode: %v", serverList, useCodeExecutionMode, useToolSearchMode)
 		agentConfig := agent.LLMAgentConfig{
@@ -2686,10 +2838,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}(),
 			SelectedTools: selectedTools, // NEW: Pass selected tools
 
-			// Enable smart routing by default for both React and Simple agents
-			EnableSmartRouting:     true,
-			SmartRoutingMaxTools:   20, // Enable when more than 20 tools
-			SmartRoutingMaxServers: 4,  // Enable when more than 4 servers
+			// Smart routing disabled - always use all available tools
+			EnableSmartRouting: false,
 
 			// Detailed LLM configuration from frontend (unified fallback structure)
 			Fallbacks: fallbacks,
@@ -2954,6 +3104,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Check if subagent-creator is in selected skills
+		hasSubAgentCreator := false
+		for _, s := range req.SelectedSkills {
+			if s == "subagent-creator" || s == "custom/subagent-creator" {
+				hasSubAgentCreator = true
+				break
+			}
+		}
+
 		// When skill-creator is selected, ensure it's installed
 		if hasSkillCreator {
 			workspaceAPIURL := api.GetAPIURL()
@@ -3021,12 +3180,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Create subagents/ folder if it doesn't exist
+				if err := skills.CreateFolder("subagents"); err != nil {
+					log.Printf("[WORKSPACE] Warning: Could not create subagents/ folder: %v", err)
+				} else {
+					if err := skills.CreateFolder("subagents/custom"); err != nil {
+						log.Printf("[WORKSPACE] Warning: Could not create subagents/custom/ folder: %v", err)
+					}
+				}
+
 				// Chat mode: advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
 				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (advanced only)
+
+				// Extract @context file paths for additional write access
+				fileContextFolders := extractFileContextWriteFolders(req.Query)
+				if len(fileContextFolders) > 0 {
+					log.Printf("[FILE CONTEXT] Extracted write paths from @context: %v", fileContextFolders)
+				}
 
 				// Apply folder guard to restrict writes based on mode
 				// Multi-agent (plan) mode: primary write folder is Plans/, Chats/ also writable
@@ -3036,14 +3210,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if hasSkillCreator {
 						additionalFolders = append(additionalFolders, "skills/custom/")
 					}
+					if hasSubAgentCreator {
+						additionalFolders = append(additionalFolders, "subagents/custom/")
+					}
+					additionalFolders = append(additionalFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, "Plans", additionalFolders...)
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied Plans/ folder restriction (additional: %v)", additionalFolders)
-				} else if hasSkillCreator {
-					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, "skills/custom/")
-					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + skills/custom/ folder restriction (skill-creator active)")
 				} else {
-					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
-					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ folder restriction to chat mode tools")
+					extraFolders := []string{}
+					if hasSkillCreator {
+						extraFolders = append(extraFolders, "skills/custom/")
+					}
+					if hasSubAgentCreator {
+						extraFolders = append(extraFolders, "subagents/custom/")
+					}
+					extraFolders = append(extraFolders, fileContextFolders...)
+					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
+					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
 				}
 
 				// Apply skill folder guard if skills are selected (read-only access to selected skills only)
@@ -3061,8 +3244,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					toolName := tool.Function.Name
 					if executor, exists := workspaceExecutors[toolName]; exists {
-						// Enhance tool description for chat mode
-						enhancedDescription := enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
+						// Enhance tool description based on mode
+						var enhancedDescription string
+						if req.DelegationMode == "plan" {
+							enhancedDescription = enhanceToolDescriptionForPlanMode(toolName, tool.Function.Description)
+						} else {
+							enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
+						}
 
 						// Convert Parameters to map[string]interface{}
 						var params map[string]interface{}
@@ -3109,17 +3297,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
-					// Apply same folder guard as workspace tools
+					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
 					if req.DelegationMode == "plan" {
 						additionalFolders := []string{"Chats/"}
 						if hasSkillCreator {
 							additionalFolders = append(additionalFolders, "skills/custom/")
 						}
+						additionalFolders = append(additionalFolders, fileContextFolders...)
 						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, "Plans", additionalFolders...)
-					} else if hasSkillCreator {
-						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, "skills/custom/")
 					} else {
-						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors)
+						browserExtraFolders := []string{}
+						if hasSkillCreator {
+							browserExtraFolders = append(browserExtraFolders, "skills/custom/")
+						}
+						browserExtraFolders = append(browserExtraFolders, fileContextFolders...)
+						browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, browserExtraFolders...)
 					}
 					log.Printf("[BROWSER TOOLS] Applied folder guard to browser tools (delegation_mode: %s)", req.DelegationMode)
 
@@ -3361,6 +3553,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add base instructions for all agents
 			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
 
+			// Add skill builder instructions when skill-creator is active
+			if hasSkillCreator {
+				underlyingAgent.AppendSystemPrompt(GetSkillBuilderInstructions())
+				log.Printf("[SKILL BUILDER] Added skill builder instructions to system prompt")
+			}
+
+			// Add sub-agent builder instructions when subagent-creator is active
+			if hasSubAgentCreator {
+				underlyingAgent.AppendSystemPrompt(GetSubAgentBuilderInstructions())
+				log.Printf("[SUBAGENT BUILDER] Added sub-agent builder instructions to system prompt")
+			}
+
 			// Add skill instructions if skills are selected
 			if len(req.SelectedSkills) > 0 {
 				skillPrompt := buildSkillPrompt(req.SelectedSkills)
@@ -3373,6 +3577,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add delegation instructions based on mode and phase
 			if req.DelegationMode == "plan" {
 				planState := api.getOrCreatePlanSessionState(sessionID)
+
+				// Detect existing plan reference from @ file context in query
+				// e.g. "📁 Files in context: Plans/my-plan/plan.md" or "Plans/my-plan"
+				if planState.PlanID == "" {
+					if idx := strings.Index(req.Query, "Plans/"); idx != -1 {
+						rest := req.Query[idx:]
+						// Extract plan folder path: "Plans/<plan-id>" or "Plans/<plan-id>/plan.md"
+						parts := strings.SplitN(rest, "/", 3)
+						if len(parts) >= 2 {
+							planID := strings.TrimSpace(parts[1])
+							// Clean up: remove trailing punctuation, commas, whitespace
+							planID = strings.TrimRight(planID, " ,\n\t")
+							if strings.HasSuffix(planID, ".md") {
+								planID = "" // "Plans/plan.md" isn't a valid plan reference
+							}
+							if planID != "" {
+								planFolder := fmt.Sprintf("Plans/%s", planID)
+								planState.PlanID = planID
+								planState.PlanFolder = planFolder
+								planState.Phase = "planning" // Start in planning so user gets approval prompt
+								log.Printf("[PLAN STATE] Detected existing plan reference in query: plan=%s folder=%s", planID, planFolder)
+							}
+						}
+					}
+				}
+
 				phase := planState.GetPhase()
 				if phase == "execution" {
 					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionModeInstructions())
@@ -3608,6 +3838,35 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelMux.Lock()
 		delete(api.agentCancelFuncs, sessionID)
 		api.agentCancelMux.Unlock()
+
+		// --- BEGIN: Persist plan state for session resume ---
+		if req.DelegationMode == "plan" {
+			planState := api.getOrCreatePlanSessionState(sessionID)
+			if planState.PlanID != "" {
+				// Read existing config, merge plan state, and save
+				if chatSession != nil {
+					existingConfig := &database.ChatSessionConfig{}
+					if cs, err := api.chatDB.GetChatSession(context.Background(), sessionID); err == nil && cs != nil {
+						if cfg, err := cs.GetConfig(); err == nil && cfg != nil {
+							existingConfig = cfg
+						}
+					}
+					existingConfig.PlanID = planState.PlanID
+					existingConfig.PlanFolder = planState.PlanFolder
+					existingConfig.PlanPhase = planState.GetPhase()
+					if configJSON, err := existingConfig.ToJSON(); err == nil {
+						if _, err := api.chatDB.UpdateChatSession(streamCtx, sessionID, &database.UpdateChatSessionRequest{
+							Config: configJSON,
+						}); err != nil {
+							log.Printf("[PLAN STATE] Failed to persist plan state: %v", err)
+						} else {
+							log.Printf("[PLAN STATE] Saved plan state for session %s: plan=%s phase=%s", sessionID, planState.PlanID, planState.GetPhase())
+						}
+					}
+				}
+			}
+		}
+		// --- END: Persist plan state for session resume ---
 
 		// --- BEGIN: Update chat session status to completed ---
 		if chatSession != nil {
@@ -4379,7 +4638,7 @@ type sessionEventEmitter struct {
 	sessionID  string
 }
 
-func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question string, yesNoOnly bool, yesLabel, noLabel string, options ...string) {
+func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, contextText string, yesNoOnly bool, yesLabel, noLabel string, options ...string) {
 	now := time.Now()
 	eventData := &orchEvents.BlockingHumanFeedbackEvent{
 		BaseEventData: unifiedevents.BaseEventData{
@@ -4387,6 +4646,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question stri
 		},
 		Question:      question,
 		AllowFeedback: !yesNoOnly && len(options) == 0, // Allow text input when not yes/no and no options
+		Context:       contextText,
 		SessionID:     e.sessionID,
 		RequestID:     requestID,
 		YesNoOnly:     yesNoOnly,
@@ -4441,8 +4701,27 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		modelID = "claude-sonnet-4-20250514"
 	}
 
+	// Load sub-agent template if specified
+	var loadedTemplate *subagents.SubAgent
+	agentTemplateName, _ := ctx.Value(virtualtools.AgentTemplateKey).(string)
+	if agentTemplateName != "" {
+		workspaceAPIURL := getWorkspaceAPIURL()
+		sa, err := subagents.GetSubAgent(workspaceAPIURL, agentTemplateName)
+		if err != nil {
+			log.Printf("[DELEGATION] Warning: Failed to load sub-agent template %s: %v", agentTemplateName, err)
+		} else {
+			loadedTemplate = sa
+			log.Printf("[DELEGATION] Loaded sub-agent template: %s (%s)", sa.Frontmatter.Name, agentTemplateName)
+		}
+	}
+
 	// Resolve reasoning level tier to specific provider/model if configured
 	reasoningLevel, _ := ctx.Value(virtualtools.ReasoningLevelKey).(string)
+	// Apply template defaults if not explicitly set
+	if reasoningLevel == "" && loadedTemplate != nil && loadedTemplate.Frontmatter.DefaultReasoningLevel != "" {
+		reasoningLevel = loadedTemplate.Frontmatter.DefaultReasoningLevel
+		log.Printf("[DELEGATION] Using template default reasoning_level: %s", reasoningLevel)
+	}
 	if reasoningLevel != "" {
 		tierConfig := resolveDelegationTierConfig(parentReq.DelegationTierConfig)
 		if tierConfig != nil {
@@ -4465,6 +4744,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Emit delegation_start event (after model resolution so we can include reasoning level and model)
 	toolMode, _ := ctx.Value(virtualtools.ToolModeKey).(string)
+	if toolMode == "" && loadedTemplate != nil && loadedTemplate.Frontmatter.DefaultToolMode != "" {
+		toolMode = loadedTemplate.Frontmatter.DefaultToolMode
+		log.Printf("[DELEGATION] Using template default tool_mode: %s", toolMode)
+	}
 	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode)
 
 	// Build server name from enabled servers
@@ -4565,17 +4848,19 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			return 5 * time.Minute
 		}(),
+		// Sub-agent mode is determined ONLY by the explicit tool_mode on the delegate call.
+		// Do NOT inherit parent session's mode — the orchestrator's mode is irrelevant to sub-agents.
 		UseCodeExecutionMode: func() bool {
 			if toolMode, ok := ctx.Value(virtualtools.ToolModeKey).(string); ok {
 				return toolMode == "code_execution"
 			}
-			return parentReq.UseCodeExecutionMode
+			return false // Default to simple mode
 		}(),
 		UseToolSearchMode: func() bool {
 			if toolMode, ok := ctx.Value(virtualtools.ToolModeKey).(string); ok {
 				return toolMode == "tool_search"
 			}
-			return parentReq.UseToolSearchMode
+			return false // Default to simple mode
 		}(),
 		APIKeys:              apiKeys,
 		UserID:               subAgentUserID, // Per-user OAuth token isolation
@@ -4702,6 +4987,39 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		underlyingAgent.AddEventListener(dbEventObserver)
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
+		// Merge template skills/servers into parent request if a template is loaded
+		if loadedTemplate != nil {
+			templateSkills := subagents.ParseCSV(loadedTemplate.Frontmatter.Skills)
+			for _, ts := range templateSkills {
+				found := false
+				for _, ps := range parentReq.SelectedSkills {
+					if ps == ts {
+						found = true
+						break
+					}
+				}
+				if !found {
+					parentReq.SelectedSkills = append(parentReq.SelectedSkills, ts)
+				}
+			}
+			templateServers := subagents.ParseCSV(loadedTemplate.Frontmatter.Servers)
+			for _, ts := range templateServers {
+				found := false
+				for _, ps := range parentReq.EnabledServers {
+					if ps == ts {
+						found = true
+						break
+					}
+				}
+				if !found {
+					parentReq.EnabledServers = append(parentReq.EnabledServers, ts)
+				}
+			}
+			if len(templateSkills) > 0 || len(templateServers) > 0 {
+				log.Printf("[DELEGATION] Merged template skills=%v servers=%v into sub-agent config", templateSkills, templateServers)
+			}
+		}
+
 		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
 		if len(parentReq.SelectedSkills) > 0 {
 			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills)
@@ -4709,6 +5027,27 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				underlyingAgent.AppendSystemPrompt(skillPrompt)
 				log.Printf("[DELEGATION] Added skill instructions to sub-agent (%d skills)", len(parentReq.SelectedSkills))
 			}
+		}
+
+		// Add skill builder instructions for sub-agents when skill-creator is active
+		hasSkillCreator := false
+		for _, s := range parentReq.SelectedSkills {
+			if s == "skill-creator" {
+				hasSkillCreator = true
+				break
+			}
+		}
+		if hasSkillCreator {
+			underlyingAgent.AppendSystemPrompt(GetSkillBuilderInstructions())
+			log.Printf("[DELEGATION] Added skill builder instructions to sub-agent")
+		}
+
+		// Inject sub-agent template instructions into system prompt
+		if loadedTemplate != nil {
+			templatePrompt := fmt.Sprintf("\n## Sub-Agent Role: %s\n\n%s\n",
+				loadedTemplate.Frontmatter.Name, loadedTemplate.Content)
+			underlyingAgent.AppendSystemPrompt(templatePrompt)
+			log.Printf("[DELEGATION] Injected sub-agent template instructions: %s", loadedTemplate.Frontmatter.Name)
 		}
 	}
 
@@ -4738,6 +5077,21 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 			}
 
+			// Check for subagent-creator
+			hasSubAgentCreator := false
+			for _, s := range parentReq.SelectedSkills {
+				if s == "subagent-creator" || s == "custom/subagent-creator" {
+					hasSubAgentCreator = true
+					break
+				}
+			}
+
+			// Extract @context file paths from parent query for additional write access
+			fileContextFolders := extractFileContextWriteFolders(parentReq.Query)
+			if len(fileContextFolders) > 0 {
+				log.Printf("[DELEGATION] Extracted write paths from parent @context: %v", fileContextFolders)
+			}
+
 			// Apply folder guards
 			// If executing a plan task, restrict writes to the plan's specific folder
 			planFolder, _ := ctx.Value(virtualtools.PlanFolderKey).(string)
@@ -4747,12 +5101,22 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				if hasSkillCreator {
 					additionalFolders = append(additionalFolders, "skills/custom/")
 				}
+				if hasSubAgentCreator {
+					additionalFolders = append(additionalFolders, "subagents/custom/")
+				}
+				additionalFolders = append(additionalFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, additionalFolders...)
 				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
-			} else if hasSkillCreator {
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, "skills/custom/")
 			} else {
-				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors)
+				extraFolders := []string{}
+				if hasSkillCreator {
+					extraFolders = append(extraFolders, "skills/custom/")
+				}
+				if hasSubAgentCreator {
+					extraFolders = append(extraFolders, "subagents/custom/")
+				}
+				extraFolders = append(extraFolders, fileContextFolders...)
+				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 			}
 
 
@@ -4799,11 +5163,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
+				browserExtraFolders := []string{}
 				if hasSkillCreator {
-					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, "skills/custom/")
-				} else {
-					browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors)
+					browserExtraFolders = append(browserExtraFolders, "skills/custom/")
 				}
+				browserExtraFolders = append(browserExtraFolders, fileContextFolders...)
+				browserExecutors = wrapExecutorsWithChatModeFolderGuard(browserExecutors, browserExtraFolders...)
 
 				for _, tool := range browserTools {
 					if tool.Function == nil {
@@ -4916,6 +5281,24 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 			Name:        skill.Frontmatter.Name,
 			Description: skill.Frontmatter.Description,
 			FolderName:  folderName,
+		})
+	}
+
+	// Load sub-agent template summaries
+	for _, folderName := range req.SelectedSubAgents {
+		sa, err := subagents.GetSubAgent(workspaceAPIURL, folderName)
+		if err != nil {
+			log.Printf("[CAPABILITIES] Warning: Failed to load sub-agent template %s: %v", folderName, err)
+			continue
+		}
+		caps.SubAgentTemplates = append(caps.SubAgentTemplates, virtualtools.SubAgentTemplateSummary{
+			Name:                  sa.Frontmatter.Name,
+			Description:           sa.Frontmatter.Description,
+			FolderName:            folderName,
+			DefaultReasoningLevel: sa.Frontmatter.DefaultReasoningLevel,
+			DefaultToolMode:       sa.Frontmatter.DefaultToolMode,
+			Skills:                subagents.ParseCSV(sa.Frontmatter.Skills),
+			Servers:               subagents.ParseCSV(sa.Frontmatter.Servers),
 		})
 	}
 

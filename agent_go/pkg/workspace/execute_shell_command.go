@@ -28,10 +28,10 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Populate folder guard configuration from context or client
 	if params.FolderGuard == nil {
 		// Check for chat mode folder guard in context
-		if allowedWrite, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).(string); ok && allowedWrite != "" {
+		if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
 			params.FolderGuard = &FolderGuardConfig{
 				Enabled:    true,
-				WritePaths: []string{allowedWrite},
+				WritePaths: allowedWrites,
 				// In chat mode, allow reading everything in the workspace
 				ReadPaths: []string{"."},
 			}

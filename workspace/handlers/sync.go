@@ -604,14 +604,15 @@ func GetSyncStatus(c *gin.Context) {
 	}
 
 	responseData := models.SyncStatus{
-		IsConnected:    isConnected,
-		LastSync:       lastSync,
-		PendingChanges: totalPendingChanges,
-		PendingFiles:   pendingFiles,
-		FileStatuses:   fileStatuses,
-		Conflicts:      []models.Conflict{},
-		Repository:     githubRepo,
-		Branch:         githubBranch,
+		IsConnected:     isConnected,
+		LastSync:        lastSync,
+		PendingChanges:  totalPendingChanges,
+		UnpushedCommits: unpushedCommits,
+		PendingFiles:    pendingFiles,
+		FileStatuses:    fileStatuses,
+		Conflicts:       []models.Conflict{},
+		Repository:      githubRepo,
+		Branch:          githubBranch,
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[models.SyncStatus]{

@@ -660,9 +660,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 		)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
 	} else {
-		// Use all tools if no filtering specified (default behavior)
-		toolsToRegister = hcpo.WorkspaceTools
-		executorsToUse = hcpo.WorkspaceToolExecutors
+		// Default: enable only advanced + human tools (not all tools)
+		// This avoids exposing basic file tools that may not be needed
+		defaultEnabledTools := []string{
+			"workspace_advanced:*",
+			"human_tools:*",
+		}
+		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
+			hcpo.WorkspaceTools,
+			hcpo.WorkspaceToolExecutors,
+			defaultEnabledTools,
+		)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using default tool set (advanced + human): %d tools enabled", len(toolsToRegister)))
 	}
 
 	return toolsToRegister, executorsToUse
@@ -1134,6 +1143,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	// This allows concurrent execution of multiple independent tool calls
 	config.EnableParallelToolExecution = true
 	hcpo.GetLogger().Info("⚡ Parallel tool execution enabled for execution-only agent")
+
+	// Allow step config to override parallel tool execution
+	if stepConfig != nil && stepConfig.DisableParallelToolExecution != nil && *stepConfig.DisableParallelToolExecution {
+		config.EnableParallelToolExecution = false
+		hcpo.GetLogger().Info("🔧 Parallel tool execution DISABLED for execution-only agent via step config")
+	}
 
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)

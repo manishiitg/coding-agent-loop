@@ -609,14 +609,20 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
+			// Use per-call tokens (not cumulative) to reflect actual context window usage
+			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
+			// which don't represent actual context window usage per call
 			if contextWindow > 0 {
 				existing.ModelContextWindow = contextWindow
-				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
-				if existing.ModelContextWindow > 0 {
-					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
-					if existing.ContextUsagePercent > 100.0 {
-						existing.ContextUsagePercent = 100.0
+				if modelTokenData.LLMCallCount <= 1 {
+					// Per-call event: use this call's tokens as actual context usage
+					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+					existing.ContextWindowUsage = currentCallTokens
+					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
+					if currentPercent > 100.0 {
+						currentPercent = 100.0
 					}
+					existing.ContextUsagePercent = currentPercent
 				}
 			}
 		} else {
@@ -705,14 +711,20 @@ func (bo *BaseOrchestrator) PersistTokenUsage(ctx context.Context, iterationFold
 			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
+			// Use per-call tokens (not cumulative) to reflect actual context window usage
+			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
+			// which don't represent actual context window usage per call
 			if contextWindow > 0 {
 				existing.ModelContextWindow = contextWindow
-				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
-				if existing.ModelContextWindow > 0 {
-					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
-					if existing.ContextUsagePercent > 100.0 {
-						existing.ContextUsagePercent = 100.0
+				if modelTokenData.LLMCallCount <= 1 {
+					// Per-call event: use this call's tokens as actual context usage
+					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+					existing.ContextWindowUsage = currentCallTokens
+					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
+					if currentPercent > 100.0 {
+						currentPercent = 100.0
 					}
+					existing.ContextUsagePercent = currentPercent
 				}
 			}
 		} else {
@@ -930,14 +942,20 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
+			// Use per-call tokens (not cumulative) to reflect actual context window usage
+			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
+			// which don't represent actual context window usage per call
 			if contextWindow > 0 {
 				existing.ModelContextWindow = contextWindow
-				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
-				if existing.ModelContextWindow > 0 {
-					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
-					if existing.ContextUsagePercent > 100.0 {
-						existing.ContextUsagePercent = 100.0
+				if modelTokenData.LLMCallCount <= 1 {
+					// Per-call event: use this call's tokens as actual context usage
+					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+					existing.ContextWindowUsage = currentCallTokens
+					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
+					if currentPercent > 100.0 {
+						currentPercent = 100.0
 					}
+					existing.ContextUsagePercent = currentPercent
 				}
 			}
 		} else {
@@ -1021,14 +1039,20 @@ func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 			existing.CacheWriteCost += modelTokenData.CacheWriteCost
 			existing.TotalCost += totalCost
 			// Update context window tracking
+			// Use per-call tokens (not cumulative) to reflect actual context window usage
+			// Conversation-end events (LLMCallCount > 1) have cumulative PromptTokens
+			// which don't represent actual context window usage per call
 			if contextWindow > 0 {
 				existing.ModelContextWindow = contextWindow
-				existing.ContextWindowUsage = existing.InputTokens + existing.OutputTokens
-				if existing.ModelContextWindow > 0 {
-					existing.ContextUsagePercent = (float64(existing.ContextWindowUsage) / float64(existing.ModelContextWindow)) * 100.0
-					if existing.ContextUsagePercent > 100.0 {
-						existing.ContextUsagePercent = 100.0
+				if modelTokenData.LLMCallCount <= 1 {
+					// Per-call event: use this call's tokens as actual context usage
+					currentCallTokens := modelTokenData.InputTokens + modelTokenData.OutputTokens
+					existing.ContextWindowUsage = currentCallTokens
+					currentPercent := (float64(currentCallTokens) / float64(contextWindow)) * 100.0
+					if currentPercent > 100.0 {
+						currentPercent = 100.0
 					}
+					existing.ContextUsagePercent = currentPercent
 				}
 			}
 		} else {

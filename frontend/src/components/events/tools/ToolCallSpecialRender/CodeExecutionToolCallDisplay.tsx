@@ -111,7 +111,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
                 </div>
               </div>
             )}
-            {toolNames && toolNames.length > 0 && (
+            {Array.isArray(toolNames) && toolNames.length > 0 && (
               <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-1.5">
                 <div className="text-[10px] font-medium text-blue-700 dark:text-blue-300 mb-0.5">
                   🔧 Tools ({toolNames.length}):
@@ -128,7 +128,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
                 </div>
               </div>
             )}
-            {(serverName || (toolNames && toolNames.length > 0)) && (
+            {(serverName || (Array.isArray(toolNames) && toolNames.length > 0)) && (
               <div className="text-xs text-gray-500 dark:text-gray-400 px-2">
                 Fetching Go source code...
               </div>

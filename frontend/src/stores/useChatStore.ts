@@ -86,6 +86,7 @@ export interface ChatTabConfig {
   useToolSearchMode: boolean  // Tool search mode toggle (discover tools on-demand)
   selectedServers: string[]  // Selected MCP servers
   selectedSkills: string[]  // Selected skills to include in chat
+  selectedSubAgents: string[]  // Selected sub-agent templates for delegation
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
@@ -141,6 +142,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     useToolSearchMode: false,
     selectedServers,
     selectedSkills: [],  // No skills selected by default
+    selectedSubAgents: [],  // No sub-agent templates selected by default
     llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',
@@ -257,9 +259,13 @@ interface ChatState extends StoreActions {
   chatHistoryLoadedCount: number  // Number of sessions currently loaded
 
   // Streaming text accumulation (per session)
-  // Only tracks parent agent streaming - sub-agent streaming is filtered out in ChatArea
+  // Only tracks parent agent streaming - sub-agent streaming routed to delegationStreamingText
   streamingText: Record<string, string>  // sessionId → accumulated streaming text
   lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
+
+  // Sub-agent streaming text accumulation (per delegation)
+  delegationStreamingText: Record<string, string>  // delegationId → accumulated streaming text
+  lastDelegationChunkIndex: Record<string, number>  // delegationId → last processed chunk_index (dedup guard)
 
   // Actions
   setIsStreaming: (streaming: boolean) => void
@@ -358,6 +364,10 @@ interface ChatState extends StoreActions {
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
   clearStreamingText: (sessionId: string) => void
 
+  // Delegation streaming text actions
+  appendDelegationStreamingChunk: (delegationId: string, chunkIndex: number, chunk: string) => void
+  clearDelegationStreamingText: (delegationId: string) => void
+
   // Helper methods
   resetChatState: () => void
   isAtBottom: (element: HTMLDivElement) => boolean
@@ -408,6 +418,10 @@ export const useChatStore = create<ChatState>()(
       // Streaming text accumulation (per session)
       streamingText: {},
       lastStreamingChunkIndex: {},
+
+      // Sub-agent streaming text accumulation (per delegation)
+      delegationStreamingText: {},
+      lastDelegationChunkIndex: {},
 
       // Actions
       setIsStreaming: (streaming) => {
@@ -783,6 +797,47 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      // Delegation streaming text actions
+      appendDelegationStreamingChunk: (delegationId: string, chunkIndex: number, chunk: string) => {
+        if (typeof chunk !== 'string' || !chunk) return
+        set((state) => {
+          let lastIndex = state.lastDelegationChunkIndex[delegationId] ?? -1
+          let currentText = state.delegationStreamingText[delegationId] || ''
+
+          // Auto-reset if we see chunk 0 (start of new generation)
+          if (chunkIndex === 0) {
+            lastIndex = -1
+            currentText = ''
+          }
+
+          // Deduplicate: skip chunks already processed
+          if (chunkIndex >= 0 && chunkIndex <= lastIndex) {
+            return state
+          }
+
+          return {
+            delegationStreamingText: {
+              ...state.delegationStreamingText,
+              [delegationId]: currentText + chunk
+            },
+            lastDelegationChunkIndex: {
+              ...state.lastDelegationChunkIndex,
+              [delegationId]: chunkIndex
+            }
+          }
+        })
+      },
+
+      clearDelegationStreamingText: (delegationId: string) => {
+        set((state) => {
+          const newText = { ...state.delegationStreamingText }
+          delete newText[delegationId]
+          const newIdx = { ...state.lastDelegationChunkIndex }
+          delete newIdx[delegationId]
+          return { delegationStreamingText: newText, lastDelegationChunkIndex: newIdx }
+        })
+      },
+
       // Helper methods
       resetChatState: () => {
         const state = get()
@@ -821,7 +876,9 @@ export const useChatStore = create<ChatState>()(
           chatTabs: {},
           activeTabId: null,
           streamingText: {},
-          lastStreamingChunkIndex: {}
+          lastStreamingChunkIndex: {},
+          delegationStreamingText: {},
+          lastDelegationChunkIndex: {}
         })
         
         // Clear the requiresNewChat flag after successful chat reset
@@ -1620,7 +1677,19 @@ export const useChatStore = create<ChatState>()(
             return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
           })()
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
-        })
+        }),
+        onRehydrateStorage: () => (state) => {
+          if (!state) return
+          // Auto-select first tab if activeTabId is null but tabs exist
+          if (!state.activeTabId) {
+            const tabs = Object.values(state.chatTabs)
+            if (tabs.length > 0) {
+              const sorted = [...tabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+              // Use setState to trigger re-render (direct mutation won't)
+              useChatStore.setState({ activeTabId: sorted[0].tabId })
+            }
+          }
+        }
       }
     ),
     {

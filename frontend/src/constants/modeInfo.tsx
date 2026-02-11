@@ -39,7 +39,7 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
     tips: []
   },
   'multi-agent': {
-    icon: <Users className="w-16 h-16 text-emerald-500" />,
+    icon: <Users className="w-16 h-16 text-indigo-500" />,
     title: 'Multi Agent Chat',
     description: 'Delegate complex tasks to a team of AI sub-agents with plan-driven coordination',
     features: [

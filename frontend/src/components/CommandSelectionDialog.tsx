@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, FileText, Lightbulb, Download, Server, Cpu, History, GitBranch } from 'lucide-react'
+import { Terminal, FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers } from 'lucide-react'
+import type { ModeCategory } from '../stores/useModeStore'
 
 interface Command {
   command: string
   description: string
   icon: React.ReactNode
+  modes?: ModeCategory[] // If set, only show in these modes. If omitted, show in all modes.
 }
 
 const AVAILABLE_COMMANDS: Command[] = [
@@ -17,6 +19,11 @@ const AVAILABLE_COMMANDS: Command[] = [
     command: 'build-skill',
     description: 'Build a new skill using the skill-creator',
     icon: <Lightbulb className="w-4 h-4" />
+  },
+  {
+    command: 'build-subagent',
+    description: 'Build a new sub-agent template',
+    icon: <Bot className="w-4 h-4" />
   },
   {
     command: 'add-skill',
@@ -52,6 +59,12 @@ const AVAILABLE_COMMANDS: Command[] = [
     command: 'nospawn',
     description: 'Disable all sub-agent delegation',
     icon: <GitBranch className="w-4 h-4" />
+  },
+  {
+    command: 'workflow-builder',
+    description: 'Build a workflow from existing plans',
+    icon: <Layers className="w-4 h-4" />,
+    modes: ['multi-agent']
   }
 ]
 
@@ -61,6 +74,7 @@ interface CommandSelectionDialogProps {
   onSelectCommand: (command: string) => void
   searchQuery: string
   position: { bottom: number; left: number }
+  modeCategory?: ModeCategory
 }
 
 export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
@@ -68,7 +82,8 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   onClose,
   onSelectCommand,
   searchQuery,
-  position
+  position,
+  modeCategory
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [filteredCommands, setFilteredCommands] = useState<Command[]>([])
@@ -101,15 +116,20 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose, onSelectCommand, filteredCommands, selectedIndex])
 
-  // Filter commands based on search query
+  // Filter commands based on search query and current mode
   useEffect(() => {
+    // First filter by mode
+    const modeFiltered = AVAILABLE_COMMANDS.filter(cmd =>
+      !cmd.modes || cmd.modes.includes(modeCategory ?? null)
+    )
+
     if (!searchQuery.trim()) {
-      setFilteredCommands(AVAILABLE_COMMANDS)
+      setFilteredCommands(modeFiltered)
       return
     }
 
     const query = searchQuery.toLowerCase().trim()
-    const filtered = AVAILABLE_COMMANDS.filter(cmd => 
+    const filtered = modeFiltered.filter(cmd =>
       cmd.command.toLowerCase().includes(query) ||
       cmd.description.toLowerCase().includes(query)
     )
@@ -131,7 +151,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
     
     setFilteredCommands(filtered)
     setSelectedIndex(0) // Reset selection when filtering
-  }, [searchQuery])
+  }, [searchQuery, modeCategory])
 
   // Scroll selected item into view
   useEffect(() => {

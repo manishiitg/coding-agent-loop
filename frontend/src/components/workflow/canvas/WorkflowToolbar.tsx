@@ -15,6 +15,7 @@ import {
   BookOpen,
   Trash2,
   Settings,
+  SlidersHorizontal,
   X,
   Brain,
   MessageSquare,
@@ -40,12 +41,13 @@ import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import LLMOverrideModal from '../LLMOverrideModal'
 import BulkStepConfigModal from '../BulkStepConfigModal'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
+import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
 import LearningsPopup from '../LearningsPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
-import type { PlanStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import { sanitizeDisplayNameForFolder, resolveGroupFolderPath } from '../../../utils/workflowUtils'
 
@@ -88,6 +90,8 @@ interface WorkflowToolbarProps {
   showChatArea?: boolean
   onToggleChatArea?: () => void
   onBulkUpdateSteps?: (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => Promise<void>  // Bulk update function
+  stepOverride?: AgentConfigs | null  // Global step override config
+  onSaveStepOverride?: (agentConfigs: AgentConfigs | null) => Promise<void>  // Save global step override
   onRefresh?: () => Promise<void>  // Refresh plan and variables
   onSaveLayout?: () => Promise<void>  // Save workflow layout
   onDeleteLayout?: () => Promise<void>  // Delete workflow layout and reset to default
@@ -116,6 +120,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   showChatArea = false,
   onToggleChatArea,
   onBulkUpdateSteps,
+  stepOverride,
+  onSaveStepOverride,
   onRefresh,
   onSaveLayout,
   onDeleteLayout,
@@ -1213,7 +1219,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const currentPhaseDetails = phases.find((p: WorkflowPhase) => p.id === currentPhase)
   // Only consider it execution phase if currentPhase is explicitly set to 'execution'
   // If currentPhase is undefined/null, allow dropdown to be enabled
-  const isExecutionPhase = currentPhase === EXECUTION_PHASE_ID
+  const isExecutionPhase = currentPhase === EXECUTION_PHASE_ID || currentPhase === EVAL_EXECUTION_PHASE_ID
 
   // Allow dropdown to be enabled even when phases are running - this enables parallel execution
   // Only disable if phases are loading or there are no other phases available
@@ -1452,7 +1458,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     <>
     <div className={`
       flex items-center justify-between gap-2 px-3 py-1.5 
-      bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700
+      bg-background border-b border-border
       relative z-10
       ${className}
     `}>
@@ -1462,21 +1468,21 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           // No plan - show create button
           <button
             onClick={onCreatePlan}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-medium text-xs"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted text-foreground rounded-md hover:bg-accent transition-colors font-medium text-xs"
           >
             <Plus className="w-3.5 h-3.5" />
-            Create Plan
+            {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Create Plan'}
           </button>
         ) : (
           <>
             {/* Mode Toggle */}
-            <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 rounded-md p-1 mr-2 border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-1 bg-muted rounded-md p-1 mr-2 border border-border">
               <button
                 onClick={() => setWorkflowMode('plan')}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                   workflowMode === 'plan'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Plan+Exec
@@ -1485,8 +1491,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 onClick={() => setWorkflowMode('eval')}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                   workflowMode === 'eval'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 Eval
@@ -1512,7 +1518,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-medium min-w-[160px]
                   ${dropdownDisabled
                     ? 'bg-muted text-muted-foreground cursor-not-allowed' 
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600'
+                    : 'bg-muted text-foreground hover:bg-accent'
                   }
                 `}
               >
@@ -1557,18 +1563,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 <div 
                   data-phase-dropdown
                   ref={dropdownRef}
-                  className="fixed w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] max-h-[400px] overflow-y-auto"
+                  className="fixed w-80 bg-popover rounded-lg shadow-xl border border-border z-[9999] max-h-[400px] overflow-y-auto"
                   style={{
                     top: `${dropdownPosition.top}px`,
                     left: `${dropdownPosition.left}px`
                   }}
                 >
                   <div className="p-2">
-                    <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
+                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2">
                       {workflowMode === 'eval' ? 'Evaluation Phases' : 'Workflow Phases'}
                     </div>
                     {visiblePhases.length === 0 ? (
-                      <div className="px-3 py-4 text-sm text-gray-500 dark:text-gray-400 text-center">
+                      <div className="px-3 py-4 text-sm text-muted-foreground text-center">
                         {isLoadingPhases ? 'Loading phases...' : 'No phases available'}
                       </div>
                     ) : (
@@ -1594,10 +1600,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           className={`
                             w-full text-left px-3 py-2.5 rounded-lg transition-colors
                             ${isDisabled
-                              ? 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-800'
+                              ? 'opacity-50 cursor-not-allowed bg-muted'
                               : isActive 
-                                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-semibold' 
-                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100'
+                                ? 'bg-accent text-accent-foreground font-semibold' 
+                                : 'hover:bg-accent text-foreground'
                             }
                           `}
                         >
@@ -1609,8 +1615,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                 : isPhaseCompleted
                                   ? 'bg-green-500 dark:bg-green-600'
                                   : isActive 
-                                    ? 'bg-gray-900 dark:bg-gray-100 text-gray-100 dark:text-gray-900' 
-                                    : 'bg-gray-200 dark:bg-gray-600 text-gray-500 dark:text-gray-400'
+                                    ? 'bg-foreground text-background'
+                                    : 'bg-muted text-muted-foreground'
                               }
                             `}>
                               {isPhaseRunning ? (
@@ -1629,7 +1635,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               <div className="font-medium text-sm flex items-center gap-2">
                                 {phase.title}
                                 {isPhaseRunning && (
-                                  <span className="text-xs px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded flex items-center gap-1">
+                                  <span className="text-xs px-1.5 py-0.5 bg-primary/10 text-primary rounded flex items-center gap-1">
                                     <Loader2 className="w-2.5 h-2.5 animate-spin" />
                                     Running
                                   </span>
@@ -1641,7 +1647,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                 )}
                               </div>
                               {phase.description && (
-                                <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 line-clamp-2">
+                                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
                                   {phase.description}
                                 </div>
                               )}
@@ -1671,7 +1677,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         }
                       }}
                       className="flex items-center justify-center w-7 h-7 rounded-md transition-all text-xs
-                                 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                                 bg-muted text-foreground hover:bg-accent"
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                     </button>
@@ -1703,10 +1709,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       className={`
                         flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
                         ${isExecutionRunning
-                          ? 'bg-red-500 dark:bg-red-600 text-white shadow-md hover:bg-red-600 dark:hover:bg-red-700 hover:shadow-lg'
+                          ? 'bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 hover:shadow-lg'
                           : isDisabled
-                          ? 'bg-gray-400 dark:bg-gray-600 text-white shadow-md cursor-not-allowed opacity-75'
-                          : 'bg-purple-500 dark:bg-purple-600 text-white shadow-md hover:bg-purple-600 dark:hover:bg-purple-700 hover:shadow-lg'
+                          ? 'bg-muted text-muted-foreground shadow-md cursor-not-allowed opacity-75'
+                          : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
                         }
                       `}
                       title={
@@ -1749,7 +1755,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all text-xs font-medium
                       ${isRunning || isLoadingWorkspaceState
                         ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                        : 'bg-muted text-foreground hover:bg-accent hover:text-accent-foreground'
                       }
                     `}
                     title={isLoadingWorkspaceState ? "Loading workspace data..." : "Select iteration folder"}
@@ -1770,7 +1776,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     <div 
                       data-iteration-dropdown
                       ref={iterationDropdownRef}
-                      className="fixed w-56 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] max-h-[300px] overflow-y-auto"
+                      className="fixed w-56 bg-popover rounded-lg shadow-xl border border-border z-[9999] max-h-[300px] overflow-y-auto"
                       style={{
                         top: `${iterationDropdownPosition.top}px`,
                         left: `${iterationDropdownPosition.left}px`
@@ -1784,8 +1790,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           className={`
                             w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors mb-1
                             ${isCreatingIteration || !workspacePath
-                              ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
-                              : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900/50'
+                              ? 'bg-muted text-muted-foreground cursor-not-allowed'
+                              : 'bg-primary/10 text-primary hover:bg-primary/20'
                             }
                           `}
                           title={isCreatingIteration ? 'Creating iteration...' : 'Create a new iteration folder'}
@@ -1805,8 +1811,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         
                         {(iterationGroups.sortedIterations.length > 0 || folders.length > 0) ? (
                           <>
-                            <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
-                            <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-1">
+                            <div className="border-t border-border my-1" />
+                            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 py-1">
                               {iterationGroups.sortedIterations.length > 0 ? 'Iterations & Groups' : `Existing Runs (${folders.length})`}
                             </div>
                             {iterationGroups.sortedIterations.length > 0 ? (
@@ -1827,7 +1833,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                         tabIndex={0}
                                         onClick={() => toggleIteration(iteration)}
                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleIteration(iteration) }}
-                                        className="w-full px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900/50 flex items-center justify-between gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                                        className="w-full px-3 py-1.5 text-xs font-semibold text-muted-foreground bg-muted/50 flex items-center justify-between gap-2 hover:bg-muted transition-colors cursor-pointer"
                                         title={isExpanded ? 'Collapse iteration' : 'Expand iteration'}
                                       >
                                         <div className="flex items-center gap-2">
@@ -1852,10 +1858,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 }
                                               }}
                                               disabled={isRunning}
-                                              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
                                               title="Select all groups"
                                             >
-                                              <CheckSquare className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
+                                              <CheckSquare className="w-3.5 h-3.5 text-primary" />
                                             </button>
                                             <button
                                               onClick={(e) => {
@@ -1865,10 +1871,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 setSelectedRunFolder(iteration)
                                               }}
                                               disabled={isRunning}
-                                              className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                              className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
                                               title="Unselect all groups"
                                             >
-                                              <Square className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+                                              <Square className="w-3.5 h-3.5 text-muted-foreground" />
                                             </button>
                                           </div>
                                         )}
@@ -1895,7 +1901,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           className={`
                                             group flex items-center gap-1 px-1
                                             ${isSelected 
-                                              ? 'bg-purple-100 dark:bg-purple-900/30' 
+                                              ? 'bg-primary/10' 
                                               : ''
                                             }
                                             ${isDisabled ? 'opacity-60' : ''}
@@ -1950,7 +1956,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               }}
                                               onClick={(e) => e.stopPropagation()}
                                               disabled={isDisabled || isRunning}
-                                              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                              className="w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                               title={isDisabled ? 'Group is disabled' : isGroupChecked ? 'Deselect group' : 'Select group for execution'}
                                             />
                                           )}
@@ -1967,10 +1973,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             className={`
                                               flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
                                               ${isSelected 
-                                                ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
+                                                ? 'bg-primary/10 text-primary' 
                                                 : isDisabled
-                                                ? 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400'
-                                                : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                                ? 'hover:bg-accent text-muted-foreground'
+                                                : 'hover:bg-accent text-foreground'
                                               }
                                             `}
                                             title={isDisabled ? 'Group is disabled' : group.exists ? undefined : 'Group not run yet'}
@@ -1991,12 +1997,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               </span>
                                             </span>
                                             {hasProgress && (
-                                              <span className="text-xs text-gray-500 dark:text-gray-400">
+                                              <span className="text-xs text-muted-foreground">
                                                 {completedCount}/{totalSteps}
                                               </span>
                                             )}
                                             {!group.exists && !hasProgress && (
-                                              <span className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                                              <span className="text-[10px] text-muted-foreground/70 italic">
                                                 not run
                                               </span>
                                             )}
@@ -2006,7 +2012,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             <button
                                               onClick={(e) => handleDeleteFolderClick(e, group.id)}
                                               className={`
-                                                p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20
+                                                p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10
                                                 opacity-0 group-hover:opacity-100 transition-opacity
                                               `}
                                               title={`Delete ${group.id}`}
@@ -2036,7 +2042,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                     className={`
                                       group flex items-center gap-1 px-1
                                       ${selectedRunFolder === folder.name 
-                                        ? 'bg-purple-100 dark:bg-purple-900/30' 
+                                        ? 'bg-primary/10' 
                                         : ''
                                       }
                                     `}
@@ -2052,15 +2058,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                       className={`
                                         flex-1 text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
                                         ${selectedRunFolder === folder.name 
-                                          ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'
+                                          ? 'bg-primary/10 text-primary' 
+                                          : 'hover:bg-accent text-foreground'
                                         }
                                       `}
                                     >
                                       <FolderOpen className="w-4 h-4" />
                                       <span className="flex-1">{folder.name}</span>
                                       {hasProgress && (
-                                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                                        <span className="text-xs text-muted-foreground">
                                           {folderCompletedCount}/{folderTotalSteps}
                                         </span>
                                       )}
@@ -2069,7 +2075,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                     <button
                                       onClick={(e) => handleDeleteFolderClick(e, folder.name)}
                                       className={`
-                                        p-1.5 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20
+                                        p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10
                                         opacity-0 group-hover:opacity-100 transition-opacity
                                       `}
                                       title={`Delete ${folder.name}`}
@@ -2082,7 +2088,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             )}
                           </>
                         ) : !isLoadingWorkspaceState && workspacePath ? (
-                          <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                          <div className="px-3 py-2 text-xs text-muted-foreground">
                             No existing runs found
                           </div>
                         ) : null}
@@ -2110,7 +2116,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       flex items-center gap-1.5 px-2 py-1.5 rounded-md transition-all text-xs font-medium
                       ${isRunning
                         ? 'bg-muted text-muted-foreground cursor-not-allowed' 
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                        : 'bg-muted text-foreground hover:bg-accent'
                       }
                     `}
                     title="Select where to start execution"
@@ -2128,14 +2134,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     <div 
                       data-start-point-dropdown
                       ref={startPointDropdownRef}
-                      className="fixed w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-[9999] max-h-[300px] overflow-y-auto"
+                      className="fixed w-64 bg-popover rounded-lg shadow-xl border border-border z-[9999] max-h-[300px] overflow-y-auto"
                       style={{
                         top: `${startPointDropdownPosition.top}px`,
                         left: `${startPointDropdownPosition.left}px`
                       }}
                     >
                       <div className="p-1">
-                        <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
+                        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-3 py-2">
                           Start Point
                         </div>
                         {startPointOptions.map((option: StartPointOption, idx: number) => {
@@ -2160,7 +2166,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             <div key={`${option.id}-${option.stepNumber || option.branchStep?.parentStepIndex || idx}`}>
                               {showBranchSeparator && (
                                 <div className="px-3 py-2">
-                                  <div className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">
+                                  <div className="text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">
                                     Branch Resume Options
                                   </div>
                                 </div>
@@ -2174,24 +2180,24 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               className={`
                                   w-full text-left px-3 py-2.5 rounded-md transition-colors cursor-pointer
                                 ${isSelected 
-                                  ? 'bg-purple-100 dark:bg-purple-900/30' 
-                                  : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                                  ? 'bg-primary/10' 
+                                  : 'hover:bg-accent'
                                 }
                                   ${option.id === 'resume_branch' ? 'border-l-4 border-blue-400 dark:border-blue-500 ml-0' : ''}
                               `}
                                 type="button"
                             >
                               <div className="flex items-start gap-3">
-                                  <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isSelected ? 'text-purple-600 dark:text-purple-400' : option.id === 'resume_branch' ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} />
+                                  <Icon className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isSelected ? 'text-primary' : option.id === 'resume_branch' ? 'text-blue-500 dark:text-blue-400' : 'text-muted-foreground'}`} />
                                 <div className="flex-1 min-w-0">
-                                    <div className={`font-medium text-sm ${isSelected ? 'text-purple-700 dark:text-purple-300' : option.id === 'resume_branch' ? 'text-blue-700 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100'}`}>
+                                    <div className={`font-medium text-sm ${isSelected ? 'text-primary' : option.id === 'resume_branch' ? 'text-blue-700 dark:text-blue-300' : 'text-foreground'}`}>
                                     {option.label}
                                   </div>
-                                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                  <div className="text-xs text-muted-foreground mt-0.5">
                                     {option.description}
                                   </div>
                                 </div>
-                                  {isSelected && <Check className="w-4 h-4 text-purple-600 dark:text-purple-400 mt-0.5 flex-shrink-0" />}
+                                  {isSelected && <Check className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />}
                               </div>
                             </button>
                             </div>
@@ -2238,7 +2244,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50">
+                <div className="p-1.5 rounded-md bg-muted text-muted-foreground cursor-not-allowed opacity-50">
                   <Brain className="w-3.5 h-3.5" />
                 </div>
               </TooltipTrigger>
@@ -2328,7 +2334,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           // No override - show button to set one
           <button
             onClick={() => setShowLLMOverrideModal(true)}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
             title="Set temporary LLM override for execution agents"
           >
             <Brain className="w-3.5 h-3.5" />
@@ -2339,7 +2345,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <button
             onClick={() => setShowCostsPopup(true)}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
             title="Show cost analysis"
           >
             <DollarSign className="w-3.5 h-3.5" />
@@ -2350,7 +2356,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <button
             onClick={() => setShowExecutionLogsPopup(true)}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
             title="Show execution logs"
           >
             <FileText className="w-3.5 h-3.5" />
@@ -2361,7 +2367,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <button
             onClick={() => setShowLearningsPopup(true)}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
             title="Show step learnings"
           >
             <BookOpen className="w-3.5 h-3.5" />
@@ -2372,7 +2378,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {workspacePath && (
           <button
             onClick={() => setShowEvaluationPopup(true)}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
             title="Show evaluation reports"
           >
             <BarChart3 className="w-3.5 h-3.5" />
@@ -2385,8 +2391,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             onClick={onToggleChatArea}
             className={`p-1.5 rounded-md transition-colors ${
               showChatArea
-                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-700'
-                : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                ? 'bg-primary/10 text-primary border border-primary/30'
+                : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
             }`}
             title={showChatArea ? 'Hide chat panel' : 'Show chat panel'}
           >
@@ -2397,10 +2403,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {/* Multi-Select Indicator - appears when 2+ steps are selected */}
         {selectedStepIds && selectedStepIds.length >= 2 && (
           <div
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-700"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary border border-primary/30"
             title={`${selectedStepIds.length} steps selected - configure in sidebar`}
           >
-            <Settings className="w-3.5 h-3.5" />
+            <CheckSquare className="w-3.5 h-3.5" />
             <span className="text-xs font-medium">{selectedStepIds.length} Selected</span>
           </div>
         )}
@@ -2409,17 +2415,26 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         {hasPlan && plan && onBulkUpdateSteps && (
           <button
             onClick={() => setShowBulkStepConfigModal(true)}
-            className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
             title="Bulk configure all steps"
           >
-            <Settings className="w-3.5 h-3.5" />
+            <SlidersHorizontal className="w-3.5 h-3.5" />
           </button>
         )}
-        
+
+        {/* Workflow Settings Button — opens the preset settings modal from the top header */}
+        <button
+          onClick={() => useCommandDialogStore.getState().openDialog('presetSettings')}
+          className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+          title="Workflow settings"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
+
         {/* Layout Controls Group - Direction, Save and Reset */}
         {(onSaveLayout || onDeleteLayout) && (
           <>
-            <div className="w-px h-5 bg-gray-200 dark:bg-gray-700 mx-0.5" />
+            <div className="w-px h-5 bg-border mx-0.5" />
             <div className="flex items-center gap-1">
               {/* Layout Direction Toggle */}
               <TooltipProvider>
@@ -2431,7 +2446,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         console.log('[WorkflowToolbar] Layout direction toggled:', newDirection)
                         setLayoutDirection(newDirection)
                       }}
-                      className="p-1.5 rounded-md transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400"
+                      className="p-1.5 rounded-md transition-colors hover:bg-accent text-muted-foreground"
                       title={layoutDirection === 'LR' ? 'Switch to vertical layout' : 'Switch to horizontal layout'}
                     >
                       {layoutDirection === 'LR' ? (
@@ -2466,10 +2481,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       disabled={isSavingLayout}
                       className={`p-1.5 rounded-md transition-colors ${
                         isSavingLayout
-                          ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                          ? 'bg-muted text-muted-foreground cursor-not-allowed'
                           : hasUnsavedLayoutChanges
                           ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
-                          : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400'
+                          : 'hover:bg-accent text-muted-foreground'
                       }`}
                       title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
                     >
@@ -2509,7 +2524,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         disabled={isDeletingLayout}
                         className={`p-1.5 rounded-md transition-colors ${
                           isDeletingLayout
-                            ? 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                            ? 'bg-muted text-muted-foreground cursor-not-allowed'
                             : 'hover:bg-orange-100 dark:hover:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300'
                         }`}
                         title={isDeletingLayout ? 'Resetting layout...' : 'Reset layout to default'}
@@ -2557,6 +2572,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         isOpen={showBulkStepConfigModal}
         onClose={() => setShowBulkStepConfigModal(false)}
         plan={plan || null}
+        workspacePath={workspacePath || null}
+        stepOverride={stepOverride || null}
+        onSaveStepOverride={onSaveStepOverride || (async () => {})}
         onBulkUpdate={onBulkUpdateSteps}
       />
     )}

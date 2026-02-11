@@ -7,6 +7,7 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
+import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -75,6 +76,19 @@ export const ModePresetBar: React.FC = () => {
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
+
+  // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
+  const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
+  useEffect(() => {
+    if (showPresetSettings) {
+      useCommandDialogStore.getState().closeDialog('presetSettings')
+      const preset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+      if (preset && customPresets.some(cp => cp.id === preset.id)) {
+        setEditingPreset(preset as CustomPreset)
+        setShowPresetModal(true)
+      }
+    }
+  }, [showPresetSettings, selectedModeCategory, getActivePreset, customPresets])
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
@@ -244,7 +258,7 @@ export const ModePresetBar: React.FC = () => {
                     selectedModeCategory === 'chat'
                       ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
                       : selectedModeCategory === 'multi-agent'
-                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                        ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
                         : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                   }`}
                   title="Click to change mode"
@@ -319,12 +333,12 @@ export const ModePresetBar: React.FC = () => {
                         }}
                         className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
                           selectedModeCategory === 'multi-agent'
-                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-900 dark:text-emerald-100'
+                            ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-900 dark:text-indigo-100'
                             : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
                         }`}
                       >
                         <div className="flex items-center gap-3">
-                          <Users className="w-4 h-4 text-emerald-600" />
+                          <Users className="w-4 h-4 text-indigo-600" />
                           <div>
                             <div className="font-medium">Multi Agent Chat</div>
                             <div className="text-xs text-gray-500 dark:text-gray-400">

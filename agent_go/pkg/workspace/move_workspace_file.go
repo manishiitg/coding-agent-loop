@@ -12,7 +12,6 @@ import (
 type MoveWorkspaceFileParams struct {
 	SourceFilepath      string `json:"source_filepath"`
 	DestinationFilepath string `json:"destination_filepath"`
-	CommitMessage       string `json:"commit_message,omitempty"`
 }
 
 // MoveWorkspaceFile moves a file from one location to another
@@ -38,9 +37,6 @@ func (c *Client) MoveWorkspaceFile(ctx context.Context, params MoveWorkspaceFile
 	// Prepare request body
 	requestBody := map[string]interface{}{
 		"destination_path": params.DestinationFilepath,
-	}
-	if params.CommitMessage != "" {
-		requestBody["commit_message"] = params.CommitMessage
 	}
 
 	jsonBody, err := json.Marshal(requestBody)
@@ -77,11 +73,6 @@ func (c *Client) MoveWorkspaceFile(ctx context.Context, params MoveWorkspaceFile
 	// Format the response
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("**File Moved: `%s` -> `%s`**\n\n", params.SourceFilepath, params.DestinationFilepath))
-
-	if params.CommitMessage != "" {
-		result.WriteString(fmt.Sprintf("**Commit Message**: %s\n", params.CommitMessage))
-	}
-
 	result.WriteString("**Status**: File successfully moved to new location")
 
 	return result.String(), nil

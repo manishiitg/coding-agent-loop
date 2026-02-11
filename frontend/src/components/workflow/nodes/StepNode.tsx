@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward, Search, Bot } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward, Search, Bot, Pause } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
@@ -203,6 +203,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
     llm_validation_mode?: string
     pre_discovered_tools?: string[]
+    disable_parallel_tool_execution?: boolean
   } }
   
   // Backward-compatible prerequisite flags/rules (agent_configs takes priority over top-level fields)
@@ -570,110 +571,141 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             </h3>
           </div>
         </div>
-        {/* Second row: Action buttons */}
+        {/* Second row: Actions + Status */}
         <div className="flex items-center gap-1.5">
-          {/* Run from this step button */}
           {onRunFromStep ? (
             <button
               onClick={handleRunClick}
               disabled={isRunDisabled}
               className={`
-                flex items-center justify-center w-8 h-8 rounded-md transition-all relative z-10
+                flex items-center justify-center w-7 h-7 rounded-md transition-all relative z-10
                 ${isRunDisabled
                   ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 cursor-not-allowed opacity-50'
                   : 'bg-emerald-500 dark:bg-emerald-600 text-white hover:bg-emerald-600 dark:hover:bg-emerald-500 hover:scale-105 cursor-pointer shadow-sm'
                 }
               `}
               title={
-                isExecuting 
-                  ? 'Execution in progress...' 
+                isExecuting
+                  ? 'Execution in progress...'
                   : isSubAgent
                     ? 'Sub-agents cannot be run independently (run the parent routing step)'
                     : `Run step ${stepIndex + 1} only`
               }
             >
-              <Play className="w-4 h-4" />
+              <Play className="w-3.5 h-3.5" />
             </button>
           ) : (
-            <div className="w-8 h-8 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
+            <div className="w-7 h-7 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
               ⚠️
             </div>
           )}
-          {/* Settings icon button - opens sidebar */}
           {onOpenSidebar ? (
             <button
               onClick={handleSettingsClick}
-              className="flex items-center justify-center w-8 h-8 rounded-md transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
+              className="flex items-center justify-center w-7 h-7 rounded-md transition-all relative z-10 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 hover:scale-105 cursor-pointer"
               title="Open step settings"
             >
-              <Settings className="w-4 h-4" />
+              <Settings className="w-3.5 h-3.5" />
             </button>
           ) : null}
-          {/* Agent Mode Badge */}
-          {useCodeExecutionMode ? (
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Code Execution Mode">
-              <Terminal className="w-4 h-4" />
-            </div>
-          ) : useToolSearchMode ? (
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-yellow-100 dark:bg-yellow-900/40 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-800" title="Tool Search Mode">
-              <Search className="w-4 h-4" />
-            </div>
-          ) : (
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700" title="Simple Agent Mode">
-              <Code className="w-4 h-4" />
-            </div>
-          )}
-          {/* LLM Provider Badge */}
-          {executionProvider && (
+          <div className="flex-1" />
+          {statusIcons[status]}
+        </div>
+        {/* Third row: Model info + mode/config indicators */}
+        <div className="flex items-center gap-2 mt-1.5">
+          {executionProvider && executionLLM && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div
-                    className={`flex items-center justify-center w-8 h-8 rounded-md cursor-default ${providerBadgeStyles[executionProvider]?.bg || 'bg-gray-100 dark:bg-gray-800'} ${providerBadgeStyles[executionProvider]?.text || 'text-gray-600 dark:text-gray-400'} border border-gray-200 dark:border-gray-700`}
-                  >
-                    <ProviderIcon provider={executionProvider} />
-                  </div>
+                  <span className={`text-[10px] font-medium truncate max-w-[140px] cursor-default ${providerBadgeStyles[executionProvider]?.text || 'text-gray-500 dark:text-gray-400'}`}>
+                    {executionLLM}
+                  </span>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="font-medium">{executionProvider}</p>
-                  {executionLLM && <p className="text-xs text-gray-500">{executionLLM}</p>}
+                  <p className="font-medium">{executionLLM}</p>
+                  <p className="text-xs text-gray-500">{executionProvider}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
           )}
-          {/* Prerequisite Detection Badge */}
-          {prerequisiteEnabled && (
-            <div 
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
-              title={
-                prerequisiteRules && prerequisiteRules.length > 0
-                  ? `Prerequisite detection enabled. ${prerequisiteRules.length} rule(s) configured`
-                  : 'Prerequisite detection enabled'
-              }
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>Prereq</span>
-            </div>
-          )}
-          {/* Lock Learnings Badge */}
-          {stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning && (
-            <div 
-              className="flex items-center justify-center w-8 h-8 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800"
-              title="Learnings are locked - learning agent will not run but existing learnings will be used"
-            >
-              <Lock className="w-3.5 h-3.5" />
-            </div>
-          )}
-          {/* Validation Skipped Badge */}
-          {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
-            <div 
-              className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
-              title="LLM validation will be skipped if pre-validation passes"
-            >
-              <SkipForward className="w-3.5 h-3.5" />
-            </div>
-          )}
-          {statusIcons[status]}
+          {/* Mode + config flag indicators */}
+          {(() => {
+            const flags: { icon: ReactElement; label: string; color: string }[] = []
+            // Agent mode (always show one)
+            if (useCodeExecutionMode) {
+              flags.push({
+                icon: <Terminal className="w-3 h-3" />,
+                label: 'Code Execution Mode',
+                color: 'text-amber-600 dark:text-amber-400',
+              })
+            } else if (useToolSearchMode) {
+              flags.push({
+                icon: <Search className="w-3 h-3" />,
+                label: 'Tool Search Mode',
+                color: 'text-yellow-600 dark:text-yellow-400',
+              })
+            } else {
+              flags.push({
+                icon: <Code className="w-3 h-3" />,
+                label: 'Simple Agent Mode',
+                color: 'text-slate-500 dark:text-slate-400',
+              })
+            }
+            // Config flags
+            if (prerequisiteEnabled) {
+              flags.push({
+                icon: <AlertTriangle className="w-3 h-3" />,
+                label: prerequisiteRules && prerequisiteRules.length > 0
+                  ? `Prerequisite detection (${prerequisiteRules.length} rule${prerequisiteRules.length > 1 ? 's' : ''})`
+                  : 'Prerequisite detection',
+                color: 'text-orange-500 dark:text-orange-400',
+              })
+            }
+            if (stepConfig?.agent_configs?.lock_learnings && !stepConfig?.agent_configs?.disable_learning) {
+              flags.push({
+                icon: <Lock className="w-3 h-3" />,
+                label: 'Learnings locked',
+                color: 'text-purple-500 dark:text-purple-400',
+              })
+            }
+            if (stepConfig?.agent_configs?.disable_parallel_tool_execution) {
+              flags.push({
+                icon: <Pause className="w-3 h-3" />,
+                label: 'Parallel tool execution disabled',
+                color: 'text-rose-500 dark:text-rose-400',
+              })
+            }
+            if (stepConfig?.agent_configs?.llm_validation_mode === 'skip') {
+              flags.push({
+                icon: <SkipForward className="w-3 h-3" />,
+                label: 'LLM validation skipped',
+                color: 'text-indigo-500 dark:text-indigo-400',
+              })
+            }
+            return (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1 ml-auto cursor-default">
+                      {flags.map((f, i) => (
+                        <span key={i} className={f.color}>{f.icon}</span>
+                      ))}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    <div className="space-y-1">
+                      {flags.map((f, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-xs">
+                          <span className={f.color}>{f.icon}</span>
+                          <span>{f.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )
+          })()}
         </div>
       </div>
 

@@ -175,10 +175,6 @@ func diffPatchToolDef() llmtypes.Tool {
 						"type":        "string",
 						"description": "Unified diff format string to apply:\n\n**FORMAT (like 'diff -U0'):**\n- Headers: --- a/file.md and +++ b/file.md\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (SPACE + content - MUST match file exactly)\n- Removals: '-' prefix (MINUS + content)\n- Additions: '+' prefix (PLUS + content)\n- MUST end with newline character\n\nContext lines start with SPACE ( ), NOT minus (-). Example:\n--- a/plan.md\n+++ b/plan.md\n@@ -5,1 +5,1 @@\n-- [ ] **task-1**: Do something\n+- [x] **task-1**: Do something\n",
 					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
 				},
 				"required": []string{"filepath", "diff"},
 			}),

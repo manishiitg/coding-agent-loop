@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // Executor handles the execution of browser tool commands
@@ -57,10 +59,20 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Determine timeout
 	timeout := getTimeoutForCommand(command)
 
+	// Build FolderGuard from context (same pattern as shell tool)
+	var folderGuard *FolderGuardConfig
+	if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+		folderGuard = &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: allowedWrites,
+			ReadPaths:  []string{"."},
+		}
+	}
+
 	// Execute via client
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, &ExecuteOptions{
-		Timeout: timeout,
-		// Note: FolderGuard can be added here if passed via context or struct fields in future
+		Timeout:     timeout,
+		FolderGuard: folderGuard,
 	})
 	if err != nil {
 		return "", err

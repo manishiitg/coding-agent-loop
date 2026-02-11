@@ -286,7 +286,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               category="multi-agent"
               title="Multi Agent Chat"
               description="Delegate complex tasks to AI sub-agents with plan-driven coordination and multi-LLM tier support."
-              icon={<Users className="w-5 h-5 text-emerald-600" />}
+              icon={<Users className="w-5 h-5 text-indigo-600" />}
               features={getModeInfoForModal('multi-agent').features}
               exampleQueries={getModeInfoForModal('multi-agent').examples}
               onSelect={() => handleModeSelect('multi-agent')}

@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useEffect, forwardRef } from 'reac
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
-import { useChatStore, type ChatTab } from '../../stores/useChatStore'
+import { useChatStore } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
@@ -37,6 +37,7 @@ import { agentApi } from '../../services/api'
 import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
 import { getTypedEventData, getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
+import { findOrCreateWorkflowTab } from '../../utils/chatSubmitHelpers'
 
 /**
  * Helper function to restore workflow state from loaded events
@@ -240,8 +241,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const stepProgress = useWorkflowStore(state => state.stepProgress)
   const showRunningDrawer = useShowRunningDrawer()
 
-  // Tab management (generalized for both chat and workflow)
-  const { createChatTab, getActiveTab } = useChatStore()
   const getPhaseById = useWorkflowStore(state => state.getPhaseById)
   
   // Ref for the ChatArea component
@@ -288,7 +287,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }, 500)
   }, [fetchFiles])
 
-  // Clean up debounce timer on unmount
+  // Clean up timers on unmount
   useEffect(() => {
     return () => {
       if (fetchFilesTimerRef.current) clearTimeout(fetchFilesTimerRef.current)
@@ -630,7 +629,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const { getPhaseById } = useWorkflowStore.getState()
 
         // Check each active session
-        logger.debug('Reconnection', `Checking ${activeSessions.length} active sessions for reconnection (Active Preset: ${activePresetId})`)
+        logger.debug('Reconnection', `Checking ${activeSessions.length} active sessions (preset: ${activePresetId})`)
         for (const activeSession of activeSessions) {
           try {
             if (activeSession.agent_mode !== 'workflow') {
@@ -658,7 +657,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               }
             }
             
-            logger.debug('Reconnection', `Session ${activeSession.session_id}: presetQueryId=${presetQueryId} (source: ${source}), activePresetId=${activePresetId}`)
+            logger.debug('Reconnection', `Session ${activeSession.session_id}: preset=${presetQueryId} (${source})`)
             
             // Extract phase ID from query
             let phaseId: string | null = null
@@ -681,7 +680,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             // STRICT RESTORATION: Only reconnect if the session explicitly belongs to this preset
             // OR if the session is an orphan (no preset ID) and we have an active preset (adopt it)
             const shouldReconnect = presetQueryId === activePresetId || (!presetQueryId && activePresetId)
-            logger.debug('Reconnection', `Session ${activeSession.session_id} reconnection check: ${shouldReconnect} (presetQueryId: '${presetQueryId}' === activePresetId: '${activePresetId}' OR orphan adoption)`)
+            logger.debug('Reconnection', `Session ${activeSession.session_id} reconnect=${shouldReconnect}`)
             
             if (!shouldReconnect) {
               // Log why we skipped this session for debugging
@@ -689,18 +688,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               continue
             }
 
-            // DEBUG: Log all existing tabs before checking
-            const allTabsBefore = Object.values(useChatStore.getState().chatTabs)
-              .filter(tab => tab.metadata?.mode === 'workflow')
-              .map(tab => ({
-                tabId: tab.tabId,
-                sessionId: tab.sessionId,
-                phaseId: tab.metadata?.phaseId,
-                presetQueryId: tab.metadata?.presetQueryId,
-                name: tab.name
-              }))
-            logger.debug('Reconnection', `Reconnecting session ${activeSession.session_id} (phaseId: ${phaseId}, presetQueryId: ${activePresetId})`)
-            logger.debug('Reconnection', `Existing workflow tabs BEFORE check:`, allTabsBefore)
+            logger.debug('Reconnection', `Reconnecting session ${activeSession.session_id} (phase: ${phaseId})`)
 
             // Check if we already have a tab for this session
             const existingTabs = Object.values(useChatStore.getState().chatTabs)
@@ -711,9 +699,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               tab.metadata?.mode === 'workflow'
             )
 
-            if (existingTab) {
-              logger.debug('Reconnection', `Found tab by sessionId: ${existingTab.tabId}`)
-            } else {
+            if (!existingTab) {
               // Check by phaseId and presetQueryId
               const matchingTabs = existingTabs.filter(tab => 
                 tab.metadata?.mode === 'workflow' &&
@@ -721,26 +707,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
                 (tab.metadata?.presetQueryId === activePresetId || (!tab.metadata?.presetQueryId && activePresetId))
               )
               
-              logger.debug('Reconnection', `Tabs matching phaseId=${phaseId} AND presetQueryId=${activePresetId}:`, 
-                matchingTabs.map(t => ({ tabId: t.tabId, sessionId: t.sessionId, phaseId: t.metadata?.phaseId, presetQueryId: t.metadata?.presetQueryId })))
-              
               if (matchingTabs.length > 0) {
                 existingTab = matchingTabs[0]
-                logger.debug('Reconnection', `Found tab by phaseId/presetQueryId: ${existingTab.tabId} (sessionId: ${existingTab.sessionId})`)
-                
                 if (existingTab.sessionId !== activeSession.session_id) {
-                  logger.debug('Reconnection', `Updating sessionId from ${existingTab.sessionId} to ${activeSession.session_id}`)
+                  logger.debug('Reconnection', `Updating tab ${existingTab.tabId} sessionId to ${activeSession.session_id}`)
                   const { updateTabSessionId } = useChatStore.getState()
                   updateTabSessionId(existingTab.tabId, activeSession.session_id)
                   existingTab = { ...existingTab, sessionId: activeSession.session_id }
                 }
-              } else {
-                logger.debug('Reconnection', `No matching tab found for phaseId=${phaseId}, presetQueryId=${activePresetId}`)
               }
             }
 
             if (existingTab) {
-              logger.debug('Reconnection', `Reusing existing tab ${existingTab.tabId}, NOT creating duplicate`)
               
               // Update tab's metadata if presetQueryId is missing
               if (!existingTab.metadata?.presetQueryId && activePresetId) {
@@ -787,25 +765,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             const phase = getPhaseById(phaseId)
             const phaseName = phase?.title || phaseId
             
-            logger.debug('Reconnection', `Creating NEW tab for phaseId=${phaseId}, sessionId=${activeSession.session_id}`)
+            logger.debug('Reconnection', `Creating tab for phase ${phaseId}, session ${activeSession.session_id}`)
             const tabId = await createChatTab(phaseName, {
               mode: 'workflow',
               phaseId,
               phaseName,
               presetQueryId: activePresetId
             }, activeSession.session_id)
-
-            // DEBUG: Log all tabs after creation
-            const allTabsAfter = Object.values(useChatStore.getState().chatTabs)
-              .filter(tab => tab.metadata?.mode === 'workflow')
-              .map(tab => ({
-                tabId: tab.tabId,
-                sessionId: tab.sessionId,
-                phaseId: tab.metadata?.phaseId,
-                presetQueryId: tab.metadata?.presetQueryId,
-                name: tab.name
-              }))
-            logger.debug('Reconnection', `Existing workflow tabs AFTER creation:`, allTabsAfter)
 
             switchTab(tabId)
             setShowChatArea(true)
@@ -825,6 +791,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
   }, [selectedModeCategory, activePresetId, setShowChatArea])
+
 
   // Auto-minimize workflows when switching to a different preset
   useEffect(() => {
@@ -902,166 +869,56 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Handle phase start from toolbar (now accepts execution options directly)
   const handleStartPhase = useCallback(async (phaseId: string, executionOptions?: ExecutionOptions) => {
-    logger.debug('WorkflowLayout', 'handleStartPhase called:', {
-      phaseId,
-      hasExecutionOptions: Boolean(executionOptions)
-    })
-    
-    // Ensure we're in workflow mode before starting phase (only if we have an active preset)
+    // Ensure we're in workflow mode before starting phase
     if (activePresetId) {
       const currentMode = useModeStore.getState().selectedModeCategory
       if (currentMode !== 'workflow') {
         useModeStore.getState().setModeCategory('workflow')
       }
     }
-    
-    // Validate phaseId is actually a string, not a Promise
+
     if (typeof phaseId !== 'string') {
       logger.error('WorkflowLayout', 'Invalid phaseId: expected string, got', typeof phaseId)
       return
     }
-    // Check if it's a Promise object (has .then method) - runtime check for safety
-    const phaseIdValue = phaseId as unknown
-    if (phaseIdValue && typeof phaseIdValue === 'object' && 'then' in phaseIdValue && typeof (phaseIdValue as { then: unknown }).then === 'function') {
-      logger.error('WorkflowLayout', 'Invalid phaseId: received Promise instead of string')
-      return
-    }
-    
-    if (!activePresetId) {
-      return
-    }
-    
-    // Get phase name
+
+    if (!activePresetId) return
+
     const phase = getPhaseById(phaseId)
     const phaseName = phase?.title || phaseId
-    
-    // DEBUG: Log all existing tabs before checking
-    const allTabsBefore = Object.values(useChatStore.getState().chatTabs)
-      .filter(tab => tab.metadata?.mode === 'workflow')
-      .map(tab => ({
-        tabId: tab.tabId,
-        sessionId: tab.sessionId,
-        phaseId: tab.metadata?.phaseId,
-        presetQueryId: tab.metadata?.presetQueryId,
-        name: tab.name
-      }))
-    logger.debug('Reconnection', `handleStartPhase called for phaseId=${phaseId}, presetQueryId=${activePresetId}`)
-    logger.debug('Reconnection', `Existing workflow tabs BEFORE check:`, allTabsBefore)
-    
-    // Check if a tab for this phase already exists
-    const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
-    const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
-    const switchTab = useChatStore.getState().switchTab
-    const existingPhaseTabs = getTabsByPhaseId(phaseId)
-    
-    logger.debug('Reconnection', `Tabs with phaseId=${phaseId}:`, existingPhaseTabs.map(t => ({
-      tabId: t.tabId,
-      sessionId: t.sessionId,
-      presetQueryId: t.metadata?.presetQueryId,
-      name: t.name
-    })))
-    
-    // Find existing tab for this phase (prefer running, but reuse any existing tab)
-    const runningTab = existingPhaseTabs.find(tab => getTabStreamingStatus(tab.tabId))
-    const existingTab = runningTab || (existingPhaseTabs.length > 0 ? existingPhaseTabs.sort((a, b) => b.createdAt - a.createdAt)[0] : null)
-    
-    let tabId: string
-    let tab: ChatTab | undefined
-    let isReusingTab = false
-    
-    if (existingTab) {
-      logger.debug('Reconnection', `Reusing existing tab ${existingTab.tabId} for phaseId=${phaseId}, NOT creating duplicate`)
-      tabId = existingTab.tabId
-      switchTab(tabId)
-      tab = getActiveTab()
-      isReusingTab = true
-    } else {
-      // Check if there's a tab with same phaseId and presetQueryId but different sessionId
-      const allTabs = Object.values(useChatStore.getState().chatTabs)
-      const matchingTab = allTabs.find(tab => 
-        tab.metadata?.mode === 'workflow' &&
-        tab.metadata?.phaseId === phaseId &&
-        (tab.metadata?.presetQueryId === activePresetId || (!tab.metadata?.presetQueryId && activePresetId))
-      )
-      
-      if (matchingTab) {
-        logger.debug('Reconnection', `Found tab with matching phaseId/presetQueryId: ${matchingTab.tabId}, reusing it`)
-        tabId = matchingTab.tabId
-        switchTab(tabId)
-        tab = getActiveTab()
-        isReusingTab = true
-      } else {
-        try {
-          logger.debug('Reconnection', `Creating NEW tab for phaseId=${phaseId}, presetQueryId=${activePresetId}`)
-          tabId = await createChatTab(phaseName, {
-            mode: 'workflow',
-            phaseId,
-            phaseName,
-            presetQueryId: activePresetId || undefined
-          })
-          
-          // DEBUG: Log all tabs after creation
-          const allTabsAfter = Object.values(useChatStore.getState().chatTabs)
-            .filter(tab => tab.metadata?.mode === 'workflow')
-            .map(tab => ({
-              tabId: tab.tabId,
-              sessionId: tab.sessionId,
-              phaseId: tab.metadata?.phaseId,
-              presetQueryId: tab.metadata?.presetQueryId,
-              name: tab.name
-            }))
-          logger.debug('Reconnection', `Existing workflow tabs AFTER creation:`, allTabsAfter)
-          
-          tab = getActiveTab()
-        } catch (error) {
-          logger.error('Reconnection', 'Failed to create workflow tab:', error)
-          return
-        }
-      }
-    }
-    
-    if (!tab) {
-      logger.error('WorkflowLayout', 'Failed to get active tab')
-      return
-    }
-    
-    // If reusing an existing tab that's already running, don't submit a new query
-    if (isReusingTab && getTabStreamingStatus(tab.tabId)) {
-      logger.debug('WorkflowLayout', 'Tab is already running, not submitting new query. Just switched to view it.')
-      setShowChatArea(true) // Ensure ChatArea is visible
-      return
-    }
-    
-    // Update workflow status in database (non-blocking for parallel execution)
-    // Note: This is informational only - each tab has its own session and can run independently
-    // The backend reads the phase from the query/context, not just from the database
-    agentApi.updateWorkflow(activePresetId, phaseId, null, undefined).catch(error => {
-      logger.error('WorkflowLayout', 'Failed to update workflow status (non-blocking):', error)
-      // Continue anyway - parallel execution should work regardless
-    })
-    
-    // Don't set global activePhase - allow multiple phases to run in parallel
-    // setActivePhase(phaseId) // Removed to allow parallel execution
-    setCurrentWorkflowPhase(phaseId) // This is per-tab, so it's fine
-    
-    // Build query for the phase
-    const query = `Execute workflow phase: ${phaseId}`
-    
-    // Store pending query to submit after ChatArea mounts
-    logger.debug('WorkflowLayout', 'Storing pending query:', {
-      query,
-      hasExecutionOptions: Boolean(executionOptions),
-      executionOptions: executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined'
-    })
-    pendingQueryRef.current = { query, executionOptions }
-    
-    // Show ChatArea when starting a phase (this will trigger ChatArea to mount)
-    setShowChatArea(true)
-    
-    // Note: Query will be submitted via useEffect when ChatArea ref becomes available
-  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, createChatTab, getPhaseById, getActiveTab])
 
-  // Handle create plan - starts the planning phase (ID: "planning")
+    // Single-pass tab lookup: find or create workflow tab
+    const result = await findOrCreateWorkflowTab({ phaseId, activePresetId, phaseName })
+    if (!result) {
+      logger.error('WorkflowLayout', 'Failed to get or create tab for phase', phaseId)
+      return
+    }
+
+    const { tab, isReusingTab } = result
+
+    // If reusing an existing tab that's already running, just switch to view it
+    if (isReusingTab && useChatStore.getState().getTabStreamingStatus(tab.tabId)) {
+      logger.debug('WorkflowLayout', 'Tab already running, switching to view it')
+      setShowChatArea(true)
+      return
+    }
+
+    // Update workflow status in database (non-blocking)
+    agentApi.updateWorkflow(activePresetId, phaseId, null, undefined).catch(error => {
+      logger.error('WorkflowLayout', 'Failed to update workflow status:', error)
+    })
+
+    setCurrentWorkflowPhase(phaseId)
+
+    // Store pending query to submit after ChatArea mounts
+    const query = `Execute workflow phase: ${phaseId}`
+    pendingQueryRef.current = { query, executionOptions }
+
+    // Show ChatArea when starting a phase (triggers ChatArea mount)
+    setShowChatArea(true)
+  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById])
+
+  // Handle create plan - starts the planning or evaluation-designer phase depending on workflow mode
   const handleCreatePlan = useCallback(() => {
     // Ensure we're in workflow mode before creating plan (only if we have an active preset)
     if (activePresetId) {
@@ -1071,23 +928,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
     }
 
+    const workflowMode = useWorkflowStore.getState().workflowMode
     const phases = useWorkflowStore.getState().phases
-    // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
-    const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
-    const planningPhaseId = planningPhase?.id || 'planning'
-    logger.debug('WorkflowLayout', 'Create plan requested, starting planning phase:', planningPhaseId)
 
-    // Show ChatArea immediately (synchronously) before starting the phase
-    setShowChatArea(true)
-    // Note: Don't set activePhase here - allow parallel execution
-
-    // Then start the phase (which will also set showChatArea, but this ensures it's visible immediately)
-    handleStartPhase(planningPhaseId)
+    if (workflowMode === 'eval') {
+      const evalDesignerPhase = phases.find(p => p.id === 'evaluation-designer')
+      const evalPhaseId = evalDesignerPhase?.id || 'evaluation-designer'
+      logger.debug('WorkflowLayout', 'Create eval plan requested, starting eval designer phase:', evalPhaseId)
+      setShowChatArea(true)
+      handleStartPhase(evalPhaseId)
+    } else {
+      // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
+      const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
+      const planningPhaseId = planningPhase?.id || 'planning'
+      logger.debug('WorkflowLayout', 'Create plan requested, starting planning phase:', planningPhaseId)
+      setShowChatArea(true)
+      handleStartPhase(planningPhaseId)
+    }
   }, [handleStartPhase, setShowChatArea, activePresetId])
 
   // Minimize chat area when drawer opens to reduce renders and stop event processing
-  // Open chat area when drawer closes
+  // Open chat area when drawer closes (but not on initial mount)
+  const drawerMountedRef = useRef(false)
   useEffect(() => {
+    if (!drawerMountedRef.current) {
+      drawerMountedRef.current = true
+      return
+    }
     if (showRunningDrawer) {
       // Minimize chat area when drawer opens
       setShowChatArea(false)
@@ -1096,7 +963,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // 2. Polling management (useEffect hooks won't run)
       // This significantly reduces browser load
     } else {
-      // Always open chat area when drawer closes
+      // Open chat area when drawer closes (user just closed the running workflows drawer)
       setShowChatArea(true)
     }
   }, [showRunningDrawer, setShowChatArea])

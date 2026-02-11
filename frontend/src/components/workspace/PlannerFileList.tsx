@@ -79,7 +79,9 @@ export default function PlannerFileList({
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
     const isExpanded = expandedFolders.has(file.filepath)
     const isLoadingChildren = loadingChildren.has(file.filepath)
-    const isViewable = file.type === 'folder' || file.is_image || isTextBasedFile(file.filepath)
+    const fileExt = file.filepath.split('.').pop()?.toLowerCase() || ''
+    const isViewableBinary = ['xls', 'xlsx', 'docx'].includes(fileExt)
+    const isViewable = file.type === 'folder' || file.is_image || isTextBasedFile(file.filepath) || isViewableBinary
     const isClickable = file.type === 'folder' || isViewable
     const fileName = file.filepath.split('/').pop() || file.filepath
     // Check both filepath (adjusted for display) and originalFilepath (original path)

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"workspace/models"
 	"workspace/parsers"
@@ -19,9 +18,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )
-
-// Global lock manager
-var lockManager = utils.NewLockManager()
 
 // getUserID extracts the user ID from the request header
 // Returns the default user ID if not provided
@@ -122,22 +118,9 @@ func CreateDocument(c *gin.Context) {
 		return
 	}
 
-	// Acquire file lock
-	lock, err := lockManager.AcquireLock(fullPath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release the lock explicitly before Git operations
-
 	// Create directory if it doesn't exist
 	dir := filepath.Dir(fullPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create directory",
@@ -148,7 +131,6 @@ func CreateDocument(c *gin.Context) {
 
 	// Check if file already exists
 	if _, err := os.Stat(fullPath); err == nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusConflict, models.APIResponse[any]{
 			Success: false,
 			Message: "Document already exists",
@@ -159,7 +141,6 @@ func CreateDocument(c *gin.Context) {
 
 	// Write file
 	if err := os.WriteFile(fullPath, []byte(req.Content), 0644); err != nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create document",
@@ -167,11 +148,6 @@ func CreateDocument(c *gin.Context) {
 		})
 		return
 	}
-
-	// Release lock immediately after writing
-	lockManager.ReleaseLock(lock)
-
-	// File created successfully
 
 	// Queue file for semantic processing
 	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
@@ -195,14 +171,6 @@ func CreateDocument(c *gin.Context) {
 	// Create response
 	doc := models.Document{
 		FilePath: relativePath,
-	}
-
-	// Handle git operations if commit message provided
-	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
-		}
 	}
 
 	responseData := models.CreateDocumentResponse{
@@ -812,17 +780,6 @@ func GetDocument(c *gin.Context) {
 		return
 	}
 
-	// Acquire read lock (checks if file is being written to)
-	// This prevents reading partial files during concurrent writes
-	if err := lockManager.AcquireReadLock(filePath, 5*time.Second); err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-
 	// Check if file exists
 	_, err = os.Stat(filePath)
 	if os.IsNotExist(err) {
@@ -936,16 +893,6 @@ func GetRawDocument(c *gin.Context) {
 		return
 	}
 
-	// Acquire read lock
-	if err := lockManager.AcquireReadLock(filePath, 5*time.Second); err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		c.JSON(http.StatusNotFound, models.APIResponse[any]{
@@ -1018,18 +965,6 @@ func UpdateDocument(c *gin.Context) {
 		return
 	}
 
-	// Acquire file lock
-	lock, err := lockManager.AcquireLock(filePath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release the lock explicitly before Git operations
-
 	// Check if file exists and create directory if needed
 	fileExists := true
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -1037,7 +972,6 @@ func UpdateDocument(c *gin.Context) {
 		// Create directory if it doesn't exist
 		dir := filepath.Dir(filePath)
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			lockManager.ReleaseLock(lock) // Release lock on error
 			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 				Success: false,
 				Message: "Failed to create directory",
@@ -1049,7 +983,6 @@ func UpdateDocument(c *gin.Context) {
 
 	// Write content (create or update)
 	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
-		lockManager.ReleaseLock(lock) // Release lock on error
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to write document",
@@ -1058,9 +991,6 @@ func UpdateDocument(c *gin.Context) {
 		return
 	}
 
-	// Release lock immediately after writing to allow reads
-	lockManager.ReleaseLock(lock)
-
 	// Queue file for semantic processing
 	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
 		action := "update"
@@ -1068,14 +998,6 @@ func UpdateDocument(c *gin.Context) {
 			action = "create"
 		}
 		go fileProcessor.QueueJob(filePathParam, req.Content, action)
-	}
-
-	// Handle git operations if commit message provided
-	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
-		}
 	}
 
 	// Return user-relative path in the response
@@ -1102,7 +1024,6 @@ func UpdateDocument(c *gin.Context) {
 func DeleteDocument(c *gin.Context) {
 	filePathParam := c.Param("filepath")
 	confirm := c.Query("confirm")
-	commitMessage := c.Query("commit_message")
 
 	if confirm != "true" {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
@@ -1139,21 +1060,8 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	// Acquire file lock
-	lock, err := lockManager.AcquireLock(filePath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release the lock explicitly
-
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusNotFound, models.APIResponse[any]{
 			Success: false,
 			Message: "Document not found",
@@ -1162,12 +1070,8 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	// Unused variable
-	_ = commitMessage
-
 	// Delete file
 	if err := os.Remove(filePath); err != nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to delete document",
@@ -1176,20 +1080,9 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	// Release lock immediately after deletion
-	lockManager.ReleaseLock(lock)
-
 	// Queue file for semantic processing (delete embeddings)
 	if fileProcessor := GetFileProcessor(); fileProcessor != nil {
 		go fileProcessor.QueueJob(filePathParam, "", "delete")
-	}
-
-	// Handle git operations if commit message provided
-	if commitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", commitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
-		}
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[any]{
@@ -1309,34 +1202,9 @@ func MoveDocument(c *gin.Context) {
 		return
 	}
 
-	// Acquire locks for both source and destination
-	sourceLock, err := lockManager.AcquireLock(sourcePath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Source file is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	
-	destinationLock, err := lockManager.AcquireLock(destinationFilePath, 30*time.Second)
-	if err != nil {
-		lockManager.ReleaseLock(sourceLock) // Release source lock if destination fails
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Destination file is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release locks explicitly
-
 	// Create destination directory if it doesn't exist
 	destDir := filepath.Dir(destinationFilePath)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		lockManager.ReleaseLock(sourceLock)
-		lockManager.ReleaseLock(destinationLock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create destination directory",
@@ -1347,31 +1215,12 @@ func MoveDocument(c *gin.Context) {
 
 	// Move file
 	if err := os.Rename(sourceFilePath, destinationFilePath); err != nil {
-		lockManager.ReleaseLock(sourceLock)
-		lockManager.ReleaseLock(destinationLock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to move document",
 			Error:   err.Error(),
 		})
 		return
-	}
-
-	// Release locks immediately after move
-	lockManager.ReleaseLock(sourceLock)
-	lockManager.ReleaseLock(destinationLock)
-
-	// Handle git operations if commit message provided and git is initialized
-	if req.CommitMessage != "" {
-		gitDir := filepath.Join(docsDir, ".git")
-		if _, err := os.Stat(gitDir); err == nil {
-			if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-				// Log error but don't fail the request
-				fmt.Printf("Warning: Git operation failed: %v\n", err)
-			}
-		} else {
-			fmt.Println("Warning: Git sync skipped - not a git repository")
-		}
 	}
 
 	// Create response data
@@ -1497,21 +1346,9 @@ func RestoreFileVersion(c *gin.Context) {
 		return
 	}
 
-	// Acquire file lock
-	lock, err := lockManager.AcquireLock(filePath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	defer lockManager.ReleaseLock(lock)
-
 	// Restore the version
 	versionManager := utils.NewGitVersionManager(docsDir)
-	if err := versionManager.RestoreFileVersion(filePath, req.CommitHash, req.CommitMessage); err != nil {
+	if err := versionManager.RestoreFileVersion(filePath, req.CommitHash); err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to restore version",
@@ -1595,43 +1432,14 @@ func CreateFolder(c *gin.Context) {
 		return
 	}
 
-	// Acquire folder lock
-	lock, err := lockManager.AcquireLock(folderPath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Folder is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// Lock will be released explicitly
-
 	// Create the folder
 	if err := os.MkdirAll(folderPath, 0755); err != nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to create folder",
 			Error:   err.Error(),
 		})
 		return
-	}
-
-	// Release lock immediately after creation
-	lockManager.ReleaseLock(lock)
-
-	// Handle git operations if commit message provided and git is initialized
-	if req.CommitMessage != "" {
-		gitDir := filepath.Join(docsDir, ".git")
-		if _, err := os.Stat(gitDir); err == nil {
-			if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-				// Log error but don't fail the request
-				fmt.Printf("Warning: Git operation failed: %v\n", err)
-			}
-		} else {
-			fmt.Println("Warning: Git sync skipped - not a git repository")
-		}
 	}
 
 	response := models.CreateFolderResponse{
@@ -1763,29 +1571,6 @@ func CopyFolder(c *gin.Context) {
 		return
 	}
 
-	// Acquire locks for both source and destination
-	sourceLock, err := lockManager.AcquireLock(sourcePath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Source folder is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	
-	destinationLock, err := lockManager.AcquireLock(destinationPath, 30*time.Second)
-	if err != nil {
-		lockManager.ReleaseLock(sourceLock)
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Destination folder is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release locks explicitly
-
 	// Counters for response
 	var filesCopied int
 	var dirsCreated int
@@ -1853,26 +1638,12 @@ func CopyFolder(c *gin.Context) {
 	})
 
 	if err != nil {
-		lockManager.ReleaseLock(sourceLock)
-		lockManager.ReleaseLock(destinationLock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to copy folder",
 			Error:   err.Error(),
 		})
 		return
-	}
-
-	// Release locks immediately after copy
-	lockManager.ReleaseLock(sourceLock)
-	lockManager.ReleaseLock(destinationLock)
-
-	// Handle git operations if commit message provided
-	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
-		}
 	}
 
 	response := models.CopyFolderResponse{
@@ -1892,14 +1663,13 @@ func CopyFolder(c *gin.Context) {
 // DeleteFolder handles DELETE /api/folders/*folderpath
 func DeleteFolder(c *gin.Context) {
 	folderPathParam := c.Param("folderpath")
-	commitMessage := c.Query("commit_message")
 	confirm := c.Query("confirm") == "true"
 
 	// Check if this is a request to delete all files in folder
 	if strings.HasSuffix(c.Request.URL.Path, "/files") {
 		// Remove "/files" from the folderpath
 		folderPathParam = strings.TrimSuffix(folderPathParam, "/files")
-		DeleteAllFilesInFolder(c, folderPathParam, commitMessage, confirm)
+		DeleteAllFilesInFolder(c, folderPathParam, confirm)
 		return
 	}
 
@@ -1955,43 +1725,14 @@ func DeleteFolder(c *gin.Context) {
 		return
 	}
 
-	// Acquire folder lock (using folder path as lock key)
-	lock, err := lockManager.AcquireLock(folderPath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Folder is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release lock explicitly
-
 	// Remove the folder and all its contents
 	if err := os.RemoveAll(folderPath); err != nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to delete folder",
 			Error:   err.Error(),
 		})
 		return
-	}
-
-	// Release lock immediately after deletion
-	lockManager.ReleaseLock(lock)
-
-	// If commit message provided and git is initialized, commit the deletion
-	if commitMessage != "" {
-		gitDir := filepath.Join(docsDir, ".git")
-		if _, err := os.Stat(gitDir); err == nil {
-			if err := utils.SyncWithGitHub(docsDir, "main", commitMessage); err != nil {
-				// Log error but don't fail the request
-				fmt.Printf("Warning: Git operation failed: %v\n", err)
-			}
-		} else {
-			fmt.Println("Warning: Git sync skipped - not a git repository")
-		}
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[any]{
@@ -2004,7 +1745,7 @@ func DeleteFolder(c *gin.Context) {
 }
 
 // DeleteAllFilesInFolder handles DELETE /api/folders/*folderpath/files
-func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage string, confirm bool) {
+func DeleteAllFilesInFolder(c *gin.Context, folderPathParam string, confirm bool) {
 	if !confirm {
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
 			Success: false,
@@ -2057,18 +1798,6 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 		return
 	}
 
-	// Acquire folder lock (using folder path as lock key)
-	lock, err := lockManager.AcquireLock(folderPath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "Folder is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	// We will release lock explicitly
-
 	// Count and collect all files and folders to be deleted
 	var itemsToDelete []string
 	var deletedCount int
@@ -2094,7 +1823,6 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 	})
 
 	if err != nil {
-		lockManager.ReleaseLock(lock)
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to scan folder contents",
@@ -2107,34 +1835,21 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 	for _, itemPath := range itemsToDelete {
 		fullPath := filepath.Join(docsDir, itemPath)
 
-		// Acquire lock for each item
-		itemLock, err := lockManager.AcquireLock(fullPath, 10*time.Second)
-		if err != nil {
-			// Log warning but continue with other items
-			fmt.Printf("Warning: Could not acquire lock for item %s: %v\n", itemPath, err)
-			continue
-		}
-
 		// Check if it's a file or directory
 		info, err := os.Stat(fullPath)
 		if err != nil {
-			lockManager.ReleaseLock(itemLock)
 			fmt.Printf("Warning: Could not stat item %s: %v\n", itemPath, err)
 			continue
 		}
 
 		// Delete the item (file or directory)
 		if info.IsDir() {
-			// Delete directory and all its contents
 			if err := os.RemoveAll(fullPath); err != nil {
-				lockManager.ReleaseLock(itemLock)
 				fmt.Printf("Warning: Could not delete directory %s: %v\n", itemPath, err)
 				continue
 			}
 		} else {
-			// Delete file
 			if err := os.Remove(fullPath); err != nil {
-				lockManager.ReleaseLock(itemLock)
 				fmt.Printf("Warning: Could not delete file %s: %v\n", itemPath, err)
 				continue
 			}
@@ -2145,19 +1860,7 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam, commitMessage strin
 			}
 		}
 
-		lockManager.ReleaseLock(itemLock)
 		deletedCount++
-	}
-
-	// Release folder lock immediately after deletion loop
-	lockManager.ReleaseLock(lock)
-
-	// Handle git operations if commit message provided
-	if commitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", commitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
-		}
 	}
 
 	c.JSON(http.StatusOK, models.APIResponse[any]{
@@ -2283,18 +1986,6 @@ func UploadFile(c *gin.Context) {
 		return
 	}
 
-	// Acquire file lock
-	lock, err := lockManager.AcquireLock(fullFilePath, 30*time.Second)
-	if err != nil {
-		c.JSON(http.StatusConflict, models.APIResponse[any]{
-			Success: false,
-			Message: "File is currently being modified",
-			Error:   err.Error(),
-		})
-		return
-	}
-	defer lockManager.ReleaseLock(lock)
-
 	// Create the file
 	dst, err := os.Create(fullFilePath)
 	if err != nil {
@@ -2324,19 +2015,6 @@ func UploadFile(c *gin.Context) {
 	contentType := header.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
-	}
-
-	// If commit message provided and git is initialized, commit the upload
-	if req.CommitMessage != "" {
-		gitDir := filepath.Join(docsDir, ".git")
-		if _, err := os.Stat(gitDir); err == nil {
-			if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-				// Log error but don't fail the request
-				fmt.Printf("Warning: Git operation failed: %v\n", err)
-			}
-		} else {
-			fmt.Println("Warning: Git sync skipped - not a git repository")
-		}
 	}
 
 	// Convert full path to user-relative path for API response

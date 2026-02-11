@@ -58,10 +58,8 @@ export default function ServerSelectionDropdown({
 
   // Memoize display text to ensure it updates when selectedServers or availableServers change
   const displayText = useMemo(() => {
-    if (hasNoServers) {
+    if (hasNoServers || actualSelectedServers.length === 0) {
       return "None";
-    } else if (actualSelectedServers.length === 0) {
-      return `All servers (${serversToDisplay.length})`;
     } else if (actualSelectedServers.length === serversToDisplay.length) {
       return `All servers (${serversToDisplay.length})`;
     } else if (actualSelectedServers.length === 1) {
@@ -72,7 +70,7 @@ export default function ServerSelectionDropdown({
   }, [hasNoServers, actualSelectedServers, serversToDisplay.length]);
 
   const isAllSelected = actualSelectedServers.length === serversToDisplay.length && !hasNoServers;
-  const isNoneSelected = hasNoServers;
+  const isNoneSelected = hasNoServers || actualSelectedServers.length === 0;
 
   return (
     <TooltipProvider>
@@ -221,11 +219,9 @@ export default function ServerSelectionDropdown({
                   <div className="text-xs text-gray-500">
                     {availableServers.length === 0 
                       ? 'No servers available - check MCP server connections'
-                      : hasNoServers
+                      : hasNoServers || actualSelectedServers.length === 0
                         ? 'No servers selected - pure LLM mode (no tools)'
-                        : actualSelectedServers.length === 0 
-                          ? 'No servers selected - all servers will be used'
-                          : `${actualSelectedServers.length} of ${availableServers.length} servers selected`
+                        : `${actualSelectedServers.length} of ${availableServers.length} servers selected`
                     }
                   </div>
 

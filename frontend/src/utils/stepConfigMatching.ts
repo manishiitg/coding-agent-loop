@@ -38,6 +38,7 @@ export interface AgentConfigs {
   enable_dynamic_tier_selection?: boolean;    // allow orchestrator to choose tier for sub-agents
   orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
+  disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
 }
 
 // PrerequisiteRule represents a single prerequisite rule with one step dependency and one description

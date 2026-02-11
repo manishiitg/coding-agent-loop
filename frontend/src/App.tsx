@@ -5,6 +5,9 @@ import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
+import { CsvRenderer } from "./components/ui/CsvRenderer";
+import { XlsxRenderer } from "./components/ui/XlsxRenderer";
+import { DocxRenderer } from "./components/ui/DocxRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
@@ -154,7 +157,8 @@ function App() {
     setEditedContent,
     isSaving,
     getHasUnsavedChanges,
-    saveFile
+    saveFile,
+    binaryFileData
   } = useWorkspaceStore()
   
   const [commitMessage, setCommitMessage] = useState('')
@@ -961,13 +965,20 @@ function App() {
                   {!isEditMode ? (
                     <>
                       <div className="flex items-center gap-0.5">
-                        <button
-                          onClick={handleEdit}
-                          className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-                          title="Edit file (Ctrl+E)"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
+                        {/* Hide edit/revisions for binary files (xls, xlsx, docx) */}
+                        {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.docx') && (
+                          <>
+                            <button
+                              onClick={handleEdit}
+                              className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                              title="Edit file (Ctrl+E)"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
                         <button
                           onClick={handleDownload}
                           className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
@@ -975,18 +986,22 @@ function App() {
                         >
                           <Download className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => setShowRevisionsModal(true)}
-                          className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-                          title="View file revisions"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        </button>
-                        {selectedFile?.path && !isCodeFile(selectedFile.path) &&
-                         !selectedFile.path.toLowerCase().endsWith('.json') &&
-                         !fileContent.startsWith('data:image/') && (
+                        {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.docx') && (
+                          <button
+                            onClick={() => setShowRevisionsModal(true)}
+                            className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                            title="View file revisions"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </button>
+                        )}
+                        {selectedFile?.path && (
+                         selectedFile.path.toLowerCase().endsWith('.md') ||
+                         selectedFile.path.toLowerCase().endsWith('.markdown')) && (
                           <button
                             onClick={handleExportPdf}
                             disabled={isExportingPdf}
@@ -1134,7 +1149,24 @@ function App() {
                     ) : (
                       <div className="p-6">
                         {(() => {
-                          // Check for JSON files first
+                          const filePath = selectedFile?.path?.toLowerCase() || ''
+
+                          // CSV files
+                          if (filePath.endsWith('.csv')) {
+                            return <CsvRenderer content={fileContent} />
+                          }
+
+                          // Excel files (binary)
+                          if ((filePath.endsWith('.xlsx') || filePath.endsWith('.xls')) && binaryFileData) {
+                            return <XlsxRenderer data={binaryFileData} />
+                          }
+
+                          // DOCX files (binary)
+                          if (filePath.endsWith('.docx') && binaryFileData) {
+                            return <DocxRenderer data={binaryFileData} />
+                          }
+
+                          // Check for JSON files
                           if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
                             // Check if content looks like formatted JSON (has proper indentation)
                             const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')

@@ -34,6 +34,17 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     setAutoScroll(!storeAutoScroll)
   })
   
+  // Auto-select first tab if none is active but tabs exist (e.g. after page refresh)
+  useEffect(() => {
+    if (activeTabId) return
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') return
+    const tabs = Object.values(chatTabs).filter(tab => tab.metadata?.mode === selectedModeCategory)
+    if (tabs.length > 0) {
+      const sorted = [...tabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+      switchTab(sorted[0].tabId)
+    }
+  }, [activeTabId, chatTabs, selectedModeCategory, switchTab])
+
   // Filter tabs by current mode
   // In workflow mode, only show chat tabs in global ChatTabs (workflow tabs show in chat area)
   const modeTabs = useMemo(() => {

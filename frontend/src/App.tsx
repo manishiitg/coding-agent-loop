@@ -5,6 +5,9 @@ import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
 import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
+import { CsvRenderer } from "./components/ui/CsvRenderer";
+import { XlsxRenderer } from "./components/ui/XlsxRenderer";
+import { DocxRenderer } from "./components/ui/DocxRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
@@ -154,7 +157,8 @@ function App() {
     setEditedContent,
     isSaving,
     getHasUnsavedChanges,
-    saveFile
+    saveFile,
+    binaryFileData
   } = useWorkspaceStore()
   
   const [commitMessage, setCommitMessage] = useState('')
@@ -447,8 +451,8 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat mode
-    if (selectedModeCategory !== 'chat') {
+    // Only create default tab for chat and multi-agent modes (workflow tabs are created by WorkflowLayout)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
       return
     }
     
@@ -482,7 +486,8 @@ function App() {
       )
       if (currentModeTabs.length === 0) {
         try {
-          await chatStore.createChatTab('Chat 1', { mode: selectedModeCategory })
+          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
+          await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
         } catch (error) {
           console.error('Failed to create default tab:', error)
           // Reset flag on error so it can retry
@@ -500,8 +505,8 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only run for chat mode
-    if (selectedModeCategory !== 'chat') {
+    // Only run for chat and multi-agent modes (workflow handles its own tab selection)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
       return
     }
     
@@ -538,8 +543,8 @@ function App() {
           if (!result.success) {
             console.error('[APP] Failed to restore preset:', result.error)
           }
-        } else if (selectedModeCategory === 'chat') {
-          // For chat mode, if there's no active preset, clear any stale preset server state
+        } else if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
+          // For chat/multi-agent mode, if there's no active preset, clear any stale preset server state
           // This prevents old preset servers from persisting when no preset is selected
           const { setCurrentPresetServers } = useGlobalPresetStore.getState()
           setCurrentPresetServers([])
@@ -594,7 +599,7 @@ function App() {
         clearActivePreset(selectedModeCategory)
       }
     } else {
-      // For other modes (chat), clear preset state as before
+      // For other modes (chat, multi-agent), clear preset state as before
       setSelectedPresetId(null); // Clear selected preset filter
       if (selectedModeCategory) {
         clearActivePreset(selectedModeCategory); // Also clear in global store
@@ -960,13 +965,20 @@ function App() {
                   {!isEditMode ? (
                     <>
                       <div className="flex items-center gap-0.5">
-                        <button
-                          onClick={handleEdit}
-                          className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-                          title="Edit file (Ctrl+E)"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
+                        {/* Hide edit/revisions for binary files (xls, xlsx, docx) */}
+                        {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.docx') && (
+                          <>
+                            <button
+                              onClick={handleEdit}
+                              className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                              title="Edit file (Ctrl+E)"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          </>
+                        )}
                         <button
                           onClick={handleDownload}
                           className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
@@ -974,18 +986,22 @@ function App() {
                         >
                           <Download className="w-4 h-4" />
                         </button>
-                        <button
-                          onClick={() => setShowRevisionsModal(true)}
-                          className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-                          title="View file revisions"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                        </button>
-                        {selectedFile?.path && !isCodeFile(selectedFile.path) &&
-                         !selectedFile.path.toLowerCase().endsWith('.json') &&
-                         !fileContent.startsWith('data:image/') && (
+                        {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.docx') && (
+                          <button
+                            onClick={() => setShowRevisionsModal(true)}
+                            className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                            title="View file revisions"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </button>
+                        )}
+                        {selectedFile?.path && (
+                         selectedFile.path.toLowerCase().endsWith('.md') ||
+                         selectedFile.path.toLowerCase().endsWith('.markdown')) && (
                           <button
                             onClick={handleExportPdf}
                             disabled={isExportingPdf}
@@ -1133,7 +1149,24 @@ function App() {
                     ) : (
                       <div className="p-6">
                         {(() => {
-                          // Check for JSON files first
+                          const filePath = selectedFile?.path?.toLowerCase() || ''
+
+                          // CSV files
+                          if (filePath.endsWith('.csv')) {
+                            return <CsvRenderer content={fileContent} />
+                          }
+
+                          // Excel files (binary)
+                          if ((filePath.endsWith('.xlsx') || filePath.endsWith('.xls')) && binaryFileData) {
+                            return <XlsxRenderer data={binaryFileData} />
+                          }
+
+                          // DOCX files (binary)
+                          if (filePath.endsWith('.docx') && binaryFileData) {
+                            return <DocxRenderer data={binaryFileData} />
+                          }
+
+                          // Check for JSON files
                           if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
                             // Check if content looks like formatted JSON (has proper indentation)
                             const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')

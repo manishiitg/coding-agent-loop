@@ -50,6 +50,18 @@ func ExecuteShellCommand(c *gin.Context) {
 		// Sanitize and validate working directory
 		sanitizedDir := utils.SanitizeInputPath(req.WorkingDirectory, docsDir)
 
+		// When FolderGuard is enabled, do NOT resolve per-user paths for the working directory.
+		// The Isolator's mount namespace handles path mapping via WritePathMappings
+		// (e.g., mounts _users/default/Chats/ at logical Chats/). Resolving to the physical
+		// per-user path would place the command in the read-only view of the physical path,
+		// while the writable mount is at the logical path.
+		if req.FolderGuard == nil || !req.FolderGuard.Enabled {
+			userID := getUserID(c)
+			if userID != "" && utils.IsPerUserPath(sanitizedDir) {
+				sanitizedDir = filepath.Join(utils.UsersDirectory, userID, sanitizedDir)
+			}
+		}
+
 		// Build full path
 		fullWorkingDir := filepath.Join(docsDir, sanitizedDir)
 
@@ -63,7 +75,8 @@ func ExecuteShellCommand(c *gin.Context) {
 			return
 		}
 
-		// Check if directory exists
+		// Check if directory exists (for FolderGuard mode, the logical path may exist
+		// as a mount point artifact from previous isolator runs)
 		if info, err := os.Stat(fullWorkingDir); os.IsNotExist(err) || !info.IsDir() {
 			c.JSON(http.StatusBadRequest, models.APIResponse[any]{
 				Success: false,
@@ -101,19 +114,39 @@ func ExecuteShellCommand(c *gin.Context) {
 
 	// Check if folder guard is enabled
 	if req.FolderGuard != nil && req.FolderGuard.Enabled {
-		// Use isolated execution with filesystem restrictions
-		isolator := &security.Isolator{
-			ReadPaths:    req.FolderGuard.ReadPaths,
-			WritePaths:   req.FolderGuard.WritePaths,
-			BlockedPaths: req.FolderGuard.BlockedPaths,
-			WorkDir:      workingDir,
+		// Build per-user write path mappings for filesystem isolation.
+		// Shell commands see logical paths (e.g., Plans/{planID}/),
+		// but the physical location is under _users/{userID}/.
+		// WritePathMappings tells the Isolator to source files from the physical per-user path
+		// while mounting them at the logical path the shell command expects.
+		var writePathMappings map[string]string
+		userID := getUserID(c)
+		if userID != "" {
+			for _, wp := range req.FolderGuard.WritePaths {
+				cleanWP := strings.TrimSuffix(strings.TrimPrefix(wp, "/"), "/")
+				if utils.IsPerUserPath(cleanWP) {
+					if writePathMappings == nil {
+						writePathMappings = make(map[string]string)
+					}
+					writePathMappings[wp] = filepath.Join(utils.UsersDirectory, userID, wp)
+				}
+			}
 		}
 
-		if len(req.Args) > 0 {
-			fullCommand = req.Command + " " + strings.Join(req.Args, " ")
-		} else {
-			fullCommand = req.Command
+		// Use isolated execution with filesystem restrictions
+		isolator := &security.Isolator{
+			ReadPaths:         req.FolderGuard.ReadPaths,
+			WritePaths:        req.FolderGuard.WritePaths,
+			WritePathMappings: writePathMappings,
+			BlockedPaths:      req.FolderGuard.BlockedPaths,
+			WorkDir:           workingDir,
 		}
+
+		// Debug: log isolator configuration for troubleshooting mount namespace issues
+		fmt.Printf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v WritePathMappings=%v\n",
+			workingDir, req.FolderGuard.ReadPaths, req.FolderGuard.WritePaths, writePathMappings)
+
+		fullCommand = stripShellPrefix(req.Command)
 
 		var err error
 		// Pass the command directly - generateMountScript already wraps with "exec sh -c '...'"
@@ -132,21 +165,8 @@ func ExecuteShellCommand(c *gin.Context) {
 		}
 
 	} else {
-		// Non-isolated execution (backward compatibility)
-		// BUT STILL sanitize environment for security!
-		
-		// Respect UseShell if provided, but original logic hardcoded useShell=true.
-		// I will check if I should follow original logic or the snippet.
-		// Snippet for non-isolated:
-		// if len(req.Args) > 0 { fullCommand = ... } else { fullCommand = req.Command }
-		// cmd = exec.CommandContext(ctx, "sh", "-c", fullCommand)
-		// This forces shell execution, same as original.
-
-		if len(req.Args) > 0 {
-			fullCommand = req.Command + " " + strings.Join(req.Args, " ")
-		} else {
-			fullCommand = req.Command
-		}
+		// Non-isolated execution
+		fullCommand = stripShellPrefix(req.Command)
 
 		cmd = exec.CommandContext(ctx, "sh", "-c", fullCommand)
 		cmd.Dir = workingDir
@@ -175,13 +195,19 @@ func ExecuteShellCommand(c *gin.Context) {
 		} else {
 			// Handle timeout or other execution errors
 			if ctx.Err() == context.DeadlineExceeded {
+				// Build stderr with timeout info prepended so the LLM sees it clearly
+				timeoutMsg := fmt.Sprintf("TIMEOUT: Command killed after %d seconds\n", timeoutSeconds)
+				capturedStderr := stderrBuf.String()
+				if capturedStderr != "" {
+					timeoutMsg += capturedStderr
+				}
 				c.JSON(http.StatusRequestTimeout, models.APIResponse[models.ExecuteShellResponse]{
 					Success: false,
 					Message: "Command execution timed out",
 					Error:   fmt.Sprintf("Command exceeded timeout of %d seconds", timeoutSeconds),
 					Data: models.ExecuteShellResponse{
 						Stdout:          stdoutBuf.String(),
-						Stderr:          stderrBuf.String(),
+						Stderr:          timeoutMsg,
 						ExitCode:        -1,
 						ExecutionTimeMs: int(executionTime.Milliseconds()),
 						Command:         fullCommand,
@@ -190,13 +216,17 @@ func ExecuteShellCommand(c *gin.Context) {
 				return
 			}
 			// Other execution errors (e.g., command not found)
+			errorStderr := stderrBuf.String()
+			if errorStderr == "" {
+				errorStderr = err.Error()
+			}
 			c.JSON(http.StatusInternalServerError, models.APIResponse[models.ExecuteShellResponse]{
 				Success: false,
 				Message: "Failed to execute command",
 				Error:   err.Error(),
 				Data: models.ExecuteShellResponse{
 					Stdout:          stdoutBuf.String(),
-					Stderr:          stderrBuf.String(),
+					Stderr:          errorStderr,
 					ExitCode:        -1,
 					ExecutionTimeMs: int(executionTime.Milliseconds()),
 					Command:         fullCommand,
@@ -218,4 +248,18 @@ func ExecuteShellCommand(c *gin.Context) {
 			Command:         fullCommand,
 		},
 	})
+}
+
+// stripShellPrefix removes a leading "sh -c " wrapper from the command string.
+// LLMs sometimes generate commands like "sh -c ls -la" which, when passed to
+// exec.CommandContext(ctx, "sh", "-c", fullCommand), causes double sh -c wrapping
+// and breaks argument parsing.
+func stripShellPrefix(cmd string) string {
+	trimmed := strings.TrimSpace(cmd)
+	for _, prefix := range []string{"sh -c ", "/bin/sh -c ", "bash -c ", "/bin/bash -c "} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return strings.TrimSpace(trimmed[len(prefix):])
+		}
+	}
+	return cmd
 }

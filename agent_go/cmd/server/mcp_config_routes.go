@@ -172,6 +172,11 @@ func (api *StreamingAPI) handleSaveMCPConfig(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Log save event for each user-added server
+	for name := range userAdditions.MCPServers {
+		api.appendServerLog(name, "info", "Configuration saved, triggering discovery...")
+	}
+
 	// Trigger background discovery (smart refresh - will only discover modified/new servers)
 	go api.triggerMCPDiscovery()
 
@@ -409,4 +414,33 @@ func (api *StreamingAPI) handleGetMCPConfigStatus(w http.ResponseWriter, r *http
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(status)
+}
+
+// handleGetServerLogs handles GET requests to retrieve per-server install/connection logs
+func (api *StreamingAPI) handleGetServerLogs(w http.ResponseWriter, r *http.Request) {
+	serverName := r.URL.Query().Get("server_name")
+
+	api.serverLogsMux.RLock()
+	defer api.serverLogsMux.RUnlock()
+
+	result := make(map[string][]ServerLogEntry)
+
+	if serverName != "" {
+		// Return logs for a specific server
+		if logs, exists := api.serverLogs[serverName]; exists {
+			result[serverName] = logs
+		} else {
+			result[serverName] = []ServerLogEntry{}
+		}
+	} else {
+		// Return logs for all servers
+		for name, logs := range api.serverLogs {
+			result[name] = logs
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"logs": result,
+	})
 }

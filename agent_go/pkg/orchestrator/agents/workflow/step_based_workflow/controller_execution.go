@@ -320,6 +320,39 @@ func createFolderViaAPI(ctx context.Context, folderPath string, workspacePath ..
 	return nil
 }
 
+// writeFileViaAPI writes a file via the Workspace API (PUT /api/documents/{filepath}).
+func writeFileViaAPI(ctx context.Context, filePath string, content string) error {
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + filePath
+
+	requestBody := map[string]string{
+		"content": content,
+	}
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
 // ensureStepExecutionFolderExists ensures the step execution folder exists by creating it if needed.
 // This is called when a step starts running to ensure the folder exists even if it was previously deleted.
 // Creates folder via Workspace API only (ensures consistency with list_workspace_files).
@@ -1693,10 +1726,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 				}
 
-				// Check if LLM validation is enabled for this step (disabled by default)
+				// LLM validation is always disabled — validation agent removed.
+				// Pre-validation (code-based) and learning still run.
 				agentConfigs = getAgentConfigs(step)
-				// LLM validation disabled by default (nil = disabled). Only enabled when explicitly set to false.
-				enableLLMValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && !*agentConfigs.DisableValidation
+				enableLLMValidation := false
 				if !enableLLMValidation {
 					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ LLM validation disabled for step %d - auto-approving (pre-validation and learning will still run)", stepIndex+1))
 					// Auto-approve: create a success validation response
@@ -2489,11 +2522,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 				} else {
-					// Ensure validationResponse exists - if validation is disabled, assume success
-					agentConfigs := getAgentConfigs(step)
-					// LLM validation disabled by default (nil = disabled). Only enabled when explicitly set to false.
-					enableLLMValidation := agentConfigs != nil && agentConfigs.DisableValidation != nil && !*agentConfigs.DisableValidation
-					if validationResponse == nil && !enableLLMValidation {
+					// Ensure validationResponse exists - validation is always disabled, assume success
+					if validationResponse == nil {
 						// LLM validation is disabled but response is nil - create success response for learning
 						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ LLM validation disabled for step %d - creating success response for learning", stepIndex+1))
 						validationResponse = &ValidationResponse{

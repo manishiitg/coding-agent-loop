@@ -341,7 +341,8 @@ type AgentConfigs struct {
 	TodoTaskOrchestratorTier    *int               `json:"todo_task_orchestrator_tier,omitempty"`    // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	EnableDynamicTierSelection  *bool              `json:"enable_dynamic_tier_selection,omitempty"`  // Allow todo task orchestrator to choose tier for sub-agents
 	OrchestratorLLM             *AgentLLMConfig    `json:"orchestrator_llm,omitempty"`               // Direct LLM override for orchestrator (works in both tiered and manual modes)
-	SubAgentLLM                 *AgentLLMConfig    `json:"sub_agent_llm,omitempty"`                  // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
+	SubAgentLLM                  *AgentLLMConfig    `json:"sub_agent_llm,omitempty"`                  // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
+	DisableParallelToolExecution *bool              `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 }
 
 // ============================================================================
@@ -5607,25 +5608,57 @@ func createUpdateOrchestrationStepExecutor(workspacePath string, logger loggerv2
 	}
 }
 
+// extractStringArray extracts a []string from args[key], handling cases where the LLM
+// sends either a proper JSON array or a stringified array (JSON or Python-style).
+func extractStringArray(args map[string]interface{}, key string) ([]string, error) {
+	raw, ok := args[key]
+	if !ok {
+		return nil, fmt.Errorf("missing required argument: %s", key)
+	}
+
+	// Case 1: already a []interface{} (normal JSON array)
+	if arr, ok := raw.([]interface{}); ok {
+		result := make([]string, 0, len(arr))
+		for _, v := range arr {
+			s, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("invalid %s: array elements must be strings", key)
+			}
+			result = append(result, s)
+		}
+		return result, nil
+	}
+
+	// Case 2: string — try to parse as JSON array, then fall back to Python-style
+	if s, ok := raw.(string); ok {
+		s = strings.TrimSpace(s)
+		// Try JSON parse first: ["a", "b"]
+		var parsed []string
+		if err := json.Unmarshal([]byte(s), &parsed); err == nil {
+			return parsed, nil
+		}
+		// Python-style: ['a', 'b'] — replace single quotes with double quotes and retry
+		if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+			fixed := strings.ReplaceAll(s, "'", "\"")
+			if err := json.Unmarshal([]byte(fixed), &parsed); err == nil {
+				return parsed, nil
+			}
+		}
+		return nil, fmt.Errorf("invalid %s: could not parse string as array: %s", key, s)
+	}
+
+	return nil, fmt.Errorf("invalid %s: expected array or string, got %T", key, raw)
+}
+
 // createDeletePlanStepsExecutor creates an executor function for delete_plan_steps tool
 // unlockLearningsFunc is optional - if provided, it will be called after plan deletions to unlock learnings
 // Note: For deleted steps, we unlock based on the old plan's step indices before deletion
 func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		// Extract deleted_step_ids from args
-		deletedIDsRaw, ok := args["deleted_step_ids"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("invalid deleted_step_ids argument"), nil)
-		}
-
-		// Convert to string array
-		deletedIDs := make([]string, 0, len(deletedIDsRaw))
-		for _, id := range deletedIDsRaw {
-			if idStr, ok := id.(string); ok {
-				deletedIDs = append(deletedIDs, idStr)
-			} else {
-				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
-			}
+		deletedIDs, err := extractStringArray(args, "deleted_step_ids")
+		if err != nil {
+			return "", err
 		}
 
 		// Read current plan
@@ -7180,19 +7213,9 @@ func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logge
 			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
 		}
 
-		deletedIDsRaw, ok := args["deleted_step_ids"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("invalid deleted_step_ids argument"), nil)
-		}
-
-		// Convert to string array
-		deletedIDs := make([]string, 0, len(deletedIDsRaw))
-		for _, id := range deletedIDsRaw {
-			if idStr, ok := id.(string); ok {
-				deletedIDs = append(deletedIDs, idStr)
-			} else {
-				return "", fmt.Errorf("invalid step ID in deleted_step_ids: %v", id)
-			}
+		deletedIDs, err := extractStringArray(args, "deleted_step_ids")
+		if err != nil {
+			return "", err
 		}
 
 		// Read current plan

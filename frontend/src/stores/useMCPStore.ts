@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware'
 import { devtools } from 'zustand/middleware'
 import type { ToolDefinition, StoreActions } from './types'
 import { agentApi } from '../services/api'
+import { mcpConfigApi } from '../services/mcpConfigApi'
+import type { ServerLogEntry } from '../services/mcpConfigApi'
 
 interface MCPState extends StoreActions {
   // Server and tool data
@@ -31,10 +33,13 @@ interface MCPState extends StoreActions {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   showApiTester: { serverName: string; toolName: string; toolDetail?: any } | null
   
+  // Server logs
+  serverLogs: Record<string, ServerLogEntry[]>
+
   // Loading states
   isLoadingTools: boolean
   toolsError: string | null
-  
+
   // Actions
   setEnabledServers: (servers: string[]) => void
   setSelectedServers: (servers: string[]) => void
@@ -61,6 +66,9 @@ interface MCPState extends StoreActions {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setShowApiTester: (value: { serverName: string; toolName: string; toolDetail?: any } | null) => void
   
+  // Log actions
+  fetchServerLogs: (serverName?: string) => Promise<void>
+
   // Helper methods
   getAvailableServers: () => string[]
   getServerGroups: () => Record<string, ToolDefinition[]>
@@ -89,6 +97,7 @@ export const useMCPStore = create<MCPState>()(
         showRegistryModal: false,
         showConfigEditor: false,
         showApiTester: null,
+        serverLogs: {},
         isLoadingTools: true,
         toolsError: null,
 
@@ -266,6 +275,18 @@ export const useMCPStore = create<MCPState>()(
           set({ showApiTester: value })
         },
 
+        // Log actions
+        fetchServerLogs: async (serverName?: string) => {
+          try {
+            const response = await mcpConfigApi.getServerLogs(serverName)
+            set((state) => ({
+              serverLogs: { ...state.serverLogs, ...response.logs }
+            }))
+          } catch (error) {
+            console.error('Failed to fetch server logs:', error)
+          }
+        },
+
         // Helper methods
         getAvailableServers: () => {
           const state = get()
@@ -311,6 +332,7 @@ export const useMCPStore = create<MCPState>()(
             showMCPDetails: false,
             showRegistryModal: false,
             showConfigEditor: false,
+            serverLogs: {},
             isLoadingTools: true,
             toolsError: null
           })

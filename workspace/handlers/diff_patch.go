@@ -153,14 +153,6 @@ func DiffPatchDocument(c *gin.Context) {
 		go fileProcessor.QueueJob(filePathParam, newContent, "update")
 	}
 
-	// Handle git operations if commit message provided
-	if req.CommitMessage != "" {
-		if err := utils.SyncWithGitHub(docsDir, "main", req.CommitMessage); err != nil {
-			// Log error but don't fail the request
-			fmt.Printf("Warning: Git operation failed: %v\n", err)
-		}
-	}
-
 	// Return simple success response
 	c.JSON(http.StatusOK, models.APIResponse[models.DiffPatchResponse]{
 		Success: true,

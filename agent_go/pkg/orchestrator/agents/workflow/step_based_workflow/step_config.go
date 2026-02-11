@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -160,6 +161,114 @@ func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context,
 	return nil
 }
 
+// ParseStepOverrideContent parses step_override.json content directly into AgentConfigs
+func ParseStepOverrideContent(content string) (*AgentConfigs, error) {
+	var overrides AgentConfigs
+	if err := json.Unmarshal([]byte(content), &overrides); err != nil {
+		return nil, fmt.Errorf("failed to parse step_override.json: %w", err)
+	}
+	return &overrides, nil
+}
+
+// ReadStepOverrides reads step_override.json from the workspace
+// Public method that accepts BaseOrchestrator, workspacePath, and runWorkspacePath as parameters
+// Returns nil, nil if the file doesn't exist (no overrides configured)
+func ReadStepOverrides(ctx context.Context, bo *orchestrator.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir string) (*AgentConfigs, error) {
+	if configSubdir == "" {
+		configSubdir = "planning"
+	}
+
+	// First, try to read from run folder (run-specific overrides)
+	var runOverrideRelativePath string
+	if runWorkspacePath != workspacePath && runWorkspacePath != "" {
+		relativePart := runWorkspacePath
+		if len(workspacePath) > 0 && len(runWorkspacePath) > len(workspacePath) {
+			relativePart = runWorkspacePath[len(workspacePath):]
+			relativePart = filepath.Clean(relativePart)
+			relativePart = filepath.ToSlash(relativePart)
+			if len(relativePart) > 0 && relativePart[0] == '/' {
+				relativePart = relativePart[1:]
+			}
+		}
+		runOverrideRelativePath = filepath.Join(relativePart, configSubdir, "step_override.json")
+	} else {
+		runOverrideRelativePath = filepath.Join(configSubdir, "step_override.json")
+	}
+
+	content, err := bo.ReadWorkspaceFile(ctx, runOverrideRelativePath)
+	if err == nil {
+		overrides, err := ParseStepOverrideContent(content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse run folder step_override.json: %w", err)
+		}
+		bo.GetLogger().Info(fmt.Sprintf("📁 Using run-specific step_override.json from: %s", runOverrideRelativePath))
+		return overrides, nil
+	}
+
+	// Fallback to workspace default overrides
+	overridePath := filepath.Join(configSubdir, "step_override.json")
+	content, err = bo.ReadWorkspaceFile(ctx, overridePath)
+	if err != nil {
+		// File doesn't exist - return nil (no overrides)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		// Check for "not found" in error message (workspace API may not use os errors)
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "no such file") || strings.Contains(errMsg, "404") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to read step_override.json: %w", err)
+	}
+
+	overrides, err := ParseStepOverrideContent(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse step_override.json: %w", err)
+	}
+
+	bo.GetLogger().Info(fmt.Sprintf("📁 Using default step_override.json from: %s", overridePath))
+	return overrides, nil
+}
+
+// ReadStepOverrides reads step_override.json using the orchestrator's workspace paths
+func (hcpo *StepBasedWorkflowOrchestrator) ReadStepOverrides(ctx context.Context) (*AgentConfigs, error) {
+	workspacePath := hcpo.GetWorkspacePath()
+	var runWorkspacePath string
+
+	configSubdir := "planning"
+	if hcpo.isEvaluationMode {
+		configSubdir = "evaluation"
+	}
+
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = filepath.Join(workspacePath, "runs", hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = workspacePath
+	}
+	return ReadStepOverrides(ctx, hcpo.BaseOrchestrator, workspacePath, runWorkspacePath, configSubdir)
+}
+
+// WriteStepOverrides writes step_override.json to the workspace
+func (hcpo *StepBasedWorkflowOrchestrator) WriteStepOverrides(ctx context.Context, overrides *AgentConfigs) error {
+	configSubdir := "planning"
+	if hcpo.isEvaluationMode {
+		configSubdir = "evaluation"
+	}
+
+	overridePath := filepath.Join(configSubdir, "step_override.json")
+
+	jsonData, err := json.MarshalIndent(overrides, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal step_override.json: %w", err)
+	}
+
+	if err := hcpo.WriteWorkspaceFile(ctx, overridePath, string(jsonData)); err != nil {
+		return fmt.Errorf("failed to write step_override.json: %w", err)
+	}
+
+	return nil
+}
+
 // MatchStepConfigs matches new plan steps with existing configs by ID only
 // Returns a map of step index -> matched AgentConfigs
 // Returns an error if any step is missing a required ID field
@@ -279,6 +388,10 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 		target.DisableTempLLM = source.DisableTempLLM
 		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_temp_llm: %v", stepID, *source.DisableTempLLM))
 	}
+	if source.DisableParallelToolExecution != nil {
+		target.DisableParallelToolExecution = source.DisableParallelToolExecution
+		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_parallel_tool_execution: %v", stepID, *source.DisableParallelToolExecution))
+	}
 }
 
 // ApplyStepConfigFromFile loads step_config.json and applies matched config to the step.
@@ -330,6 +443,36 @@ func ApplyStepConfigFromFile(
 	} else {
 		// Merge matched config into existing config
 		MergeAgentConfigFields(agentConfigs, matchedConfig, step.GetID(), orchestrator.GetLogger())
+	}
+
+	// Apply global overrides from step_override.json (highest priority)
+	overrides, err := orchestrator.ReadStepOverrides(ctx)
+	if err != nil {
+		orchestrator.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_override.json in ApplyStepConfigFromFile: %v", err))
+	} else if overrides != nil {
+		currentConfigs := getAgentConfigs(step)
+		if currentConfigs == nil {
+			// Set overrides as the config
+			switch s := step.(type) {
+			case *RegularPlanStep:
+				s.AgentConfigs = overrides
+			case *ConditionalPlanStep:
+				s.AgentConfigs = overrides
+			case *DecisionPlanStep:
+				s.AgentConfigs = overrides
+			case *OrchestrationPlanStep:
+				s.AgentConfigs = overrides
+			case *TodoTaskPlanStep:
+				s.AgentConfigs = overrides
+			case *HumanInputPlanStep:
+				s.AgentConfigs = overrides
+			case *EvaluationStep:
+				s.AgentConfigs = overrides
+			}
+		} else {
+			MergeAgentConfigFields(currentConfigs, overrides, step.GetID(), orchestrator.GetLogger())
+		}
+		orchestrator.GetLogger().Info(fmt.Sprintf("🔧 Applied global overrides for step %s (ID: %s)", step.GetTitle(), step.GetID()))
 	}
 
 	return nil

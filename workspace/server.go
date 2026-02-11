@@ -64,7 +64,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Create default shared workspace subdirectories (these remain at root level)
-	sharedFolders := []string{"Workflow", "skills", "Workspace"}
+	sharedFolders := []string{"Workflow", "skills"}
 	for _, folder := range sharedFolders {
 		path := filepath.Join(docsDir, folder)
 		if err := os.MkdirAll(path, 0755); err != nil {
@@ -79,6 +79,14 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Printf("Warning: Failed to create default user directories: %v\n", err)
 	} else {
 		fmt.Printf("Created default user directories under /_users/%s/\n", utils.DefaultUserID)
+	}
+
+	// Create root-level symlinks for per-user folders so shell commands can access
+	// Chats/, Plans/, Downloads/ via their logical paths (physical files are under _users/{userID}/)
+	if err := utils.EnsurePerUserSymlinks(docsDir, utils.DefaultUserID); err != nil {
+		fmt.Printf("Warning: Failed to create per-user symlinks: %v\n", err)
+	} else {
+		fmt.Printf("Ensured per-user symlinks for default user\n")
 	}
 
 	// Sync with GitHub on startup if credentials are configured
@@ -284,20 +292,20 @@ func syncWithGitHubOnStartup(docsDir, githubToken, githubRepo string) error {
 	}
 
 	// Check if it's effectively empty (only standard folders created by Dockerfile)
-	// Dockerfile creates Downloads, Chats, Workspace, so we consider dir empty if only these exist
+	// Dockerfile creates Downloads, Chats, Plans, Workspace, so we consider dir empty if only these exist
 	if !isEmpty {
 		entries, _ := os.ReadDir(docsDir)
 		isEffectivelyEmpty := true
 		for _, entry := range entries {
 			name := entry.Name()
 			// Ignore these folders and .DS_Store
-			if name != "Downloads" && name != "Chats" && name != "Workspace" && name != "data" && name != ".DS_Store" {
+			if name != "Downloads" && name != "Chats" && name != "Plans" && name != "data" && name != ".DS_Store" {
 				isEffectivelyEmpty = false
 				break
 			}
 		}
 		if isEffectivelyEmpty {
-			fmt.Printf("ℹ️  Directory contains only standard folders (Downloads/Chats/Workspace) - treating as empty\n")
+			fmt.Printf("ℹ️  Directory contains only standard folders (Downloads/Chats/Plans) - treating as empty\n")
 			isEmpty = true
 		}
 	}

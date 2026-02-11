@@ -139,12 +139,16 @@ The workspace uses a hybrid folder model:
 ├── _users/                    # Per-user isolated folders
 │   ├── default/               # Fallback for single-user mode
 │   │   ├── Chats/             # User's chat history
-│   │   └── Downloads/         # User's downloads
+│   │   ├── Downloads/         # User's downloads
+│   │   └── Plans/             # User's delegation plans
 │   └── user-abc123/           # Multi-user: each user gets own folder
 │       ├── Chats/
-│       └── Downloads/
+│       ├── Downloads/
+│       └── Plans/
+├── Chats -> _users/default/Chats   # Symlink (for shell command access)
+├── Plans -> _users/default/Plans   # Symlink (for shell command access)
+├── Downloads -> _users/default/Downloads
 ├── skills/                    # Shared across all users
-├── Workspace/                 # Shared across all users
 └── Workflow/                  # Shared across all users
 ```
 
@@ -152,24 +156,30 @@ The workspace uses a hybrid folder model:
 
 | Folder | Type | Description |
 |--------|------|-------------|
-| `Chats/` | **Per-User** | Chat session outputs, user-specific |
+| `Chats/` | **Per-User** | Chat session outputs, skill files, user scripts |
 | `Downloads/` | **Per-User** | User downloads and imports |
+| `Plans/` | **Per-User** | Delegation plans (multi-agent mode) |
 | `skills/` | **Shared** | Installed skills/templates |
-| `Workspace/` | **Shared** | General workspace metadata |
 | `Workflow/` | **Shared** | Workflow definitions and runs |
 
 ### How It Works
 
 1. **User ID Resolution:**
    - Multi-user mode: User ID from JWT token claims
-   - Single-user mode: Default user ID from environment
+   - Single-user mode: Default user ID from environment (`"default"`)
 
-2. **Path Routing:**
-   - Requests to `Chats/*` or `Downloads/*` → `/_users/{userID}/Chats/*`
-   - Requests to `skills/*`, `Workspace/*`, `Workflow/*` → root level
+2. **Path Routing (Document/File API):**
+   - Requests to `Chats/*`, `Downloads/*`, or `Plans/*` → `/_users/{userID}/Chats/*` etc.
+   - Requests to `skills/*`, `Workflow/*` → root level (shared)
+   - Implemented in `workspace/utils/path.go` via `ResolveUserPath()`
 
-3. **Automatic Migration:**
-   - On startup, existing `Chats/` and `Downloads/` at root level are migrated to `/_users/default/`
+3. **Symlinks for Shell Commands:**
+   - On startup, `EnsurePerUserSymlinks()` creates root-level symlinks: `Chats/ -> _users/{userID}/Chats/`
+   - Shell commands can use logical paths (e.g., `cat Chats/file.md`) and the symlink resolves to the physical per-user location
+   - Symlinks are per the default user in single-user mode; multi-user deployments use the Isolator's WritePathMappings instead
+
+4. **Automatic Migration:**
+   - On startup, existing `Chats/`, `Downloads/`, `Plans/` at root level are migrated to `/_users/default/`
    - One-time migration for backwards compatibility
 
 ### User ID Flow
@@ -186,6 +196,66 @@ The workspace uses a hybrid folder model:
                                                 │ (resolves path) │
                                                 └─────────────────┘
 ```
+
+### Shell Command Isolation (FolderGuard)
+
+Shell commands (`execute_shell_command`) run inside the workspace Docker container and are sandboxed using Linux mount namespaces via `unshare -m`. The FolderGuard system controls what the LLM can read and write.
+
+#### FolderGuard Modes
+
+| Mode | When Used | Mechanism |
+|------|-----------|-----------|
+| **Deny-list** (Mode 1) | Chat mode (default tools) | Hides `_users/` with tmpfs overlay; everything else visible |
+| **Allow-list** (Mode 2) | Multi-agent / workflow mode | Hides entire workspace with tmpfs, then selectively bind-mounts ReadPaths (read-only) and WritePaths (read-write) |
+
+#### Mode 1: Deny-List (Chat Mode)
+
+The default FolderGuard (`getDefaultFolderGuard()`) blocks only `_users/` to prevent direct access to the internal per-user directory structure. The LLM accesses per-user folders via their logical symlinked paths (e.g., `Chats/`).
+
+```
+BlockedPaths: ["_users"]     # Hidden with tmpfs
+ReadPaths:    []             # Not used (everything else is visible)
+WritePaths:   []             # Not used
+```
+
+The agent backend additionally restricts which folders the LLM can **write** to via `wrapExecutorsWithChatModeFolderGuard()` — writes are only allowed to `Chats/` (and `skills/custom/` if the skill creator is active). This is enforced at the agent level before the shell command reaches the workspace API.
+
+#### Mode 2: Allow-List (Multi-Agent / Plan Mode)
+
+When delegation mode is active, `wrapExecutorsWithPlanFolderGuard()` injects a FolderGuard config with explicit read/write paths:
+
+```
+ReadPaths:  ["."]            # Entire workspace mounted read-only
+WritePaths: ["Plans/", "Chats/"]   # Only these folders writable
+```
+
+The Isolator creates a mount namespace:
+1. Bind-mounts the original workspace to a temp location
+2. Covers `/app/workspace-docs` with tmpfs (hides everything)
+3. Bind-mounts ReadPaths back (read-only) from the temp copy
+4. Bind-mounts WritePaths back (read-write) from the temp copy
+
+#### Per-User Write Path Mappings
+
+For per-user folders (Chats/, Plans/), the shell handler creates `WritePathMappings` that map logical paths to physical per-user paths:
+
+```
+WritePaths:        ["Plans/", "Chats/"]
+WritePathMappings: {
+  "Plans/": "_users/default/Plans/",
+  "Chats/": "_users/default/Chats/"
+}
+```
+
+The Isolator uses these mappings to source files from `_users/{userID}/Chats/` while mounting them at the logical `Chats/` path. This way, shell commands use logical paths transparently, and each user's data stays isolated.
+
+#### Protected Folder Enforcement
+
+The agent backend enforces additional restrictions before shell commands reach the workspace API:
+
+- `_users/` folder references in shell commands are **blocked** (prevents bypassing isolation)
+- `Workflow/` folder references are **blocked** in chat mode (workflows have their own mode)
+- Write operations to folders outside the allowed list are **rejected** with an error message
 
 ---
 
@@ -371,9 +441,12 @@ This header is automatically set by the agent API based on the authenticated use
 
 | File | Description |
 |------|-------------|
-| `workspace/utils/path.go` | Per-user path resolution |
+| `workspace/utils/path.go` | Per-user path resolution, symlink setup, migration |
 | `workspace/handlers/documents.go` | Document handlers with user routing |
-| `workspace/server.go` | Startup migration |
+| `workspace/handlers/shell.go` | Shell command handler with FolderGuard/Isolator integration |
+| `workspace/security/isolator.go` | Mount namespace isolation (unshare) with read/write path control |
+| `workspace/models/shell.go` | FolderGuardConfig struct definition |
+| `workspace/server.go` | Startup migration, symlink creation |
 
 #### Frontend
 
@@ -432,3 +505,89 @@ On first startup with this feature:
 4. Shared folders remain unchanged
 
 No manual intervention required - migration is automatic and one-time.
+
+---
+
+## Testing
+
+The multi-user isolation system has comprehensive test coverage across three test files.
+
+### Test Files
+
+| File | Tests | Scope |
+|------|-------|-------|
+| `workspace/utils/path_test.go` | 38 | Path routing, user isolation, symlinks, migration |
+| `workspace/handlers/documents_test.go` | 8 | Document listing API, cross-user isolation |
+| `workspace/security/isolator_test.go` | 6 (multi-user) | FolderGuard mount scripts, sandbox profiles |
+
+### Path Utilities (`workspace/utils/path_test.go`)
+
+Tests for the core path routing logic that enforces per-user isolation.
+
+**User ID Validation:**
+- `TestIsValidUserID` — Validates allowed characters (alphanumeric, hyphens, underscores), rejects special chars, path traversal attempts (`../etc`), and enforces max length (128 chars)
+- `TestSanitizeUserID` — Empty/invalid user IDs fall back to `"default"`
+
+**Path Routing:**
+- `TestIsPerUserPath` — Correctly classifies `Chats/`, `Downloads/`, `Plans/` as per-user and `skills/`, `Workflow/` as shared
+- `TestResolveUserPath` — Per-user paths routed to `_users/{userID}/`, shared paths pass through unchanged, `_users/` direct access blocked, invalid/empty user IDs fall back to default, full internal paths sanitized
+- `TestConvertToUserRelativePath` — Strips `_users/{userID}/` prefix for API responses
+- `TestSanitizeInputPath` — Handles relative paths, full-path stripping, `..` cleaning
+
+**Cross-User Security:**
+- `TestCrossUserIsolation` — User1 cannot access User2's files; `_users/user2/Chats` path is blocked for User1; shared folders resolve identically for all users
+
+**Symlink Management:**
+- `TestEnsurePerUserSymlinks` — Creates symlinks (`Chats -> _users/default/Chats`), idempotent on re-run, fixes wrong symlink targets, replaces empty directories with symlinks, skips non-empty directories to prevent data loss
+
+**Migration:**
+- `TestMigratePerUserFolders` — Migrates root-level `Chats/` to `_users/default/Chats/`, skips already-migrated (symlinked) folders, skips empty folders, merges content in partial migration scenarios (root + user dirs both have files)
+
+### Document Handler (`workspace/handlers/documents_test.go`)
+
+HTTP-level tests using `httptest` and a real Gin router to verify the document listing API.
+
+**Root Listing Security:**
+- `TestRootListingFiltersUsersDirectory` — `_users/` directory never appears in root listing; per-user folders (`Chats/`, `Plans/`, `Downloads/`) are injected from the user's isolated directory
+- `TestRootListingWithDotFolder` — `folder=.` parameter treated as root listing (same `_users/` filtering applies)
+
+**Per-User Isolation:**
+- `TestPerUserFolderIsolation` — Default user sees `session1.json` in their `Chats/` but not User2's `user2-secret.json`; User2 sees their own files but not the default user's
+- `TestNoUserIDFallsToDefault` — Missing `X-User-ID` header falls back to `"default"` user
+
+**Cross-User Access Prevention:**
+- `TestDirectUsersAccessBlocked` — `folder=_users` request returns error
+- `TestCrossUserAccessViaUsersPath` — `folder=_users/default/Chats` blocked for other users (prevents path-based cross-user data access)
+
+**Shared Folders:**
+- `TestSharedFoldersSameForAllUsers` — `skills/` returns identical content regardless of `X-User-ID`
+
+### FolderGuard / Isolator (`workspace/security/isolator_test.go`)
+
+Tests for the Linux mount namespace and macOS sandbox-exec isolation scripts.
+
+**Deny-List Mode (Mode 1) Symlink Fixup:**
+- `TestDenyListSymlinkFixup` — When `_users/` is hidden with tmpfs, symlinks like `Chats -> _users/default/Chats` would break. Verifies that the Linux mount script preserves the workspace via bind-mount and re-mounts symlink targets after tmpfs. Verifies the macOS sandbox profile adds explicit allow rules for symlink targets within the denied path.
+- `TestDenyListNoSymlinks` — When no symlinks point into blocked paths, no unnecessary workspace preservation occurs (simpler script)
+- `TestDenyListWithMultiUser` — With multiple users (`default`, `alice`, `bob`), only the current user's symlink targets are exposed in the mount script. Alice and bob's directories remain hidden.
+
+**Environment Isolation:**
+- `TestEnvironmentIsolation` — Secrets (`DATABASE_URL`, `API_KEY`) set in the parent process are NOT leaked to subprocess environment; safe PATH is present
+
+### Running Tests
+
+```bash
+# All multi-user isolation tests
+go test ./utils/ ./handlers/ ./security/ -v
+
+# Path routing tests only
+go test ./utils/ -v
+
+# Document API tests only
+go test ./handlers/ -run "TestRootListing|TestPerUser|TestShared|TestDirectUsers|TestCrossUser|TestNoUser" -v
+
+# FolderGuard/Isolator tests only
+go test ./security/ -run "TestDenyList" -v
+```
+
+All commands should be run from the `workspace/` directory.

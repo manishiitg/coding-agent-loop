@@ -21,6 +21,15 @@ import { ChatHeader } from './ChatHeader'
 import type { ChatTab, ChatTabConfig } from '../stores/useChatStore'
 import { WORKSPACE_TOOLS } from '../utils/customToolNames'
 import { truncateTabTitle } from '../utils/textUtils'
+import { logger } from '../utils/logger'
+import {
+  determineModeFlag,
+  buildLLMConfigWithApiKeys,
+  buildQueryRequestPayload,
+  resolveOrCreateTab,
+  createUserMessageEvent,
+  validateExecutionGroups,
+} from '../utils/chatSubmitHelpers'
 
 interface ChatAreaProps {
   // New chat handler
@@ -77,12 +86,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     selectedModeCategory: state.selectedModeCategory,
     getAgentModeFromCategory: state.getAgentModeFromCategory
   })))
-  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers, currentPresetTools } = useGlobalPresetStore(useShallow(state => ({
+  const { getActivePreset, applyPreset, clearActivePreset, currentPresetServers } = useGlobalPresetStore(useShallow(state => ({
     getActivePreset: state.getActivePreset,
     applyPreset: state.applyPreset,
     clearActivePreset: state.clearActivePreset,
-    currentPresetServers: state.currentPresetServers,
-    currentPresetTools: state.currentPresetTools
+    currentPresetServers: state.currentPresetServers
   })))
   
   // Derive correct agent mode from selectedModeCategory (source of truth)
@@ -93,34 +101,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     return agentMode // Fallback to agentMode if selectedModeCategory is null
   }, [selectedModeCategory, agentMode, getAgentModeFromCategory])
   
-  const {
-    primaryConfig: llmConfig,
-    openrouterConfig,
-    openaiConfig,
-    anthropicConfig,
-    vertexConfig,
-    bedrockConfig,
-    azureConfig
-  } = useLLMStore(useShallow(state => ({
-    primaryConfig: state.primaryConfig,
-    openrouterConfig: state.openrouterConfig,
-    openaiConfig: state.openaiConfig,
-    anthropicConfig: state.anthropicConfig,
-    vertexConfig: state.vertexConfig,
-    bedrockConfig: state.bedrockConfig,
-    azureConfig: state.azureConfig
-  })))
+  // LLM provider configs are read via useLLMStore.getState() in helpers
   
   const {
     toolList: allTools,
     selectedServers,
     enabledServers,
-    getAvailableServers
   } = useMCPStore(useShallow(state => ({
     toolList: state.toolList,
     selectedServers: state.selectedServers,
     enabledServers: state.enabledServers,
-    getAvailableServers: state.getAvailableServers
   })))
   
   // Get active tab reactively (works for both chat and workflow modes)
@@ -143,15 +133,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
     // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
-    const tabSelectedServers = (selectedModeCategory === 'chat' && activeTab?.config) 
+    const isChatLike = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
+    const tabSelectedServers = (isChatLike && activeTab?.config)
       ? activeTab.config.selectedServers 
       : selectedServers
     
-    // If no servers are selected (empty array), default to all available servers (matches backend behavior)
-    // This ensures tools are available when user hasn't explicitly selected servers
+    // If no servers are selected (empty array), default to no servers (pure LLM mode)
+    // User must explicitly select servers to enable tools
     if (tabSelectedServers.length === 0) {
-      const availableServers = getAvailableServers()
-      return availableServers.length > 0 ? availableServers : []
+      return ["NO_SERVERS"]
     }
     // Filter out servers that aren't currently enabled (connected).
     // Stale servers from localStorage could block queries if sent to backend.
@@ -165,7 +155,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     currentPresetServers,
     selectedServers,
     enabledServers,
-    getAvailableServers,
     activeTab?.config  // ✅ Now reactive - will update when tab config changes
   ])
   
@@ -178,7 +167,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     // Get workspace access setting from tab config (default: true)
-    const enableWorkspaceAccess = (selectedModeCategory === 'chat' && activeTab?.config) 
+    const enableWorkspaceAccess = ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && activeTab?.config)
       ? (activeTab.config.enableWorkspaceAccess ?? true)
       : true // Default to enabled for workflow mode or if no tab config
     
@@ -220,14 +209,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setTabEvents,
     getTabLastEventIndex,
     setTabLastEventIndex,
-    setSessionId,
     setHasActiveChat,
     autoScroll,
     setAutoScroll,
     lastScrollTop,
     setLastScrollTop,
     finalResponse,
-    setFinalResponse: _setFinalResponse,
     setIsCompleted,
     isLoadingHistory,
     setIsLoadingHistory,
@@ -258,14 +245,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setTabEvents: state.setTabEvents,
     getTabLastEventIndex: state.getTabLastEventIndex,
     setTabLastEventIndex: state.setTabLastEventIndex,
-    setSessionId: state.setSessionId,
     setHasActiveChat: state.setHasActiveChat,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
     lastScrollTop: state.lastScrollTop,
     setLastScrollTop: state.setLastScrollTop,
     finalResponse: state.finalResponse,
-    setFinalResponse: state.setFinalResponse,
     setIsCompleted: state.setIsCompleted,
     isLoadingHistory: state.isLoadingHistory,
     setIsLoadingHistory: state.setIsLoadingHistory,
@@ -328,7 +313,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         
         const duplicateSessionIds = sessionIdToTabs.filter(item => item.tabsUsingThisId.length > 1)
         if (duplicateSessionIds.length > 0) {
-          console.warn(`[ChatArea] WARNING: Multiple tabs sharing session IDs:`, duplicateSessionIds)
+          logger.warn('ChatArea', 'Multiple tabs sharing session IDs:', duplicateSessionIds)
         }
         
         // Check if the current sessionId matches any in the store (only warn on issues)
@@ -339,9 +324,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }))
         const matchingSession = sessionDetails.find(item => item.sessionId === currentSessionId)
         if (!matchingSession) {
-          console.warn(`[ChatArea] ⚠️ SessionId ${currentSessionId} NOT FOUND in store! Available sessionIds:`, sessionDetails.map(item => item.sessionId))
+          logger.warn('ChatArea', `SessionId ${currentSessionId} not found in store`, sessionDetails.map(item => item.sessionId))
         } else if (matchingSession.eventCount !== eventsForTab.length) {
-          console.warn(`[ChatArea] ⚠️ Event count mismatch! Store says ${matchingSession.eventCount} events, but found ${eventsForTab.length} events`)
+          logger.warn('ChatArea', `Event count mismatch: store=${matchingSession.eventCount}, found=${eventsForTab.length}`)
         }
       }
       return eventsForTab
@@ -463,7 +448,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setTimeout(() => {
         const result = applyPreset(presetId, pendingModeCategory)
         if (!result.success) {
-          console.error('[MODE_SWITCH] Failed to apply preset:', result.error)
+          logger.error('ChatArea', 'Failed to apply preset:', result.error)
         }
       }, 100)
       
@@ -745,7 +730,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         setCurrentQuery(presetContent)
       }
     } catch (error) {
-      console.error('[WORKFLOW] Error checking workflow status:', error)
+      logger.error('ChatArea', 'Error checking workflow status:', error)
       // Fallback to default phase on error
       const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       setCurrentWorkflowPhase(defaultPhase)
@@ -779,7 +764,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // Use the stored preset query ID instead of the request ID
     const presetQueryId = currentWorkflowQueryId
     if (!presetQueryId) {
-      console.error('[WORKFLOW] No preset query ID available for workflow approval')
+      logger.error('ChatArea', 'No preset query ID available for workflow approval')
       setIsApprovingWorkflow(false)
       return
     }
@@ -818,7 +803,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       setCurrentWorkflowPhase(nextPhase as WorkflowPhase)
       
     } catch (error) {
-      console.error('[WORKFLOW] Failed to approve workflow:', error)
+      logger.error('ChatArea', 'Failed to approve workflow:', error)
       // TODO: Show error message to user
     } finally {
       setIsApprovingWorkflow(false)  // Clear loading state
@@ -843,7 +828,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Tabs should always exist - this should never be called
     // Log error and discard to prevent mixing
-    console.error(`[flushEventBatch] ERROR: This should not be called in tab mode. Discarding ${batch.length} events. Events should be stored via addTabEvents in polling.`)
+    logger.error('ChatArea', `flushEventBatch should not be called in tab mode. Discarding ${batch.length} events.`)
   }, [])
   
   // Create debounced flush function (100ms delay)
@@ -876,9 +861,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const pollEvents = useCallback(async () => {
     const chatStore = useChatStore.getState()
 
+    // Read mode from store directly to avoid stale closure from setInterval capture
+    const currentModeCategory = useModeStore.getState().selectedModeCategory
+
     // Get all tabs that should be polled (all tabs in current mode)
     const allTabs = Object.values(chatStore.chatTabs).filter(tab => {
-      return tab.metadata?.mode === selectedModeCategory
+      // If mode category is null (not yet selected), poll all non-workflow tabs
+      if (!currentModeCategory) {
+        return tab.metadata?.mode !== 'workflow'
+      }
+      return tab.metadata?.mode === currentModeCategory
     })
     
     // CRITICAL: Only poll tabs that are:
@@ -999,7 +991,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         if (storedEvents && storedEvents.length > 0) {
           const actualLastIndex = storedEvents.length - 1
           rawLastEventIndex = actualLastIndex
-          console.log(`[ChatArea] Recovered lastEventIndex ${actualLastIndex} from stored events for session ${effectiveSessionId}`)
+          logger.debug('ChatArea', `Recovered lastEventIndex ${actualLastIndex} for session ${effectiveSessionId}`)
           
           if (currentTab) {
             setTabLastEventIndex(effectiveSessionId, actualLastIndex)
@@ -1038,16 +1030,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // Handle different session statuses - update UI state (isStreaming) for user feedback
           if (sessionStatus === 'completed' || sessionStatus === 'error') {
             // Session is done - update UI state
-            const workflowStore = useWorkflowStore.getState()
-            console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Execution completed/error - checking selectedGroupIds:', {
-              sessionStatus,
-              tabId: currentTab.tabId,
-              phaseId: currentTab.metadata?.phaseId,
-              selectedGroupIds: workflowStore.selectedGroupIds,
-              selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
-              hasVariablesManifest: !!workflowStore.variablesManifest,
-              groupsCount: workflowStore.variablesManifest?.groups?.length || 0
-            })
             chatStore.setTabCompleted(currentTab.tabId, true)
             chatStore.setTabStreaming(currentTab.tabId, false) // UI: Hide stop button, show send button
           } else if (sessionStatus === 'running') {
@@ -1062,14 +1044,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         } else {
           // No tab - update global UI state
           if (sessionStatus === 'completed' || sessionStatus === 'error') {
-            const workflowStore = useWorkflowStore.getState()
-            console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Execution completed/error (no tab) - checking selectedGroupIds:', {
-              sessionStatus,
-              selectedGroupIds: workflowStore.selectedGroupIds,
-              selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
-              hasVariablesManifest: !!workflowStore.variablesManifest,
-              groupsCount: workflowStore.variablesManifest?.groups?.length || 0
-            })
             setIsStreaming(false) // UI: Hide stop button
             setIsCompleted(true)
             setHasActiveChat(false)
@@ -1088,7 +1062,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // This ensures correct tracking even when filtering reduces the number of events returned
           // Require last_processed_index from backend (new system - no fallback)
           if (response.last_processed_index === undefined) {
-            console.warn(`[ChatArea] ⚠️ Backend didn't provide last_processed_index, skipping event processing for sessionId: ${effectiveSessionId}`)
+            logger.warn('ChatArea', `Backend didn't provide last_processed_index for session ${effectiveSessionId}`)
             return // Skip processing if backend doesn't provide required field
           }
           
@@ -1127,37 +1101,57 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           for (const event of eventsBeforeFilter) {
             // Extract component from event (used to identify sub-agent events)
             // Sub-agent events have component like "delegation-0", "delegation-1", etc.
+            // Check multiple locations: event top-level, event.data (AgentEvent), event.data.data (inner)
             const agentEvent = event.data as Record<string, unknown> | undefined
             const innerData = agentEvent?.data as Record<string, unknown> | undefined
-            const rawComponent = innerData?.component ?? agentEvent?.component
-            // Also check hierarchy_level as a robust fallback for sub-agent detection
-            // Sub-agents always have hierarchy_level > 0 (set by DelegationEventObserver)
-            const rawHierarchyLevel = innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
-            
-            const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-')) || 
-                                    (typeof rawHierarchyLevel === 'number' && rawHierarchyLevel > 0)
+            const rawComponent = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
+            const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
+            const rawHierarchyLevel = (event as unknown as Record<string, unknown>).hierarchy_level ?? innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
+            const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
+              || (typeof rawCorrelationId === 'string' && rawCorrelationId.startsWith('delegation-'))
+              || (typeof rawHierarchyLevel === 'number' && (rawHierarchyLevel as number) > 0 && typeof rawComponent === 'string' && rawComponent !== '')
 
             // Intercept streaming events - accumulate text in store, don't add to event list
-            // IMPORTANT: Only process streaming from parent agent, skip sub-agent streaming
-            // This prevents sub-agents from overwriting the main agent's streaming text
+            // Parent agent streaming → streamingText[sessionId]
+            // Sub-agent streaming → delegationStreamingText[delegationId]
             if (event.type === 'streaming_start') {
-              if (!isSubAgentEvent) {
+              if (isSubAgentEvent) {
+                const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+                if (correlationId && typeof correlationId === 'string') {
+                  chatStore.clearDelegationStreamingText(correlationId)
+                }
+              } else {
                 chatStore.clearStreamingText(actualSessionId)
               }
               continue
             }
             if (event.type === 'streaming_chunk') {
-              // Skip sub-agent streaming chunks - only show parent agent streaming
               if (isSubAgentEvent) {
+                // Route sub-agent streaming to delegation-specific slot
+                const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+                if (correlationId && typeof correlationId === 'string') {
+                  const rawContent = innerData?.content ?? agentEvent?.content
+                  const content = typeof rawContent === 'string' ? rawContent : ''
+                  const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
+                  const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+                  if (content) {
+                    if (chunkIndex === 0) chatStore.clearDelegationStreamingText(correlationId)
+                    chatStore.appendDelegationStreamingChunk(correlationId, chunkIndex, content)
+                  }
+                }
                 continue
               }
-              // Extract content and chunk_index from streaming chunk event
-              // Structure: event.data (AgentEvent) → event.data.data (StreamingChunkEvent) → content/chunk_index
+              // Parent agent streaming chunk
               const rawContent = innerData?.content ?? agentEvent?.content
               const content = typeof rawContent === 'string' ? rawContent : ''
 
               const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
               const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+
+              // Debug: Log if this chunk might actually be from a sub-agent (has hierarchy metadata)
+              if (rawHierarchyLevel && rawHierarchyLevel > 0) {
+                logger.warn('ChatArea', `streaming_chunk routed to parent but has hierarchy_level=${rawHierarchyLevel}, component=${rawComponent}, correlation_id=${rawCorrelationId}`)
+              }
 
               if (content) {
                 if (chunkIndex === 0) {
@@ -1178,6 +1172,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Only track parent agent completion events for clearing streaming text
             if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end')) {
               hasCompletionEvent = true
+            }
+
+            // Clear delegation streaming text when delegation ends
+            if (event.type === 'delegation_end') {
+              const correlationId = innerData?.correlation_id ?? innerData?.delegation_id ?? agentEvent?.correlation_id ?? agentEvent?.delegation_id
+              if (correlationId && typeof correlationId === 'string') {
+                chatStore.clearDelegationStreamingText(correlationId)
+              }
             }
 
             if (event.type === 'request_human_feedback' && currentTab) {
@@ -1225,7 +1227,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 const groupIndex = batchGroupStartData?.group_index as number | undefined
                 const totalGroups = batchGroupStartData?.total_groups as number | undefined
 
-                console.log('[ChatArea] batch_group_start event:', { groupId, runFolder, groupIndex, totalGroups })
+                logger.debug('ChatArea', 'batch_group_start', { groupId, groupIndex, totalGroups })
 
                 if (groupId && runFolder) {
                   workflowStore.handleBatchGroupStart(
@@ -1284,7 +1286,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 const runFolder = stepProgressData?.run_folder as string | undefined
 
                 if (groupId && totalGroups !== undefined && totalGroups > 0) {
-                  console.log('[ChatArea] Updating batch progress from step_progress_updated:', { groupId, groupIndex, totalGroups })
+                  logger.debug('ChatArea', 'batch progress update', { groupId, groupIndex, totalGroups })
                   workflowStore.handleBatchGroupStart(
                     groupId,
                     runFolder || '',
@@ -1328,7 +1330,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Continue polling other observers even if one fails
       }
     }
-  }, [selectedModeCategory, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedModeCategory read from store directly inside callback to avoid stale setInterval closure
+  }, [getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds])
 
 
   // Track if we're already processing to prevent infinite loops
@@ -1377,15 +1380,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const agentMode = s.agent_mode?.toLowerCase()
           const isWorkflow = agentMode === 'workflow'
 
-          // Filter by current mode
-          if (selectedModeCategory === 'chat') {
-            // In chat mode, skip workflow sessions
+          // Filter by current mode (chat and multi-agent both use simple agent mode)
+          if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
+            // In chat/multi-agent mode, skip workflow sessions
             if (isWorkflow) {
-              console.log(`[AutoRestore] Skipping ${agentMode} session in chat mode: ${s.session_id}`)
+              console.log(`[AutoRestore] Skipping ${agentMode} session in ${selectedModeCategory} mode: ${s.session_id}`)
               return false
             }
           } else {
-            // Should not happen as effect only runs for chat
+            // Workflow mode handles its own session restore
             return false
           }
           
@@ -1410,15 +1413,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           return
         }
         
+        // Determine tab mode — match current mode so tabs appear in correct tab bar
+        const tabMode = (selectedModeCategory === 'multi-agent' ? 'multi-agent' : 'chat') as 'chat' | 'multi-agent'
+
+        // Collect persisted tabs without sessionId (restored from localStorage with sessionId: null)
+        const orphanedTabs = Object.values(chatStore.chatTabs).filter(tab =>
+          tab.metadata?.mode === tabMode && !tab.sessionId
+        ).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        let orphanIndex = 0
+
         // For each active session, create a tab if one doesn't exist
         for (const activeSession of runningSessions) {
           const sessionId = activeSession.session_id
 
-          // Check if a tab already exists for this session
+          // Check if a tab already exists for this session (by sessionId match)
           const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
 
           if (existingTab) {
             console.log(`[AutoRestore] Tab already exists for active session ${sessionId}, skipping`)
+            // Still switch to first session's tab
+            if (runningSessions.indexOf(activeSession) === 0) {
+              switchTab(existingTab.tabId)
+            }
             continue
           }
 
@@ -1432,156 +1448,171 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           // Mark as being restored to prevent duplicate tab creation
           sessionsBeingRestored.add(sessionId)
 
-          // Create a tab for this active session (truncate to 3 words for display)
-          const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
+          // Try to re-use a persisted tab (from localStorage) instead of creating a new one
+          const orphanedTab = orphanedTabs[orphanIndex]
+          let targetTabId: string
 
-          // Determine default event mode based on agent mode
-          // orchestrator -> advanced (more complex, needs detailed view)
-          // simple -> tiny (minimal view for restored sessions)
-          // workflow -> tiny (minimal view for restored sessions)
-          const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-          const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
-            agentMode === 'orchestrator' ? 'advanced' : 'tiny'
+          if (orphanedTab) {
+            orphanIndex++
+            console.log(`[AutoRestore] Re-associating persisted tab ${orphanedTab.tabId} with session ${sessionId}`)
+            chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
+            targetTabId = orphanedTab.tabId
+          } else {
+            // Create a new tab for this active session
+            const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
+            const agentMode = activeSession.agent_mode?.toLowerCase() || ''
+            const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
+              agentMode === 'orchestrator' ? 'advanced' : 'tiny'
 
-          // Determine tab mode
-          const tabMode = 'chat' as const
-
-          try {
-            console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
-            const newTabId = await createChatTab(sessionTitle, { mode: tabMode }, sessionId, defaultEventMode)
-            const newTab = chatStore.getTab(newTabId)
-            
-            if (!newTab) {
-              console.error(`[AutoRestore] Tab ${newTabId} was created but not found in store`)
+            try {
+              console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
+              targetTabId = await createChatTab(sessionTitle, { mode: tabMode }, sessionId, defaultEventMode)
+            } catch (error) {
+              console.error(`[AutoRestore] Failed to create tab for active session ${sessionId}:`, error)
+              sessionsBeingRestored.delete(sessionId)
               continue
             }
-            
-            // Load session config and events
-            try {
-              // Get full chat session details including config
-              const chatSession = await agentApi.getChatSession(sessionId)
-              
-              // Restore config from stored session
-              if (chatSession.config) {
-                const config = chatSession.config
-                console.log(`[AutoRestore] Session config from API:`, JSON.stringify(config, null, 2))
-                const configUpdate: Partial<ChatTabConfig> = {}
-                
-                // Restore selected servers (prefer enabled_servers over selected_servers)
-                if (config.enabled_servers && config.enabled_servers.length > 0) {
-                  configUpdate.selectedServers = config.enabled_servers
-                } else if (config.selected_servers && config.selected_servers.length > 0) {
-                  configUpdate.selectedServers = config.selected_servers
-                }
-                
-                // Restore code execution mode
-                if (config.use_code_execution_mode !== undefined) {
-                  configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-                }
-                
-                // Restore context summarization
-                if (config.enable_context_summarization !== undefined) {
-                  configUpdate.enableContextSummarization = config.enable_context_summarization
-                }
-                
-                // Restore LLM config
-                if (config.llm_config) {
-                  let provider = config.llm_config.provider as string
-                  // Fix for invalid provider (e.g. "." or empty) - fallback to global default
-                  if (!provider || provider === '.' || provider.trim() === '') {
-                    console.warn(`[AutoRestore] Invalid provider "${provider}" found in session config, falling back to default`)
-                    provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                  }
+          }
 
-                  let modelId = config.llm_config.model_id || ''
-                  // Fix for invalid/missing model_id - fallback to global default
-                  if (!modelId || modelId.trim() === '') {
-                    console.warn(`[AutoRestore] Invalid model_id "${modelId}" found in session config, falling back to default`)
-                    modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                  }
+          const targetTab = chatStore.getTab(targetTabId)
 
-                  const llmConfig: ExtendedLLMConfiguration = {
-                    provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                    model_id: modelId,
-                    fallback_models: config.llm_config.fallback_models || [],
-                  }
-                  if (config.llm_config.cross_provider_fallback) {
-                    llmConfig.cross_provider_fallback = {
-                      provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                      models: config.llm_config.cross_provider_fallback.models || [],
-                    }
-                  }
-                  configUpdate.llmConfig = llmConfig
-                }
-                
-                // Restore workspace file context
-                if (config.file_context && Array.isArray(config.file_context)) {
-                  configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
-                    name: item.name || item.path || '',
-                    path: item.path || '',
-                    type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                  }))
-                }
-                
-                // Restore workspace access setting
-                if (config.enable_workspace_access !== undefined) {
-                  configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+          if (!targetTab) {
+            console.error(`[AutoRestore] Tab ${targetTabId} not found in store`)
+            sessionsBeingRestored.delete(sessionId)
+            continue
+          }
+
+          // Load session config and events
+          try {
+            // Get full chat session details including config
+            const chatSession = await agentApi.getChatSession(sessionId)
+
+            // Restore config from stored session
+            if (chatSession.config) {
+              const config = chatSession.config
+              console.log(`[AutoRestore] Session config from API:`, JSON.stringify(config, null, 2))
+              const configUpdate: Partial<ChatTabConfig> = {}
+
+              // Restore selected servers (prefer enabled_servers over selected_servers)
+              if (config.enabled_servers && config.enabled_servers.length > 0) {
+                configUpdate.selectedServers = config.enabled_servers
+              } else if (config.selected_servers && config.selected_servers.length > 0) {
+                configUpdate.selectedServers = config.selected_servers
+              }
+
+              // Restore code execution mode
+              if (config.use_code_execution_mode !== undefined) {
+                configUpdate.useCodeExecutionMode = config.use_code_execution_mode
+              }
+
+              // Restore context summarization
+              if (config.enable_context_summarization !== undefined) {
+                configUpdate.enableContextSummarization = config.enable_context_summarization
+              }
+
+              // Restore LLM config
+              if (config.llm_config) {
+                let provider = config.llm_config.provider as string
+                // Fix for invalid provider (e.g. "." or empty) - fallback to global default
+                if (!provider || provider === '.' || provider.trim() === '') {
+                  console.warn(`[AutoRestore] Invalid provider "${provider}" found in session config, falling back to default`)
+                  provider = useLLMStore.getState().primaryConfig.provider || 'openai'
                 }
 
-                // Restore selected skills
-                if (config.selected_skills && Array.isArray(config.selected_skills)) {
-                  configUpdate.selectedSkills = config.selected_skills
+                let modelId = config.llm_config.model_id || ''
+                // Fix for invalid/missing model_id - fallback to global default
+                if (!modelId || modelId.trim() === '') {
+                  console.warn(`[AutoRestore] Invalid model_id "${modelId}" found in session config, falling back to default`)
+                  modelId = useLLMStore.getState().primaryConfig.model_id || ''
                 }
 
-                // Update tab config
-                if (Object.keys(configUpdate).length > 0) {
-                  chatStore.setTabConfig(newTabId, configUpdate)
-                  console.log(`[AutoRestore] Restored config for active session ${sessionId}:`, JSON.stringify(configUpdate, null, 2))
-                } else {
-                  console.log(`[AutoRestore] No config to restore for session ${sessionId}`)
+                const llmConfig: ExtendedLLMConfiguration = {
+                  provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                  model_id: modelId,
+                  fallback_models: config.llm_config.fallback_models || [],
                 }
+                if (config.llm_config.cross_provider_fallback) {
+                  llmConfig.cross_provider_fallback = {
+                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                    models: config.llm_config.cross_provider_fallback.models || [],
+                  }
+                }
+                configUpdate.llmConfig = llmConfig
+              }
+
+              // Restore workspace file context
+              if (config.file_context && Array.isArray(config.file_context)) {
+                configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
+                  name: item.name || item.path || '',
+                  path: item.path || '',
+                  type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                }))
+              }
+
+              // Restore workspace access setting
+              if (config.enable_workspace_access !== undefined) {
+                configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+              }
+
+              // Restore selected skills
+              if (config.selected_skills && Array.isArray(config.selected_skills)) {
+                configUpdate.selectedSkills = config.selected_skills
+              }
+
+              // Restore selected sub-agent templates
+              if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
+                configUpdate.selectedSubAgents = config.selected_subagents
+              }
+
+              // Restore delegation tier config (for multi-agent sessions)
+              if (config.delegation_tier_config) {
+                configUpdate.delegationTierConfig = config.delegation_tier_config
+              }
+
+              // Update tab config
+              if (Object.keys(configUpdate).length > 0) {
+                chatStore.setTabConfig(targetTabId, configUpdate)
+                console.log(`[AutoRestore] Restored config for active session ${sessionId}:`, JSON.stringify(configUpdate, null, 2))
               } else {
-                console.log(`[AutoRestore] No config in chatSession for session ${sessionId}`)
+                console.log(`[AutoRestore] No config to restore for session ${sessionId}`)
               }
+            } else {
+              console.log(`[AutoRestore] No config in chatSession for session ${sessionId}`)
+            }
 
-              // Load events for this session
-              const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (newTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
-              const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
-              const pollingEvents: PollingEvent[] = response.events
+            // Load events for this session
+            const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (targetTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+            const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
+            const pollingEvents: PollingEvent[] = response.events
 
-              // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
-              // When restoring historical events, we want to replace any existing events to maintain order
-              setTabEvents(sessionId, pollingEvents)
-              // CRITICAL: Use last_processed_index from backend (not events.length - 1)
-              // Backend tracks the actual event index which may be higher due to filtering/cleanup
-              const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
-              setTabLastEventIndex(sessionId, lastIndex)
-              console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for session ${sessionId}, last_processed_index=${lastIndex}`)
-              
-              // Set streaming/completed status based on actual session status
-              if (activeSession.status === 'completed') {
-                chatStore.setTabStreaming(newTabId, false)
-                chatStore.setTabCompleted(newTabId, true)
-                console.log(`[AutoRestore] Restored completed session ${sessionId}`)
-              } else {
-                chatStore.setTabStreaming(newTabId, true)
-                chatStore.setTabCompleted(newTabId, false)
-              }
-              
-              // If this is the first active session, switch to it
-              if (runningSessions.indexOf(activeSession) === 0) {
-                switchTab(newTabId)
-                console.log(`[AutoRestore] Switched to first active session tab: ${newTabId}`)
-              }
-            } catch (error) {
-              console.error(`[AutoRestore] Failed to load events/config for session ${sessionId}:`, error)
-            } finally {
-              // Remove from sessionsBeingRestored after processing is complete
-              sessionsBeingRestored.delete(sessionId)
+            // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
+            // When restoring historical events, we want to replace any existing events to maintain order
+            setTabEvents(sessionId, pollingEvents)
+            // CRITICAL: Use last_processed_index from backend (not events.length - 1)
+            // Backend tracks the actual event index which may be higher due to filtering/cleanup
+            const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
+            setTabLastEventIndex(sessionId, lastIndex)
+            console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for session ${sessionId}, last_processed_index=${lastIndex}`)
+
+            // Set streaming/completed status based on actual session status
+            if (activeSession.status === 'completed') {
+              chatStore.setTabStreaming(targetTabId, false)
+              chatStore.setTabCompleted(targetTabId, true)
+              console.log(`[AutoRestore] Restored completed session ${sessionId}`)
+            } else {
+              chatStore.setTabStreaming(targetTabId, true)
+              chatStore.setTabCompleted(targetTabId, false)
+            }
+
+            // If this is the first active session, switch to it
+            if (runningSessions.indexOf(activeSession) === 0) {
+              switchTab(targetTabId)
+              console.log(`[AutoRestore] Switched to first active session tab: ${targetTabId}`)
             }
           } catch (error) {
-            console.error(`[AutoRestore] Failed to create tab for active session ${sessionId}:`, error)
-            // Remove from sessionsBeingRestored on error too
+            console.error(`[AutoRestore] Failed to load events/config for session ${sessionId}:`, error)
+          } finally {
+            // Remove from sessionsBeingRestored after processing is complete
             sessionsBeingRestored.delete(sessionId)
           }
         }
@@ -1592,8 +1623,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
     }
     
-    // Restore in chat mode
-    if (selectedModeCategory === 'chat') {
+    // Restore in chat and multi-agent modes (workflow handles its own restore)
+    if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
       restoreActiveSessions()
     }
   }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
@@ -1695,7 +1726,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             }
           }
         } catch (error) {
-          console.error(`[ChatArea] Failed to fetch events from beginning:`, error)
+          logger.error('ChatArea', 'Failed to fetch events from beginning:', error)
         }
       }
       
@@ -1892,6 +1923,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   configUpdate.selectedSkills = config.selected_skills
                 }
 
+                // Restore selected sub-agent templates
+                if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
+                  configUpdate.selectedSubAgents = config.selected_subagents
+                }
+
+                // Restore delegation tier config (for multi-agent sessions)
+                if (config.delegation_tier_config) {
+                  configUpdate.delegationTierConfig = config.delegation_tier_config
+                }
+
                 // Update tab config
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(newTabId, configUpdate)
@@ -1983,6 +2024,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // Restore selected skills
               if (config.selected_skills && Array.isArray(config.selected_skills)) {
                 configUpdate.selectedSkills = config.selected_skills
+              }
+
+              // Restore selected sub-agent templates
+              if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
+                configUpdate.selectedSubAgents = config.selected_subagents
+              }
+
+              // Restore delegation tier config (for multi-agent sessions)
+              if (config.delegation_tier_config) {
+                configUpdate.delegationTierConfig = config.delegation_tier_config
               }
 
               // Update tab config
@@ -2189,6 +2240,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                     configUpdate.selectedSkills = config.selected_skills
                   }
 
+                  // Restore selected sub-agent templates
+                  if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
+                    configUpdate.selectedSubAgents = config.selected_subagents
+                  }
+
+                  // Restore delegation tier config (for multi-agent sessions)
+                  if (config.delegation_tier_config) {
+                    configUpdate.delegationTierConfig = config.delegation_tier_config
+                  }
+
                   // Update tab config
                   if (Object.keys(configUpdate).length > 0) {
                     chatStore.setTabConfig(newTabId, configUpdate)
@@ -2280,6 +2341,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 // Restore selected skills
                 if (config.selected_skills && Array.isArray(config.selected_skills)) {
                   configUpdate.selectedSkills = config.selected_skills
+                }
+
+                // Restore selected sub-agent templates
+                if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
+                  configUpdate.selectedSubAgents = config.selected_subagents
+                }
+
+                // Restore delegation tier config (for multi-agent sessions)
+                if (config.delegation_tier_config) {
+                  configUpdate.delegationTierConfig = config.delegation_tier_config
                 }
 
                 // Update tab config
@@ -2423,12 +2494,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // Update active tab's streaming status (UI feedback only)
     if (activeTab) {
       chatStore.setTabStreaming(activeTab.tabId, false) // UI: Hide stop button, show send button
-      console.log(`[STOP] Updated tab ${activeTab.tabId} streaming status to false (UI feedback only)`)
-      
-      // DO NOT reset event index when stopping - preserve it for multi-turn conversations
-      // The event index should only be reset when starting a completely new chat
-      // This ensures that when user sends a new message after stopping, we only get NEW events
-      console.log(`[STOP] Preserving event index for tab ${activeTab.tabId} to continue multi-turn conversation`)
     }
 
     // Call backend to stop the agent execution (preserves conversation history)
@@ -2436,53 +2501,51 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // Falling back to global sessionId could stop a different tab's session
     const sessionIdToStop = activeTab?.sessionId
     if (!sessionIdToStop) {
-      console.warn('[STOP] No session ID available for active tab, cannot stop session')
+      logger.warn('ChatArea', 'No session ID available for active tab')
       return
     }
 
     try {
       await agentApi.stopSession(sessionIdToStop)
     } catch (error) {
-      console.error('[STOP] Failed to stop session:', error)
+      logger.error('ChatArea', 'Failed to stop session:', error)
     }
 
-    // DO NOT reset global event polling index - preserve it for multi-turn conversations
-    // Only reset when starting a completely new chat (via handleNewChat)
-    console.log('[STOP] Preserving event polling index for multi-turn conversation')
+    // Mark tab as completed so queued messages get auto-sent
+    if (activeTab) {
+      chatStore.setTabCompleted(activeTab.tabId, true)
+    }
+
     // Deprecated: setLastEventCount removed
   }, [setIsStreaming, activeTab])
 
   // Store execution options for use in the request
   const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
 
+  // Helper: reset streaming state (replaces 4 duplicated blocks)
+  const resetStreamingState = useCallback((tabId?: string) => {
+    const store = useChatStore.getState()
+    store.setIsStreaming(false)
+    store.setHasActiveChat(false)
+    if (tabId) store.setTabStreaming(tabId, false)
+  }, [])
+
   // Wrapper function to submit query with the current local query
   const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
-    // CRITICAL: Get fresh tab state from store to avoid stale closure issues
-    // This ensures we have the latest config (e.g., selectedSkills) even if user just changed it
+    // Get fresh tab state from store to avoid stale closure issues
     const chatStore = useChatStore.getState()
     const freshActiveTab = activeTab?.tabId ? chatStore.chatTabs[activeTab.tabId] : activeTab
 
-    console.log('[ChatArea] submitQueryWithQuery called:', {
-      query: query?.substring(0, 50),
-      hasQuery: Boolean(query?.trim()),
-      activeTab: freshActiveTab?.tabId,
-      tabSessionId: freshActiveTab?.sessionId,
-      selectedSkills: freshActiveTab?.config?.selectedSkills,
-    })
-
-    // Store execution options for inclusion in the request
-    console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Received executionOptions:', executionOptions ? JSON.stringify(executionOptions, null, 2) : 'undefined')
     executionOptionsRef.current = executionOptions
-    console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Stored executionOptionsRef.current:', executionOptionsRef.current ? JSON.stringify(executionOptionsRef.current, null, 2) : 'undefined')
 
     // Early validation
     if (!query?.trim()) {
-      console.warn('[ChatArea] submitQueryWithQuery: Empty query, returning early')
+      logger.warn('ChatArea', 'Empty query, returning early')
       return
     }
 
     if (selectedModeCategory === 'workflow' && !isRequiredFolderSelected) {
-      console.error('[SUBMIT] Validation failed - Workflow folder required for workflow mode')
+      logger.error('ChatArea', 'Workflow folder required for workflow mode')
       return
     }
 
@@ -2491,56 +2554,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       await stopStreaming()
     }
 
-    // Get or create current tab - use fresh state from store
-    let currentTab = freshActiveTab
-    if (!currentTab && selectedModeCategory === 'chat') {
-      const chatStore = useChatStore.getState()
-      const chatTabs = Object.values(chatStore.chatTabs).filter(tab => 
-        tab.metadata?.mode === selectedModeCategory
-      )
-      
-      if (chatTabs.length === 0) {
-        console.log(`[SUBMIT] No ${selectedModeCategory} tab exists, creating one automatically...`)
-        try {
-          const newTabId = await chatStore.createChatTab('Chat 1', { mode: selectedModeCategory })
-          currentTab = chatStore.getTab(newTabId)
-          console.log(`[SUBMIT] Created new ${selectedModeCategory} tab: ${newTabId}`)
-        } catch (error) {
-          console.error(`[SUBMIT] Failed to create ${selectedModeCategory} tab:`, error)
-          return
-        }
-      } else {
-        currentTab = chatStore.getActiveTab() || chatTabs[0]
-      }
-    }
-    
-    // Validate tab exists
-    if (!currentTab) {
-      const chatStore = useChatStore.getState()
-      const hasTabs = Object.keys(chatStore.chatTabs).length > 0
-      console.error(`[SUBMIT] No currentTab - cannot submit query. Has tabs: ${hasTabs}`)
-      return
-    }
-    
-    // Ensure tab has session ID (generate if missing)
-    let sessionId = currentTab.sessionId
-    if (!sessionId) {
-      sessionId = globalThis.crypto.randomUUID()
-      const chatStore = useChatStore.getState()
-      chatStore.updateTabSessionId(currentTab.tabId, sessionId)
-      currentTab = { ...currentTab, sessionId }
-      console.log(`[SUBMIT] Generated new session ID for tab ${currentTab.tabId}: ${sessionId}`)
-    }
-    
-    // At this point, sessionId is guaranteed to be a string
-    const tabSessionId: string = sessionId
-    
-    // Use tab's file context in chat mode, preset's selectedFolder in workflow mode
+    // Resolve or create tab
+    const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory })
+    if (!resolved) return
+    const { tab: currentTab, sessionId: tabSessionId } = resolved
+
+    // Build file context
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
-    if (selectedModeCategory === 'chat' && currentTab?.config) {
+    if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     } else if (selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder) {
-      // Convert preset's selectedFolder to FileContextItem format
       const folderPath = activeWorkflowPreset.selectedFolder.filepath
       effectiveFileContext = [{
         name: folderPath.split('/').pop() || folderPath,
@@ -2548,56 +2571,30 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         type: (activeWorkflowPreset.selectedFolder.type || 'folder') as 'file' | 'folder'
       }]
     }
-    
-    // Build query with file context
-    const queryWithContext = effectiveFileContext.length > 0 
+
+    const queryWithContext = effectiveFileContext.length > 0
       ? `${query.trim()}\n\n📁 Files in context: ${effectiveFileContext.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
-    
-    // Set current query for workflow mode
-    if (selectedModeCategory === 'workflow') {
-      setCurrentQuery(queryWithContext)
-    }
-    
-    // Add user message event to the tab's events
-    const userMessageEvent: PollingEvent = {
-      id: `user-message-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      type: 'user_message',
-      timestamp: new Date().toISOString(),
-      data: {
-        type: 'user_message',
-        timestamp: new Date().toISOString(),
-        data: {
-          content: query.trim(),
-          timestamp: new Date().toISOString()
-        }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      } as any
-    }
-    
-    console.log(`[SUBMIT] Adding user message event:`, {
-      id: userMessageEvent.id,
-      content: query.trim().substring(0, 50),
-      sessionId: tabSessionId,
-      tabId: currentTab.tabId
-    })
-    addTabEvents(tabSessionId, [userMessageEvent])
-    
-    // Enable auto-scroll and scroll to bottom when user submits a new message
-    setAutoScroll(true)
-    setTimeout(() => {
-      scrollToBottom('smooth')
-    }, 50)
-    
-    // Clear the query text after submission
-    setCurrentQuery('')
 
-    // Preserve final response by adding it as completion event if needed
-    const eventsToCheck = getTabEvents(tabSessionId)
-    const hasCompletionEvent = eventsToCheck.some(event => 
+    if (selectedModeCategory === 'workflow') {
+      useAppStore.getState().setCurrentQuery(queryWithContext)
+    }
+
+    // Add user message event
+    chatStore.addTabEvents(tabSessionId, [createUserMessageEvent(query.trim())])
+
+    // Enable auto-scroll and scroll to bottom
+    chatStore.setAutoScroll(true)
+    setTimeout(() => { scrollToBottom('smooth') }, 50)
+
+    // Clear query text
+    useAppStore.getState().setCurrentQuery('')
+
+    // Preserve final response as completion event if needed
+    const eventsToCheck = chatStore.getTabEvents(tabSessionId)
+    const hasCompletionEvent = eventsToCheck.some(event =>
       event.type === 'unified_completion' || event.type === 'agent_end'
     )
-    
     if (finalResponse && !hasCompletionEvent) {
       const completionEvent: PollingEvent = {
         id: `completion-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -2610,387 +2607,141 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           }
         } as PollingEvent['data']
       }
-      addTabEvents(tabSessionId, [completionEvent])
+      chatStore.addTabEvents(tabSessionId, [completionEvent])
     }
 
-    // Clear the final response and completion state for the new query
-    _setFinalResponse('')
-    setIsCompleted(false)
-    setIsStreaming(true)
-    setHasActiveChat(true)
-    
-    // Reset tab's completion status and set streaming to true immediately (UI feedback only)
-    // This gives instant UI feedback - buttons change immediately, not waiting for API response
-    // Note: Polling decisions are based on backend activeSessionIds, not isStreaming
-    if (currentTab) {
-      const chatStore = useChatStore.getState()
-      chatStore.setTabCompleted(currentTab.tabId, false)
-      chatStore.setTabStreaming(currentTab.tabId, true) // UI: Show stop button immediately
+    // Reset UI state for new query
+    chatStore.setFinalResponse('')
+    chatStore.setIsCompleted(false)
+    chatStore.setIsStreaming(true)
+    chatStore.setHasActiveChat(true)
+    chatStore.setTabCompleted(currentTab.tabId, false)
+    chatStore.setTabStreaming(currentTab.tabId, true)
 
-      // Start polling immediately so we catch streaming events from the start
-      // Don't wait for API response or active sessions cache refresh
-      if (!chatStore.pollingInterval) {
-        startPolling(pollEvents)
-      }
+    // Start polling immediately
+    if (!chatStore.pollingInterval) {
+      startPolling(pollEvents)
     }
 
-    // Reset event tracking for new query (preserve lastEventIndex for multi-turn chat)
-    // Deprecated: setLastEventCount removed
     processedCompletionEventsRef.current.clear()
 
     try {
-      // Get code execution mode: 
-      // - For chat mode: Use ChatInput selection if no preset, or preset value if preset exists
-      // - For workflow mode: Use preset value if available
-      // IMPORTANT: Only check for chat preset when in chat mode, workflow preset when in workflow mode
-      const chatPreset = correctAgentMode === 'simple' ? getActivePreset('chat') : null
-      const workflowPreset = correctAgentMode === 'workflow' ? (selectedWorkflowPreset ? getActivePreset('workflow') : null) : null
+      // Get active presets for the current mode
+      const presetStore = useGlobalPresetStore.getState()
+      const chatPreset = correctAgentMode === 'simple' ? presetStore.getActivePreset('chat') : null
+      const workflowPreset = correctAgentMode === 'workflow' ? (selectedWorkflowPreset ? presetStore.getActivePreset('workflow') : null) : null
       const activePreset = workflowPreset || chatPreset
-      
-      // CRITICAL: Get tools from the active preset for the current mode ONLY
-      // Never use global currentPresetTools - it may contain tools from a different mode
-      // Filter out "*" markers from preset tools before sending to backend
-      // "*" markers indicate "all tools" mode, which is represented as an empty array
+
       const presetTools = activePreset?.selectedTools || []
       const filteredPresetTools = presetTools.filter(t => !t.endsWith(':*'))
-      
-      // Use the correctAgentMode calculated at component level (derived from selectedModeCategory)
-      console.log('[CHATAREA] Starting query with:', {
-        selectedModeCategory,
-        agentModeFromStore: agentMode,
-        correctAgentMode,
-        selectedWorkflowPreset,
-        activePreset: activePreset?.label,
-        activePresetMode: activePreset ? (workflowPreset ? 'workflow' : 'chat') : 'none',
-        presetTools,
-        filteredPresetTools,
-        effectiveServers,
-        enabledToolsCount: enabledTools.length,
-        'hasAllToolsMarkers': presetTools.some(t => t.endsWith(':*')) ? 'YES' : 'NO',
-        selectedSkills: currentTab?.config?.selectedSkills
-      });
-      const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode
-      const presetUseToolSearchMode = activePreset?.useToolSearchMode
-      
-      // Get preset IDs for the current mode only
+
       const chatPresetId = chatPreset?.id || null
       const workflowPresetId = workflowPreset?.id || null
-      
-      // Determine final code execution mode value
-      // For chat mode: Use preset value if preset exists, otherwise use tab's config value
-      // For workflow mode: Use preset value if available, otherwise undefined
-      let useCodeExecutionMode: boolean | undefined
-      if (correctAgentMode === 'simple') {
-        // In chat mode: If preset exists, use preset value; otherwise use tab's config
-        if (presetUseCodeExecutionMode !== undefined) {
-          useCodeExecutionMode = presetUseCodeExecutionMode
-        } else {
-          // No preset, use tab's config value (user's manual control via ChatInput toggle)
-          // Default to false if not set (explicitly send false to API)
-          if (selectedModeCategory === 'chat' && currentTab?.config) {
-            useCodeExecutionMode = currentTab.config.useCodeExecutionMode ?? false
-          } else {
-            // Fallback to false if no tab config available
-            useCodeExecutionMode = false
-          }
-        }
-      } else if (correctAgentMode === 'workflow') {
-        // For workflow mode, use preset value if available
-        useCodeExecutionMode = presetUseCodeExecutionMode
-      } else {
-        useCodeExecutionMode = undefined
-      }
 
-      // Determine final tool search mode value
-      // For chat mode: Use preset value if preset exists, otherwise use tab's config value
-      // For workflow mode: Use preset value if available, otherwise undefined
-      let useToolSearchMode: boolean | undefined
-      if (correctAgentMode === 'simple') {
-        // In chat mode: If preset exists, use preset value; otherwise use tab's config
-        if (presetUseToolSearchMode !== undefined) {
-          useToolSearchMode = presetUseToolSearchMode
-        } else {
-          // No preset, use tab's config value (user's manual control via ChatInput toggle)
-          // Default to false if not set (explicitly send false to API)
-          if (selectedModeCategory === 'chat' && currentTab?.config) {
-            useToolSearchMode = currentTab.config.useToolSearchMode ?? false
-          } else {
-            // Fallback to false if no tab config available
-            useToolSearchMode = false
-          }
-        }
-      } else if (correctAgentMode === 'workflow') {
-        // For workflow mode, use preset value if available
-        useToolSearchMode = presetUseToolSearchMode
-      } else {
-        useToolSearchMode = undefined
-      }
-      
-      console.log('[code_execution] [ChatArea] Mode determination:', {
-        activePreset: activePreset?.label,
-        presetUseCodeExecutionMode,
-        presetUseToolSearchMode,
-        tabConfigUseCodeExecutionMode: currentTab?.config?.useCodeExecutionMode,
-        tabConfigUseToolSearchMode: currentTab?.config?.useToolSearchMode,
-        selectedModeCategory,
+      // Determine mode flags using helper
+      const useCodeExecutionMode = determineModeFlag({
         correctAgentMode,
-        finalUseCodeExecutionMode: useCodeExecutionMode,
-        finalUseToolSearchMode: useToolSearchMode,
-        finalType: typeof useCodeExecutionMode
+        selectedModeCategory: selectedModeCategory || '',
+        presetValue: activePreset?.useCodeExecutionMode,
+        tabConfigValue: currentTab?.config?.useCodeExecutionMode,
       })
-      
-      // Use tab's LLM config in chat mode, global config otherwise
-      const effectiveLLMConfig = (selectedModeCategory === 'chat' && currentTab?.config)
-        ? currentTab.config.llmConfig 
-        : llmConfig
-      
-      // Build llm_config with API keys from provider configs
-      const llmConfigWithApiKeys = {
-        ...effectiveLLMConfig,
-        api_keys: {
-          ...(openrouterConfig.api_key ? { openrouter: openrouterConfig.api_key } : {}),
-          ...(openaiConfig.api_key ? { openai: openaiConfig.api_key } : {}),
-          ...(anthropicConfig.api_key ? { anthropic: anthropicConfig.api_key } : {}),
-          ...(vertexConfig.api_key ? { vertex: vertexConfig.api_key } : {}),
-          ...(bedrockConfig.region ? { bedrock: { region: bedrockConfig.region } } : {}),
-          ...(azureConfig.endpoint && azureConfig.api_key ? { azure: { endpoint: azureConfig.endpoint, api_key: azureConfig.api_key, api_version: (azureConfig.options?.api_version as string) || undefined, region: azureConfig.region || undefined } } : {}),
-        }
-      }
-      
-      // Prepare API request payload
-      // CRITICAL: Log the actual query being sent to debug message confusion issues
-      console.log('[SUBMIT] Preparing API request with query:', {
-        query: query.trim(),
-        queryLength: query.trim().length,
-        queryWithContext: queryWithContext.substring(0, 100),
-        queryWithContextLength: queryWithContext.length,
-        sessionId: tabSessionId,
-        tabId: currentTab.tabId
+      const useToolSearchMode = determineModeFlag({
+        correctAgentMode,
+        selectedModeCategory: selectedModeCategory || '',
+        presetValue: activePreset?.useToolSearchMode,
+        tabConfigValue: currentTab?.config?.useToolSearchMode,
       })
-      
-      const isChatMode = selectedModeCategory === 'chat'
 
-      const requestPayload = {
-        query: queryWithContext,
-        agent_mode: correctAgentMode,
-        enabled_tools: enabledTools.map((tool: { name: string }) => tool.name),
-        enabled_servers: effectiveServers,
-        selected_tools: activePreset ? filteredPresetTools : undefined, // Only send when preset is active
-        provider: effectiveLLMConfig.provider,
-        model_id: effectiveLLMConfig.model_id,
-        llm_config: llmConfigWithApiKeys,
-        preset_query_id: workflowPresetId || chatPresetId || undefined, // Send preset ID only if preset is active for current mode
-        // Always send use_code_execution_mode explicitly for chat mode (simple agent)
-        // This ensures the backend receives the correct value (false for simple mode, true for code exec mode)
-        use_code_execution_mode: correctAgentMode === 'simple' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
-        // Always send use_tool_search_mode explicitly for chat mode (simple agent)
-        // This ensures the backend receives the correct value (false for simple mode, true for tool search mode)
-        use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
-        // Execution options from frontend (for workflow execution phase)
-        execution_options: executionOptionsRef.current,
-        // Context summarization: Enable by default for chat mode
-        enable_context_summarization: isChatMode ? true : undefined,
-        summarize_on_max_turns: isChatMode ? true : undefined,
-        summary_keep_last_messages: isChatMode ? 8 : undefined,
-        // Workspace access: Send the setting from tab config (default: true)
-        enable_workspace_access: isChatMode
-          ? (currentTab?.config?.enableWorkspaceAccess ?? true)
-          : undefined,
-        // Browser access: Send the setting from tab config (default: false)
-        enable_browser_access: isChatMode
-          ? (currentTab?.config?.enableBrowserAccess ?? false)
-          : undefined,
-        // Delegation mode: Send the mode setting (persisted across sessions)
-        delegation_mode: isChatMode && useAppStore.getState().delegationMode !== 'off'
-          ? useAppStore.getState().delegationMode as 'spawn' | 'plan'
-          : undefined,
-        // Delegation tier config: Send tier assignments for multi-LLM delegation (only for plan mode)
-        delegation_tier_config: isChatMode && useAppStore.getState().delegationMode === 'plan'
-          ? (useLLMStore.getState().delegationTierConfig ?? undefined)
-          : undefined,
-        // Selected skills: Include skill folder names from tab config
-        selected_skills: isChatMode && currentTab?.config?.selectedSkills?.length
-          ? currentTab.config.selectedSkills
-          : undefined,
-        // Context editing: Read from active workflow preset's llmConfig
-        enable_context_editing: (() => {
-          if (selectedModeCategory === 'workflow') {
-            const presetStore = useGlobalPresetStore.getState()
-            const presetId = presetStore.activePresetIds.workflow
-            const preset = presetId
-              ? presetStore.customPresets.find(p => p.id === presetId)
-                || presetStore.predefinedPresets.find(p => p.id === presetId)
-              : null
-            if (preset?.llmConfig?.enable_context_editing === false) {
-              return false
-            }
-          }
-          return undefined // Let backend use default
-        })(),
-        // Note: Conversation history is loaded by backend from database using session ID
-        // Backend will automatically load history from conversation_turn events if session exists
-      }
-      
-      console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Including execution_options in request payload:', requestPayload.execution_options ? JSON.stringify(requestPayload.execution_options, null, 2) : 'undefined')
-      
-      console.log('[code_execution] [ChatArea] API Request payload:', {
-        use_code_execution_mode: requestPayload.use_code_execution_mode,
-        use_tool_search_mode: requestPayload.use_tool_search_mode,
-        type: typeof requestPayload.use_code_execution_mode,
-        preset_query_id: requestPayload.preset_query_id,
-        has_execution_options: Boolean(requestPayload.execution_options),
-        enabled_servers: requestPayload.enabled_servers,
-        enabled_servers_count: requestPayload.enabled_servers?.length || 0
+      // Build LLM config
+      const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+      const llmStore = useLLMStore.getState()
+      const baseLLMConfig = ((selectedModeCategory === 'chat' || isMultiAgentMode) && currentTab?.config)
+        ? currentTab.config.llmConfig
+        : llmStore.primaryConfig
+      const tierConfig = llmStore.delegationTierConfig
+      const effectiveLLMConfig: ExtendedLLMConfiguration = (isMultiAgentMode && tierConfig?.high?.provider && tierConfig?.high?.model_id)
+        ? { ...baseLLMConfig, provider: tierConfig.high.provider as ExtendedLLMConfiguration['provider'], model_id: tierConfig.high.model_id }
+        : baseLLMConfig
+
+      const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(effectiveLLMConfig)
+
+      // Build request payload
+      const requestPayload = buildQueryRequestPayload({
+        queryWithContext,
+        correctAgentMode,
+        selectedModeCategory,
+        enabledTools,
+        effectiveServers,
+        currentTab,
+        effectiveLLMConfig,
+        llmConfigWithApiKeys,
+        useCodeExecutionMode,
+        useToolSearchMode,
+        executionOptions: executionOptionsRef.current,
+        workflowPresetId,
+        chatPresetId,
+        filteredPresetTools,
+        hasActivePreset: !!activePreset,
       })
-      
-      // Validate execution options: Check if enabled_group_ids is required but missing/empty
+
+      // Validate execution groups for workflow mode
       if (correctAgentMode === 'workflow' && requestPayload.execution_options) {
-        const workflowStore = useWorkflowStore.getState()
-        const variablesManifest = workflowStore.variablesManifest
-        
-        console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Validating execution options before API call:', {
-          hasExecutionOptions: !!requestPayload.execution_options,
-          executionOptions: JSON.stringify(requestPayload.execution_options, null, 2),
-          hasVariablesManifest: !!variablesManifest,
-          groupsCount: variablesManifest?.groups?.length || 0,
-          selectedGroupIds: workflowStore.selectedGroupIds,
-          selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
-          enabledGroupIds: requestPayload.execution_options.enabled_group_ids,
-          enabledGroupIdsLength: requestPayload.execution_options.enabled_group_ids?.length || 0
-        })
-        
-        // If variables manifest has groups, ensure enabled_group_ids is set and not empty
-        if (variablesManifest?.groups && variablesManifest.groups.length > 0) {
-          const enabledGroupIds = requestPayload.execution_options.enabled_group_ids
-          if (!enabledGroupIds || enabledGroupIds.length === 0) {
-            console.error('[EXECUTION_OPTIONS_DEBUG] [ChatArea] ❌ Validation failed: Groups are available but enabled_group_ids is empty or missing', {
-              groupsAvailable: variablesManifest.groups.length,
-              groupIds: variablesManifest.groups.map(g => g.group_id),
-              selectedGroupIdsInStore: workflowStore.selectedGroupIds,
-              executionOptions: JSON.stringify(requestPayload.execution_options, null, 2)
-            })
-            alert('Please select at least one group to execute. Groups are available but no groups are selected.')
-            setIsStreaming(false)
-            setHasActiveChat(false)
-            // Reset tab's streaming status on validation failure
-            if (currentTab) {
-              const chatStore = useChatStore.getState()
-              chatStore.setTabStreaming(currentTab.tabId, false)
-            }
-            return
-          } else {
-            console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] ✅ Validation passed: enabled_group_ids is set', {
-              enabledGroupIds,
-              count: enabledGroupIds.length
-            })
-          }
-        } else {
-          console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] ℹ️ No groups in manifest (single-group mode or no groups)')
+        const validationError = validateExecutionGroups(requestPayload.execution_options)
+        if (validationError) {
+          chatStore.addToast(validationError, 'warning')
+          resetStreamingState(currentTab.tabId)
+          return
         }
       }
-      
-      // Ensure API module uses the tab's session ID
-      setSessionId(tabSessionId)
-      
-      // Submit query to backend
+
+      // Set session ID and submit
+      chatStore.setSessionId(tabSessionId)
       const response = await agentApi.startQuery(requestPayload, tabSessionId)
 
       if (response.status === 'started' || response.status === 'workflow_started') {
-        // Update session ID from response (matches backend storage)
-        const sessionId = response.session_id || response.query_id
-        if (!sessionId) {
-          console.error('[SUBMIT] No sessionId in response, cannot start polling')
-          setIsStreaming(false)
-          setHasActiveChat(false)
-          // Reset tab's streaming status on error
-          if (currentTab) {
-            const chatStore = useChatStore.getState()
-            chatStore.setTabStreaming(currentTab.tabId, false)
-          }
+        const responseSessionId = response.session_id || response.query_id
+        if (!responseSessionId) {
+          logger.error('ChatArea', 'No sessionId in response')
+          resetStreamingState(currentTab.tabId)
           return
         }
-        
-        setSessionId(sessionId)
-        
-        // Update tab's session ID and streaming status
-        const chatStore = useChatStore.getState()
-        chatStore.updateTabSessionId(currentTab.tabId, sessionId)
+
+        chatStore.setSessionId(responseSessionId)
+        chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
         chatStore.setTabStreaming(currentTab.tabId, true)
-        chatStore.setTabCompleted(currentTab.tabId, false) // Ensure not marked as completed
-        
-        // Update session state to 'active' when reactivating a historical session
-        if (sessionState === 'completed' || sessionState === 'error') {
-          console.log(`[SUBMIT] Reactivating historical session, updating sessionState from '${sessionState}' to 'active'`)
-          setSessionState('active')
+        chatStore.setTabCompleted(currentTab.tabId, false)
+
+        // Reactivate historical session if needed
+        const currentSessionState = useChatStore.getState().sessionState
+        if (currentSessionState === 'completed' || currentSessionState === 'error') {
+          chatStore.setSessionState('active')
         }
-        
-        console.log(`[SUBMIT] Updated tab ${currentTab.tabId} with sessionId: ${sessionId}, streaming: true`)
-        
-        // Verify the update was applied by reading fresh from store
-        const updatedTab = chatStore.getTab(currentTab.tabId)
-        if (updatedTab) {
-          console.log(`[SUBMIT] Verified tab state - streaming: ${updatedTab.isStreaming}, sessionId: ${updatedTab.sessionId}, completed: ${updatedTab.isCompleted}`)
+
+        // Refresh active sessions cache then start polling
+        const startPollingAfterRefresh = () => {
+          const currentPollingInterval = useChatStore.getState().pollingInterval
+          if (!currentPollingInterval) {
+            startPolling(pollEvents)
+          }
+          setTimeout(() => { pollEvents() }, 150)
         }
-        
-        // CRITICAL: Force refresh active sessions cache immediately after submitting query
-        // This ensures the reactivated session appears in active sessions list right away
-        // Backend has already added it via trackActiveSession(), but frontend cache might be stale
-        // Wait for the refresh to complete before starting polling to avoid race conditions
+
         getActiveSessions(true)
-          .then(() => {
-            console.log('[SUBMIT] Active sessions cache refreshed, starting polling')
-            
-            // Start polling if not already running (read fresh from store to avoid stale closure)
-            const currentPollingInterval = chatStore.pollingInterval
-            if (!currentPollingInterval) {
-              console.log('[SUBMIT] Starting polling interval for events')
-              startPolling(pollEvents)
-            } else {
-              console.log('[SUBMIT] Polling already active, reusing existing interval')
-            }
-            
-            // Call pollEvents immediately after a short delay to ensure store updates are applied
-            // Use a slightly longer delay to ensure Zustand store updates have propagated
-            setTimeout(() => {
-              console.log('[SUBMIT] Calling pollEvents after store update delay')
-              pollEvents()
-            }, 150)
-          })
+          .then(startPollingAfterRefresh)
           .catch(error => {
-            console.error('[SUBMIT] Failed to refresh active sessions cache:', error)
-            // Even if refresh fails, start polling anyway (isStreaming check will handle it)
-            const currentPollingInterval = chatStore.pollingInterval
-            if (!currentPollingInterval) {
-              console.log('[SUBMIT] Starting polling interval despite cache refresh failure')
-              startPolling(pollEvents)
-            }
-            setTimeout(() => {
-              console.log('[SUBMIT] Calling pollEvents after store update delay (fallback)')
-              pollEvents()
-            }, 150)
+            logger.error('ChatArea', 'Failed to refresh active sessions cache:', error)
+            startPollingAfterRefresh()
           })
       } else {
-        console.error('[SUBMIT] Backend error:', response)
-        setIsStreaming(false)
-        setHasActiveChat(false)
-        // Reset tab's streaming status on error
-        if (currentTab) {
-          const chatStore = useChatStore.getState()
-          chatStore.setTabStreaming(currentTab.tabId, false)
-        }
+        logger.error('ChatArea', 'Backend error:', response)
+        resetStreamingState(currentTab.tabId)
       }
     } catch (error) {
-      console.error('[SUBMIT] Failed to submit query:', error)
-      setIsStreaming(false)
-      setHasActiveChat(false)
-      // Reset tab's streaming status on error
-      if (currentTab) {
-        const chatStore = useChatStore.getState()
-        chatStore.setTabStreaming(currentTab.tabId, false)
-      }
+      logger.error('ChatArea', 'Failed to submit query:', error)
+      resetStreamingState(currentTab.tabId)
     }
 
-  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, setCurrentQuery, _setFinalResponse, setIsCompleted, setIsStreaming, setHasActiveChat, setSessionId, llmConfig, openrouterConfig, openaiConfig, anthropicConfig, vertexConfig, bedrockConfig, azureConfig, effectiveServers, enabledTools, currentPresetTools, getActivePreset, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, agentMode, currentPresetServers, addTabEvents, getTabEvents, setAutoScroll, scrollToBottom, chatSessionId, sessionState, getActiveSessions])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState])
 
   // Auto-send queued messages one by one when chat completes
   const prevIsCompletedRef = useRef<boolean>(false)
@@ -3002,16 +2753,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Log when execution completes or stops
     if (prevIsCompleted !== currentIsCompleted) {
-      const workflowStore = useWorkflowStore.getState()
-      console.log('[EXECUTION_OPTIONS_DEBUG] [ChatArea] Execution completion state changed:', {
-        prevIsCompleted,
-        currentIsCompleted,
-        tabId: activeTab?.tabId,
-        phaseId: activeTab?.metadata?.phaseId,
-        selectedGroupIds: workflowStore.selectedGroupIds,
-        selectedGroupIdsLength: workflowStore.selectedGroupIds?.length || 0,
-        hasVariablesManifest: !!workflowStore.variablesManifest,
-        groupsCount: workflowStore.variablesManifest?.groups?.length || 0
+      logger.debug('ChatArea', 'Completion state changed', {
+        prev: prevIsCompleted, current: currentIsCompleted, tabId: activeTab?.tabId
       })
     }
     
@@ -3020,7 +2763,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const queuedMessages = activeTab.config?.queuedMessages || []
 
       if (queuedMessages.length > 0) {
-        console.log('[ChatArea] Chat completed, processing queued messages:', queuedMessages.length)
+        logger.debug('ChatArea', 'Processing queued messages:', queuedMessages.length)
         isProcessingQueueRef.current = true
 
         // Get the first message from queue
@@ -3033,11 +2776,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
         // Small delay to ensure completion state is fully processed
         setTimeout(async () => {
-          console.log('[ChatArea] Auto-sending queued message:', messageToSend)
+          logger.debug('ChatArea', 'Auto-sending queued message')
           try {
             await submitQueryWithQuery(messageToSend.trim())
           } catch (error) {
-            console.error('[ChatArea] Failed to send queued message:', error)
+            logger.error('ChatArea', 'Failed to send queued message:', error)
             // Re-add the failed message back to the front of the queue
             const currentChatStore = useChatStore.getState()
             const currentQueue = currentChatStore.getTabConfig(activeTab.tabId)?.queuedMessages || []
@@ -3069,13 +2812,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (sessionIdToClear) {
       try {
         await agentApi.clearSession(sessionIdToClear)
-        console.log('[NEW_CHAT] Successfully cleared session:', sessionIdToClear)
       } catch (error) {
-        console.error('[NEW_CHAT] Failed to clear session:', error)
+        logger.error('ChatArea', 'Failed to clear session:', error)
         // Continue with frontend reset even if backend clear fails
       }
-    } else {
-      console.log('[NEW_CHAT] No sessionId available, skipping backend session clear')
     }
     
     // For workflow mode, preserve the selected preset but reset workflow phase

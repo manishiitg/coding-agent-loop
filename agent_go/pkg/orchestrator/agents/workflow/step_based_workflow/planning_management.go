@@ -800,6 +800,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 		stepConfigs = []StepConfig{}
 	}
 
+	// Read global step overrides from step_override.json (applied after per-step configs)
+	stepOverrides, err := hcpo.ReadStepOverrides(ctx)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_override.json: %v (skipping global overrides)", err))
+		stepOverrides = nil
+	}
+	if stepOverrides != nil {
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 Loaded global step overrides from step_override.json"))
+	}
+
 	// Log available config IDs for debugging
 	if len(stepConfigs) > 0 {
 		configIDs := make([]string, 0, len(stepConfigs))
@@ -866,6 +876,34 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 			// Note: Inner orchestration steps should NOT inherit config from wrapper steps
 			// Each step (wrapper and inner) loads its own config by its own ID only
 			// The inner step will get its config when ApplyStepConfigFromFile is called for it during execution
+		}
+
+		// Apply global overrides from step_override.json (highest priority - wins over per-step config)
+		if stepOverrides != nil {
+			existingConfigs := getAgentConfigs(todoStep)
+			if existingConfigs == nil {
+				// Set AgentConfigs on the step with override values
+				switch s := todoStep.(type) {
+				case *RegularPlanStep:
+					overrideCopy := *stepOverrides
+					s.AgentConfigs = &overrideCopy
+				case *ConditionalPlanStep:
+					overrideCopy := *stepOverrides
+					s.AgentConfigs = &overrideCopy
+				case *DecisionPlanStep:
+					overrideCopy := *stepOverrides
+					s.AgentConfigs = &overrideCopy
+				case *OrchestrationPlanStep:
+					overrideCopy := *stepOverrides
+					s.AgentConfigs = &overrideCopy
+				case *EvaluationStep:
+					overrideCopy := *stepOverrides
+					s.AgentConfigs = &overrideCopy
+				}
+			} else {
+				MergeAgentConfigFields(existingConfigs, stepOverrides, step.GetID(), hcpo.GetLogger())
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Applied global overrides for step '%s' (ID: %s)", step.GetTitle(), step.GetID()))
 		}
 
 		// Log config matching results for nested steps
@@ -1304,26 +1342,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 	initialPlanExists, _, _ := hcpo.checkExistingPlan(ctx, checkPlanPath)
 
 	if !initialPlanExists {
-		// Ask the user what they want to build (even if objective is provided, to confirm/refine)
-		requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
-		approved, feedback, err := hcpo.RequestHumanFeedback(
-			ctx,
-			requestID,
-			"What would you like to build?",
-			"", // No additional context
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
+		if objective != "" {
+			// Objective already provided (e.g. from workflow builder) - skip human feedback
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Objective already provided, skipping objective inquiry: %s", objective))
+		} else {
+			// No objective provided - ask the user what they want to build
+			requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
+			approved, feedback, err := hcpo.RequestHumanFeedback(
+				ctx,
+				requestID,
+				"What would you like to build?",
+				"", // No additional context
+				hcpo.getSessionID(),
+				hcpo.getWorkflowID(),
+			)
 
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
-		} else if feedback != "" {
-			// User provided feedback, use it as the objective
-			objective = feedback
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
-		} else if approved && feedback == "" {
-			// User approved but empty feedback? Keep existing objective if any
-			hcpo.GetLogger().Info("ℹ️ User sent empty response, keeping existing objective")
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
+			} else if feedback != "" {
+				// User provided feedback, use it as the objective
+				objective = feedback
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
+			} else if approved && feedback == "" {
+				// User approved but empty feedback? Keep existing objective if any
+				hcpo.GetLogger().Info("ℹ️ User sent empty response, keeping existing objective")
+			}
 		}
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Plan exists at %s - skipping objective inquiry", checkPlanPath))

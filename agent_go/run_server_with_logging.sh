@@ -162,14 +162,13 @@ export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
 export AGENT_PROVIDER="${AGENT_PROVIDER:-azure}"
 export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 
-# Set available models for each provider
-export BEDROCK_AVAILABLE_MODELS="global.anthropic.claude-sonnet-4-5-20250929-v1:0,us.anthropic.claude-sonnet-4-20250514-v1:0,us.anthropic.claude-3-7-sonnet-20250219-v1:0"
-export OPENROUTER_AVAILABLE_MODELS="x-ai/grok-code-fast-1,x-ai/grok-4-fast"
-export OPENAI_AVAILABLE_MODELS="gpt-5-mini,gpt-4.1-mini"
-export AZURE_AVAILABLE_MODELS="gpt-5.2,gpt-5.2-codex,gpt-4.1-mini"
+# Available models for each provider (optional - set in .env to customize; unset = empty lists, users add custom models)
+# Removed hardcoded restrictions - use .env or leave unset for maximum flexibility
+# BEDROCK_AVAILABLE_MODELS, OPENROUTER_AVAILABLE_MODELS, OPENAI_AVAILABLE_MODELS, AZURE_AVAILABLE_MODELS
 
-# Supported LLM providers (controls which providers appear in the UI)
-export SUPPORTED_LLM_PROVIDERS="${SUPPORTED_LLM_PROVIDERS:-azure}"
+# Supported LLM providers (optional - unset = all 6 providers shown: openrouter, bedrock, openai, vertex, anthropic, azure)
+# Removed default restriction to azure only
+# SUPPORTED_LLM_PROVIDERS
 
 # Obsidian configuration removed - now using workspace tools
 

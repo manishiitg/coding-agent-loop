@@ -2,7 +2,9 @@
 
 ## 📋 Overview
 
-The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation Orchestrator**) is a multi-phase execution system that transforms high-level objectives into executable plans with automated execution, validation, and learning capabilities. It manages complex workflows through distinct phases: variable extraction, planning, execution, validation, learning, and post-execution optimization.
+The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation Orchestrator**) is a multi-phase execution system that transforms high-level objectives into executable plans with automated execution, pre-validation, and learning capabilities. It manages complex workflows through distinct phases: variable extraction, planning, execution, pre-validation (code-based), learning, and post-execution optimization.
+
+> **Note**: LLM-based validation (the validation agent) has been **disabled**. Only code-based pre-validation (file checks, JSON schema validation) runs when a `validation_schema` is defined on a step. Steps are auto-approved after execution.
 
 **Key Benefits:**
 - Phase isolation: Each phase runs independently and can be triggered separately
@@ -25,7 +27,7 @@ The Workflow Orchestrator (implemented as the **Human-Controlled Todo Creation O
 | **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `HumanControlledTodoPlannerPlanningAgent`, `PlanningResponse`, `PlanStep` |
 | **Execution Agent** | [`execution_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_agent.go) | `HumanControlledTodoPlannerExecutionAgent`, `Execute()` |
 | **Execution-Only Agent** | [`execution_only_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/execution_only_agent.go) | `HumanControlledTodoPlannerExecutionOnlyAgent` |
-| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/validation_agent.go) | `HumanControlledTodoPlannerValidationAgent`, `ValidationResponse`, `ExecuteStructured()` |
+| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/validation_agent.go) | `HumanControlledTodoPlannerValidationAgent`, `ValidationResponse`, `ExecuteStructured()` — **DISABLED** (code retained but never called; all steps auto-approved) |
 | **Learning Agent** | [`learning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent.go) | `HumanControlledTodoPlannerLearningAgent`, `Execute()` |
 | **Code Execution Learning** | [`learning_agent_code_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learning_agent_code_execution.go) | `HumanControlledTodoPlannerCodeExecutionLearningAgent` |
 | **Variable Management** | [`variable_management.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/variable_management.go) | `VariableManager`, `ExtractVariablesOnly()`, `VariablesManifest` |
@@ -84,8 +86,8 @@ graph TD
     C -->|Yes| D[Skip Step]
     C -->|No| E[Execute with Execution Agent]
     E --> F{Has Loop?}
-    F -->|Yes| G[Execute with Validation in Loop]
-    F -->|No| H[Single Execution + Validation]
+    F -->|Yes| G[Execute in Loop]
+    F -->|No| H[Single Execution]
     G --> I{Loop Condition Met?}
     I -->|No| J[Retry Execution]
     I -->|Yes| K[Learning Phase]
@@ -133,7 +135,7 @@ graph TB
     
     HCTP --> SS[executeSingleStep]
     SS --> EA[Execution Agent]
-    SS --> VA[Validation Agent]
+    SS --> PV[Pre-Validation]
     SS --> LA[Learning Agent]
     
     VM --> VF[variables/variables.json]
@@ -204,7 +206,7 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 | **Evaluation Designer** | Creates evaluation plan | Objective, execution results (runs/) | `evaluation_plan.json` | `add_evaluation_step`, `update_evaluation_step`, `delete_evaluation_step`, `human_feedback` | `phase_llm` |
 | **Execution** | Executes plan steps | Step details, context, variables | Execution result, conversation history | Full MCP Tool Access | `execution_llm` |
 | **Execution-Only** | Executes with pre-discovered learnings | Step details + learning history | Execution result | Full MCP Tool Access | `execution_llm` |
-| **Validation** | Validates step execution | Step details, execution history | `ValidationResponse` (Success/Partial/Failed) | Structured Output | `validation_llm` |
+| **Validation** | ~~Validates step execution~~ **DISABLED** — all steps auto-approved. Pre-validation (code-based) still runs if `validation_schema` is defined. | — | — | — | — |
 | **Learning** | Captures execution patterns | Execution history | Learning files in `learnings/` | Pattern Extraction | `learning_llm` |
 | **Code Execution Learning** | Captures Go code patterns | Execution history (code execution mode) | Go code patterns, imports | Code Pattern Extraction | `learning_llm` |
 | **Conditional** | Evaluates branching decisions | Condition question, step output | `ConditionalResponse` (Boolean, Reasoning) | Tool-Based Verification | `execution_llm` |
@@ -506,12 +508,12 @@ func (hcpo *HumanControlledTodoPlannerOrchestrator) executeSingleStep(
     // Execute with execution agent
     executionResult, err := hcpo.executionAgent.Execute(ctx, step, workspacePath)
     
-    // Validate execution
-    validationResult, err := hcpo.validationAgent.ExecuteStructured(ctx, step, executionResult)
-    
+    // LLM validation disabled — step auto-approved
+    // Pre-validation (code-based) runs if validation_schema is defined
+
     // Learn from execution
     if !options.DisableLearning {
-        err := hcpo.learningAgent.Execute(ctx, step, executionResult, validationResult)
+        err := hcpo.learningAgent.Execute(ctx, step, executionResult)
     }
     
     // Request human feedback if needed
@@ -562,9 +564,8 @@ workspace/
     │   │   ├── step-4-decision/      # Decision step execution output
     │   │   ├── step-5-sub-agent-0/   # Orchestration/todo_task sub-agent output
     │   │   └── step-5-generic-agent-0/  # Todo_task generic agent output
-    │   └── logs/                     # Validation and execution logs
+    │   └── logs/                     # Execution logs
     │       ├── step-1/
-    │       │   ├── validation-1.json                  # Validation attempt (is_success_criteria_met, reasoning)
     │       │   └── execution/
     │       │       ├── execution-attempt-1-iteration-0.json              # Execution result
     │       │       └── execution-attempt-1-iteration-0-conversation.json # Full LLM conversation
@@ -683,14 +684,14 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 
 - `completed_step_indices`: 0-based indices of completed steps
 - `branch_steps`: tracks which branch was taken for conditional steps and which steps completed
-- `validation_failures`: counts retry attempts per step (step failed validation, was re-executed)
+- `validation_failures`: counts retry attempts per step (legacy — LLM validation is now disabled)
 - `archival_counts`: how many times each step's execution was archived (loop steps)
 
 ### Step-Specific Folder Rules
 
 | Step Type | Execution Folder | Logs Folder | Special Log Files |
 |-----------|-----------------|-------------|-------------------|
-| **Regular** | `execution/step-{X}/` | `logs/step-{X}/` | `validation-{N}.json`, `execution-attempt-{A}-iteration-{I}.json` |
+| **Regular** | `execution/step-{X}/` | `logs/step-{X}/` | `execution-attempt-{A}-iteration-{I}.json` |
 | **Conditional** (wrapper) | _(not executed)_ | `logs/step-{X}/` | `conditional-evaluation.json` (condition_result, branch_executed) |
 | **Conditional** (branches) | `execution/step-{X}-if-true-{idx}/` or `step-{X}-if-false-{idx}/` | `logs/step-{X}-if-true-{idx}/` | Same as regular |
 | **Decision** | `execution/step-{X}-decision/` | `logs/step-{X}/` | `decision-execution.json`, `decision-evaluation.json` (decision_result, reasoning) |
@@ -723,12 +724,11 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 
 | Level | Configuration | Example |
 |-------|---------------|---------|
-| **Preset** | `presetExecutionLLM`, `presetValidationLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
-| **Step** | `step_config.json` → `execution_llm`, `validation_llm`, `learning_llm` | Per-step override |
+| **Preset** | `presetExecutionLLM`, `presetLearningLLM`, `presetPhaseLLM` | Default LLM for all steps |
+| **Step** | `step_config.json` → `execution_llm`, `learning_llm` | Per-step override |
 
 **Preset LLM Configurations:**
 - **`execution_llm`**: Default for execution agents
-- **`validation_llm`**: Default for validation agents
 - **`learning_llm`**: Default for learning agents
 - **`phase_llm`**: Default for all phase agents (planning, anonymization, plan improvement, plan tool optimization, learning consolidation, plan learnings alignment, evaluation debugger, code exec debugging, execution debugger)
   - All phase agents use this unified configuration
@@ -741,7 +741,7 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 |---------|----------|
 | **When used** | Only when step has learnings (`learnings/step-{N}/` has files) |
 | **When skipped** | Step has no learnings (folder empty) → uses original LLM |
-| **Scope** | Execution agents only (not validation/learning agents) |
+| **Scope** | Execution agents only (not learning agents) |
 | **Failure criteria** | Only `ExecutionStatus == "FAILED"` triggers next attempt |
 | **Fallback** | `fallback_to_original_llm_on_failure` blocks tempLLM1, NOT tempLLM2 |
 
@@ -766,10 +766,11 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 
 ### Validation Configuration
 
+> **LLM validation agent is disabled.** All steps are auto-approved after execution. Only code-based pre-validation runs (when `validation_schema` is defined on a step).
+
 | Setting | Description |
 |---------|-------------|
-| **disable_validation** | LLM validation: `nil`/`true` = disabled by default (auto-approve), `false` = enabled. Pre-validation always runs if schema exists. |
-| **Loop Validation** | Checks both success criteria AND loop condition (LLM validation forced on for loop steps) |
+| **Pre-validation** | Code-based checks (file existence, JSON schema, content rules) — runs when `validation_schema` is defined |
 | **Prerequisite Failure Detection** | Per-step config to detect missing prerequisites and navigate back |
 
 ### Preset-Level Feature Toggles
@@ -916,7 +917,7 @@ Only include `read_image` or `read_pdf` when the step needs to **analyze content
 
 | Issue | Cause | Solution |
 |-------|-------|----------|
-| Step fails | Validation failed | Check `runs/{run_folder}/validation/step_X_*.md` for feedback |
+| Step fails | Pre-validation failed | Check pre-validation output; ensure `validation_schema` file rules are correct |
 | Missing context | Context dependencies not met | Update `context_dependencies` in `plan.json` |
 | Wrong tools used | Learning patterns not applied | Check `learnings/*.md` for patterns, learning agent enhances plan |
 | Progress lost | `steps_done.json` not saved | Progress auto-saved after each step, check file permissions |
@@ -959,7 +960,7 @@ Only include `read_image` or `read_pdf` when the step needs to **analyze content
 
 ❌ **Forbidden:**
 - Modifying `steps_done.json` manually (use orchestrator methods)
-- Bypassing validation without `disable_validation` flag
+- Modifying pre-validation schemas without understanding downstream effects
 - Running execution phase without `variables.json` and `plan.json`
 - Reusing same step ID in plan (must be unique)
 
@@ -1050,7 +1051,7 @@ type CleanupScope struct {
 ### Sub-Agents
 - **Purpose**: Execute specific tasks based on routing conditions
 - **Scope**: Private to routing step (not accessible by other workflow steps)
-- **Validation**: Disabled (execution + learning only)
+- **LLM Validation**: Disabled (execution + learning only)
 - **Context**: Receives context from main routing step about what to do
 
 ### Execution Flow
@@ -1069,8 +1070,7 @@ type CleanupScope struct {
         * instructions_to_sub_agent (string)
         * success_criteria_for_sub_agent (string)
    b. If success criteria met:
-      - Call validation agent
-      - If validation passes → Exit loop, route to NextStepID
+      - Auto-approved (LLM validation disabled) → Exit loop, route to NextStepID
    c. If success criteria NOT met:
       - Validate selected_route_id exists
       - Handle special routes ("end", "learning")
@@ -2328,6 +2328,7 @@ if prereqErr != nil {
 |-------|------|---------|---------|
 | `enable_prerequisite_detection` | `boolean` | `false` | Enable prerequisite detection for this step |
 | `prerequisite_rules` | `PrerequisiteRule[]` | `[]` | Array of prerequisite rules |
+| `disable_parallel_tool_execution` | `boolean` | `false` (enabled) | Disable parallel tool execution for this step. Applies to execution agents and sub-agents (including generic sub-agents in todo task steps, which inherit from the parent). |
 
 ### Prerequisite Rule Structure
 

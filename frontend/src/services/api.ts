@@ -316,6 +316,11 @@ export const agentApi = {
     })
   },
 
+  // Dismiss session so it won't be auto-restored on page refresh
+  dismissSession: async (sessionId: string): Promise<void> => {
+    await api.post(`/api/sessions/${sessionId}/dismiss`)
+  },
+
   // Clear session/conversation history (for new chat)
   clearSession: async (sessionId: string): Promise<void> => {
     await api.post('/api/session/clear', {}, {
@@ -973,6 +978,29 @@ export const agentApi = {
         plan_updates: u.planUpdates,
         config_updates: u.configUpdates
       }))
+    })
+    return response.data
+  },
+
+  // Get step override (global config that overrides all steps)
+  getStepOverride: async (
+    workspacePath: string
+  ): Promise<{ success: boolean; data: { agent_configs: AgentConfigs | null } }> => {
+    const response = await api.get('/api/workflow/plan/step-override', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  // Update step override (global config that overrides all steps)
+  // Pass null to clear all overrides
+  updateStepOverride: async (
+    workspacePath: string,
+    agentConfigs: AgentConfigs | null
+  ): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post('/api/workflow/plan/step-override', {
+      workspace_path: workspacePath,
+      agent_configs: agentConfigs
     })
     return response.data
   },

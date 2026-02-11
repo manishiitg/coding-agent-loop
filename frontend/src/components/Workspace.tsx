@@ -117,6 +117,9 @@ export default function Workspace({
     items: []
   })
 
+  // Server refresh search state (re-fetch file tree when local search finds nothing)
+  const [serverSearchLoading, setServerSearchLoading] = useState(false)
+
   // Search Sync Details state
   const [showSearchSyncDetails, setShowSearchSyncDetails] = useState(false)
 
@@ -162,7 +165,8 @@ export default function Workspace({
     setLoadingFileContent,
     setShowFileContent,
     fetchFiles,
-    setActiveFolder
+    setActiveFolder,
+    setBinaryFileData
   } = useWorkspaceStore()
 
   // Note: moveDialog from store is shadowed by local state below
@@ -237,6 +241,8 @@ export default function Workspace({
   const autoExpandedWorkflowRef = useRef<string | null>(null)
   // Track whether we've auto-expanded Chats/ for chat mode
   const autoExpandedChatRef = useRef(false)
+  // Track whether we've auto-expanded Plans/ for multi-agent mode
+  const autoExpandedMultiAgentRef = useRef(false)
   
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
@@ -381,7 +387,7 @@ export default function Workspace({
   // Legacy function name for backward compatibility
   const getFullFilePath = getOriginalFilePath
 
-  // Simple filter: show all folders, filter only files
+  // Filter by query: match file names and folder names; hide folders with no match and no matching descendants
   const filterFiles = (files: PlannerFile[], query: string): PlannerFile[] => {
     if (!query.trim()) return files
     
@@ -390,16 +396,20 @@ export default function Workspace({
     const filterRecursive = (fileList: PlannerFile[]): PlannerFile[] => {
       return fileList.map(file => {
         if (file.type === 'folder') {
-          // For folders: always show them, filter their children
+          const filteredChildren = file.children ? filterRecursive(file.children) : []
+          const folderName = file.filepath.split('/').filter(Boolean).pop() || file.filepath
+          const folderMatches = folderName.toLowerCase().includes(lowercaseQuery) ||
+            file.filepath.toLowerCase().includes(lowercaseQuery)
+          const keepFolder = folderMatches || filteredChildren.length > 0
+          if (!keepFolder) return null
           return {
             ...file,
-            children: file.children ? filterRecursive(file.children) : []
+            children: filteredChildren
           }
         } else {
-          // For files: only show if they match
           const fileName = file.filepath.split('/').pop() || file.filepath
-          const matches = fileName.toLowerCase().includes(lowercaseQuery) || 
-                        file.filepath.toLowerCase().includes(lowercaseQuery)
+          const matches = fileName.toLowerCase().includes(lowercaseQuery) ||
+            file.filepath.toLowerCase().includes(lowercaseQuery)
           return matches ? file : null
         }
       }).filter(Boolean) as PlannerFile[]
@@ -436,6 +446,12 @@ export default function Workspace({
         result = adjustFilePathsRecursive(result, workflowFolderPath)
       }
       console.log('[WORKSPACE_DEBUG] after adjustFilePathsRecursive:', result.length, 'items, paths:', result.map(f => f.filepath).join(', '))
+    } else if (selectedModeCategory === 'multi-agent') {
+      // Multi Agent Chat mode: show Plans/, Chats/ and skills/ folders
+      result = files.filter(f => {
+        const topFolder = f.filepath.split('/')[0]
+        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'skills'
+      })
     } else if (selectedModeCategory === 'chat') {
       // Chat mode: show only Chats/ and skills/ top-level folders
       result = files.filter(f => {
@@ -450,6 +466,18 @@ export default function Workspace({
     return result
   }, [files, workflowFolderPath, searchQuery, selectedModeCategory])
   
+  // Refresh file tree from server (re-fetch all files so local filter can find them)
+  const handleRefreshAndSearch = useCallback(async () => {
+    setServerSearchLoading(true)
+    try {
+      await fetchFiles(undefined)
+    } catch (err) {
+      console.error('Failed to refresh files:', err)
+    } finally {
+      setServerSearchLoading(false)
+    }
+  }, [fetchFiles])
+
   // File highlighting with auto-scroll.
   // In workflow mode we only scroll — we do NOT call expandFoldersForFile() because it
   // opens ALL parent folders with no depth limit, overriding the maxLevel=3 cap from
@@ -516,6 +544,19 @@ export default function Workspace({
       autoExpandedChatRef.current = false
     }
   }, [selectedModeCategory, filteredFiles, setExpandedFolders])
+
+  // In multi-agent mode, auto-expand Plans/ folder by default
+  useEffect(() => {
+    if (selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedMultiAgentRef.current) {
+      const hasPlansFolder = filteredFiles.some(f => f.filepath === 'Plans' || f.filepath === 'Plans/')
+      if (hasPlansFolder) {
+        autoExpandedMultiAgentRef.current = true
+        setExpandedFolders(new Set(['Plans']))
+      }
+    } else if (selectedModeCategory !== 'multi-agent') {
+      autoExpandedMultiAgentRef.current = false
+    }
+  }, [selectedModeCategory, filteredFiles, setExpandedFolders])
   
   // Auto-collapse other iterations when an iteration is selected
   // Get selected iteration from workflow store
@@ -565,6 +606,12 @@ export default function Workspace({
     }
   }, [activeFolder, fetchFiles, minimized])
 
+  // Check if a file is a viewable binary format (xlsx, docx) that we can render
+  const isViewableBinaryFile = (fileName: string): boolean => {
+    const ext = fileName.split('.').pop()?.toLowerCase() || ''
+    return ['xls', 'xlsx', 'docx'].includes(ext)
+  }
+
   // Handle file click - fetch content and show in chat area
   const handleFileClick = async (file: PlannerFile) => {
     if (file.type === 'file' || !file.type) {
@@ -572,20 +619,35 @@ export default function Workspace({
       const fullFilePath = getOriginalFilePath(file)
       const fileName = fullFilePath.split('/').pop() || fullFilePath
 
-      // Check if file is viewable
-      if (!isTextBasedFile(fileName) && !file.is_image) {
+      // Check if file is viewable (text, image, or viewable binary like xlsx/docx)
+      if (!isTextBasedFile(fileName) && !file.is_image && !isViewableBinaryFile(fileName)) {
         setError(`File "${fileName}" is a binary file and cannot be viewed in the editor.`)
         return
       }
 
       try {
         setLoadingFileContent(true)
-        
+
         setSelectedFile({ name: fileName, path: fullFilePath })
-        
+
+        // For viewable binary files (xlsx, docx), fetch as raw binary
+        if (isViewableBinaryFile(fileName)) {
+          const response = await workspaceApi.get(
+            `/api/documents/${encodeURIComponent(fullFilePath)}`,
+            { params: { download: 'true' }, responseType: 'arraybuffer' }
+          )
+          setBinaryFileData(response.data as ArrayBuffer)
+          setFileContent('') // Clear text content
+          setShowFileContent(true)
+          return
+        }
+
+        // Clear binary data when viewing text files
+        setBinaryFileData(null)
+
         // Use the reconstructed full filepath for the API call
         const response = await agentApi.getPlannerFileContent(fullFilePath)
-        
+
         if (response.success && response.data) {
           // Check if content exists and is a string
           if (response.data.content === undefined || response.data.content === null) {
@@ -594,13 +656,13 @@ export default function Workspace({
             setLoadingFileContent(false)
             return
           }
-          
-          let processedContent = typeof response.data.content === 'string' 
-            ? response.data.content 
+
+          let processedContent = typeof response.data.content === 'string'
+            ? response.data.content
             : String(response.data.content)
           let isJsonFile = false
           let formattedJson = null
-          
+
           // Check if this is an image file
           if (response.data.is_image && processedContent && processedContent.startsWith('data:image/')) {
             // For images, the content is already base64 encoded data URL
@@ -613,12 +675,12 @@ export default function Workspace({
                 .replace(/\\n/g, '\n')  // Convert \n to actual newlines
                 .replace(/\\t/g, '\t')  // Convert \t to actual tabs
                 .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
-              
+
               // Check if this is a JSON file (by extension OR content)
               const extensionIsJson = file.filepath.toLowerCase().endsWith('.json')
               const contentIsJson = isValidJSON(processedContent)
               isJsonFile = extensionIsJson || contentIsJson
-              
+
               // If it's a JSON file, try to parse and format it
               if (isJsonFile) {
                 try {
@@ -632,7 +694,7 @@ export default function Workspace({
               }
             }
           }
-          
+
           // Store both original content and formatted JSON (if applicable)
           setFileContent(processedContent || '')
           if (formattedJson) {
@@ -1895,6 +1957,29 @@ export default function Workspace({
                 onToggleFileSelection={toggleFileSelection}
                 onSelectFileAndEnterSelectionMode={selectFileAndEnterSelectionMode}
               />
+
+              {/* Refresh from server when local search finds nothing */}
+              {searchQuery.trim() && filteredFiles.length === 0 && (
+                <div className="flex flex-col items-center gap-2 pt-2 pb-4">
+                  <button
+                    onClick={handleRefreshAndSearch}
+                    disabled={serverSearchLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-md transition-colors disabled:opacity-50"
+                  >
+                    {serverSearchLoading ? (
+                      <>
+                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                        Refreshing files...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                        Refresh &amp; search
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

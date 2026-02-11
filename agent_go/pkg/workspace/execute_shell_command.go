@@ -2,13 +2,15 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 type ExecuteShellCommandParams struct {
 	Command          string             `json:"command"`
-	WorkingDirectory *string            `json:"working_directory,omitempty"`
-	Args             *[]string          `json:"args,omitempty"`
+	WorkingDirectory string             `json:"working_directory"`
 	Timeout          *int               `json:"timeout,omitempty"`
 	UseShell         *bool              `json:"use_shell,omitempty"`
 	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
@@ -17,8 +19,8 @@ type ExecuteShellCommandParams struct {
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
 	// Validate working directory against folder guard (write operation since commands can modify files)
-	if params.WorkingDirectory != nil && *params.WorkingDirectory != "" {
-		if err := c.ValidatePath(*params.WorkingDirectory, true); err != nil {
+	if params.WorkingDirectory != "" {
+		if err := c.ValidatePath(params.WorkingDirectory, true); err != nil {
 			return "", err
 		}
 	}
@@ -26,10 +28,10 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Populate folder guard configuration from context or client
 	if params.FolderGuard == nil {
 		// Check for chat mode folder guard in context
-		if allowedWrite, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).(string); ok && allowedWrite != "" {
+		if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
 			params.FolderGuard = &FolderGuardConfig{
 				Enabled:    true,
-				WritePaths: []string{allowedWrite},
+				WritePaths: allowedWrites,
 				// In chat mode, allow reading everything in the workspace
 				ReadPaths: []string{"."},
 			}
@@ -49,5 +51,58 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		return "", err
 	}
 
-	return string(respBody), nil
+	formatted, isError := formatShellResponse(respBody)
+	if isError {
+		return "", fmt.Errorf("%s", formatted)
+	}
+	return formatted, nil
+}
+
+// formatShellResponse strips the success/message envelope and returns
+// just the data fields (stdout, stderr, exit_code, execution_time_ms) plus error if present.
+// Returns the formatted string and whether the command failed (non-zero exit code).
+func formatShellResponse(respBody []byte) (string, bool) {
+	var resp map[string]json.RawMessage
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return string(respBody), false
+	}
+
+	// Build output with just the useful fields
+	out := make(map[string]json.RawMessage)
+	var exitCode float64
+
+	// Copy data fields (stdout, stderr, exit_code, execution_time_ms)
+	// Skip "command" and "working_directory" — the LLM already knows what it sent
+	if data, ok := resp["data"]; ok {
+		var dataFields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &dataFields); err == nil {
+			for k, v := range dataFields {
+				if k == "command" || k == "working_directory" {
+					continue
+				}
+				out[k] = v
+			}
+			// Check exit code
+			if ec, ok := dataFields["exit_code"]; ok {
+				json.Unmarshal(ec, &exitCode)
+			}
+		}
+	}
+
+	// Include error if present
+	hasError := false
+	if errVal, ok := resp["error"]; ok && string(errVal) != `""` && string(errVal) != "null" {
+		out["error"] = errVal
+		hasError = true
+	}
+
+	result, err := json.Marshal(out)
+	if err != nil {
+		return string(respBody), false
+	}
+
+	// Command failed if exit code is non-zero or API returned an error
+	commandFailed := exitCode != 0 || hasError
+
+	return string(result), commandFailed
 }

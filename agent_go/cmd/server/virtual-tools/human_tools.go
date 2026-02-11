@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/cmd/server/services"
+
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -17,7 +19,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "human_feedback",
-			Description: "Use this tool when you need to get human input, confirmation, or feedback. This tool will pause execution until the user provides input via the UI. The tool returns the user's response as text - you must interpret the response to determine the user's intent (approval, rejection, questions, etc.). Ideal for requesting confirmation before making plan modifications, asking for OTP/2FA codes, or any situation requiring human decision-making.",
+			Description: "Use this tool when you need to get human input, confirmation, or feedback. This tool will pause execution until the user provides input via the UI. You can present multiple options as buttons for the user to choose from, or use free-text input. The tool returns the user's response as text. Ideal for asking clarifying questions, presenting choices, requesting confirmation, or any situation requiring human decision-making.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -29,8 +31,15 @@ func CreateHumanTools() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Unique identifier for this feedback request. Always generate a UUID (e.g., '550e8400-e29b-41d4-a716-446655440000').",
 					},
+					"options": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+						"description": "Optional list of choices to present as buttons. When provided, the user clicks a button instead of typing. Use for multiple-choice questions (e.g. ['Option A: Use REST API', 'Option B: Use GraphQL', 'Option C: Use gRPC']). Omit for free-text input.",
+					},
 				},
-				"required": []string{"unique_id"},
+				"required": []string{"unique_id", "message_for_user"},
 			}),
 		},
 	}
@@ -65,13 +74,36 @@ func handleHumanFeedback(ctx context.Context, args map[string]interface{}) (stri
 	if !ok {
 		return "", fmt.Errorf("unique_id is required and must be a string")
 	}
+
+	// Extract optional options array
+	var options []string
+	if optionsRaw, ok := args["options"].([]interface{}); ok {
+		for _, opt := range optionsRaw {
+			if s, ok := opt.(string); ok && s != "" {
+				options = append(options, s)
+			}
+		}
+	}
+
+	// Emit blocking_human_feedback event so the frontend renders the proper UI
+	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
+		hasOptions := len(options) > 0
+		emitter.EmitBlockingHumanFeedback(uniqueID, messageForUser, "", hasOptions, "", "", options...)
+	}
+
+	// Build button options for notifications (Slack, etc.)
+	var buttonOptions *services.ButtonOptions
+	if len(options) > 0 {
+		buttonOptions = &services.ButtonOptions{
+			Options: options,
+		}
+	}
+
 	// Get global feedback store
 	feedbackStore := GetHumanFeedbackStore()
 
 	// Create feedback request (automatically sends notifications via notification manager)
-	// This will send to all enabled connectors (Slack, Gmail, WhatsApp, etc.)
-	// No button options for simple human_feedback tool (just text input)
-	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", nil); err != nil {
+	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, messageForUser, "", buttonOptions); err != nil {
 		return "", fmt.Errorf("failed to create feedback request: %w", err)
 	}
 

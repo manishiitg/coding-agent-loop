@@ -310,6 +310,54 @@ func removeStaleLockFile(docsDir string) error {
 	return nil
 }
 
+// MaxGitFileSize is the maximum file size (in bytes) allowed to be committed to git.
+// Files larger than this are automatically unstaged before commit.
+const MaxGitFileSize = 1 * 1024 * 1024 // 1 MB
+
+// unstageLargeFiles scans staged files and unstages any that exceed MaxGitFileSize.
+func unstageLargeFiles(docsDir string) error {
+	// List all staged files with their sizes
+	// git diff --cached --name-only gives us the list of staged files
+	cmd := exec.Command("git", "-C", docsDir, "diff", "--cached", "--name-only")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to list staged files: %v", err)
+	}
+
+	stagedFiles := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(stagedFiles) == 1 && stagedFiles[0] == "" {
+		return nil // no staged files
+	}
+
+	var unstagedFiles []string
+	for _, file := range stagedFiles {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		fullPath := filepath.Join(docsDir, file)
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			// File might have been deleted (staged deletion) — that's fine, skip
+			continue
+		}
+		if info.Size() > MaxGitFileSize {
+			log.Printf("[GIT] Unstaging large file: %s (%.2f MB > %d MB limit)", file, float64(info.Size())/(1024*1024), MaxGitFileSize/(1024*1024))
+			resetCmd := exec.Command("git", "-C", docsDir, "reset", "HEAD", "--", file)
+			if resetOut, resetErr := resetCmd.CombinedOutput(); resetErr != nil {
+				log.Printf("[GIT] WARNING: Failed to unstage %s: %v (%s)", file, resetErr, string(resetOut))
+			} else {
+				unstagedFiles = append(unstagedFiles, file)
+			}
+		}
+	}
+
+	if len(unstagedFiles) > 0 {
+		log.Printf("[GIT] Unstaged %d large file(s) exceeding %d MB limit: %v", len(unstagedFiles), MaxGitFileSize/(1024*1024), unstagedFiles)
+	}
+	return nil
+}
+
 // gitAddWithRetry performs git add with automatic retry on lock file errors
 func gitAddWithRetry(docsDir string) error {
 	// Remove any stale lock files before attempting add
@@ -344,15 +392,64 @@ func gitAddWithRetry(docsDir string) error {
 				return fmt.Errorf("failed to add files (after retry): %s", retryErrorMsg)
 			}
 			log.Printf("[GIT] Successfully added files to staging after retry")
-			return nil
+		} else {
+			if errorMsg == "" {
+				errorMsg = addErr.Error()
+			}
+			return fmt.Errorf("failed to add files: %s", errorMsg)
 		}
-
-		if errorMsg == "" {
-			errorMsg = addErr.Error()
-		}
-		return fmt.Errorf("failed to add files: %s", errorMsg)
+	} else {
+		log.Printf("[GIT] Successfully added files to staging")
 	}
-	log.Printf("[GIT] Successfully added files to staging")
+
+	// After staging, unstage any files that exceed the max size limit
+	if err := unstageLargeFiles(docsDir); err != nil {
+		log.Printf("[GIT] WARNING: Failed to check for large files: %v", err)
+		// Non-fatal — continue with commit
+	}
+
+	return nil
+}
+
+// LocalCommit performs a local git add + commit without any fetch/pull/push.
+// Safe to call on non-git workspaces (no-ops if .git doesn't exist).
+func LocalCommit(docsDir string, commitMessage string) error {
+	// Check if .git directory exists
+	gitDir := filepath.Join(docsDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		log.Printf("[GIT] LocalCommit: No .git directory in %s, skipping", docsDir)
+		return nil
+	}
+
+	log.Printf("[GIT] LocalCommit: Starting local commit in %s", docsDir)
+
+	// Add all files and unstage large ones
+	if err := gitAddWithRetry(docsDir); err != nil {
+		return err
+	}
+
+	// Check if there are changes to commit
+	statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
+	output, err := statusCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to check git status: %v", err)
+	}
+
+	if len(strings.TrimSpace(string(output))) == 0 {
+		log.Printf("[GIT] LocalCommit: No changes to commit")
+		return nil
+	}
+
+	if commitMessage == "" {
+		commitMessage = fmt.Sprintf("Update documents - %s", getCurrentTimestamp())
+	}
+
+	log.Printf("[GIT] LocalCommit: Committing with message: %s", commitMessage)
+	if err := exec.Command("git", "-C", docsDir, "commit", "-m", commitMessage).Run(); err != nil {
+		return fmt.Errorf("failed to commit changes: %v", err)
+	}
+
+	log.Printf("[GIT] LocalCommit: Changes committed successfully")
 	return nil
 }
 

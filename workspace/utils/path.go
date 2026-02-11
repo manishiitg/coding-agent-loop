@@ -60,14 +60,14 @@ func SanitizeInputPath(inputPath, docsDir string) string {
 
 // --- Per-User Folder Isolation ---
 // These utilities support hybrid user/shared folder routing:
-// - Per-user folders (Chats/, Downloads/) are stored under /_users/{userID}/
-// - Shared folders (skills/, Workspace/, Workflow/) remain at root level
+// - Per-user folders (Chats/, Downloads/, Plans/) are stored under /_users/{userID}/
+// - Shared folders (skills/, Workflow/) remain at root level
 
 // PerUserFolders defines folders that are isolated per-user
-var PerUserFolders = []string{"Chats", "Downloads"}
+var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
 
 // SharedFolders defines folders that are shared across all users
-var SharedFolders = []string{"skills", "Workspace", "Workflow"}
+var SharedFolders = []string{"skills", "Workflow"}
 
 // UsersDirectory is the directory under which per-user folders are stored
 const UsersDirectory = "_users"
@@ -119,7 +119,7 @@ func IsPerUserPath(requestedPath string) bool {
 //   - Input: "Chats/session.json", userID: "user123"
 //   - Output: "/_users/user123/Chats/session.json"
 //
-// For shared folders (skills/, Workspace/, Workflow/) and other paths:
+// For shared folders (skills/, Workflow/) and other paths:
 //   - Input: "skills/my-skill.json", userID: "user123"
 //   - Output: "/skills/my-skill.json" (unchanged)
 //
@@ -130,6 +130,13 @@ func ResolveUserPath(docsDir, requestedPath, userID string) (string, error) {
 
 	// Clean the requested path
 	cleanPath := SanitizeInputPath(requestedPath, docsDir)
+
+	// Block direct access to _users/ directory — prevents cross-user data access.
+	// Per-user folders (Chats/, Downloads/, Plans/) are the correct access paths;
+	// they get routed to _users/{userID}/ by this function.
+	if cleanPath == UsersDirectory || strings.HasPrefix(cleanPath, UsersDirectory+"/") || strings.HasPrefix(cleanPath, UsersDirectory+string(filepath.Separator)) {
+		return "", fmt.Errorf("direct access to %s/ directory is not allowed; use Chats/, Downloads/, or Plans/ instead", UsersDirectory)
+	}
 
 	// Check if this is a per-user path
 	if IsPerUserPath(cleanPath) {
@@ -204,26 +211,69 @@ func EnsureUserDirectories(docsDir, userID string) error {
 	return nil
 }
 
+// EnsurePerUserSymlinks creates root-level symlinks for per-user folders pointing
+// to the given user's directories. This allows shell commands to access per-user
+// folders (Chats/, Plans/, Downloads/) via their logical paths, since the physical
+// files live under _users/{userID}/.
+func EnsurePerUserSymlinks(docsDir, userID string) error {
+	safeUserID := SanitizeUserID(userID)
+
+	for _, folder := range PerUserFolders {
+		rootPath := filepath.Join(docsDir, folder)
+		targetPath := filepath.Join(UsersDirectory, safeUserID, folder)
+
+		// Check what currently exists at root path
+		info, err := os.Lstat(rootPath)
+		if err == nil {
+			// Something exists — check if it's already a correct symlink
+			if info.Mode()&os.ModeSymlink != 0 {
+				existingTarget, readErr := os.Readlink(rootPath)
+				if readErr == nil && existingTarget == targetPath {
+					continue // Already correct
+				}
+				// Wrong symlink target — remove and recreate
+				os.Remove(rootPath)
+			} else if info.IsDir() {
+				// Real directory exists (not a symlink)
+				// If empty (e.g. created by Dockerfile), safe to replace with symlink
+				entries, readErr := os.ReadDir(rootPath)
+				if readErr != nil || len(entries) > 0 {
+					// Has content — skip to avoid data loss (needs migration first)
+					fmt.Printf("Warning: real directory %s/ exists with content, skipping symlink (run migration first)\n", folder)
+					continue
+				}
+				// Empty directory — remove it so we can create the symlink
+				if removeErr := os.Remove(rootPath); removeErr != nil {
+					fmt.Printf("Warning: failed to remove empty directory %s/: %v\n", folder, removeErr)
+					continue
+				}
+			}
+		}
+
+		// Create symlink: rootPath -> _users/{userID}/{folder}
+		if err := os.Symlink(targetPath, rootPath); err != nil {
+			return fmt.Errorf("failed to create symlink %s -> %s: %w", folder, targetPath, err)
+		}
+	}
+
+	return nil
+}
+
 // MigratePerUserFolders migrates existing per-user folders from root level to /_users/default/
 // This is a one-time migration for backwards compatibility with existing workspaces.
+// Also handles partial migrations where _users/default/ exists but root-level folders still have content.
 // Returns the number of folders migrated and any error.
 func MigratePerUserFolders(docsDir string) (int, error) {
 	migratedCount := 0
 
-	// Check if _users directory already exists
-	usersDir := filepath.Join(docsDir, UsersDirectory)
-	if _, err := os.Stat(usersDir); err == nil {
-		// _users directory exists, check if migration already happened
-		defaultUserDir := filepath.Join(usersDir, DefaultUserID)
-		if _, err := os.Stat(defaultUserDir); err == nil {
-			// Default user directory exists, migration likely already done
-			return 0, nil
-		}
-	}
-
 	// Check each per-user folder at root level
 	for _, folder := range PerUserFolders {
 		rootFolderPath := filepath.Join(docsDir, folder)
+
+		// Check if root path is a symlink — already migrated
+		if linfo, err := os.Lstat(rootFolderPath); err == nil && linfo.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 
 		// Check if folder exists at root level and has content
 		info, err := os.Stat(rootFolderPath)
@@ -259,17 +309,28 @@ func MigratePerUserFolders(docsDir string) (int, error) {
 			return migratedCount, fmt.Errorf("failed to create user directory: %w", err)
 		}
 
-		// Move the folder
-		// First, try a simple rename (works if on same filesystem)
-		if err := os.Rename(rootFolderPath, destFolderPath); err != nil {
-			// Rename failed (possibly cross-filesystem), try copy and delete
-			if copyErr := copyDir(rootFolderPath, destFolderPath); copyErr != nil {
-				return migratedCount, fmt.Errorf("failed to migrate folder %s: %w", folder, copyErr)
+		// Check if destination already exists (partial migration scenario)
+		if _, destErr := os.Stat(destFolderPath); destErr == nil {
+			// Destination exists — merge content (copy without overwriting existing files)
+			if copyErr := copyDirMerge(rootFolderPath, destFolderPath); copyErr != nil {
+				return migratedCount, fmt.Errorf("failed to merge folder %s: %w", folder, copyErr)
 			}
-			// Remove original after successful copy
+			// Remove original after successful merge
 			if removeErr := os.RemoveAll(rootFolderPath); removeErr != nil {
-				// Log warning but don't fail - content was successfully copied
-				fmt.Printf("Warning: failed to remove original folder %s after migration: %v\n", folder, removeErr)
+				fmt.Printf("Warning: failed to remove original folder %s after merge: %v\n", folder, removeErr)
+			}
+		} else {
+			// Destination doesn't exist — move the folder
+			// First, try a simple rename (works if on same filesystem)
+			if err := os.Rename(rootFolderPath, destFolderPath); err != nil {
+				// Rename failed (possibly cross-filesystem), try copy and delete
+				if copyErr := copyDir(rootFolderPath, destFolderPath); copyErr != nil {
+					return migratedCount, fmt.Errorf("failed to migrate folder %s: %w", folder, copyErr)
+				}
+				// Remove original after successful copy
+				if removeErr := os.RemoveAll(rootFolderPath); removeErr != nil {
+					fmt.Printf("Warning: failed to remove original folder %s after migration: %v\n", folder, removeErr)
+				}
 			}
 		}
 
@@ -278,13 +339,44 @@ func MigratePerUserFolders(docsDir string) (int, error) {
 	}
 
 	// Ensure the default user directories exist (creates empty folders for non-migrated ones)
-	if migratedCount > 0 {
-		if err := EnsureUserDirectories(docsDir, DefaultUserID); err != nil {
-			return migratedCount, fmt.Errorf("failed to ensure user directories: %w", err)
-		}
+	if err := EnsureUserDirectories(docsDir, DefaultUserID); err != nil {
+		return migratedCount, fmt.Errorf("failed to ensure user directories: %w", err)
 	}
 
 	return migratedCount, nil
+}
+
+// copyDirMerge copies files from src into dst without overwriting existing files.
+// Used for partial migration scenarios where some files already exist in dst.
+func copyDirMerge(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			if err := copyDirMerge(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			// Only copy if destination file doesn't exist
+			if _, err := os.Stat(dstPath); os.IsNotExist(err) {
+				if err := copyFile(srcPath, dstPath); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // copyDir recursively copies a directory from src to dst

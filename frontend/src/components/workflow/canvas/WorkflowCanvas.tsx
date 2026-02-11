@@ -8,7 +8,8 @@ import {
   BackgroundVariant,
   ReactFlowProvider,
   type NodeChange,
-  type OnSelectionChangeParams
+  type OnSelectionChangeParams,
+  SelectionMode
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
@@ -396,6 +397,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const noop = useCallback(() => {}, [])
   const clearChanges = workflowMode === 'plan' ? planData.clearChanges : noop
   const setChanges = workflowMode === 'plan' ? planData.setChanges : noop
+  const stepOverride = workflowMode === 'plan' ? planData.stepOverride : null
+  const saveStepOverride = planData.saveStepOverride
 
   // *** NEW CONSOLIDATED API ***
   // Load all workspace state (run folders, variables, phases, progress) in one call
@@ -510,6 +513,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Multi-selection state for configuring multiple steps at once
   const [selectedNodes, setSelectedNodes] = useState<WorkflowNode[]>([])
+
+  // Track Shift key for toggling between pan (default) and selection mode
+  const [isShiftPressed, setIsShiftPressed] = useState(false)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => { if (e.key === 'Shift') setIsShiftPressed(true) }
+    const handleKeyUp = (e: KeyboardEvent) => { if (e.key === 'Shift') setIsShiftPressed(false) }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [])
 
   // Store latest nodes in ref to avoid dependency issues
   const nodesRef = React.useRef(nodes)
@@ -996,7 +1012,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         execution_strategy: 'run_single_step',
         resume_from_step: stepIndex + 1  // 1-based step number (target step)
       }
-      onStartPhase('execution', executionOptions)
+      const workflowMode = useWorkflowStore.getState().workflowMode
+      const phaseId = workflowMode === 'eval' ? 'evaluation-execution' : 'execution'
+      onStartPhase(phaseId, executionOptions)
     }
   }, [onStartPhase, focusNode])
 
@@ -2115,7 +2133,22 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   // Error state - show errors from plan loading or workspace state loading
-  const hasError = error || workspaceStateError
+  // Treat "plan.json not found" as "no plan" rather than an error (new workflows don't have plan.json yet)
+  const isPlanNotFoundError = error && /not found|does not exist|planning must be run first/i.test(error)
+  const effectiveError = isPlanNotFoundError ? null : error
+  const hasError = effectiveError || workspaceStateError
+
+  console.log('[WORKFLOW_BUILDER] WorkflowCanvas render check:', {
+    error,
+    isPlanNotFoundError,
+    effectiveError,
+    workspaceStateError,
+    hasError,
+    hasPlan: !!(workflowMode === 'plan' ? (plan && plan.steps && plan.steps.length > 0) : false),
+    loading,
+    isLoadingWorkspaceState,
+    workspacePath,
+  })
 
   if (hasError) {
     return (
@@ -2125,9 +2158,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             <span className="text-2xl">⚠️</span>
           </div>
           <div className="flex flex-col gap-2">
-            {error && (
+            {effectiveError && (
               <span className="text-sm text-red-600 dark:text-red-400">
-                <strong>Plan error:</strong> {error}
+                <strong>Plan error:</strong> {effectiveError}
               </span>
             )}
             {workspaceStateError && (
@@ -2199,12 +2232,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                   : 'Run Evaluation Designer to create an evaluation plan'}
               </p>
             </div>
-            {onCreatePlan && workflowMode === 'plan' && (
+            {onCreatePlan && (
               <button
                 onClick={onCreatePlan}
                 className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-medium"
               >
-                Create Plan
+                {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Create Plan'}
               </button>
             )}
           </div>
@@ -2231,6 +2264,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         onStartPhase={handleStartPhase}
         onStop={stopWorkflow}
         onBulkUpdateSteps={handleBulkUpdateSteps}
+        stepOverride={stepOverride}
+        onSaveStepOverride={saveStepOverride}
         onCreatePlan={onCreatePlan || (() => {})}
         showChatArea={showChatArea}
         onToggleChatArea={onToggleChatArea}
@@ -2263,7 +2298,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           onPaneClick={onPaneClick}
           onSelectionChange={onSelectionChange}
           multiSelectionKeyCode={["Shift", "Control", "Meta"]}
-          selectionOnDrag={false}
+          selectionOnDrag={isShiftPressed}
+          panOnDrag={!isShiftPressed}
+          panOnScroll
+          selectionKeyCode="Shift"
+          selectionMode={SelectionMode.Partial}
           onViewportChange={(viewport) => {
             // Track viewport state to preserve it during refresh
             const viewportState = {

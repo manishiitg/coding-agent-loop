@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -9,6 +9,7 @@ import { getEventData, isEventType } from '../generated/event-types'
 import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
+import SubAgentSelectionDropdown from './subagents/SubAgentSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
@@ -18,12 +19,14 @@ import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import ResumeSessionDialog from './ResumeSessionDialog'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
-import type { PlannerFile } from '../services/api-types'
+import WorkflowBuilderModal from './WorkflowBuilderModal'
+import type { PlannerFile, PollingEvent } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
 
 interface ChatInputProps {
@@ -68,25 +71,23 @@ const shortModelName = (modelId: string): string => {
 // Stable empty array reference to avoid infinite loops in selectors
 const EMPTY_EVENTS: never[] = []
 
-// Provider icon for tier chip (official SVGs from simple-icons)
+// Provider color dot + short label for tier chip
+const providerMeta: Record<string, { color: string; label: string }> = {
+  anthropic: { color: 'bg-amber-500', label: 'An' },
+  openai: { color: 'bg-emerald-500', label: 'OA' },
+  openrouter: { color: 'bg-purple-500', label: 'OR' },
+  bedrock: { color: 'bg-orange-500', label: 'BR' },
+  vertex: { color: 'bg-sky-500', label: 'Vx' },
+  azure: { color: 'bg-blue-500', label: 'Az' },
+}
 const TierProviderDot = ({ provider }: { provider: string }) => {
-  const cls = "w-3 h-3 flex-shrink-0"
-  switch (provider) {
-    case 'anthropic':
-      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M17.304 3.541h-3.672l6.696 16.918H24zm-10.608 0L0 20.459h3.744l1.37-3.553h7.005l1.369 3.553h3.744L10.536 3.541zm-.371 10.223 2.291-5.946 2.291 5.946z"/></svg>
-    case 'openai':
-      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M22.282 9.821a5.985 5.985 0 0 0-.516-4.91 6.046 6.046 0 0 0-6.51-2.9A6.065 6.065 0 0 0 4.981 4.18a5.985 5.985 0 0 0-3.998 2.9 6.046 6.046 0 0 0 .743 7.097 5.98 5.98 0 0 0 .51 4.911 6.051 6.051 0 0 0 6.515 2.9A5.985 5.985 0 0 0 13.26 24a6.056 6.056 0 0 0 5.772-4.206 5.99 5.99 0 0 0 3.997-2.9 6.056 6.056 0 0 0-.747-7.073zM13.26 22.43a4.476 4.476 0 0 1-2.876-1.04l.141-.081 4.779-2.758a.795.795 0 0 0 .392-.681v-6.737l2.02 1.168a.071.071 0 0 1 .038.052v5.583a4.504 4.504 0 0 1-4.494 4.494zM3.6 18.304a4.47 4.47 0 0 1-.535-3.014l.142.085 4.783 2.759a.771.771 0 0 0 .78 0l5.843-3.369v2.332a.08.08 0 0 1-.033.062L9.74 19.95a4.5 4.5 0 0 1-6.14-1.646zM2.34 7.896a4.485 4.485 0 0 1 2.366-1.973V11.6a.766.766 0 0 0 .388.676l5.815 3.355-2.02 1.168a.076.076 0 0 1-.071 0l-4.83-2.786A4.504 4.504 0 0 1 2.34 7.872zm16.597 3.855-5.833-3.387L15.119 7.2a.076.076 0 0 1 .071 0l4.83 2.791a4.494 4.494 0 0 1-.676 8.105v-5.678a.79.79 0 0 0-.407-.667zm2.01-3.023-.141-.085-4.774-2.782a.776.776 0 0 0-.785 0L9.409 9.23V6.897a.066.066 0 0 1 .028-.061l4.83-2.787a4.5 4.5 0 0 1 6.68 4.66zm-12.64 4.135-2.02-1.164a.08.08 0 0 1-.038-.057V6.075a4.5 4.5 0 0 1 7.375-3.453l-.142.08L8.704 5.46a.795.795 0 0 0-.393.681zm1.097-2.365 2.602-1.5 2.607 1.5v2.999l-2.597 1.5-2.607-1.5z"/></svg>
-    case 'openrouter':
-      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"/></svg>
-    case 'bedrock':
-      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M4.985 0c-.294.003-.534.247-.534.548l-.006 4.908c0 .145.06.284.159.39a.532.532 0 0 0 .381.155h3.428l8.197 17.681a.537.537 0 0 0 .489.318h5.81c.298 0 .543-.245.543-.548V18.544c0-.303-.239-.548-.543-.548h-2.013L12.739.315A.536.536 0 0 0 12.245 0h-7.254zm.54 1.091h6.368l8.16 17.68a.537.537 0 0 0 .488.318h1.818v3.817h-2.922L11.24 5.226a.536.536 0 0 0-.488-.318H5.522z"/></svg>
-    case 'vertex':
-      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>
-    case 'azure':
-      return <svg viewBox="0 0 24 24" className={cls} fill="currentColor"><path d="M13.05 4.24 7.56 18.05l-4.3.76L13.05 4.24M14.7.76H9.07L1.97 19.45l5.03-.88L14.7.76zM22.03 18.76 14.26 3.38l-3.2 7.36 4.78 8.79-8.27 1.23L22.03 18.76z"/></svg>
-    default:
-      return <span className="text-[8px] font-bold uppercase leading-none">{provider?.slice(0, 2) || '?'}</span>
-  }
+  const meta = providerMeta[provider]
+  return (
+    <>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${meta?.color || 'bg-gray-400'}`} />
+      <span className="opacity-70">{meta?.label || provider.slice(0, 2).toUpperCase()}</span>
+    </>
+  )
 }
 
 // Completely isolated input component that doesn't re-render when events change
@@ -100,7 +101,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setWorkspaceMinimized,
     delegationMode
   } = useAppStore()
-  
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  // For plan features, treat multi-agent as always 'plan'
+  const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
+
+  // Detect plan phase from events (planning → execution after confirm_plan_execution succeeds)
+  // We'll compute this from tabEvents below after they're defined
+
   // Use selectors to subscribe only to specific values, reducing re-renders
   const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
@@ -131,7 +139,35 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
   }, [tabSessionId, allTabEvents])
 
+  // Detect plan phase from events: check if confirm_plan_execution completed successfully
+  const planPhase = useMemo(() => {
+    if (!isMultiAgentMode) return null
+    // Look for a successful tool_call_end for confirm_plan_execution
+    for (let i = tabEvents.length - 1; i >= 0; i--) {
+      const event = tabEvents[i]
+      if (event.type === 'tool_call_end') {
+        const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined
+        const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name
+        if (toolName === 'confirm_plan_execution') {
+          return 'execution'
+        }
+      }
+    }
+    return 'planning'
+  }, [isMultiAgentMode, tabEvents])
+
+  // Helper: check if an event is from a sub-agent (delegation)
+  const isSubAgentEvent = useCallback((event: PollingEvent): boolean => {
+    const agentEvent = event.data as Record<string, unknown> | undefined
+    const innerData = agentEvent?.data as Record<string, unknown> | undefined
+    const comp = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
+    const corrId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
+    return (typeof comp === 'string' && comp.startsWith('delegation-'))
+      || (typeof corrId === 'string' && corrId.startsWith('delegation-'))
+  }, [])
+
   // Find the latest token usage (optimized with backward iteration)
+  // In multi-agent mode, skip sub-agent events — show the PARENT agent's context usage
   const { contextUsagePercent, latestTokenUsage } = useMemo(() => {
     if (tabEvents.length === 0) return { contextUsagePercent: null, latestTokenUsage: null }
 
@@ -142,6 +178,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     for (let i = tabEvents.length - 1; i >= 0 && !latestTotalEvent; i--) {
       const event = tabEvents[i]
       if (event.type === 'token_usage') {
+        // Skip sub-agent token_usage events — we want the parent agent's context
+        if (isSubAgentEvent(event)) continue
         const tokenUsageData = event.data?.data?.token_usage
         if (tokenUsageData?.context === 'conversation_total') {
           latestTotalEvent = event
@@ -180,6 +218,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     for (let i = tabEvents.length - 1; i >= 0; i--) {
       const event = tabEvents[i]
       if (event.type === 'llm_generation_end') {
+        // Skip sub-agent llm_generation_end events
+        if (isSubAgentEvent(event)) continue
         const llmData = event.data?.data?.llm_generation_end
         const contextPercent = llmData?.metadata?.context_usage_percent as number | undefined
 
@@ -198,7 +238,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     return { contextUsagePercent: null, latestTokenUsage: null }
-  }, [tabEvents])
+  }, [tabEvents, isSubAgentEvent])
   
   // Always use tab-specific config (ChatInput is only in chat mode)
   // Memoize to prevent unnecessary re-renders when other config values change
@@ -370,6 +410,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
 
+  // Use tab-specific sub-agent templates - memoize to prevent re-renders
+  const selectedSubAgents = useMemo(() => tabConfig?.selectedSubAgents || [], [tabConfig?.selectedSubAgents])
+
+  // Sub-agent template operations (update tab config)
+  const onSubAgentToggle = useCallback((folderName: string) => {
+    if (activeTabId) {
+      const newSubAgents = selectedSubAgents.includes(folderName)
+        ? selectedSubAgents.filter(s => s !== folderName)
+        : [...selectedSubAgents, folderName]
+      setTabConfig(activeTabId, { selectedSubAgents: newSubAgents })
+    }
+  }, [activeTabId, selectedSubAgents, setTabConfig])
+
+  const onSelectAllSubAgents = useCallback((allNames: string[]) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSubAgents: allNames })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const onClearAllSubAgents = useCallback(() => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSubAgents: [] })
+    }
+  }, [activeTabId, setTabConfig])
+
   const {
     availableLLMs,
     getCurrentLLMOption,
@@ -379,7 +444,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
-  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, showResume, openDialog, closeDialog } = useCommandDialogStore()
+  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, showResume, showWorkflowBuilder, openDialog, closeDialog } = useCommandDialogStore()
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
@@ -866,6 +931,45 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         return
       }
 
+      // Handle /build-subagent command
+      const buildSubAgentIndex = trimmedQuery.indexOf('/build-subagent')
+      if (buildSubAgentIndex >= 0) {
+        const textAfterCommand = trimmedQuery.substring(buildSubAgentIndex + '/build-subagent'.length).trim()
+
+        // Auto-add subagent-creator to current tab's selectedSkills
+        if (activeTabId) {
+          const currentSkills = tabConfig?.selectedSkills || []
+          if (!currentSkills.includes('subagent-creator') && !currentSkills.includes('custom/subagent-creator')) {
+            setTabConfig(activeTabId, { selectedSkills: [...currentSkills, 'custom/subagent-creator'] })
+          }
+        }
+
+        // Expand subagents/ and subagents/custom/ folders in workspace
+        const wsStore2 = useWorkspaceStore.getState()
+        const expanded2 = new Set(wsStore2.expandedFolders)
+        expanded2.add('subagents')
+        expanded2.add('subagents/custom')
+        wsStore2.setExpandedFolders(expanded2)
+
+        // Clear input after command
+        setLocalInputText('')
+        if (syncToStoreTimeoutRef.current) {
+          clearTimeout(syncToStoreTimeoutRef.current)
+          syncToStoreTimeoutRef.current = null
+        }
+        if (activeTabId) {
+          setTabConfig(activeTabId, { inputText: '' })
+        }
+
+        // Submit with sub-agent builder context
+        const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode, skills, servers) and markdown instructions.'
+        const message = textAfterCommand
+          ? `${textAfterCommand}\n\n${saContext}`
+          : `I want to build a sub-agent template. ${saContext}`
+        onSubmit(message)
+        return
+      }
+
       // Handle /add-skill command — open the import dialog
       if (trimmedQuery.indexOf('/add-skill') >= 0) {
         // Clear input
@@ -1126,6 +1230,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         onSubmit(message)
         break
       }
+      case 'build-subagent': {
+        // Auto-add subagent-creator to current tab's selectedSkills
+        const currentSkills2 = tabConfig?.selectedSkills || []
+        if (!currentSkills2.includes('subagent-creator') && !currentSkills2.includes('custom/subagent-creator')) {
+          setTabConfig(activeTabId, { selectedSkills: [...currentSkills2, 'custom/subagent-creator'] })
+        }
+        // Expand subagents folders in workspace
+        const wsStore2 = useWorkspaceStore.getState()
+        const expanded2 = new Set(wsStore2.expandedFolders)
+        expanded2.add('subagents')
+        expanded2.add('subagents/custom')
+        wsStore2.setExpandedFolders(expanded2)
+        // Submit with sub-agent builder context
+        const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode, skills, servers) and markdown instructions.'
+        const saMessage = beforeSlash
+          ? `${beforeSlash}\n\n${saContext}`
+          : `I want to build a sub-agent template. ${saContext}`
+        onSubmit(saMessage)
+        break
+      }
       case 'add-skill':
         openDialog('skillImport')
         break
@@ -1152,29 +1276,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         )
         break
       }
-      case 'plan': {
-        // Check if delegation tier config exists in localStorage
-        const tierConfig = useLLMStore.getState().delegationTierConfig
-        const hasTierConfig = tierConfig && (tierConfig.high || tierConfig.medium || tierConfig.low)
-
-        useAppStore.getState().setDelegationMode('plan')
-
-        if (!hasTierConfig) {
-          // First time - open left sidebar and expand delegation tiers section
-          useAppStore.getState().setSidebarMinimized(false)
-          openDialog('delegationTiers')
-          addToast(
-            'Plan delegation enabled - Configure your delegation tier models in the sidebar',
-            'info'
-          )
-        } else {
-          addToast(
-            'Plan delegation enabled - Agent will create plans and delegate with multi-LLM tiers',
-            'success'
-          )
-        }
-        break
-      }
       case 'nospawn': {
         useAppStore.getState().setDelegationMode('off')
         addToast(
@@ -1183,6 +1284,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         )
         break
       }
+      case 'workflow-builder':
+        openDialog('workflowBuilder')
+        break
       default:
         // For unknown commands, insert into text (fallback)
         if (textareaRef.current) {
@@ -1340,6 +1444,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 
                 {/* Agent Mode Selector - Only show when no preset is active */}
                 {!chatActivePreset && (
+                  effectiveDelegationMode === 'plan' ? (
+                    /* In plan mode, agent auto-picks tool mode per task */
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-0.5 px-2 py-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 cursor-default">
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <Code2 className="w-3.5 h-3.5" />
+                          <Search className="w-3.5 h-3.5" />
+                          <span className="text-[10px] font-medium ml-0.5">Auto</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        <p>Plan mode: agent picks tool mode per task (simple, code exec, tool search)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
                   <div className="flex items-center gap-1">
                     {/* Simple Mode */}
                     <button
@@ -1402,6 +1522,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </span>
                     </button>
                   </div>
+                  )
                 )}
                 
                 {/* Server and LLM Selection - only show when no preset is active */}
@@ -1425,10 +1546,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           onClearAll={onClearAllSkills}
                           disabled={isStreaming || isSummarizing}
                         />
+                        {(effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
+                          <SubAgentSelectionDropdown
+                            selectedSubAgents={selectedSubAgents}
+                            onSubAgentToggle={onSubAgentToggle}
+                            onSelectAll={onSelectAllSubAgents}
+                            onClearAll={onClearAllSubAgents}
+                            disabled={isStreaming || isSummarizing}
+                          />
+                        )}
                       </>
-                    
-                    {/* Hide LLM dropdown in plan mode - show tier summary chip instead */}
-                    {delegationMode === 'plan' ? (
+
+                    {/* Hide LLM dropdown in plan/multi-agent mode - show tier summary chip instead */}
+                    {effectiveDelegationMode === 'plan' ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button
@@ -1438,33 +1568,41 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           >
                             <Layers className="w-3.5 h-3.5 flex-shrink-0" />
                             {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
-                              <span className="flex items-center gap-2 font-medium">
+                              <span className="flex items-center gap-1 font-medium">
                                 {delegationTierConfig.high && (
-                                  <span className="flex items-center gap-0.5" title={`High: ${delegationTierConfig.high.provider}/${delegationTierConfig.high.model_id}`}>
+                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
                                     <TierProviderDot provider={delegationTierConfig.high.provider} />
-                                    <span className="text-[10px]">H:{shortModelName(delegationTierConfig.high.model_id)}</span>
+                                    H
                                   </span>
                                 )}
                                 {delegationTierConfig.medium && (
-                                  <span className="flex items-center gap-0.5" title={`Medium: ${delegationTierConfig.medium.provider}/${delegationTierConfig.medium.model_id}`}>
+                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
                                     <TierProviderDot provider={delegationTierConfig.medium.provider} />
-                                    <span className="text-[10px]">M:{shortModelName(delegationTierConfig.medium.model_id)}</span>
+                                    M
                                   </span>
                                 )}
                                 {delegationTierConfig.low && (
-                                  <span className="flex items-center gap-0.5" title={`Low: ${delegationTierConfig.low.provider}/${delegationTierConfig.low.model_id}`}>
+                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
                                     <TierProviderDot provider={delegationTierConfig.low.provider} />
-                                    <span className="text-[10px]">L:{shortModelName(delegationTierConfig.low.model_id)}</span>
+                                    L
                                   </span>
                                 )}
                               </span>
                             ) : (
-                              <span className="font-medium">Configure Tiers</span>
+                              <span className="font-medium">Tiers</span>
                             )}
                           </button>
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          <p>Click to configure delegation tier models</p>
+                          {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                            <div className="space-y-1 text-xs">
+                              {delegationTierConfig.high && <p>High: {shortModelName(delegationTierConfig.high.model_id)} ({delegationTierConfig.high.provider})</p>}
+                              {delegationTierConfig.medium && <p>Med: {shortModelName(delegationTierConfig.medium.model_id)} ({delegationTierConfig.medium.provider})</p>}
+                              {delegationTierConfig.low && <p>Low: {shortModelName(delegationTierConfig.low.model_id)} ({delegationTierConfig.low.provider})</p>}
+                            </div>
+                          ) : (
+                            <p>Click to configure delegation tier models</p>
+                          )}
                         </TooltipContent>
                       </Tooltip>
                     ) : (
@@ -1544,20 +1682,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div className="flex items-center gap-1">
-                      {/* Delegation mode indicator */}
-                      {delegationMode !== 'off' && (
+                      {/* Delegation mode indicator - show for spawn in chat mode only (multi-agent mode is self-evident) */}
+                      {!isMultiAgentMode && delegationMode !== 'off' && (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <div className={`p-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-default ${
-                              delegationMode === 'plan' ? 'text-blue-500 dark:text-blue-400' : 'text-purple-500 dark:text-purple-400'
-                            }`}>
+                            <div className="p-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-default text-purple-500 dark:text-purple-400">
                               <GitBranch className="w-3.5 h-3.5" />
                             </div>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>{delegationMode === 'plan' ? 'Plan delegation enabled' : 'Simple delegation enabled'} (/nospawn to disable)</p>
+                            <p>Simple delegation enabled (/nospawn to disable)</p>
                           </TooltipContent>
                         </Tooltip>
+                      )}
+
+                      {/* Multi-agent phase indicator */}
+                      {isMultiAgentMode && planPhase && (
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${
+                          planPhase === 'execution'
+                            ? 'border-green-300 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400'
+                            : 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                        }`}>
+                          {planPhase === 'execution' ? <Play className="w-3 h-3" /> : <FileSearch className="w-3 h-3" />}
+                          <span>{planPhase === 'execution' ? 'Executing' : 'Planning'}</span>
+                        </div>
                       )}
 
                       {isStreaming ? (
@@ -1619,6 +1767,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         onSelectCommand={handleCommandSelect}
         searchQuery={commandSearchQuery}
         position={commandDialogPosition}
+        modeCategory={selectedModeCategory}
       />
       
       {/* File Selection Dialog */}
@@ -1660,6 +1809,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showTierModal}
         onClose={() => setShowTierModal(false)}
       />
+      {showWorkflowBuilder && (
+        <WorkflowBuilderModal onClose={() => closeDialog('workflowBuilder')} />
+      )}
       </div>
     </TooltipProvider>
   )

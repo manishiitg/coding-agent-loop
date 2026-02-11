@@ -14,8 +14,8 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.2.6-0.20260206124739-70a701d87fbf
-	github.com/manishiitg/multi-llm-provider-go v0.3.2
+	github.com/manishiitg/mcpagent v1.2.6-0.20260207055328-423e77a04a34
+	github.com/manishiitg/multi-llm-provider-go v0.3.3-0.20260208035017-6b16cf6cbdf3
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8

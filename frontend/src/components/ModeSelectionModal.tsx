@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { MessageCircle, Workflow, ArrowRight, Info } from 'lucide-react'
+import { MessageCircle, Workflow, Users, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -122,6 +122,18 @@ const ModeCard: React.FC<ModeCardProps> = ({
                     </ul>
                   </div>
                 )}
+                {category === 'multi-agent' && (
+                  <div>
+                    <p className="font-semibold mb-2">Multi Agent Chat</p>
+                    <p className="mb-2">Plan-driven delegation with AI sub-agents. Features:</p>
+                    <ul className="list-disc list-inside space-y-1">
+                      <li>Automatic plan creation and task breakdown</li>
+                      <li>Multi-LLM tier support (high/medium/low)</li>
+                      <li>Auto tool mode selection per task</li>
+                      <li>Sub-agent tracking in Plans/ folder</li>
+                    </ul>
+                  </div>
+                )}
               </div>
             </TooltipContent>
           </Tooltip>
@@ -151,17 +163,17 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
     console.log('[ModeSelectionModal] Selecting mode:', category)
 
-    if (category === 'chat') {
-      // Chat mode doesn't need preset selection
-      // Clear any active presets when switching to chat mode
+    if (category === 'chat' || category === 'multi-agent') {
+      // Chat and multi-agent modes don't need preset selection
+      // Clear any active presets when switching
       useGlobalPresetStore.getState().clearActivePreset('workflow')
-      
+
       // Update both stores
       useModeStore.getState().setModeCategory(category)
       useAppStore.getState().setModeCategory(category)
       completeInitialSetup()
-      
-      console.log('[ModeSelectionModal] Chat mode selected, setup completed')
+
+      console.log(`[ModeSelectionModal] ${category} mode selected, setup completed`)
       onClose()
     } else {
       // Workflow mode - always show preset selection when switching modes
@@ -257,7 +269,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
           </div>
 
           {/* Mode Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 justify-items-center max-w-2xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 justify-items-center max-w-4xl mx-auto">
             {/* Chat Mode */}
             <ModeCard
               category="chat"
@@ -267,6 +279,17 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               features={getModeInfoForModal('chat').features}
               exampleQueries={getModeInfoForModal('chat').examples}
               onSelect={() => handleModeSelect('chat')}
+            />
+
+            {/* Multi Agent Chat Mode */}
+            <ModeCard
+              category="multi-agent"
+              title="Multi Agent Chat"
+              description="Delegate complex tasks to AI sub-agents with plan-driven coordination and multi-LLM tier support."
+              icon={<Users className="w-5 h-5 text-indigo-600" />}
+              features={getModeInfoForModal('multi-agent').features}
+              exampleQueries={getModeInfoForModal('multi-agent').examples}
+              onSelect={() => handleModeSelect('multi-agent')}
             />
 
             {/* Workflow Mode */}

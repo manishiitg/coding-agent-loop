@@ -13,15 +13,13 @@ type Document struct {
 
 // CreateDocumentRequest represents the request to create a document
 type CreateDocumentRequest struct {
-	FilePath      string `json:"filepath" binding:"required"`
-	Content       string `json:"content" binding:"required"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	FilePath string `json:"filepath" binding:"required"`
+	Content  string `json:"content" binding:"required"`
 }
 
 // UpdateDocumentRequest represents the request to update a document
 type UpdateDocumentRequest struct {
-	Content       string `json:"content" binding:"required"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	Content string `json:"content" binding:"required"`
 }
 
 // APIResponse represents a standard API response
@@ -47,14 +45,12 @@ type ListDocumentsRequest struct {
 
 // DeleteDocumentRequest represents the request to delete a document
 type DeleteDocumentRequest struct {
-	Confirm       bool   `form:"confirm"`
-	CommitMessage string `form:"commit_message"`
+	Confirm bool `form:"confirm"`
 }
 
 // MoveDocumentRequest represents the request to move a document
 type MoveDocumentRequest struct {
 	DestinationPath string `json:"destination_path" binding:"required"`
-	CommitMessage   string `json:"commit_message,omitempty"`
 }
 
 // PatchDocumentRequest represents the request to patch a document
@@ -63,13 +59,11 @@ type PatchDocumentRequest struct {
 	TargetSelector string `json:"target_selector" binding:"required"`
 	Operation      string `json:"operation" binding:"required"`
 	Content        string `json:"content" binding:"required"`
-	CommitMessage  string `json:"commit_message,omitempty"`
 }
 
 // DiffPatchRequest represents the request to apply a diff patch
 type DiffPatchRequest struct {
-	Diff          string `json:"diff" binding:"required"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	Diff string `json:"diff" binding:"required"`
 }
 
 // DiffPatchResponse represents the response after applying a diff patch
@@ -96,14 +90,12 @@ type FileVersionHistoryRequest struct {
 
 // RestoreVersionRequest represents the request to restore a file version
 type RestoreVersionRequest struct {
-	CommitHash    string `json:"commit_hash" binding:"required"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	CommitHash string `json:"commit_hash" binding:"required"`
 }
 
 // FileUploadRequest represents the request to upload a file
 type FileUploadRequest struct {
-	FolderPath    string `form:"folder_path" binding:"required"`
-	CommitMessage string `form:"commit_message,omitempty"`
+	FolderPath string `form:"folder_path" binding:"required"`
 }
 
 // FileUploadResponse represents the response after file upload
@@ -117,8 +109,7 @@ type FileUploadResponse struct {
 
 // CreateFolderRequest represents the request to create a folder
 type CreateFolderRequest struct {
-	FolderPath    string `json:"folder_path" binding:"required"`
-	CommitMessage string `json:"commit_message,omitempty"`
+	FolderPath string `json:"folder_path" binding:"required"`
 }
 
 // CreateFolderResponse represents the response after folder creation
@@ -131,7 +122,6 @@ type CreateFolderResponse struct {
 type CopyFolderRequest struct {
 	SourcePath      string `json:"source_path" binding:"required"`
 	DestinationPath string `json:"destination_path" binding:"required"`
-	CommitMessage   string `json:"commit_message,omitempty"`
 }
 
 // CopyFolderResponse represents the response after copying a folder

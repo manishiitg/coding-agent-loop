@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Loader2, ServerOff, RefreshCw } from 'lucide-react'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '')
 const HEALTH_URL = `${API_BASE_URL}/api/health`
 const RETRY_MS = { min: 1000, max: 5000 }
 const TIMEOUT_MS = 5000

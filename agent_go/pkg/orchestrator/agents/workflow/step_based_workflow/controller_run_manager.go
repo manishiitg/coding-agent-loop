@@ -281,6 +281,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createRunFolderStructure(ctx context.
 		return fmt.Errorf("failed to create run folder: %w", err)
 	}
 
+	// Add .gitignore to the run folder so execution artifacts aren't tracked by git
+	gitignorePath := filepath.Join(runPath, ".gitignore")
+	if err := writeFileViaAPI(ctx, gitignorePath, "*\n"); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("Failed to create .gitignore in run folder: %v (continuing)", err))
+	}
+
 	// Create knowledgebase folder at workspace root (shared across all runs) - only if enabled
 	if hcpo.UseKnowledgebase() {
 		workspacePath := hcpo.GetWorkspacePath()

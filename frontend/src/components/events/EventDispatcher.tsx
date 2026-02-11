@@ -1,4 +1,5 @@
 import React from 'react'
+import { Code2, Sparkles, Search } from 'lucide-react'
 import type { PollingEvent } from '../../services/api-types'
 import { EventHierarchy } from './EventHierarchy'
 import { EventWithOrchestratorContext } from './common/EventWithOrchestratorContext'
@@ -117,11 +118,62 @@ import {
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
+import { useChatStore } from '../../stores/useChatStore'
+import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+
+// Sub-agent live streaming text display (subscribes to delegation streaming store independently)
+const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegationId }) => {
+  const text = useChatStore(state => state.delegationStreamingText[delegationId] || '')
+  if (!text) return null
+  return (
+    <div className="mt-2 border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded p-2">
+      <div className="flex items-center gap-1.5 mb-1">
+        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+        <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">
+          Sub-agent generating...
+        </span>
+      </div>
+      <div className="text-xs">
+        <MarkdownRenderer content={text} className="text-xs" />
+        <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+      </div>
+    </div>
+  )
+}
 
 export interface DelegationStats {
   toolCalls: number
   inputTokens: number
   outputTokens: number
+  latestToolName?: string
+  completed?: boolean
+}
+
+// Live elapsed timer for running delegation events
+const ElapsedTimer: React.FC<{ startTimestamp: string; className?: string }> = ({ startTimestamp, className }) => {
+  const [elapsed, setElapsed] = React.useState('')
+
+  React.useEffect(() => {
+    const startTime = new Date(startTimestamp).getTime()
+    if (isNaN(startTime)) return
+
+    const update = () => {
+      const seconds = Math.floor((Date.now() - startTime) / 1000)
+      if (seconds < 60) {
+        setElapsed(`${seconds}s`)
+      } else {
+        const m = Math.floor(seconds / 60)
+        const s = seconds % 60
+        setElapsed(`${m}m${s.toString().padStart(2, '0')}s`)
+      }
+    }
+    update()
+    const interval = setInterval(update, 1000)
+    return () => clearInterval(interval)
+  }, [startTimestamp])
+
+  if (!elapsed) return null
+  return <span className={className}>{elapsed}</span>
 }
 
 interface EventDispatcherProps {
@@ -917,12 +969,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         instruction?: string
         reasoning_level?: string
         model_id?: string
+        tool_mode?: string
       }
       delegation_id?: string
       depth?: number
       instruction?: string
       reasoning_level?: string
       model_id?: string
+      tool_mode?: string
       timestamp?: string
     }
 
@@ -932,6 +986,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const delegationId = delegationData?.delegation_id
     const reasoningLevel = delegationData?.reasoning_level
     const modelId = delegationData?.model_id
+    const toolMode = delegationData?.tool_mode
 
     const reasoningColors: Record<string, string> = {
       high: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',
@@ -942,6 +997,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     // Get live stats for this delegation from child events
     const liveStats = delegationId ? delegationStats?.get(delegationId) : undefined
     const hasLiveStats = liveStats && (liveStats.toolCalls > 0 || liveStats.inputTokens > 0)
+    const isCompleted = liveStats?.completed
 
     return (
       <CompactWrapper>
@@ -955,16 +1011,32 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
               {hasLiveStats && (
-                <span className="text-[10px] text-purple-500 dark:text-purple-400 animate-pulse">
-                  {liveStats.inputTokens ? `${((liveStats.inputTokens + liveStats.outputTokens) / 1000).toFixed(1)}k tok` : ''}
-                  {liveStats.toolCalls ? ` · ${liveStats.toolCalls} tools` : ''}
+                <span className={`text-[10px] text-purple-500 dark:text-purple-400${isCompleted ? '' : ' animate-pulse'}`}>
+                  {liveStats.toolCalls ? `${liveStats.toolCalls} tools` : ''}
+                  {liveStats.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
+                  {liveStats.inputTokens ? ` · ${((liveStats.inputTokens + liveStats.outputTokens) / 1000).toFixed(1)}k tok` : ''}
                 </span>
+              )}
+              {event.timestamp && !isCompleted && (
+                <ElapsedTimer startTimestamp={event.timestamp} className="text-[10px] text-purple-500 dark:text-purple-400 animate-pulse font-mono" />
               )}
               {reasoningLevel && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${reasoningColors[reasoningLevel] || 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}`}>
                   {reasoningLevel}
                 </span>
               )}
+              <span className="relative group/mode cursor-default flex items-center">
+                {toolMode === 'code_execution' ? (
+                  <Code2 className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400" />
+                ) : toolMode === 'tool_search' ? (
+                  <Search className="w-3.5 h-3.5 text-cyan-500 dark:text-cyan-400" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
+                )}
+                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-[10px] font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover/mode:opacity-100 transition-opacity z-50">
+                  {toolMode === 'code_execution' ? 'Code Execution' : toolMode === 'tool_search' ? 'Tool Search' : 'Simple'}
+                </span>
+              </span>
               {event.timestamp && (
                 <span className="text-[10px] text-purple-500 dark:text-purple-400">
                   {new Date(event.timestamp).toLocaleTimeString()}
@@ -978,6 +1050,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             </div>
             <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400">
               {reasoningLevel && <span>Reasoning: {reasoningLevel}</span>}
+              <span>Mode: {!toolMode || toolMode === 'simple' ? 'Simple' : toolMode === 'code_execution' ? 'Code Execution' : 'Tool Search'}</span>
               {modelId && <span>Model: {modelId}</span>}
               {depth !== undefined && <span>Depth: {depth}</span>}
               {delegationId && <span className="font-mono">{delegationId}</span>}
@@ -987,7 +1060,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 {liveStats.inputTokens > 0 && <span>In: {liveStats.inputTokens.toLocaleString()} tokens</span>}
                 {liveStats.outputTokens > 0 && <span>Out: {liveStats.outputTokens.toLocaleString()} tokens</span>}
                 {liveStats.toolCalls > 0 && <span>Tool calls: {liveStats.toolCalls}</span>}
+                {liveStats.latestToolName && <span>Latest: {liveStats.latestToolName}</span>}
+                {event.timestamp && !isCompleted && (
+                  <span>Elapsed: <ElapsedTimer startTimestamp={event.timestamp} className="font-mono" /></span>
+                )}
               </div>
+            )}
+            {delegationId && !isCompleted && (
+              <DelegationStreamingCard delegationId={delegationId} />
             )}
           </div>
         </details>
@@ -1022,12 +1102,27 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const delegationData = data?.data || data
     const resultText = delegationData?.result
     const error = delegationData?.error
-    const duration = delegationData?.duration || ''
+    const rawDuration = delegationData?.duration || ''
     const isSuccess = !error
     const inputTokens = delegationData?.input_tokens
     const outputTokens = delegationData?.output_tokens
     const toolCalls = delegationData?.tool_calls
     const hasStats = inputTokens || outputTokens || toolCalls
+
+    // Format Go duration (e.g. "45.123456789s", "2m34.567s") to concise form
+    const formatDuration = (d: string): string => {
+      if (!d) return ''
+      // Match Go duration formats: "Xm", "Xs", "XmYs", "XmY.Zs"
+      const match = d.match(/^(?:(\d+)m)?(\d+(?:\.\d+)?)s$/)
+      if (match) {
+        const mins = match[1] ? parseInt(match[1]) : 0
+        const secs = parseFloat(match[2])
+        if (mins > 0) return `${mins}m${Math.round(secs).toString().padStart(2, '0')}s`
+        return `${secs.toFixed(1)}s`
+      }
+      return d
+    }
+    const duration = formatDuration(rawDuration)
 
     const colorClasses = isSuccess
       ? { bg: 'bg-green-50 dark:bg-green-900/20', border: 'border-green-200 dark:border-green-800', text: 'text-green-700 dark:text-green-300', muted: 'text-green-500 dark:text-green-400', divider: 'border-green-200 dark:border-green-700' }
@@ -1100,11 +1195,18 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     </div>
   )
 }, (prevProps, nextProps) => {
-  return prevProps.event.id === nextProps.event.id &&
-         prevProps.mode === nextProps.mode &&
-         prevProps.isApproving === nextProps.isApproving &&
-         prevProps.isCollapsed === nextProps.isCollapsed &&
-         prevProps.eventCount === nextProps.eventCount
+  if (prevProps.event.id !== nextProps.event.id ||
+      prevProps.mode !== nextProps.mode ||
+      prevProps.isApproving !== nextProps.isApproving ||
+      prevProps.isCollapsed !== nextProps.isCollapsed ||
+      prevProps.eventCount !== nextProps.eventCount) {
+    return false
+  }
+  // For delegation_start events, also compare live stats so they re-render with updated tool counts/names
+  if (prevProps.event.type === 'delegation_start' && prevProps.delegationStats !== nextProps.delegationStats) {
+    return false
+  }
+  return true
 })
 
 // Event list component for displaying multiple events

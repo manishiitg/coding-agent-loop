@@ -415,62 +415,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			var validationResponse *ValidationResponse
 
-			// Check validation mode (default: "skip")
-			validationMode := "skip"
-			stepConfigs := getAgentConfigs(orchestrationStepPlan)
-			if stepConfigs != nil && stepConfigs.LLMValidationMode != "" {
-				validationMode = stepConfigs.LLMValidationMode
-			}
-
-			shouldSkipLLMValidation := false
-			skipReason := ""
-
-			if validationMode == "skip" {
-				shouldSkipLLMValidation = true
-				skipReason = "configured to skip"
-			} else if validationMode == "auto" {
-				// Check if we have enough successful runs to trust orchestrator output only
-				learningPathIdentifier := getLearningPathIdentifier(orchestrationStepPlan.OrchestrationStep.GetID(), orchestrationStepPath)
-				metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
-				if err == nil && metadata != nil {
-					totalSuccess := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
-					if totalSuccess >= 3 {
-						shouldSkipLLMValidation = true
-						skipReason = fmt.Sprintf("auto-skipped after %d successful runs (threshold: 3)", totalSuccess)
-					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: %d/3 successful runs - running LLM validation", stepIndex+1, totalSuccess))
-					}
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: No metadata found - running LLM validation", stepIndex+1))
-				}
-			}
-
-			if shouldSkipLLMValidation {
-				// Skip LLM validation and assume validation success
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d - skipping LLM validation (%s)", stepIndex+1, skipReason))
-				validationResponse = &ValidationResponse{
-					IsSuccessCriteriaMet: true,
-					ExecutionStatus:      "COMPLETED",
-					Reasoning:            fmt.Sprintf("Orchestration step validation skipped (%s).", skipReason),
-					Feedback:             []ValidationFeedback{},
-				}
-			} else {
-				// Proceed to LLM validation (pre-validation is skipped for orchestration steps)
-				// Create validation agent
-				validationAgentName := fmt.Sprintf("orchestration-validation-step-%d", stepIndex+1)
-				orchestrationStepID := orchestrationStepPlan.OrchestrationStep.GetID()
-				validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, orchestrationStepID, validationAgentName, stepConfigs)
-				if err != nil {
-					hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create validation agent for orchestration step %d: %v", stepIndex+1, err), nil)
-					return false, "", fmt.Errorf("failed to create validation agent for orchestration step: %w", err)
-				}
-
-				// Call validation
-				validationResponse, _, err = validationAgent.(*WorkflowValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
-				if err != nil {
-					hcpo.GetLogger().Error(fmt.Sprintf("❌ Validation failed for orchestration step %d: %v", stepIndex+1, err), nil)
-					return false, "", fmt.Errorf("validation failed for orchestration step: %w", err)
-				}
+			// LLM validation is always disabled — validation agent removed.
+			// Always auto-approve orchestration steps.
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d - LLM validation disabled, auto-approving", stepIndex+1))
+			validationResponse = &ValidationResponse{
+				IsSuccessCriteriaMet: true,
+				ExecutionStatus:      "COMPLETED",
+				Reasoning:            "LLM validation disabled - orchestration step auto-approved.",
+				Feedback:             []ValidationFeedback{},
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Validation completed: is_success_criteria_met=%t, status=%s", validationResponse.IsSuccessCriteriaMet, validationResponse.ExecutionStatus))

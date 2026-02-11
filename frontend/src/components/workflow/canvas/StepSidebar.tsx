@@ -174,7 +174,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     
     // Start execution phase with single step options
     // The adapter in WorkflowCanvas will handle highlighting the node
-    onStartPhase('execution', executionOptions)
+    const workflowMode = useWorkflowStore.getState().workflowMode
+    const phaseId = workflowMode === 'eval' ? 'evaluation-execution' : 'execution'
+    onStartPhase(phaseId, executionOptions)
   }, [onStartPhase, node, selectedRunFolder, selectedExecutionMode, stepIndex])
 
   // Handle delete learnings for this step

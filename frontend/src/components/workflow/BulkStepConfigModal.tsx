@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Settings, AlertCircle, CheckCircle2, Loader2, Code2, Sparkles, Brain, Shield, BookOpen, Wrench, Info, Book, FileStack, Search, HardDriveDownload, Scissors } from "lucide-react";
+import { X, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "../ui/Button";
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "../ui/accordion";
 import { useLLMStore, useGlobalPresetStore } from "../../stores";
 import { useCapabilitiesStore } from "../../stores/useCapabilitiesStore";
 import {
@@ -19,10 +18,53 @@ import type {
 import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from "../../utils/stepConfigMatching";
 import LLMSelectionDropdown from "../LLMSelectionDropdown";
 
+// --- Reusable sub-components ---
+
+function SectionHeader({ label }: { label: string }) {
+  return (
+    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6 first:mt-0">
+      {label}
+    </div>
+  );
+}
+
+function ToggleRow({ label, enabled, hasOverride, disabled, onToggle }: {
+  label: string;
+  enabled: boolean;
+  hasOverride: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between py-2.5">
+      <div className="flex items-center gap-2">
+        {hasOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+        <span className="text-sm">{label}</span>
+      </div>
+      <button
+        onClick={onToggle}
+        disabled={disabled}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+          enabled ? 'bg-primary' : 'bg-muted-foreground/30'
+        }`}
+      >
+        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+          enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+        }`} />
+      </button>
+    </div>
+  );
+}
+
+// --- Main component ---
+
 interface BulkStepConfigModalProps {
   isOpen: boolean;
   onClose: () => void;
   plan: PlanningResponse | null;
+  workspacePath: string | null;
+  stepOverride: AgentConfigs | null;
+  onSaveStepOverride: (agentConfigs: AgentConfigs | null) => Promise<void>;
   onBulkUpdate: (
     updates: Array<{ stepId: string; updates: Partial<PlanStep> }>
   ) => Promise<void>;
@@ -32,6 +74,9 @@ export default function BulkStepConfigModal({
   isOpen,
   onClose,
   plan,
+  workspacePath,
+  stepOverride,
+  onSaveStepOverride,
   onBulkUpdate,
 }: BulkStepConfigModalProps) {
   const { availableLLMs, refreshAvailableLLMs } = useLLMStore();
@@ -119,24 +164,6 @@ export default function BulkStepConfigModal({
     );
   }, [presetLLMConfig, availableLLMs]);
 
-  const presetValidationLLM = useMemo(() => {
-    const llmConfig =
-      presetLLMConfig?.validation_llm ||
-      (presetLLMConfig?.provider && presetLLMConfig?.model_id
-        ? {
-            provider: presetLLMConfig.provider,
-            model_id: presetLLMConfig.model_id,
-          }
-        : null);
-    if (!llmConfig?.provider || !llmConfig?.model_id) return null;
-    return (
-      availableLLMs.find(
-        (l) =>
-          l.provider === llmConfig.provider && l.model === llmConfig.model_id
-      ) || null
-    );
-  }, [presetLLMConfig, availableLLMs]);
-
   const presetLearningLLM = useMemo(() => {
     const llmConfig =
       presetLLMConfig?.learning_llm ||
@@ -161,7 +188,6 @@ export default function BulkStepConfigModal({
 
   // Local state for selected LLMs
   const [selectedExecutionLLM, setSelectedExecutionLLM] = useState<LLMOption | null>(null);
-  const [selectedValidationLLM, setSelectedValidationLLM] = useState<LLMOption | null>(null);
   const [selectedLearningLLM, setSelectedLearningLLM] = useState<LLMOption | null>(null);
 
   // Initialize selections from preset defaults
@@ -169,30 +195,20 @@ export default function BulkStepConfigModal({
     if (presetExecutionLLM) {
       setSelectedExecutionLLM(presetExecutionLLM);
     }
-    if (presetValidationLLM) {
-      setSelectedValidationLLM(presetValidationLLM);
-    }
     if (presetLearningLLM) {
       setSelectedLearningLLM(presetLearningLLM);
     }
-  }, [presetExecutionLLM, presetValidationLLM, presetLearningLLM, isOpen]);
+  }, [presetExecutionLLM, presetLearningLLM, isOpen]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
-      // Reset all state when closing
       setSaveError(null);
       setSaveSuccess(false);
       setApplyingAction(null);
       setSelectedMaxTurns(100);
-      setTodoTaskOrchestratorTier("");
-      setEnableDynamicTierSelection(false);
-      setSelectedOrchestratorLLM(null);
-      setSelectedSubAgentLLM(null);
     }
   }, [isOpen]);
-
-
 
   // Handle Escape key to close modal
   useEffect(() => {
@@ -227,7 +243,6 @@ export default function BulkStepConfigModal({
         const stepPath = path ? `${path}.steps[${index}]` : `steps[${index}]`;
         allSteps.push({ stepId: step.id, step, path: stepPath });
 
-        // Collect branch steps from conditional steps
         if (isConditionalStep(step)) {
           if (step.if_true_steps && step.if_true_steps.length > 0) {
             collectSteps(step.if_true_steps, `${stepPath}.if_true_steps`);
@@ -237,7 +252,6 @@ export default function BulkStepConfigModal({
           }
         }
 
-        // Collect decision step's inner step
         if (isDecisionStep(step) && step.decision_step) {
           allSteps.push({
             stepId: step.decision_step.id,
@@ -246,9 +260,7 @@ export default function BulkStepConfigModal({
           });
         }
 
-        // Collect orchestration step's inner step and sub-agents
         if (isOrchestrationStep(step)) {
-          // Collect main orchestration step
           if (step.orchestration_step) {
             allSteps.push({
               stepId: step.orchestration_step.id,
@@ -257,7 +269,6 @@ export default function BulkStepConfigModal({
             });
           }
 
-          // Collect sub-agents from orchestration routes
           if (step.orchestration_routes && step.orchestration_routes.length > 0) {
             step.orchestration_routes.forEach((route, routeIndex) => {
               if (route.sub_agent_step) {
@@ -271,9 +282,7 @@ export default function BulkStepConfigModal({
           }
         }
 
-        // Collect todo task step's inner step and predefined routes
         if (isTodoTaskStep(step)) {
-          // Collect main todo task step
           if (step.todo_task_step) {
             allSteps.push({
               stepId: step.todo_task_step.id,
@@ -282,7 +291,6 @@ export default function BulkStepConfigModal({
             });
           }
 
-          // Collect sub-agents from predefined routes
           if (step.predefined_routes && step.predefined_routes.length > 0) {
             step.predefined_routes.forEach((route, routeIndex) => {
               if (route.sub_agent_step) {
@@ -304,152 +312,86 @@ export default function BulkStepConfigModal({
 
   // Helper function to check if a tool is enabled in enabled_custom_tools
   const isToolEnabled = (enabledTools: string[], toolName: string, category: "workspace_tools" | "human_tools"): boolean => {
-    // Empty array means all tools are enabled (default)
     if (enabledTools.length === 0) {
       return true;
     }
-    
-    // Check for wildcard (all tools in category enabled)
     if (enabledTools.includes(`${category}:*`)) {
       return true;
     }
-    
-    // Check for specific tool
     return enabledTools.includes(`${category}:${toolName}`);
   };
 
-  // Check context offloading state across all steps
+  // Derive current override status from stepOverride
+  const overrideStatus = useMemo(() => {
+    const ov = stepOverride || {};
+    return {
+      learningDisabled: ov.disable_learning === true,
+      learningEnabled: ov.disable_learning === false,
+      hasLearningOverride: ov.disable_learning !== undefined,
+      executionLLM: ov.execution_llm,
+      hasExecutionLLMOverride: ov.execution_llm !== undefined,
+      learningLLM: ov.learning_llm,
+      hasLearningLLMOverride: ov.learning_llm !== undefined,
+      codeExecutionMode: ov.use_code_execution_mode === true,
+      toolSearchMode: ov.use_tool_search_mode === true,
+      simpleMode: ov.use_code_execution_mode === false && ov.use_tool_search_mode === false,
+      hasAgentModeOverride: ov.use_code_execution_mode !== undefined || ov.use_tool_search_mode !== undefined,
+      contextOffloading: ov.enable_context_offloading,
+      hasContextOffloadingOverride: ov.enable_context_offloading !== undefined,
+      parallelToolExecDisabled: ov.disable_parallel_tool_execution === true,
+      hasParallelToolExecOverride: ov.disable_parallel_tool_execution !== undefined,
+      maxTurns: ov.execution_max_turns,
+      hasMaxTurnsOverride: ov.execution_max_turns !== undefined,
+      enabledCustomTools: ov.enabled_custom_tools,
+      hasToolAccessOverride: ov.enabled_custom_tools !== undefined && ov.enabled_custom_tools.length > 0,
+    };
+  }, [stepOverride]);
+
+  // Check context offloading state - prefer override, fallback to per-step check
   const contextOffloadingState = useMemo(() => {
+    if (overrideStatus.hasContextOffloadingOverride) {
+      return { enabled: overrideStatus.contextOffloading === true };
+    }
     if (!plan) return { enabled: true };
     const allSteps = getAllSteps();
     const disabledCount = allSteps.filter(({ step }) =>
       step.agent_configs?.enable_context_offloading === false
     ).length;
     return { enabled: allSteps.length === 0 || disabledCount === 0 };
-  }, [plan, getAllSteps]);
+  }, [plan, getAllSteps, overrideStatus]);
 
-  // Check if tools are currently disabled by examining step configs
-  const toolAccessState = useMemo(() => {
-    if (!plan) {
-      return { shellExecDisabled: false, readImageDisabled: false };
+  // Check parallel tool execution state - prefer override, fallback to per-step check
+  const parallelToolExecState = useMemo(() => {
+    if (overrideStatus.hasParallelToolExecOverride) {
+      return { enabled: !overrideStatus.parallelToolExecDisabled };
     }
-    
+    if (!plan) return { enabled: true };
     const allSteps = getAllSteps();
-    let shellExecDisabledCount = 0;
-    let readImageDisabledCount = 0;
-    let totalSteps = 0;
-    
-    allSteps.forEach(({ step }) => {
-      const enabledTools = step.agent_configs?.enabled_custom_tools || [];
-      totalSteps++;
-      
-      // Check if tools are disabled (not enabled)
-      if (!isToolEnabled(enabledTools, "execute_shell_command", "workspace_tools")) {
-        shellExecDisabledCount++;
-      }
-      if (!isToolEnabled(enabledTools, "read_image", "workspace_tools")) {
-        readImageDisabledCount++;
-      }
-    });
-    
-    // Tool is considered disabled if it's disabled in all steps
-    return {
-      shellExecDisabled: totalSteps > 0 && shellExecDisabledCount === totalSteps,
-      readImageDisabled: totalSteps > 0 && readImageDisabledCount === totalSteps,
-    };
-  }, [plan, getAllSteps]);
+    const disabledCount = allSteps.filter(({ step }) =>
+      step.agent_configs?.disable_parallel_tool_execution === true
+    ).length;
+    return { enabled: allSteps.length === 0 || disabledCount === 0 };
+  }, [plan, getAllSteps, overrideStatus]);
 
-  // Initialize todo task settings from plan when modal opens
-  useEffect(() => {
-    if (isOpen && plan) {
-      const allSteps = getAllSteps();
-      const todoSteps = allSteps.map(s => s.step).filter(s => isTodoTaskStep(s));
-
-      if (todoSteps.length > 0) {
-        // Check dynamic tier selection
-        // If ALL todo tasks have it enabled, set to true. Otherwise false.
-        const allEnabled = todoSteps.every(
-          (s) => s.agent_configs?.enable_dynamic_tier_selection === true
-        );
-        setEnableDynamicTierSelection(allEnabled);
-
-        // Check orchestrator tier
-        // If ALL todo tasks have the same tier, set to that tier. Otherwise empty (Auto/Mixed).
-        const firstTier =
-          todoSteps[0].agent_configs?.todo_task_orchestrator_tier;
-        const allSameTier = todoSteps.every(
-          (s) => s.agent_configs?.todo_task_orchestrator_tier === firstTier
-        );
-        if (allSameTier && firstTier !== undefined) {
-          setTodoTaskOrchestratorTier(firstTier.toString());
-        } else {
-          setTodoTaskOrchestratorTier("");
-        }
-
-        // Check orchestrator LLM override
-        // If ALL todo tasks have the same orchestrator_llm, set it. Otherwise null.
-        const firstOrchestratorLLM = todoSteps[0].agent_configs?.orchestrator_llm;
-        const allSameOrchestratorLLM = todoSteps.every(
-          (s) => s.agent_configs?.orchestrator_llm?.provider === firstOrchestratorLLM?.provider &&
-                 s.agent_configs?.orchestrator_llm?.model_id === firstOrchestratorLLM?.model_id
-        );
-        if (allSameOrchestratorLLM && firstOrchestratorLLM?.provider && firstOrchestratorLLM?.model_id) {
-          const matchingLLM = availableLLMs.find(
-            (l) => l.provider === firstOrchestratorLLM.provider && l.model === firstOrchestratorLLM.model_id
-          );
-          setSelectedOrchestratorLLM(matchingLLM || null);
-        } else {
-          setSelectedOrchestratorLLM(null);
-        }
-
-        // Check sub-agent LLM override
-        // If ALL todo tasks have the same sub_agent_llm, set it. Otherwise null.
-        const firstSubAgentLLM = todoSteps[0].agent_configs?.sub_agent_llm;
-        const allSameSubAgentLLM = todoSteps.every(
-          (s) => s.agent_configs?.sub_agent_llm?.provider === firstSubAgentLLM?.provider &&
-                 s.agent_configs?.sub_agent_llm?.model_id === firstSubAgentLLM?.model_id
-        );
-        if (allSameSubAgentLLM && firstSubAgentLLM?.provider && firstSubAgentLLM?.model_id) {
-          const matchingLLM = availableLLMs.find(
-            (l) => l.provider === firstSubAgentLLM.provider && l.model === firstSubAgentLLM.model_id
-          );
-          setSelectedSubAgentLLM(matchingLLM || null);
-        } else {
-          setSelectedSubAgentLLM(null);
-        }
-      }
-    }
-  }, [isOpen, plan, getAllSteps, availableLLMs]);
-
-  // Handle immediate action (disable/enable validation, learning, lock learnings, LLM updates, disable human tools, set max turns, learning detail level, agent mode)
+  // Handle immediate action via step_override.json
   const handleImmediateAction = async (
     action:
-      | "disable_validation"
-      | "enable_validation"
-      | "set_validation_mode_auto"
-      | "set_validation_mode_always"
-      | "set_validation_mode_skip"
       | "disable_learning"
       | "enable_learning"
-      | "lock_learnings"
-      | "unlock_learnings"
       | "set_execution_llm"
-      | "set_validation_llm"
       | "set_learning_llm"
-      | "disable_human_tools"
-      | "enable_human_tools"
-      | "disable_shell_exec_access"
-      | "enable_shell_exec_access"
+      | "enable_only_basic_tools"
+      | "enable_only_advanced_tools"
       | "disable_read_image_access"
-      | "enable_read_image_access"
+      | "disable_human_tools"
       | "set_execution_max_turns"
-      | "set_learning_detail_level_exact"
-      | "set_learning_detail_level_general"
       | "set_code_execution_mode"
       | "set_simple_mode"
       | "set_tool_search_mode"
       | "enable_context_offloading"
-      | "disable_context_offloading",
+      | "disable_context_offloading"
+      | "enable_parallel_tool_exec"
+      | "disable_parallel_tool_exec",
     llm?: LLMOption | null,
     maxTurns?: number
   ) => {
@@ -460,262 +402,116 @@ export default function BulkStepConfigModal({
     setSaveSuccess(false);
 
     try {
-      const allSteps = getAllSteps();
-      const stepConfigUpdates: Array<{
-        stepId: string;
-        agentConfigs: AgentConfigs | undefined;
-      }> = [];
+      const newOverrides: AgentConfigs = { ...(stepOverride || {}) };
 
-      allSteps.forEach(({ stepId, step }) => {
-        const agentConfigs = step.agent_configs || {};
-        const newAgentConfigs: typeof agentConfigs = { ...agentConfigs };
-
-        // Apply the specific action
-        switch (action) {
-          case "disable_validation":
-            newAgentConfigs.disable_validation = true;
-            break;
-          case "enable_validation":
-            newAgentConfigs.disable_validation = false;
-            break;
-          case "set_validation_mode_auto":
-            newAgentConfigs.llm_validation_mode = "auto";
-            break;
-          case "set_validation_mode_always":
-            newAgentConfigs.llm_validation_mode = "always";
-            break;
-          case "set_validation_mode_skip":
-            newAgentConfigs.llm_validation_mode = "skip";
-            break;
-          case "disable_learning":
-            newAgentConfigs.disable_learning = true;
-            break;
-          case "enable_learning":
-            newAgentConfigs.disable_learning = false;
-            break;
-          case "lock_learnings":
-            newAgentConfigs.lock_learnings = true;
-            break;
-          case "unlock_learnings":
-            newAgentConfigs.lock_learnings = false;
-            break;
-          case "set_execution_llm":
-            if (llm) {
-              newAgentConfigs.execution_llm = {
-                provider: llm.provider as AgentLLMConfig["provider"],
-                model_id: llm.model,
-              };
-            }
-            break;
-          case "set_validation_llm":
-            if (llm) {
-              newAgentConfigs.validation_llm = {
-                provider: llm.provider as AgentLLMConfig["provider"],
-                model_id: llm.model,
-              };
-            }
-            break;
-          case "set_learning_llm":
-            if (llm) {
-              newAgentConfigs.learning_llm = {
-                provider: llm.provider as AgentLLMConfig["provider"],
-                model_id: llm.model,
-              };
-            }
-            break;
-           case "disable_human_tools": {
-             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
-             
-             // If human tools are already disabled, no change needed
-             if (!isToolEnabled(currentEnabledTools, "human_feedback", "human_tools")) {
-               break;
-             }
-             
-             // If empty or has wildcard, replace with explicit list excluding human tools
-             if (currentEnabledTools.length === 0 || currentEnabledTools.includes("human_tools:*")) {
-               // Get all workspace tools and add them explicitly (exclude human tools)
-               const workspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
-               newAgentConfigs.enabled_custom_tools = workspaceTools.map(
-                 (tool) => `workspace_tools:${tool}`
-               );
-             } else {
-               // Remove all human_tools entries (both category:* and specific tools)
-               newAgentConfigs.enabled_custom_tools = currentEnabledTools.filter(
-                 (entry) => {
-                   const parts = entry.split(":");
-                   return parts.length !== 2 || parts[0] !== "human_tools";
-                 }
-               );
-             }
-             break;
-           }
-           case "enable_human_tools": {
-             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
-             
-             // If human tools are already enabled, no change needed
-             if (isToolEnabled(currentEnabledTools, "human_feedback", "human_tools")) {
-               break;
-             }
-             
-             // If empty, it's already enabled (default), but we'll keep it empty
-             if (currentEnabledTools.length === 0) {
-               break;
-             }
-             
-             // Add human_feedback to the list (or add wildcard if we want all human tools)
-             // For now, just add the specific tool
-             const humanToolEntry = "human_tools:human_feedback";
-             if (!currentEnabledTools.includes(humanToolEntry) && !currentEnabledTools.includes("human_tools:*")) {
-               newAgentConfigs.enabled_custom_tools = [...currentEnabledTools, humanToolEntry];
-             }
-             break;
-           }
-           case "disable_shell_exec_access": {
-             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
-             const toolEntry = "workspace_tools:execute_shell_command";
-             
-             // If tool is already disabled, no change needed
-             if (!isToolEnabled(currentEnabledTools, "execute_shell_command", "workspace_tools")) {
-               break;
-             }
-             
-             // If empty or has wildcard, replace with explicit list excluding the tool
-             if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
-               const allWorkspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
-               newAgentConfigs.enabled_custom_tools = allWorkspaceTools
-                 .filter((tool) => tool !== "execute_shell_command")
-                 .map((tool) => `workspace_tools:${tool}`);
-             } else {
-               // Remove the tool from existing list (and remove wildcard if present)
-               newAgentConfigs.enabled_custom_tools = currentEnabledTools
-                 .filter((entry) => entry !== toolEntry && entry !== "workspace_tools:*");
-             }
-             break;
-           }
-           case "enable_shell_exec_access": {
-             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
-             const toolEntry = "workspace_tools:execute_shell_command";
-             
-             // If tool is already enabled, no change needed
-             if (isToolEnabled(currentEnabledTools, "execute_shell_command", "workspace_tools")) {
-               break;
-             }
-             
-             // If empty, it's already enabled (default), but we'll keep it empty
-             if (currentEnabledTools.length === 0) {
-               break;
-             }
-             
-             // Add the tool to the list
-             if (!currentEnabledTools.includes(toolEntry)) {
-               newAgentConfigs.enabled_custom_tools = [...currentEnabledTools, toolEntry];
-             }
-             
-             // If we now have all workspace tools, we could clear to use defaults
-             // But keeping explicit is safer - user can clear manually if needed
-             // However, if we had wildcard before, we should restore it
-             // Actually, if we're adding back, we should check if all tools are now present
-             // For simplicity, just add the tool - user can optimize later
-             break;
-           }
-           case "disable_read_image_access": {
-             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
-             const toolEntry = "workspace_tools:read_image";
-             
-             // If tool is already disabled, no change needed
-             if (!isToolEnabled(currentEnabledTools, "read_image", "workspace_tools")) {
-               break;
-             }
-             
-             // If empty or has wildcard, replace with explicit list excluding the tool
-             if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
-               const allWorkspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
-               newAgentConfigs.enabled_custom_tools = allWorkspaceTools
-                 .filter((tool) => tool !== "read_image")
-                 .map((tool) => `workspace_tools:${tool}`);
-             } else {
-               // Remove the tool from existing list (and remove wildcard if present)
-               newAgentConfigs.enabled_custom_tools = currentEnabledTools
-                 .filter((entry) => entry !== toolEntry && entry !== "workspace_tools:*");
-             }
-             break;
-           }
-           case "enable_read_image_access": {
-             const currentEnabledTools = newAgentConfigs.enabled_custom_tools || [];
-             const toolEntry = "workspace_tools:read_image";
-             
-             // If tool is already enabled, no change needed
-             if (isToolEnabled(currentEnabledTools, "read_image", "workspace_tools")) {
-               break;
-             }
-             
-             // If empty, it's already enabled (default), but we'll keep it empty
-             if (currentEnabledTools.length === 0) {
-               break;
-             }
-             
-             // Add the tool to the list
-             if (!currentEnabledTools.includes(toolEntry)) {
-               newAgentConfigs.enabled_custom_tools = [...currentEnabledTools, toolEntry];
-             }
-             
-             // If we now have all workspace tools, we could clear to use defaults
-             // But keeping explicit is safer - user can clear manually if needed
-             break;
-           }
-           case "set_execution_max_turns":
-             if (maxTurns !== undefined) {
-               newAgentConfigs.execution_max_turns = maxTurns;
-             }
-             break;
-          case "set_learning_detail_level_exact":
-            newAgentConfigs.learning_detail_level = "exact";
-            break;
-          case "set_learning_detail_level_general":
-            newAgentConfigs.learning_detail_level = "general";
-            break;
-          case "set_code_execution_mode":
-            // Set code execution mode and auto-enable learning/validation
-            newAgentConfigs.use_code_execution_mode = true;
-            newAgentConfigs.use_tool_search_mode = false;
-            newAgentConfigs.disable_learning = false;
-            newAgentConfigs.disable_validation = false;
-            newAgentConfigs.learning_detail_level = "exact";
-            break;
-          case "set_tool_search_mode":
-            // Set tool search mode
-            newAgentConfigs.use_tool_search_mode = true;
-            newAgentConfigs.use_code_execution_mode = false;
-            break;
-          case "set_simple_mode":
-            // Set simple mode (disable code execution)
-            newAgentConfigs.use_code_execution_mode = false;
-            newAgentConfigs.use_tool_search_mode = false;
-            break;
-          case "enable_context_offloading":
-            newAgentConfigs.enable_context_offloading = true;
-            break;
-          case "disable_context_offloading":
-            newAgentConfigs.enable_context_offloading = false;
-            break;
+      switch (action) {
+        case "disable_learning":
+          newOverrides.disable_learning = true;
+          break;
+        case "enable_learning":
+          newOverrides.disable_learning = false;
+          break;
+        case "set_execution_llm":
+          if (llm) {
+            newOverrides.execution_llm = {
+              provider: llm.provider as AgentLLMConfig["provider"],
+              model_id: llm.model,
+            };
+          }
+          break;
+        case "set_learning_llm":
+          if (llm) {
+            newOverrides.learning_llm = {
+              provider: llm.provider as AgentLLMConfig["provider"],
+              model_id: llm.model,
+            };
+          }
+          break;
+        case "enable_only_basic_tools": {
+          const basicTools = getToolsByCategory("workspace_basic", capabilities?.workspace);
+          newOverrides.enabled_custom_tools = [
+            ...basicTools.map((tool) => `workspace_tools:${tool}`),
+            "human_tools:human_feedback",
+          ];
+          break;
         }
+        case "enable_only_advanced_tools": {
+          const advancedTools = getToolsByCategory("workspace_advanced", capabilities?.workspace);
+          newOverrides.enabled_custom_tools = [
+            ...advancedTools.map((tool) => `workspace_tools:${tool}`),
+            "human_tools:human_feedback",
+          ];
+          break;
+        }
+        case "disable_read_image_access": {
+          const currentEnabledTools = newOverrides.enabled_custom_tools || [];
+          if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
+            const allWorkspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
+            newOverrides.enabled_custom_tools = [
+              ...allWorkspaceTools
+                .filter((tool) => tool !== "read_image")
+                .map((tool) => `workspace_tools:${tool}`),
+              "human_tools:human_feedback",
+            ];
+          } else {
+            newOverrides.enabled_custom_tools = currentEnabledTools
+              .filter((entry) => entry !== "workspace_tools:read_image" && entry !== "workspace_tools:*");
+          }
+          break;
+        }
+        case "disable_human_tools": {
+          const currentEnabledTools = newOverrides.enabled_custom_tools || [];
+          if (currentEnabledTools.length === 0 || currentEnabledTools.includes("human_tools:*")) {
+            const workspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
+            newOverrides.enabled_custom_tools = workspaceTools.map(
+              (tool) => `workspace_tools:${tool}`
+            );
+          } else {
+            newOverrides.enabled_custom_tools = currentEnabledTools.filter(
+              (entry) => {
+                const parts = entry.split(":");
+                return parts.length !== 2 || parts[0] !== "human_tools";
+              }
+            );
+          }
+          break;
+        }
+        case "set_execution_max_turns":
+          if (maxTurns !== undefined) {
+            newOverrides.execution_max_turns = maxTurns;
+          }
+          break;
+        case "set_code_execution_mode":
+          newOverrides.use_code_execution_mode = true;
+          newOverrides.use_tool_search_mode = false;
+          newOverrides.disable_learning = false;
+          newOverrides.learning_detail_level = "exact";
+          break;
+        case "set_tool_search_mode":
+          newOverrides.use_tool_search_mode = true;
+          newOverrides.use_code_execution_mode = false;
+          break;
+        case "set_simple_mode":
+          newOverrides.use_code_execution_mode = false;
+          newOverrides.use_tool_search_mode = false;
+          break;
+        case "enable_context_offloading":
+          newOverrides.enable_context_offloading = true;
+          break;
+        case "disable_context_offloading":
+          newOverrides.enable_context_offloading = false;
+          break;
+        case "enable_parallel_tool_exec":
+          delete newOverrides.disable_parallel_tool_execution;
+          break;
+        case "disable_parallel_tool_exec":
+          newOverrides.disable_parallel_tool_execution = true;
+          break;
+      }
 
-        stepConfigUpdates.push({
-          stepId,
-          agentConfigs: newAgentConfigs,
-        });
-      });
-
-      // Use batch update API (handles both plan and config updates)
-      const updates = stepConfigUpdates.map(({ stepId, agentConfigs }) => ({
-        stepId,
-        updates: { agent_configs: agentConfigs } as Partial<PlanStep>,
-      }));
-      await onBulkUpdate(updates);
+      await onSaveStepOverride(newOverrides);
 
       setSaveSuccess(true);
-
-      // Reset success message after a delay
       setTimeout(() => {
         setSaveSuccess(false);
       }, 2000);
@@ -731,79 +527,78 @@ export default function BulkStepConfigModal({
     }
   };
 
-  const allSteps = getAllSteps();
-  const stepCount = allSteps.length;
-
-  // Check if any top-level steps are todo_task steps (for tiered mode controls)
-  const hasTodoTaskSteps = useMemo(() => {
-    if (!plan || !plan.steps) return false;
-    return plan.steps.some((step) => isTodoTaskStep(step));
-  }, [plan]);
-
-  // Local state for todo task tiered mode controls
-  const [todoTaskOrchestratorTier, setTodoTaskOrchestratorTier] = useState<string>("");
-  const [enableDynamicTierSelection, setEnableDynamicTierSelection] = useState(false);
-
-  // Local state for todo task direct LLM overrides (work in both tiered and manual modes)
-  const [selectedOrchestratorLLM, setSelectedOrchestratorLLM] = useState<LLMOption | null>(null);
-  const [selectedSubAgentLLM, setSelectedSubAgentLLM] = useState<LLMOption | null>(null);
-
-  // Handler to apply all todo task settings at once
-  const handleApplyTodoTaskSettings = useCallback(async () => {
-    if (!plan) return;
-
-    setApplyingAction('todo_task_settings');
+  // Handle resetting all overrides
+  const handleResetOverrides = async () => {
+    setApplyingAction("reset");
     setSaveError(null);
     setSaveSuccess(false);
 
     try {
-      const todoTaskStepUpdates: Array<{ stepId: string; updates: Partial<PlanStep> }> = [];
+      await onSaveStepOverride(null);
 
-      const allSteps = getAllSteps();
-      allSteps.forEach(({ stepId, step }) => {
-        if (isTodoTaskStep(step)) {
-          const agentConfigs = step.agent_configs || {};
-          const newAgentConfigs = { ...agentConfigs };
-
-          newAgentConfigs.todo_task_orchestrator_tier = todoTaskOrchestratorTier ? parseInt(todoTaskOrchestratorTier) : undefined;
-          newAgentConfigs.enable_dynamic_tier_selection = enableDynamicTierSelection;
-
-          // Direct LLM overrides (work in both tiered and manual modes)
-          if (selectedOrchestratorLLM) {
-            newAgentConfigs.orchestrator_llm = {
-              provider: selectedOrchestratorLLM.provider as AgentLLMConfig["provider"],
-              model_id: selectedOrchestratorLLM.model,
-            };
-          }
-          if (selectedSubAgentLLM) {
-            newAgentConfigs.sub_agent_llm = {
-              provider: selectedSubAgentLLM.provider as AgentLLMConfig["provider"],
-              model_id: selectedSubAgentLLM.model,
-            };
-          }
-
-          todoTaskStepUpdates.push({
-            stepId: stepId,
-            updates: { agent_configs: newAgentConfigs } as Partial<PlanStep>,
-          });
-        }
-      });
-
-      if (todoTaskStepUpdates.length > 0) {
-        await onBulkUpdate(todoTaskStepUpdates);
-      }
+      // Reset local LLM selections back to preset defaults
+      setSelectedExecutionLLM(presetExecutionLLM);
+      setSelectedLearningLLM(presetLearningLLM);
+      setSelectedMaxTurns(100);
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
-      console.error("[BulkStepConfigModal] Error applying todo task settings:", error);
+      console.error("[BulkStepConfigModal] Error resetting overrides:", error);
       setSaveError(
-        error instanceof Error ? error.message : "Failed to update todo task settings"
+        error instanceof Error ? error.message : "Failed to reset overrides"
       );
     } finally {
       setApplyingAction(null);
     }
-  }, [plan, onBulkUpdate, todoTaskOrchestratorTier, enableDynamicTierSelection, selectedOrchestratorLLM, selectedSubAgentLLM, getAllSteps]);
+  };
+
+  const overrideCount = stepOverride ? Object.keys(stepOverride).length : 0;
+  const isBusy = applyingAction !== null;
+
+  // Derived toggle states
+  const learningEnabled = overrideStatus.hasLearningOverride ? !overrideStatus.learningDisabled : true;
+
+  // Active execution mode
+  const activeExecutionMode = useMemo(() => {
+    if (overrideStatus.hasAgentModeOverride) {
+      if (overrideStatus.codeExecutionMode) return 'code_exec';
+      if (overrideStatus.toolSearchMode) return 'tool_search';
+      return 'simple';
+    }
+    if (activePreset?.useCodeExecutionMode) return 'code_exec';
+    return 'simple';
+  }, [overrideStatus, activePreset]);
+
+  const isTieredMode = presetLLMConfig?.llm_allocation_mode === 'tiered';
+
+  // Compute a readable summary of the current tool access state
+  const toolAccessSummary = useMemo(() => {
+    const tools = overrideStatus.enabledCustomTools;
+    if (!tools || tools.length === 0) return 'All tools enabled';
+
+    const wsTools = tools.filter(t => t.startsWith('workspace_tools:')).map(t => t.split(':')[1]);
+    const humanTools = tools.filter(t => t.startsWith('human_tools:'));
+
+    const basicTools = getToolsByCategory('workspace_basic', capabilities?.workspace);
+    const advancedTools = getToolsByCategory('workspace_advanced', capabilities?.workspace);
+
+    const isBasicOnly = wsTools.length === basicTools.length && wsTools.every(t => basicTools.includes(t));
+    const isAdvancedOnly = wsTools.length === advancedTools.length && wsTools.every(t => advancedTools.includes(t));
+
+    const parts: string[] = [];
+    if (isBasicOnly) parts.push('Basic tools only');
+    else if (isAdvancedOnly) parts.push('Advanced tools only');
+    else parts.push(`${wsTools.length} workspace tools`);
+
+    if (humanTools.length === 0) parts.push('no human tools');
+
+    if (!isBasicOnly && !isAdvancedOnly && !wsTools.includes('read_image')) {
+      parts.push('no images');
+    }
+
+    return parts.join(', ');
+  }, [overrideStatus.enabledCustomTools, capabilities]);
 
   if (!isOpen) return null;
 
@@ -812,214 +607,98 @@ export default function BulkStepConfigModal({
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       style={{ zIndex: 50 }}
     >
-      <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-background border border-border rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-gradient-to-r from-background to-muted/20 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <Settings className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h2 className="text-xl font-bold text-foreground">
-                Bulk Step Configuration
-              </h2>
-              {stepCount > 0 && (
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {stepCount} {stepCount === 1 ? "step" : "steps"} will be updated
-                </p>
-              )}
-            </div>
+            <h2 className="text-lg font-semibold text-foreground">
+              Global Overrides
+            </h2>
+            {overrideCount > 0 && (
+              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-primary/10 text-primary">
+                {overrideCount} {overrideCount === 1 ? 'override' : 'overrides'}
+              </span>
+            )}
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            className="h-9 w-9 p-0 hover:bg-secondary rounded-lg"
-            disabled={applyingAction !== null}
-          >
-            <X className="w-4 h-4" />
-          </Button>
-        </div>
-
-        {/* Description */}
-        <div className="px-6 py-3 border-b border-border bg-muted/40">
-          <div className="flex items-start gap-2.5 text-sm text-muted-foreground">
-            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-500" />
-            <div>
-              <p className="leading-relaxed">
-                Apply configuration changes to <strong className="text-foreground">all steps</strong> in the
-                workflow, including branch steps. Only fields you configure
-                below will be updated.
-              </p>
-            </div>
+          <div className="flex items-center gap-2">
+            {overrideCount > 0 && (
+              <button
+                onClick={handleResetOverrides}
+                disabled={isBusy}
+                className="text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {applyingAction === "reset" ? (
+                  <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
+                ) : null}
+                Reset
+              </button>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onClose}
+              className="h-8 w-8 p-0 hover:bg-secondary rounded-lg"
+              disabled={isBusy}
+            >
+              <X className="w-4 h-4" />
+            </Button>
           </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 p-6 space-y-3 min-h-[400px] overflow-y-auto">
-          <Accordion type="multiple" defaultValue={["llm", "validation", "learning", "agent-mode", "runtime-config", "tools-advanced"]} className="w-full space-y-3">
-            {/* LLM Configuration Section */}
-            <AccordionItem value="llm" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-5 py-4">
+        <div className="flex-1 px-5 py-4 overflow-y-auto">
+
+          {/* Active overrides summary */}
+          {overrideCount > 0 && (
+            <div className="mb-4 px-3 py-2.5 rounded-lg bg-muted/50 border border-border/50">
+              <div className="text-xs font-medium text-muted-foreground mb-1.5">Active overrides</div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-foreground">
+                {overrideStatus.hasExecutionLLMOverride && (
+                  <span>Execution LLM: <span className="text-muted-foreground">{overrideStatus.executionLLM?.model_id}</span></span>
+                )}
+                {overrideStatus.hasLearningLLMOverride && (
+                  <span>Learning LLM: <span className="text-muted-foreground">{overrideStatus.learningLLM?.model_id}</span></span>
+                )}
+                {overrideStatus.hasAgentModeOverride && (
+                  <span>Mode: <span className="text-muted-foreground">{overrideStatus.codeExecutionMode ? 'Code Exec' : overrideStatus.toolSearchMode ? 'Tool Search' : 'Simple'}</span></span>
+                )}
+                {overrideStatus.hasLearningOverride && (
+                  <span>Learning: <span className="text-muted-foreground">{overrideStatus.learningDisabled ? 'Off' : 'On'}</span></span>
+                )}
+                {overrideStatus.hasContextOffloadingOverride && (
+                  <span>Offloading: <span className="text-muted-foreground">{overrideStatus.contextOffloading ? 'On' : 'Off'}</span></span>
+                )}
+                {overrideStatus.hasParallelToolExecOverride && (
+                  <span>Parallel Exec: <span className="text-muted-foreground">{overrideStatus.parallelToolExecDisabled ? 'Off' : 'On'}</span></span>
+                )}
+                {overrideStatus.hasMaxTurnsOverride && (
+                  <span>Max Turns: <span className="text-muted-foreground">{overrideStatus.maxTurns}</span></span>
+                )}
+                {overrideStatus.hasToolAccessOverride && (
+                  <span>Tools: <span className="text-muted-foreground">{overrideStatus.enabledCustomTools?.length} entries</span></span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Models ── */}
+          <SectionHeader label="Models" />
+
+          <div className="space-y-3">
+            {isTieredMode && (
+              <div className="text-xs text-muted-foreground py-1">
+                Tiered Auto mode is active. Overrides below will take priority.
+              </div>
+            )}
+
+            {/* Execution LLM */}
+            <div>
                 <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-purple-500/10">
-                    <Brain className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                  <div className="flex items-center gap-1.5 w-28 shrink-0">
+                    {overrideStatus.hasExecutionLLMOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+                    <span className="text-sm font-medium">Execution LLM</span>
                   </div>
-                  <span className="font-semibold text-base">LLM Configuration</span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-5 pt-2 pb-6">
-                {presetLLMConfig?.llm_allocation_mode === 'tiered' ? (
-                  <div className="text-sm text-muted-foreground space-y-3">
-                    <div className="flex items-center gap-2 p-3 rounded-lg border border-border bg-muted/30">
-                      <Brain className="w-4 h-4 text-purple-500" />
-                      <span className="font-medium">Tiered Auto Mode Active</span>
-                    </div>
-                    <p>Per-step LLM configuration is disabled in Tiered Auto mode. The system automatically selects the appropriate LLM tier based on learning maturity.</p>
-                    <div className="space-y-1 text-xs">
-                      <div>Execution: Tier 1 → Tier 2 (after first learning)</div>
-                      <div>Learning: Tier 1 → Tier 2 → Tier 3 (progressive)</div>
-                      <div>Validation: Always Tier 3</div>
-                      <div>Phase agents: Always Tier 1</div>
-                    </div>
-                    {/* Todo Task Tiered Settings */}
-                    {hasTodoTaskSteps && (
-                      <div className="mt-4 p-4 rounded-xl border border-border bg-card space-y-4">
-                        <div className="font-semibold text-sm text-foreground">Todo Task Settings</div>
-
-                        {/* Orchestrator Tier Selector */}
-                        <div>
-                          <label className="text-xs font-medium text-foreground">Orchestrator Agent Tier</label>
-                          <p className="text-[10px] text-muted-foreground mb-2">
-                            Which tier to use for the todo task orchestrator agent itself
-                          </p>
-                          <select
-                            className="w-full h-8 rounded-md border border-border bg-background px-2 text-xs"
-                            value={todoTaskOrchestratorTier}
-                            onChange={(e) => setTodoTaskOrchestratorTier(e.target.value)}
-                          >
-                            <option value="">Auto (default)</option>
-                            <option value="1">Tier 1 - High Reasoning</option>
-                            <option value="2">Tier 2 - Medium Reasoning</option>
-                            <option value="3">Tier 3 - Low Reasoning</option>
-                          </select>
-                        </div>
-
-                        {/* Dynamic Tier Selection Toggle */}
-                        <div>
-                          <label className="text-xs font-medium text-foreground">Dynamic Tier Selection for Sub-Agents</label>
-                          <p className="text-[10px] text-muted-foreground mb-2">
-                            Allow the orchestrator to choose the reasoning tier when delegating tasks
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              role="switch"
-                              aria-checked={enableDynamicTierSelection}
-                              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                                enableDynamicTierSelection ? 'bg-primary' : 'bg-muted-foreground/30'
-                              }`}
-                              onClick={() => setEnableDynamicTierSelection(!enableDynamicTierSelection)}
-                            >
-                              <span
-                                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                                  enableDynamicTierSelection ? 'translate-x-4' : 'translate-x-0.5'
-                                }`}
-                              />
-                            </button>
-                            <span className="text-xs">{enableDynamicTierSelection ? 'Enabled' : 'Disabled'}</span>
-                          </div>
-                        </div>
-
-                        {/* Direct LLM Override Section */}
-                        <div className="pt-3 mt-3 border-t border-border space-y-4">
-                          <div className="text-xs font-medium text-foreground">Direct LLM Overrides (override tiers)</div>
-
-                          {/* Orchestrator LLM Override */}
-                          <div>
-                            <label className="text-xs font-medium text-foreground">Orchestrator LLM Override</label>
-                            <p className="text-[10px] text-muted-foreground mb-2">
-                              Force a specific LLM for the orchestrator agent (overrides tier selection)
-                            </p>
-                            <LLMSelectionDropdown
-                              availableLLMs={availableLLMs}
-                              selectedLLM={selectedOrchestratorLLM}
-                              onLLMSelect={setSelectedOrchestratorLLM}
-                              onRefresh={refreshAvailableLLMs}
-                              inModal={true}
-                              openDirection="down"
-                              title="Select Orchestrator LLM"
-                            />
-                          </div>
-
-                          {/* Sub-Agent LLM Override */}
-                          <div>
-                            <label className="text-xs font-medium text-foreground">Sub-Agent LLM Override</label>
-                            <p className="text-[10px] text-muted-foreground mb-2">
-                              Force a specific LLM for ALL sub-agents (overrides tier/maturity selection)
-                            </p>
-                            <LLMSelectionDropdown
-                              availableLLMs={availableLLMs}
-                              selectedLLM={selectedSubAgentLLM}
-                              onLLMSelect={setSelectedSubAgentLLM}
-                              onRefresh={refreshAvailableLLMs}
-                              inModal={true}
-                              openDirection="down"
-                              title="Select Sub-Agent LLM"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Single Apply Button */}
-                        <div className="pt-2 border-t border-border">
-                          <Button
-                            size="sm"
-                            className="w-full h-8"
-                            disabled={applyingAction !== null}
-                            onClick={handleApplyTodoTaskSettings}
-                          >
-                            {applyingAction === "todo_task_settings" ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Applying...
-                              </>
-                            ) : (
-                              "Apply Settings to All Todo Tasks"
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    <p className="text-xs text-muted-foreground">To configure per-step LLMs, switch to Fixed Models mode in the preset settings.</p>
-                  </div>
-                ) : (
-                <>
-                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-                  Configure which LLM models to use for execution, validation, and learning phases across all steps.
-                </p>
-                <div className="space-y-4">
-                  {/* Execution LLM Selector */}
-                  <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 rounded-lg bg-purple-500/10 text-purple-600 dark:text-purple-400">
-                          <Brain className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-semibold text-sm">Execution LLM</div>
-                          <div className="text-[10px] text-muted-foreground">Primary model for performing step tasks</div>
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleImmediateAction("set_execution_llm", selectedExecutionLLM)}
-                        disabled={!selectedExecutionLLM || applyingAction !== null}
-                        className="px-4 h-8"
-                      >
-                        {applyingAction === "set_execution_llm" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
-                      </Button>
-                    </div>
+                  <div className="flex-1">
                     <LLMSelectionDropdown
                       availableLLMs={availableLLMs}
                       selectedLLM={selectedExecutionLLM}
@@ -1030,60 +709,33 @@ export default function BulkStepConfigModal({
                       title="Select Execution LLM"
                     />
                   </div>
+                  <Button
+                    size="sm"
+                    onClick={() => handleImmediateAction("set_execution_llm", selectedExecutionLLM)}
+                    disabled={!selectedExecutionLLM || isBusy}
+                    className="px-3 h-8"
+                  >
+                    {applyingAction === "set_execution_llm" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
+                  </Button>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1 ml-[calc(7rem+0.375rem)]">
+                  {overrideStatus.hasExecutionLLMOverride
+                    ? <span className="text-primary">Override: {overrideStatus.executionLLM?.provider}/{overrideStatus.executionLLM?.model_id}</span>
+                    : presetExecutionLLM
+                      ? `Preset: ${presetExecutionLLM.provider}/${presetExecutionLLM.model}`
+                      : 'Using preset default'
+                  }
+                </div>
+              </div>
 
-                  {/* Validation LLM Selector */}
-                  <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400">
-                          <Shield className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-semibold text-sm">Validation LLM</div>
-                          <div className="text-[10px] text-muted-foreground">Model used to verify outputs</div>
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleImmediateAction("set_validation_llm", selectedValidationLLM)}
-                        disabled={!selectedValidationLLM || applyingAction !== null}
-                        className="px-4 h-8"
-                      >
-                        {applyingAction === "set_validation_llm" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
-                      </Button>
-                    </div>
-                    <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
-                      selectedLLM={selectedValidationLLM}
-                      onLLMSelect={setSelectedValidationLLM}
-                      onRefresh={refreshAvailableLLMs}
-                      inModal={true}
-                      openDirection="down"
-                      title="Select Validation LLM"
-                    />
+              {/* Learning LLM */}
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 w-28 shrink-0">
+                    {overrideStatus.hasLearningLLMOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+                    <span className="text-sm font-medium">Learning LLM</span>
                   </div>
-
-                  {/* Learning LLM Selector */}
-                  <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 rounded-lg bg-green-500/10 text-green-600 dark:text-green-400">
-                          <BookOpen className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-semibold text-sm">Learning LLM</div>
-                          <div className="text-[10px] text-muted-foreground">Model used for pattern extraction</div>
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => handleImmediateAction("set_learning_llm", selectedLearningLLM)}
-                        disabled={!selectedLearningLLM || applyingAction !== null}
-                        className="px-4 h-8"
-                      >
-                        {applyingAction === "set_learning_llm" ? <Loader2 className="w-4 h-4 animate-spin" /> : "Apply"}
-                      </Button>
-                    </div>
+                  <div className="flex-1">
                     <LLMSelectionDropdown
                       availableLLMs={availableLLMs}
                       selectedLLM={selectedLearningLLM}
@@ -1094,750 +746,190 @@ export default function BulkStepConfigModal({
                       title="Select Learning LLM"
                     />
                   </div>
-
-                  {/* Todo Task LLM Overrides (Manual Mode) */}
-                  {hasTodoTaskSteps && (
-                    <div className="p-4 rounded-xl border border-border bg-card shadow-sm">
-                      <div className="font-semibold text-sm text-foreground mb-3">Todo Task LLM Overrides</div>
-                      <p className="text-[10px] text-muted-foreground mb-4">
-                        Configure specific LLMs for todo task orchestrators and their sub-agents
-                      </p>
-                      <div className="space-y-4">
-                        {/* Orchestrator LLM Override */}
-                        <div>
-                          <label className="text-xs font-medium text-foreground">Orchestrator LLM Override</label>
-                          <p className="text-[10px] text-muted-foreground mb-2">
-                            Force a specific LLM for the orchestrator agent
-                          </p>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={selectedOrchestratorLLM}
-                            onLLMSelect={setSelectedOrchestratorLLM}
-                            onRefresh={refreshAvailableLLMs}
-                            inModal={true}
-                            openDirection="down"
-                            title="Select Orchestrator LLM"
-                          />
-                        </div>
-
-                        {/* Sub-Agent LLM Override */}
-                        <div>
-                          <label className="text-xs font-medium text-foreground">Sub-Agent LLM Override</label>
-                          <p className="text-[10px] text-muted-foreground mb-2">
-                            Force a specific LLM for ALL sub-agents
-                          </p>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={selectedSubAgentLLM}
-                            onLLMSelect={setSelectedSubAgentLLM}
-                            onRefresh={refreshAvailableLLMs}
-                            inModal={true}
-                            openDirection="down"
-                            title="Select Sub-Agent LLM"
-                          />
-                        </div>
-
-                        {/* Apply Button */}
-                        <div className="pt-2 border-t border-border">
-                          <Button
-                            size="sm"
-                            className="w-full h-8"
-                            disabled={applyingAction !== null || (!selectedOrchestratorLLM && !selectedSubAgentLLM)}
-                            onClick={handleApplyTodoTaskSettings}
-                          >
-                            {applyingAction === "todo_task_settings" ? (
-                              <>
-                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                Applying...
-                              </>
-                            ) : (
-                              "Apply to All Todo Tasks"
-                            )}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => handleImmediateAction("set_learning_llm", selectedLearningLLM)}
+                    disabled={!selectedLearningLLM || isBusy}
+                    className="px-3 h-8"
+                  >
+                    {applyingAction === "set_learning_llm" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
+                  </Button>
                 </div>
-                </>
+                <div className="text-[10px] text-muted-foreground mt-1 ml-[calc(7rem+0.375rem)]">
+                  {overrideStatus.hasLearningLLMOverride
+                    ? <span className="text-primary">Override: {overrideStatus.learningLLM?.provider}/{overrideStatus.learningLLM?.model_id}</span>
+                    : presetLearningLLM
+                      ? `Preset: ${presetLearningLLM.provider}/${presetLearningLLM.model}`
+                      : 'Using preset default'
+                  }
+                </div>
+              </div>
+          </div>
+
+          {/* ── Execution Mode ── */}
+          <SectionHeader label="Execution Mode" />
+
+          <div className="flex gap-2">
+            {([
+              { key: 'code_exec', label: 'Code Execution', action: 'set_code_execution_mode' as const },
+              { key: 'tool_search', label: 'Tool Search', action: 'set_tool_search_mode' as const },
+              { key: 'simple', label: 'Simple', action: 'set_simple_mode' as const },
+            ]).map(mode => (
+              <button
+                key={mode.key}
+                onClick={() => handleImmediateAction(mode.action)}
+                disabled={isBusy}
+                className={`flex-1 py-2 px-3 text-sm rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  activeExecutionMode === mode.key
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background border-border hover:bg-muted'
+                }`}
+              >
+                {applyingAction === mode.action ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
+                ) : (
+                  mode.label
                 )}
-              </AccordionContent>
-            </AccordionItem>
+              </button>
+            ))}
+          </div>
 
-            {/* Validation Settings Section */}
-            <AccordionItem value="validation" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-blue-500/10">
-                    <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                  </div>
-                  <span className="font-semibold text-base">Validation Settings</span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-5 pt-2 pb-6">
-                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-                  Control validation behavior for all steps. Validation ensures step outputs meet quality standards.
-                </p>
-                <div className="space-y-6">
-                  {/* Status Group */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                      Global Status
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("disable_validation")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "disable_validation" ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <X className="w-4 h-4 text-red-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Disable</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Skip quality checks</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("enable_validation")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "enable_validation" ? <Loader2 className="w-4 h-4 animate-spin text-green-500" /> : <CheckCircle2 className="w-4 h-4 text-green-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Enable</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Verify all outputs</div>
-                           </div>
-                         </div>
-                      </Button>
-                    </div>
-                  </div>
+          {/* ── Step Overrides ── */}
+          <SectionHeader label="Step Overrides" />
 
-                  {/* Mode Group */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500"></div>
-                      Validation Strategy
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_validation_mode_auto")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-3 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_validation_mode_auto" ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Settings className="w-4 h-4 text-blue-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Auto</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Check first 3</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_validation_mode_always")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-3 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_validation_mode_always" ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Shield className="w-4 h-4 text-blue-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Always</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Never skip</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_validation_mode_skip")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-3 hover:bg-orange-50 dark:hover:bg-orange-950/20 hover:border-orange-300 dark:hover:border-orange-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_validation_mode_skip" ? <Loader2 className="w-4 h-4 animate-spin text-orange-500" /> : <Shield className="w-4 h-4 text-orange-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Skip</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">If code passes</div>
-                           </div>
-                         </div>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
+          <div className="divide-y divide-border/50">
+            <ToggleRow
+              label="Learning"
+              enabled={learningEnabled}
+              hasOverride={overrideStatus.hasLearningOverride}
+              disabled={isBusy}
+              onToggle={() => handleImmediateAction(learningEnabled ? "disable_learning" : "enable_learning")}
+            />
+            <ToggleRow
+              label="Context Offloading"
+              enabled={contextOffloadingState.enabled}
+              hasOverride={overrideStatus.hasContextOffloadingOverride}
+              disabled={isBusy}
+              onToggle={() => handleImmediateAction(
+                contextOffloadingState.enabled ? "disable_context_offloading" : "enable_context_offloading"
+              )}
+            />
+            <ToggleRow
+              label="Parallel Tool Execution"
+              enabled={parallelToolExecState.enabled}
+              hasOverride={overrideStatus.hasParallelToolExecOverride}
+              disabled={isBusy}
+              onToggle={() => handleImmediateAction(
+                parallelToolExecState.enabled ? "disable_parallel_tool_exec" : "enable_parallel_tool_exec"
+              )}
+            />
+          </div>
 
-            {/* Learning Settings Section */}
-            <AccordionItem value="learning" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-green-500/10">
-                    <BookOpen className="w-4 h-4 text-green-600 dark:text-green-400" />
-                  </div>
-                  <span className="font-semibold text-base">Learning Settings</span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-5 pt-2 pb-6">
-                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-                  Control learning behavior. Learning agents extract insights and patterns from step execution to improve future performance.
-                </p>
-                <div className="space-y-6">
-                  {/* Status Group */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                      Global Status
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("disable_learning")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "disable_learning" ? <Loader2 className="w-4 h-4 animate-spin text-red-500" /> : <X className="w-4 h-4 text-red-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Disable</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Stop learning</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("enable_learning")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "enable_learning" ? <Loader2 className="w-4 h-4 animate-spin text-green-500" /> : <CheckCircle2 className="w-4 h-4 text-green-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Enable</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Extract insights</div>
-                           </div>
-                         </div>
-                      </Button>
-                    </div>
-                  </div>
+          {/* ── Preset Settings ── */}
+          <SectionHeader label="Preset Settings" />
 
-                  {/* Knowledge State Group */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-yellow-500"></div>
-                      Knowledge State
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("lock_learnings")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-yellow-50 dark:hover:bg-yellow-950/20 hover:border-yellow-300 dark:hover:border-yellow-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "lock_learnings" ? <Loader2 className="w-4 h-4 animate-spin text-yellow-600" /> : <Settings className="w-4 h-4 text-yellow-600" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Lock</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Read-only mode</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("unlock_learnings")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "unlock_learnings" ? <Loader2 className="w-4 h-4 animate-spin text-blue-500" /> : <Settings className="w-4 h-4 text-blue-500" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Unlock</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Read & Write</div>
-                           </div>
-                         </div>
-                      </Button>
-                    </div>
-                  </div>
+          <div className="divide-y divide-border/50">
+            <ToggleRow
+              label="Knowledgebase"
+              enabled={enableKnowledgebase}
+              hasOverride={false}
+              disabled={isBusy || !activePreset}
+              onToggle={() => handleToggleFeature('use_knowledgebase', !enableKnowledgebase)}
+            />
+            <ToggleRow
+              label="Context Summarization"
+              enabled={enableContextSummarization}
+              hasOverride={false}
+              disabled={isBusy || !activePreset}
+              onToggle={() => handleToggleFeature('enable_context_summarization', !enableContextSummarization)}
+            />
+            <ToggleRow
+              label="Context Editing"
+              enabled={enableContextEditing}
+              hasOverride={false}
+              disabled={isBusy || !activePreset}
+              onToggle={() => handleToggleFeature('enable_context_editing', !enableContextEditing)}
+            />
+          </div>
 
-                  {/* Detail Level Group */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
-                      Detail Level
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_learning_detail_level_exact")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_learning_detail_level_exact" ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <Info className="w-4 h-4 text-primary" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Exact</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Step-specific</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_learning_detail_level_general")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-4 hover:bg-primary/5 hover:border-primary/50 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_learning_detail_level_general" ? <Loader2 className="w-4 h-4 animate-spin text-primary" /> : <Info className="w-4 h-4 text-primary" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">General</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">High-level patterns</div>
-                           </div>
-                         </div>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
+          {/* ── Tools ── */}
+          <SectionHeader label="Tools" />
 
-            {/* Agent Mode Section */}
-            <AccordionItem value="agent-mode" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-indigo-500/10">
-                    <Code2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  </div>
-                  <span className="font-semibold text-base">Agent Mode</span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-5 pt-2 pb-6">
-                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-                  Choose the execution mode for agents. Code execution mode enables code generation and execution capabilities.
-                </p>
-                <div className="space-y-6">
-                  {/* Execution Mode Group */}
-                  <div>
-                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
-                      Execution Mode
-                    </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_code_execution_mode")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-3 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_code_execution_mode" ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Code2 className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Code Exec</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Write & run code</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_tool_search_mode")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-3 hover:bg-blue-50 dark:hover:bg-blue-950/20 hover:border-blue-300 dark:hover:border-blue-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_tool_search_mode" ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <Search className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Tool Search</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Dynamic discovery</div>
-                           </div>
-                         </div>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction("set_simple_mode")}
-                        disabled={applyingAction !== null}
-                        className="h-auto py-3 px-3 hover:bg-purple-50 dark:hover:bg-purple-950/20 hover:border-purple-300 dark:hover:border-purple-800 transition-all justify-start"
-                      >
-                         <div className="flex items-center gap-3">
-                           {applyingAction === "set_simple_mode" ? <Loader2 className="w-4 h-4 animate-spin text-purple-600" /> : <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />}
-                           <div className="text-left">
-                             <div className="font-medium text-sm">Simple</div>
-                             <div className="text-[10px] text-muted-foreground font-normal">Standard chat</div>
-                           </div>
-                         </div>
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
+          <div className="text-xs text-muted-foreground mb-2">
+            {overrideStatus.hasToolAccessOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary inline-block mr-1.5 align-middle" />}
+            {toolAccessSummary}
+          </div>
 
-            {/* Runtime Configuration Section */}
-            <AccordionItem value="runtime-config" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-5 py-4">
-                <div className="flex items-center gap-3">
-                                            <div className="p-1.5 rounded-md bg-indigo-500/10">
-                                              <Settings className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />                  </div>
-                  <span className="font-semibold text-base">Runtime Configuration</span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-5 pt-2 pb-6">
-                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-                  Configure runtime features that affect execution behavior. These settings persist across sessions.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Enable Knowledgebase Toggle */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleToggleFeature('use_knowledgebase', !enableKnowledgebase)}
-                      disabled={applyingAction !== null || !activePreset}
-                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                        enableKnowledgebase
-                          ? "bg-green-50 dark:bg-green-950/20 border-green-300 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/30"
-                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        <Book className={`w-4 h-4 ${enableKnowledgebase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`} />
-                        <div className="flex-1 text-left">
-                          <div className="font-medium text-sm">Knowledgebase</div>
-                          <div className={`text-xs mt-0.5 ${enableKnowledgebase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                            {enableKnowledgebase ? 'Enabled' : 'Disabled'}
-                          </div>
-                        </div>
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enables access to learnings and knowledge during execution. When disabled, agents won't use stored learnings from previous runs.
-                    </p>
-                  </div>
+          <div className="flex flex-wrap gap-2">
+            {([
+              { label: 'Basic Only', action: 'enable_only_basic_tools' as const },
+              { label: 'Advanced Only', action: 'enable_only_advanced_tools' as const },
+              { label: 'No Images', action: 'disable_read_image_access' as const },
+              { label: 'No Human Tools', action: 'disable_human_tools' as const },
+            ]).map(tool => (
+              <button
+                key={tool.action}
+                onClick={() => handleImmediateAction(tool.action)}
+                disabled={isBusy}
+                className="px-3 py-1.5 text-xs rounded-full border border-border hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {applyingAction === tool.action ? (
+                  <Loader2 className="w-3 h-3 animate-spin inline mr-1" />
+                ) : null}
+                {tool.label}
+              </button>
+            ))}
+          </div>
 
-                  {/* Enable Context Summarization Toggle */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleToggleFeature('enable_context_summarization', !enableContextSummarization)}
-                      disabled={applyingAction !== null || !activePreset}
-                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                        enableContextSummarization
-                          ? "bg-blue-50 dark:bg-blue-950/20 border-blue-300 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-950/30"
-                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        <FileStack className={`w-4 h-4 ${enableContextSummarization ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`} />
-                        <div className="flex-1 text-left">
-                          <div className="font-medium text-sm">Context Summarization</div>
-                          <div className={`text-xs mt-0.5 ${enableContextSummarization ? 'text-blue-600 dark:text-blue-400' : 'text-muted-foreground'}`}>
-                            {enableContextSummarization ? 'Enabled' : 'Disabled'}
-                          </div>
-                        </div>
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enables automatic context summarization during execution. When disabled, full conversation context is maintained without compression.
-                    </p>
-                  </div>
+          {/* ── Max Turns ── */}
+          <SectionHeader label="Max Turns" />
 
-                  {/* Context Offloading Toggle */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction(
-                        contextOffloadingState.enabled
-                          ? "disable_context_offloading"
-                          : "enable_context_offloading"
-                      )}
-                      disabled={applyingAction !== null}
-                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                        contextOffloadingState.enabled
-                          ? "bg-purple-50 dark:bg-purple-950/20 border-purple-300 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-950/30"
-                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "enable_context_offloading" || applyingAction === "disable_context_offloading" ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <HardDriveDownload className={`w-4 h-4 ${contextOffloadingState.enabled ? 'text-purple-600 dark:text-purple-400' : 'text-muted-foreground'}`} />
-                        )}
-                        <div className="flex-1 text-left">
-                          <div className="font-medium text-sm">Context Offloading</div>
-                          <div className={`text-xs mt-0.5 ${contextOffloadingState.enabled ? 'text-purple-600 dark:text-purple-400' : 'text-muted-foreground'}`}>
-                            {contextOffloadingState.enabled ? 'Enabled' : 'Disabled'}
-                          </div>
-                        </div>
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enable context offloading virtual tools (read_large_output, search_large_output, query_large_output) for all steps.
-                    </p>
-                  </div>
-
-                  {/* Context Editing Toggle */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleToggleFeature('enable_context_editing', !enableContextEditing)}
-                      disabled={applyingAction !== null || !activePreset}
-                      className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                        enableContextEditing
-                          ? "bg-slate-100 dark:bg-slate-800/40 border-slate-300 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-800/60"
-                          : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        <Scissors className={`w-4 h-4 ${enableContextEditing ? 'text-slate-600 dark:text-slate-300' : 'text-muted-foreground'}`} />
-                        <div className="flex-1 text-left">
-                          <div className="font-medium text-sm">Context Editing</div>
-                          <div className={`text-xs mt-0.5 ${enableContextEditing ? 'text-slate-600 dark:text-slate-300' : 'text-muted-foreground'}`}>
-                            {enableContextEditing ? 'Enabled' : 'Disabled'}
-                          </div>
-                        </div>
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Enable dynamic context reduction during execution. Compacts large tool outputs and old conversation turns to optimize context usage.
-                    </p>
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-
-            {/* Tools & Advanced Section */}
-            <AccordionItem value="tools-advanced" className="border border-border rounded-xl bg-muted/10 hover:bg-muted/20 transition-colors shadow-sm">
-              <AccordionTrigger className="hover:no-underline px-5 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-md bg-amber-500/10">
-                    <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                  </div>
-                  <span className="font-semibold text-base">Tools & Advanced</span>
-                </div>
-              </AccordionTrigger>
-              <AccordionContent className="px-5 pt-2 pb-6">
-                <p className="text-sm text-muted-foreground mb-5 leading-relaxed">
-                  Configure tool access and execution parameters for all steps.
-                </p>
-                <div className="space-y-5">
-                  {/* Disable Human Feedback Tools */}
-                  <div className="space-y-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => handleImmediateAction("disable_human_tools")}
-                      disabled={applyingAction !== null}
-                      className="w-full justify-start h-auto py-3 px-4 hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800 transition-all"
-                    >
-                      <div className="flex items-center gap-3 w-full">
-                        {applyingAction === "disable_human_tools" ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="font-medium">Applying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <X className="w-4 h-4 text-red-500" />
-                            <span className="font-medium text-sm">Disable Human Feedback Tools</span>
-                          </>
-                        )}
-                      </div>
-                    </Button>
-                    <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                      Removes human feedback tools from available tools. Agents cannot request human input during execution, enabling fully automated workflows.
-                    </p>
-                  </div>
-
-                  {/* Tool Access Control Section */}
-                  <div className="space-y-4 pt-4 border-t border-border">
-                    <div className="flex items-center gap-2.5 mb-3">
-                      <div className="p-1 rounded-md bg-blue-500/10">
-                        <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                      </div>
-                      <div className="text-sm font-semibold text-foreground">
-                        Tool Access Control
-                      </div>
-                    </div>
-                    
-                    {/* Disable/Enable Shell Exec Access */}
-                    <div className="space-y-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction(
-                          toolAccessState.shellExecDisabled 
-                            ? "enable_shell_exec_access" 
-                            : "disable_shell_exec_access"
-                        )}
-                        disabled={applyingAction !== null}
-                        className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                          toolAccessState.shellExecDisabled
-                            ? "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800"
-                            : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 w-full">
-                          {applyingAction === "disable_shell_exec_access" || applyingAction === "enable_shell_exec_access" ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : toolAccessState.shellExecDisabled ? (
-                            <>
-                              <CheckCircle2 className="w-4 h-4 text-green-500" />
-                              <span className="font-medium text-sm">Enable Shell Exec Access</span>
-                            </>
-                          ) : (
-                            <>
-                              <X className="w-4 h-4 text-red-500" />
-                              <span className="font-medium text-sm">Disable Shell Exec Access</span>
-                            </>
-                          )}
-                        </div>
-                      </Button>
-                      <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                        {toolAccessState.shellExecDisabled ? (
-                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool for all steps.</>
-                        ) : (
-                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">execute_shell_command</code> tool for all steps. This prevents agents from executing shell commands, providing an additional security layer for sensitive environments.</>
-                        )}
-                      </p>
-                    </div>
-
-                    {/* Disable/Enable Read Image Access */}
-                    <div className="space-y-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleImmediateAction(
-                          toolAccessState.readImageDisabled 
-                            ? "enable_read_image_access" 
-                            : "disable_read_image_access"
-                        )}
-                        disabled={applyingAction !== null}
-                        className={`w-full justify-start h-auto py-3 px-4 transition-all ${
-                          toolAccessState.readImageDisabled
-                            ? "hover:bg-green-50 dark:hover:bg-green-950/20 hover:border-green-300 dark:hover:border-green-800"
-                            : "hover:bg-red-50 dark:hover:bg-red-950/20 hover:border-red-300 dark:hover:border-red-800"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 w-full">
-                          {applyingAction === "disable_read_image_access" || applyingAction === "enable_read_image_access" ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : toolAccessState.readImageDisabled ? (
-                            <>
-                              <CheckCircle2 className="w-4 h-4 text-green-500" />
-                              <span className="font-medium text-sm">Enable Read Image Access</span>
-                            </>
-                          ) : (
-                            <>
-                              <X className="w-4 h-4 text-red-500" />
-                              <span className="font-medium text-sm">Disable Read Image Access</span>
-                            </>
-                          )}
-                        </div>
-                      </Button>
-                      <p className="text-xs text-muted-foreground ml-7 leading-relaxed">
-                        {toolAccessState.readImageDisabled ? (
-                          <>Currently disabled. Click to enable the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool for all steps.</>
-                        ) : (
-                          <>Disables the <code className="text-xs bg-background px-1.5 py-0.5 rounded border border-border">read_image</code> tool for all steps. This prevents agents from reading and analyzing image files, useful for workflows that don't require image processing.</>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Execution Max Turns Section */}
-                  <div className="space-y-3 pt-4 border-t border-border">
-                    <div className="flex items-center gap-2.5">
-                      <div className="p-1 rounded-md bg-gray-500/10">
-                        <Settings className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-                      </div>
-                      <div className="text-sm font-semibold text-foreground">
-                        Execution Max Turns
-                      </div>
-                    </div>
-                    <div className="bg-muted/30 rounded-lg p-4 border border-border/50">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <label className="text-sm font-medium text-foreground whitespace-nowrap">
-                          Max Turns:
-                        </label>
-                        <select
-                          value={selectedMaxTurns}
-                          onChange={(e) => setSelectedMaxTurns(parseInt(e.target.value))}
-                          disabled={applyingAction !== null}
-                          className="flex-1 min-w-[120px] px-3 py-2 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {[10, 25, 50, 75, 100].map((value) => (
-                            <option key={value} value={value}>
-                              {value} turns
-                            </option>
-                          ))}
-                        </select>
-                        <Button
-                          variant="outline"
-                          onClick={() =>
-                            handleImmediateAction("set_execution_max_turns", null, selectedMaxTurns)
-                          }
-                          disabled={applyingAction !== null}
-                          className="whitespace-nowrap hover:bg-primary hover:text-primary-foreground transition-colors"
-                        >
-                          {applyingAction === "set_execution_max_turns" ? (
-                            <>
-                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                              Applying...
-                            </>
-                          ) : (
-                            "Apply"
-                          )}
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
-                        Maximum number of conversation turns allowed for execution agents per step. Prevents infinite loops and controls execution time. Higher values allow more complex reasoning but may increase costs.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
-
-          <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-            <div className="flex items-start gap-3 text-sm text-blue-700 dark:text-blue-300">
-              <Info className="w-5 h-5 mt-0.5 flex-shrink-0" />
-              <p className="leading-relaxed">
-                <strong className="font-semibold">Note:</strong> All actions are applied immediately to all steps in the workflow, including branch steps. Changes take effect right away - no need to click a separate "Apply" button.
-              </p>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              {overrideStatus.hasMaxTurnsOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+              <span className="text-sm font-medium">Max turns per step</span>
             </div>
+            <select
+              value={selectedMaxTurns}
+              onChange={(e) => setSelectedMaxTurns(parseInt(e.target.value))}
+              disabled={isBusy}
+              className="px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {[10, 25, 50, 75, 100].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <Button
+              size="sm"
+              onClick={() => handleImmediateAction("set_execution_max_turns", null, selectedMaxTurns)}
+              disabled={isBusy}
+              className="px-3 h-8"
+            >
+              {applyingAction === "set_execution_max_turns" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
+            </Button>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-border bg-muted/40 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            {saveSuccess && (
-              <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Successfully updated all steps</span>
-              </div>
-            )}
-            {saveError && (
-              <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
-                <AlertCircle className="w-4 h-4" />
-                <span>{saveError}</span>
-              </div>
-            )}
-            {!saveSuccess && !saveError && stepCount > 0 && (
-              <span className="text-xs text-muted-foreground">
-                Click buttons above to apply changes to all steps
+        <div className="flex items-center justify-between px-5 py-3 border-t border-border flex-shrink-0">
+          <span className="text-xs text-muted-foreground">
+            {saveSuccess ? (
+              <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+                <CheckCircle2 className="w-3 h-3" /> Saved
               </span>
+            ) : saveError ? (
+              <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                <AlertCircle className="w-3 h-3" /> {saveError}
+              </span>
+            ) : (
+              'Changes apply to all steps'
             )}
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              disabled={applyingAction !== null}
-            >
-              Close
-            </Button>
-          </div>
+          </span>
+          <Button variant="outline" size="sm" onClick={onClose} disabled={isBusy}>
+            Close
+          </Button>
         </div>
       </div>
     </div>

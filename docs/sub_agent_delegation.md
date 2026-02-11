@@ -4,91 +4,135 @@
 
 Sub-agent delegation allows the main agent to spawn independent sub-agents to handle tasks. Two modes are supported:
 
-1. **Simple delegation** (`delegate` tool) — Quick one-off tasks
-2. **Plan-driven delegation** (`create_delegation_plan` + `execute_plan_task`) — Complex multi-step projects with task tracking
+1. **Simple delegation** (`delegate` tool) — Quick one-off tasks via `/spawn` in Chat mode
+2. **Plan-driven delegation** (`create_delegation_plan` + `delegate`) — Complex multi-step projects with task tracking via plan.md, available in **Multi Agent Chat** mode
 
-When delegation mode is enabled, the agent receives delegation tools and can spawn sub-agents with the same tool access as the parent (workspace, browser, skills, MCP servers).
+When delegation is enabled, the agent receives delegation tools and can spawn sub-agents with the same tool access as the parent (workspace, browser, skills, MCP servers).
 
 ---
 
 ## Quick Start
 
-### Enabling Delegation Mode
+### Multi Agent Chat Mode (Plan-Driven Delegation)
 
-Delegation mode is **enabled by default** for new chat sessions.
+**Multi Agent Chat** is a top-level mode alongside Chat and Workflow. It provides plan-driven delegation with multi-LLM tiers — always on, no slash command needed.
+
+- Select **Multi Agent Chat** from the mode switcher or mode selection modal
+- Auto tool mode chip + tier config chip appear automatically in the chat input
+- Plans are stored in `Plans/{planID}/plan.md` (visible in the workspace sidebar)
+- The `Plans/` folder is a **per-user folder** (auto-created, isolated under `_users/{userID}/Plans/`)
+
+### Simple Delegation (Chat Mode)
+
+In Chat mode, simple delegation can be toggled via slash commands:
 
 | Command | Action |
 |---------|--------|
-| `/spawn` | Enable sub-agent delegation |
+| `/spawn` | Enable simple sub-agent delegation |
 | `/nospawn` | Disable sub-agent delegation |
 
-### UI Indicator
-
-When delegation mode is enabled, a small purple **GitBranch icon** appears next to the send button in the chat input.
+When spawn is enabled, a small purple **GitBranch icon** appears next to the send button.
 
 ---
 
 ## Delegation Tools
 
-### 1. `delegate` — Simple One-Off Tasks
+Only two tools — `delegate` and `create_delegation_plan`. The manager reads/updates plan.md via workspace tools.
 
-Spawns a sub-agent with a single instruction. Best for quick, independent tasks.
+### 1. `delegate` — Execute a Task
+
+Spawns a sub-agent with a single instruction. Used for both one-off tasks and executing plan tasks.
 
 ```json
 {
   "name": "delegate",
   "parameters": {
     "instruction": "Clear, detailed instructions for the sub-agent",
-    "reasoning_level": "high | medium | low (optional)"
+    "reasoning_level": "high | medium | low (optional — LLM decides)",
+    "plan_folder": "Plans/{planID} (optional — restricts write access)"
   }
 }
 ```
 
-### 2. `create_delegation_plan` — Plan-Driven Delegation
+### 2. `create_delegation_plan` — Create a Plan
 
-Creates a structured plan with multiple tasks. Plan files (`.json` + `.md`) are saved to `Chats/Delegations/{planID}/`.
+Spawns a planner sub-agent that analyzes the objective and writes a `plan.md` todo list to `Plans/{planID}/`. The planner has workspace tools for **research only** (reading files, querying data, reading skill instructions) — it does NOT execute plan steps.
 
 ```json
 {
   "name": "create_delegation_plan",
   "parameters": {
-    "title": "Plan title",
-    "tasks": [
-      { "id": "task-1", "title": "...", "description": "...", "reasoning_level": "high" },
-      { "id": "task-2", "title": "...", "description": "...", "reasoning_level": "medium" }
-    ]
+    "objective": "What needs to be accomplished",
+    "context": "Optional additional context (optional)",
+    "reasoning_level": "high | medium | low (optional — LLM decides)"
   }
 }
 ```
 
-### 3. `execute_plan_task` — Execute a Plan Task
+**Returns**: `plan_id`, `plan_folder`, `plan_file` path, `plan_content` (the full plan.md content), and the planner's output. The plan content is returned directly so the manager doesn't need to read it separately.
 
-Spawns a sub-agent for a specific task from a plan. The sub-agent is:
-- **Instructed** to save all output to `Chats/Delegations/{planID}/`
-- **Restricted** via FolderGuard to only write to that plan folder
-- **Isolated** per-user via `X-User-ID` header (Chats/ routes to `_users/{userID}/Chats/`)
+### Plan Management (via workspace tools)
 
-```json
-{
-  "name": "execute_plan_task",
-  "parameters": {
-    "plan_id": "plan-xxx",
-    "task_id": "task-1",
-    "reasoning_level": "high | medium | low (optional)",
-    "additional_context": "Extra context for this execution (optional)"
-  }
-}
+After creating a plan, the manager agent reads and updates `plan.md` directly:
+
+- **Read plan**: Use `read_workspace_file` with filepath `Plans/{plan_id}/plan.md` (workspace API handles per-user path resolution)
+- **Check status**: Re-read plan.md and check checkboxes
+- **Mark complete**: `execute_shell_command("sed -i 's/- \\[ \\] \\*\\*task-N\\*\\*/- [x] **task-N**/' Plans/{plan_id}/plan.md")`
+- **Add notes**: `create_or_update_workspace_file` to append results
+
+**Note**: Use `read_workspace_file` instead of shell `cat` for reading plan files. The workspace API handles per-user path resolution correctly, while shell commands go through mount namespace isolation which may not always resolve per-user paths.
+
+---
+
+## Planner Capabilities Context
+
+When `create_delegation_plan` runs, the planner sub-agent receives a `CapabilitiesContext` describing available tools:
+
+| Field | Description |
+|-------|-------------|
+| `EnabledServers` | MCP servers available to workers |
+| `SelectedTools` | Specifically enabled tools (`server:tool` format) |
+| `Skills` | Skill summaries (name, description, folder) |
+| `HasWorkspace` | Whether workspace file access is available |
+| `HasBrowser` | Whether browser automation is available |
+
+The planner uses this information to reference specific servers, tools, and skills in task descriptions. It reads skill files (e.g., `cat skills/<name>/SKILL.md`) for research before writing the plan.
+
+---
+
+## Plan File Format
+
+Plans are stored as a single `plan.md` file in `Plans/{planID}/`:
+
+```markdown
+# Plan: Short title
+
+## Strategy
+High-level approach description
+
+## Tasks
+
+- [ ] **task-1**: Task title
+  - Detailed self-contained description
+  - Reasoning level: high
+
+- [ ] **task-2**: Task title
+  - Detailed description
+  - Depends on: task-1
+  - Reasoning level: medium
+
+- [x] **task-3**: Completed task
+  - Description
+  - Reasoning level: low
 ```
 
-### 4. `update_plan_task` / `get_plan_status` — Plan Management
-
-Update task status/notes or check overall plan progress.
+The workspace API routes `Plans/` to `_users/{userID}/Plans/` via per-user isolation (same as `Chats/` and `Downloads/`).
 
 ---
 
 ## Multi-LLM Reasoning Tiers
 
-Sub-agents can use different LLM providers/models based on task complexity:
+The `reasoning_level` parameter is **optional** on both `delegate` and `create_delegation_plan`. The LLM decides the appropriate tier based on task complexity. If not specified, the parent model is used as fallback.
 
 | Tier | Use Case | Default |
 |------|----------|---------|
@@ -96,11 +140,13 @@ Sub-agents can use different LLM providers/models based on task complexity:
 | **medium** | Standard coding, implementation | Parent model (fallback) |
 | **low** | Simple tasks, formatting, lookups | Parent model (fallback) |
 
+**Validation**: Only `"high"`, `"medium"`, `"low"` are accepted. Invalid values (e.g., LLM hallucinations like `"highbinary"`) are silently ignored and the parent model is used instead.
+
 ### Tier Configuration
 
 **Priority order**: Frontend config > Environment variables > Parent model (fallback)
 
-**Frontend**: Set via `delegationTierConfig` in chat request:
+**Frontend**: In Multi Agent Chat mode, configure tiers via the tier config chip in the chat input, or the **Delegation Models** section in the left sidebar. Sent as `delegationTierConfig` in the chat request:
 ```json
 {
   "delegationTierConfig": {
@@ -115,21 +161,43 @@ Sub-agents can use different LLM providers/models based on task complexity:
 
 ---
 
-## Sub-Agent Capabilities
+## Sub-Agent Configuration
 
 ### Inherited from Parent
+
+Sub-agents inherit ALL configuration from the parent agent request:
+
+| Setting | Source | Fallback |
+|---------|--------|----------|
+| **Temperature** | Parent request | 0.7 |
+| **MaxTurns** | Parent request | 100 |
+| **Timeout** | None (parent context controls lifetime) | — |
+| **ToolTimeout** | `TOOL_TIMEOUT_SECONDS` env var | 5 minutes |
+| **Summarization** | All 6 parent fields | Parent defaults |
+| **Context Editing** | All 3 parent fields | Parent defaults |
+| **LargeOutputThreshold** | `LARGE_OUTPUT_THRESHOLD` env var | Default |
+
+**Summarization fields**: `EnableContextSummarization`, `SummarizeOnTokenThreshold`, `TokenThresholdPercent`, `SummarizeOnFixedTokenThreshold`, `FixedTokenThreshold`, `SummaryKeepLastMessages`
+
+**Context editing fields**: `EnableContextEditing`, `ContextEditingThreshold`, `ContextEditingTurnThreshold`
+
+### Tool Capabilities
 
 - **Workspace tools**: Read/write workspace files (with FolderGuard restrictions)
 - **Browser tools**: If enabled in parent session
 - **MCP servers**: Same server connections as parent
 - **Skills**: Selected skills are passed to sub-agent system prompt via `buildSkillPrompt()`
 
+### Per-Tool Timeouts
+
+Delegation tools (`delegate`, `create_delegation_plan`) use `RegisterCustomToolWithTimeout(..., 0)` — **no timeout** (they run indefinitely, lifetime controlled by parent context). All other tools use the global `ToolTimeout` (default 5 minutes from env).
+
 ### FolderGuard Restrictions
 
 | Mode | Allowed Write Folders |
 |------|----------------------|
-| **Simple delegate** | `Chats/` (full folder) |
-| **Plan task** | `Chats/Delegations/{planID}/` only |
+| **Simple delegate** | `Chats/` (chat mode) |
+| **Plan task (via PlanFolderKey)** | `Plans/{planID}/` only |
 | **With skill-creator** | Adds `skills/custom/` to allowed list |
 
 All modes block `_users/` directory access. Per-user isolation is handled by the workspace API via `X-User-ID` header.
@@ -140,6 +208,18 @@ All modes block `_users/` directory access. Per-user isolation is handled by the
 - **No sub-delegation**: Sub-agents cannot spawn their own sub-agents (prevents runaway chains)
 - **Max depth**: 3 levels of delegation depth
 - **Same session**: All events flow to the same session ID (tagged with delegation metadata)
+
+---
+
+## Shell Command Error Handling
+
+The `execute_shell_command` tool returns a **tool call error** (not success) when:
+- The command exits with a non-zero exit code
+- The workspace API returns an error
+
+This ensures the LLM sees command failures as errors and can respond appropriately (retry, try a different approach, etc.).
+
+Implementation: `formatShellResponse()` in `execute_shell_command.go` extracts `exit_code` from the response data. If non-zero, the response is returned as `fmt.Errorf()` instead of a success value.
 
 ---
 
@@ -193,22 +273,30 @@ All events from a sub-agent are tagged by `DelegationEventObserver`:
 
 ### Plan File Events
 
-When plans are created/updated, a `workspace_file_operation` event is emitted via `PlanEventEmitter`. This triggers the workspace sidebar to highlight the plan file.
+When plans are created, a `workspace_file_operation` event is emitted via `PlanEventEmitter`. This triggers the workspace sidebar to highlight the plan file.
 
 ---
 
 ## Frontend UI
 
+### Mode Integration
+
+| Mode | Delegation | Tier Config | Workspace Sidebar |
+|------|-----------|-------------|-------------------|
+| **Multi Agent Chat** | Plan-driven (always on) | Tier chip in chat input + sidebar section | Shows `Plans/` and `skills/` |
+| **Chat** | Simple via `/spawn` | LLM dropdown (no tiers) | Shows `Chats/` and `skills/` |
+| **Workflow** | Not available | N/A | Shows workflow folder |
+
 ### Delegation Start Event
-- Shows `🔀` emoji with instruction summary (truncated to 80 chars)
-- **+/−** expand indicator to toggle full details
+- Shows instruction summary (truncated to 80 chars)
+- **+/-** expand indicator to toggle full details
 - **Reasoning level badge**: Colored by tier (red=high, yellow=medium, green=low)
 - **Live stats**: Token count and tool call count updated in real-time from child events
 - Expanded view shows: full instruction, reasoning level, model ID, depth, delegation ID
 
 ### Delegation End Event
-- Shows `✅` (success) or `❌` (failure) with summary
-- **+/−** expand indicator for full details
+- Shows success/failure with summary
+- **+/-** expand indicator for full details
 - Inline stats: total tokens, tool calls, duration
 - Expanded view shows: full result/error text, detailed token breakdown
 
@@ -225,15 +313,22 @@ When plans are created/updated, a `workspace_file_operation` event is emitted vi
 
 | Component | File Path | Description |
 |-----------|-----------|-------------|
-| **Delegation Tools** | `agent_go/cmd/server/virtual-tools/delegation_tools.go` | Tool definitions, plan CRUD, `PlanEventEmitter` interface |
-| **Server Integration** | `agent_go/cmd/server/server.go` | `executeDelegatedTask()`, folder guards, event emission |
+| **Delegation Tools** | `agent_go/cmd/server/virtual-tools/delegation_tools.go` | Tool definitions (`delegate`, `create_delegation_plan`), `buildPlannerPrompt()`, `CapabilitiesContext` |
+| **Server Integration** | `agent_go/cmd/server/server.go` | `executeDelegatedTask()`, `buildCapabilitiesContext()`, folder guards, event emission |
+| **Shell Command** | `agent_go/pkg/workspace/execute_shell_command.go` | Shell execution client with error handling (non-zero exit = tool error) |
 | **Event Observer** | `agent_go/internal/events/event_observer.go` | `DelegationEventObserver` — tags sub-agent events |
 | **Event Store** | `agent_go/internal/events/event_store.go` | `DelegationStartEventData`, `DelegationEndEventData` structs |
 | **Agent Metrics** | `agent_go/pkg/agentwrapper/llm_agent.go` | `GetMetricsSnapshot()` for post-invoke token/tool stats |
+| **Auth Middleware** | `agent_go/cmd/server/auth_middleware.go` | `GetDefaultUserID()` — returns `"default"` (aligned with workspace API) |
+| **Filesystem Isolator** | `workspace/security/isolator.go` | Mount namespace (Linux) / sandbox-exec (macOS) isolation |
+| **Shell Handler** | `workspace/handlers/shell.go` | Workspace API shell handler with FolderGuard + WritePathMappings |
 | **Frontend Events** | `frontend/src/components/events/EventDispatcher.tsx` | Delegation event rendering with expand/collapse |
 | **Event Hierarchy** | `frontend/src/components/events/EventHierarchy.tsx` | Live `delegationStats` computation from child events |
-| **Frontend Toggle** | `frontend/src/components/ChatInput.tsx` | `/spawn` and `/nospawn` handlers |
-| **Store** | `frontend/src/stores/useAppStore.ts` | `enableDelegationMode` state |
+| **Frontend Toggle** | `frontend/src/components/ChatInput.tsx` | `/spawn`, `/nospawn` handlers; `effectiveDelegationMode` for multi-agent |
+| **Mode Store** | `frontend/src/stores/useModeStore.ts` | `ModeCategory` type (`'chat' | 'workflow' | 'multi-agent' | null`) |
+| **App Store** | `frontend/src/stores/useAppStore.ts` | `delegationMode` (`'off' | 'spawn'`) — plan is implicit in multi-agent mode |
+| **Mode Selection** | `frontend/src/components/ModeSelectionModal.tsx` | 3-mode selection (Chat, Multi Agent Chat, Workflow) |
+| **Workspace Sidebar** | `frontend/src/components/Workspace.tsx` | `Plans/` folder filtering for multi-agent mode |
 
 ---
 
@@ -249,18 +344,8 @@ Defined in `delegation_tools.go`:
 | `DelegationTierConfigKey` | `*DelegationTierConfig` | Multi-LLM tier configuration |
 | `ReasoningLevelKey` | `string` | Reasoning level for current delegation |
 | `PlanEventEmitterKey` | `PlanEventEmitter` | Emits workspace file events for plan files |
-| `PlanFolderKey` | `string` | Plan-specific output folder (e.g., `Chats/Delegations/{planID}`) |
-
----
-
-## Plan File Structure
-
-Plans are stored as dual files in `Chats/Delegations/{planID}/`:
-
-- `plan.json` — Machine-readable plan data
-- `plan.md` — Human-readable markdown plan (visible in workspace sidebar)
-
-The workspace API routes `Chats/` to `_users/{userID}/Chats/` via per-user isolation.
+| `PlanFolderKey` | `string` | Plan-specific output folder (e.g., `Plans/{planID}`) |
+| `CapabilitiesContextKey` | `*CapabilitiesContext` | Available MCP servers, tools, skills for planner |
 
 ---
 
@@ -270,4 +355,5 @@ The workspace API routes `Chats/` to `_users/{userID}/Chats/` via per-user isola
 2. **No conversation context**: Sub-agents start fresh with no parent history
 3. **Max depth**: 3 levels of delegation depth
 4. **Same session events**: All events flow to the same session (tagged for identification)
-5. **Plan folder restriction**: Plan task sub-agents can only write to their plan folder
+5. **Plan folder restriction**: Sub-agents with `PlanFolderKey` set can only write to their plan folder
+6. **Planner is research-only**: The planner sub-agent uses tools to research (read files, query data) but does NOT execute plan steps

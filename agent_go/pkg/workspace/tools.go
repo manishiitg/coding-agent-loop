@@ -103,39 +103,8 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Content to write to the file (will create new file or replace entire existing file)",
 					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
 				},
 				"required": []string{"filepath", "content"},
-			}),
-		},
-	})
-
-	// Add diff_patch_workspace_file tool (unified diff patching)
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "diff_patch_workspace_file",
-			Description: "🚨 CRITICAL WORKFLOW: 1) MANDATORY - Use read_workspace_file first to see exact current content 2) Generate diff using 'diff -U0' format with perfect context matching 3) Apply patch. This tool requires precise unified diff format - context lines must match file exactly. Use for targeted, surgical changes to specific file sections. ⚠️ FAILURE TO FOLLOW WORKFLOW WILL RESULT IN PATCH FAILURES.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'configs/settings.json')",
-					},
-					"diff": map[string]interface{}{
-						"type":        "string",
-						"description": "🚨 CRITICAL REQUIREMENTS - Unified diff format string to apply:\n\n**MANDATORY FORMAT (like 'diff -U0'):**\n- Headers: --- a/file.md\n+++ b/file.md\n- Hunk headers: @@ -startLine,lineCount +startLine,lineCount @@\n- Context lines: ' ' prefix (SPACE + content - MUST match file exactly)\n- Removals: '-' prefix (MINUS + content)\n- Additions: '+' prefix (PLUS + content)\n- MUST end with newline character\n\n🚨 CRITICAL: Context lines start with SPACE ( ), NOT minus (-) !\n   Correct: ' # Header' (space + content)\n   Wrong:   '- # Header' (minus + content)\n\n**PERFECT EXAMPLE:**\n--- a/todo.md\n+++ b/todo.md\n@@ -1,3 +1,4 @@\n # Todo List\n+**New addition**: Added via unified diff\n \n ## Objective\n@@ -4,3 +5,4 @@\n ## Notes\n - Leverages tavily-search for comprehensive research\n+- Added new methodology note\n\n**🚨 CRITICAL VALIDATION CHECKLIST:**\n- ✅ File exists and was read with read_workspace_file\n- ✅ Context lines copied EXACTLY from file content (including whitespace)\n- ✅ Hunk headers show correct line numbers\n- ✅ Diff ends with newline character\n- ✅ Proper unified diff format (---/+++ headers)\n- ✅ No truncated or malformed lines\n- ✅ Test with simple single-line addition first",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
-				},
-				"required": []string{"filepath", "diff"},
 			}),
 		},
 	})
@@ -240,10 +209,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Full file path of the file to delete (e.g., 'docs/example.md', 'configs/settings.json')",
 					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
-					},
 				},
 				"required": []string{"filepath"},
 			}),
@@ -266,10 +231,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 					"destination_filepath": map[string]interface{}{
 						"type":        "string",
 						"description": "New file path where the file should be moved (e.g., 'archive/old-file.md', 'settings/config.json')",
-					},
-					"commit_message": map[string]interface{}{
-						"type":        "string",
-						"description": "Optional commit message for version control",
 					},
 				},
 				"required": []string{"source_filepath", "destination_filepath"},
@@ -337,18 +298,6 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 		result, err := client.UpdateWorkspaceFile(ctx, params)
 		if err == nil {
 			emitWorkspaceFileEvent(ctx, "update", params.Filepath, "")
-		}
-		return result, err
-	}
-
-	executors["diff_patch_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params DiffPatchWorkspaceFileParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
-		}
-		result, err := client.DiffPatchWorkspaceFile(ctx, params)
-		if err == nil {
-			emitWorkspaceFileEvent(ctx, "patch", params.Filepath, "")
 		}
 		return result, err
 	}
@@ -456,6 +405,18 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		return client.ReadPDF(ctx, params)
+	}
+
+	executors["diff_patch_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+		var params DiffPatchWorkspaceFileParams
+		if err := mapToStruct(args, &params); err != nil {
+			return "", fmt.Errorf("invalid arguments: %w", err)
+		}
+		result, err := client.DiffPatchWorkspaceFile(ctx, params)
+		if err == nil {
+			emitWorkspaceFileEvent(ctx, "patch", params.Filepath, "")
+		}
+		return result, err
 	}
 
 	return executors

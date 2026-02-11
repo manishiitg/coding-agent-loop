@@ -1,30 +1,37 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../../generated/event-types'
-import { Button } from '../../../ui/Button'
-import { Textarea } from '../../../ui/Textarea'
-import { Card } from '../../../ui/Card'
 import { MarkdownRenderer } from '../../../ui/MarkdownRenderer'
 
 interface HumanFeedbackToolCallDisplayProps {
   event: ToolCallStartEvent
 }
 
-export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplayProps> = ({ event }) => {
+export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplayProps> = React.memo(({ event }) => {
   const [response, setResponse] = React.useState('')
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [isSubmitted, setIsSubmitted] = React.useState(false)
+  const [submittedFeedback, setSubmittedFeedback] = React.useState('')
   const [notificationPermission, setNotificationPermission] = React.useState<NotificationPermission>('default')
 
-  // Extract parameters from tool arguments
-  const getToolParams = () => {
+  // Extract parameters from tool arguments (matches backend human_feedback tool schema)
+  // Memoize to avoid re-parsing on every render (prevents cascading re-renders during streaming)
+  const toolParams = React.useMemo(() => {
     try {
       if (event.tool_params?.arguments) {
         const args = JSON.parse(event.tool_params.arguments)
+        const optionsRaw = args.options
+        const options: string[] = []
+        if (Array.isArray(optionsRaw)) {
+          for (const opt of optionsRaw) {
+            if (typeof opt === 'string' && opt) options.push(opt)
+          }
+        }
         return {
           unique_id: args.unique_id || '',
           message_for_user: args.message_for_user || '',
-          session_id: args.session_id
+          session_id: args.session_id,
+          options
         }
       }
     } catch (err) {
@@ -33,17 +40,18 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
     return {
       unique_id: '',
       message_for_user: 'Please provide your feedback',
-      session_id: undefined
+      session_id: undefined,
+      options: [] as string[]
     }
-  }
+  }, [event.tool_params?.arguments])
 
-  const toolParams = getToolParams()
+  const hasMultipleOptions = toolParams.options.length > 0
 
   // Request notification permission on component mount
   React.useEffect(() => {
     if ('Notification' in window) {
       setNotificationPermission(Notification.permission)
-      
+
       if (Notification.permission === 'default') {
         Notification.requestPermission().then((permission) => {
           setNotificationPermission(permission)
@@ -71,16 +79,8 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
           notification.close()
         }
 
-        notification.onshow = () => {
-          // Notification shown successfully
-        }
-
         notification.onerror = (error) => {
           console.error('[HUMAN_FEEDBACK] Notification error:', error)
-        }
-
-        notification.onclose = () => {
-          // Notification closed
         }
 
         // Auto-close notification after 30 seconds
@@ -97,25 +97,38 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
     }
   }, [toolParams.message_for_user, toolParams.unique_id])
 
-  const handleSubmit = async () => {
-    if (!response.trim()) {
-      setError('Please provide a response')
-      return
-    }
-
+  const submitFeedback = async (value: string, displayValue?: string) => {
+    if (!value.trim()) return
     setIsSubmitting(true)
     setError(null)
-
     try {
-      // Import the API function dynamically to avoid circular imports
       const { agentApi } = await import('../../../../services/api')
-      await agentApi.submitHumanFeedback(toolParams.unique_id, response.trim())
+      await agentApi.submitHumanFeedback(toolParams.unique_id, value.trim())
+      setSubmittedFeedback(displayValue ?? value.trim())
       setIsSubmitted(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit feedback')
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  const handleSubmit = async () => {
+    if (!response.trim()) {
+      setError('Please provide a response')
+      return
+    }
+    await submitFeedback(response.trim())
+  }
+
+  const handleApprove = async () => {
+    await submitFeedback('Approve', 'Approved')
+  }
+
+  const handleOption = async (index: number) => {
+    const optionValue = `option${index}`
+    const displayLabel = toolParams.options[index] || optionValue
+    await submitFeedback(optionValue, displayLabel)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -127,112 +140,62 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
     }
   }
 
+  // Submitted state — compact confirmation matching BlockingHumanFeedbackDisplay
+  if (isSubmitted) {
+    return (
+      <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-md px-3 py-2 my-2">
+        <div className="flex items-center gap-2">
+          <svg className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="text-xs font-medium text-green-800 dark:text-green-200">
+            {submittedFeedback}
+          </span>
+          <span className="text-[10px] text-green-600 dark:text-green-400 italic ml-auto">
+            Processing...
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  // Waiting state
   return (
-    <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded p-2">
-      <div className="flex items-center justify-between gap-3 mb-3">
-        {/* Left side: Icon and main content */}
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <div className="w-6 h-6 bg-orange-500 rounded-full flex items-center justify-center">
-            <span className="text-white text-xs font-bold">👤</span>
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-orange-700 dark:text-orange-300">
-              Human Feedback Required{' '}
-              <span className="text-xs font-normal text-orange-600 dark:text-orange-400">
-                {event.turn && `• Turn: ${event.turn}`}
-                {event.tool_name && ` • Tool: ${event.tool_name}`}
-              </span>
-            </div>
+    <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-md px-3 py-2.5 my-2">
+      <div className="flex items-center gap-3">
+        {/* Question text */}
+        <div className="flex-1 min-w-0">
+          <div className="text-xs text-indigo-700 dark:text-indigo-300">
+            <MarkdownRenderer content={toolParams.message_for_user} className="text-xs" />
           </div>
         </div>
 
-        {/* Right side: Time */}
-        {event.timestamp && (
-          <div className="text-xs text-orange-600 dark:text-orange-400 flex-shrink-0">
-            {new Date(event.timestamp).toLocaleTimeString()}
-          </div>
-        )}
-      </div>
-
-      {/* Human Feedback UI */}
-      <Card className="p-3 mb-2 border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
-        <div className="space-y-3">
-          {/* Message from LLM */}
-          <div className="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700">
-            <MarkdownRenderer 
-              content={toolParams.message_for_user}
-              className="text-gray-700 dark:text-gray-300"
-            />
-          </div>
-
-          {/* Response input */}
-          {!isSubmitted ? (
-            <div className="space-y-2">
-              <label htmlFor="feedback-response" className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                Your Response:
-              </label>
-              <Textarea
-                id="feedback-response"
-                value={response}
-                onChange={(e) => setResponse(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Please provide your feedback here... (Enter to submit, Shift+Enter for newline)"
-                className="min-h-[100px] resize-y text-sm border-gray-200 dark:border-gray-700 focus:border-blue-500 dark:focus:border-blue-400"
-                disabled={isSubmitting}
-              />
-            </div>
+        {/* Action buttons: option buttons when options provided, else notification status */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {hasMultipleOptions ? (
+            toolParams.options.map((optionLabel, index) => {
+              const colorClasses = [
+                'bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50',
+                'bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 disabled:opacity-50',
+                'bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 disabled:opacity-50',
+                'bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50',
+              ]
+              const colorClass = colorClasses[index % colorClasses.length]
+              return (
+                <button
+                  key={index}
+                  onClick={() => handleOption(index)}
+                  disabled={isSubmitting}
+                  className={`px-3 py-1.5 ${colorClass} text-white text-xs font-medium rounded transition-colors`}
+                >
+                  {isSubmitting ? 'Processing...' : optionLabel}
+                </button>
+              )
+            })
           ) : (
-            <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-green-600 dark:text-green-400 text-sm">✓</span>
-                <span className="text-sm font-medium text-green-700 dark:text-green-300">
-                  Feedback Submitted Successfully
-                </span>
-              </div>
-              <p className="text-xs text-green-600 dark:text-green-400">
-                Your response has been sent to the agent.
-              </p>
-            </div>
-          )}
-
-          {/* Error display */}
-          {error && (
-            <div className="p-2 bg-red-100 dark:bg-red-900 border border-red-300 dark:border-red-700 rounded">
-              <p className="text-red-700 dark:text-red-300 text-xs">{error}</p>
-            </div>
-          )}
-
-          {/* Action buttons */}
-          {!isSubmitted && (
-            <div className="flex gap-2 justify-between items-center">
-              <div className="text-xs text-gray-500 dark:text-gray-400">
-                💡 Tip: Press <kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-xs font-mono">Enter</kbd> to submit
-              </div>
-              <Button
-                onClick={handleSubmit}
-                disabled={isSubmitting || !response.trim()}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 h-7 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmitting ? 'Submitting...' : 'Submit Feedback'}
-              </Button>
-            </div>
-          )}
-
-          {/* Request ID and Notification Status */}
-          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-            <span>Request ID: {toolParams.unique_id}</span>
-            <div className="flex items-center gap-2">
+            <>
               {notificationPermission === 'granted' && (
-                <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                  <span>🔔</span>
-                  <span>Notifications enabled</span>
-                </span>
-              )}
-              {notificationPermission === 'denied' && (
-                <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                  <span>🔕</span>
-                  <span>Notifications blocked</span>
-                </span>
+                <span className="text-[10px] text-indigo-500 dark:text-indigo-400">Notifications on</span>
               )}
               {notificationPermission === 'default' && (
                 <button
@@ -243,16 +206,59 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
                       })
                     }
                   }}
-                  className="flex items-center gap-1 text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+                  className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline"
                 >
-                  <span>🔔</span>
-                  <span>Enable notifications</span>
+                  Enable notifications
                 </button>
               )}
-            </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Free-text mode: textarea + Approve button (optional input) or Submit Feedback */}
+      {!hasMultipleOptions && (
+        <div className="mt-2">
+          <textarea
+            id="feedback-response"
+            value={response}
+            onChange={(e) => setResponse(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Type feedback here if needed... (Enter to submit. Or click Approve & Continue)"
+            className="w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800/80 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
+            rows={5}
+            disabled={isSubmitting}
+          />
+          <div className="flex justify-end gap-2 mt-1.5">
+            {!response.trim() && (
+              <button
+                onClick={handleApprove}
+                disabled={isSubmitting}
+                className="px-3 py-1.5 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
+              >
+                {isSubmitting ? 'Processing...' : 'Approve & Continue'}
+              </button>
+            )}
+            {response.trim() && (
+              <button
+                onClick={handleSubmit}
+                disabled={isSubmitting || !response.trim()}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
+              >
+                {isSubmitting ? 'Submitting...' : 'Submit Feedback'}
+              </button>
+            )}
           </div>
         </div>
-      </Card>
+      )}
+
+      {/* Error display */}
+      {error && (
+        <div className="mt-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded">
+          <p className="text-red-700 dark:text-red-300 text-xs">{error}</p>
+        </div>
+      )}
     </div>
   )
-}
+})
+HumanFeedbackToolCallDisplay.displayName = 'HumanFeedbackToolCallDisplay'

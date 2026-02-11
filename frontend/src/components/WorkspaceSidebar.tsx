@@ -4,12 +4,14 @@ import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
+import { SubAgentsSection } from './subagents'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore, useAppStore } from '../stores'
+import { useModeStore } from '../stores/useModeStore'
 import { Layers, LogOut, User } from 'lucide-react'
 import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
 import { useAuthStore } from '../stores/useAuthStore'
@@ -35,18 +37,19 @@ export default function WorkspaceSidebar({
   const { showLLMModal, setShowLLMModal, delegationTierConfig } = useLLMStore()
   const { user, logout, isMultiUserMode } = useAuthStore()
   const delegationMode = useAppStore(state => state.delegationMode)
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
 
-  // Auto-open delegation tier modal when triggered from /plan command
+  // Auto-open delegation tier modal when triggered from multi-agent mode entry
   useEffect(() => {
-    if (showDelegationTiersDialog && delegationMode === 'plan') {
+    if (showDelegationTiersDialog && selectedModeCategory === 'multi-agent') {
       setShowTierModal(true)
       closeDialog('delegationTiers')
     }
-  }, [showDelegationTiersDialog, delegationMode, closeDialog])
+  }, [showDelegationTiersDialog, selectedModeCategory, closeDialog])
 
   // Handle ESC and Enter keys for shortcuts modal
   React.useEffect(() => {
@@ -118,8 +121,8 @@ export default function WorkspaceSidebar({
               minimized={minimized}
             />
 
-            {/* Delegation Tier Models - Only visible when plan delegation mode is enabled */}
-            {delegationMode === 'plan' && (
+            {/* Sub-Agent Models - Visible in Multi Agent Chat mode */}
+            {selectedModeCategory === 'multi-agent' && (
               <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
                 <button
                   onClick={() => setShowTierModal(true)}
@@ -128,7 +131,7 @@ export default function WorkspaceSidebar({
                   <div className="flex items-center gap-2 min-w-0">
                     <Layers className="w-4 h-4 text-indigo-500 flex-shrink-0" />
                     <div className="min-w-0">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Delegation Models</span>
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Sub-Agent Models</span>
                       {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
                         <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
                           {[
@@ -159,6 +162,9 @@ export default function WorkspaceSidebar({
 
             {/* Skills */}
             <SkillsSection />
+
+            {/* Sub-Agent Templates */}
+            <SubAgentsSection />
 
             {/* Running Workflows */}
             <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 p-1">

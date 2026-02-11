@@ -213,11 +213,9 @@ func NewBaseAgent(
 		agentOptions = append(agentOptions, mcpagent.WithPreDiscoveredTools(preDiscoveredTools))
 	}
 
-	// Enable smart routing for all agents
-	// Smart routing helps filter tools based on relevance to the task
+	// Smart routing disabled - always use all available tools
 	agentOptions = append(agentOptions,
-		mcpagent.WithSmartRouting(true),
-		mcpagent.WithSmartRoutingThresholds(20, 4), // 20 tools, 4 servers threshold for all agents
+		mcpagent.WithSmartRouting(false),
 	)
 
 	// Add context offloading option if specified

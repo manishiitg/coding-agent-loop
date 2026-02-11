@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, GitBranch, Pause, Play } from 'lucide-react'
+import { RefreshCw, GitBranch, Pause, Play, ArrowUp } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { GitSyncStatus } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -280,9 +280,11 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
               ) : (
                 <GitBranch className="w-4 h-4" />
               )}
-              {/* Polling indicator */}
-              {isVisible && pollingEnabled && !syncing && !loading && (
-                <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              {/* Unpushed commits badge */}
+              {!loading && !syncing && status && status.unpushed_commits > 0 && (
+                <span className="absolute -top-2 -right-2 flex items-center justify-center min-w-[16px] h-4 px-0.5 text-[10px] font-bold text-white bg-orange-500 rounded-full animate-pulse">
+                  {status.unpushed_commits > 9 ? '9+' : status.unpushed_commits}
+                </span>
               )}
             </button>
           </TooltipTrigger>
@@ -296,6 +298,9 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
                   <p>Status: {status.is_connected ? 'Connected' : 'Disconnected'}</p>
                   {status.pending_changes > 0 && (
                     <p>Pending: {status.pending_changes} changes</p>
+                  )}
+                  {status.unpushed_commits > 0 && (
+                    <p className="text-orange-400">Unpushed: {status.unpushed_commits} commit{status.unpushed_commits !== 1 ? 's' : ''}</p>
                   )}
                   {status.file_statuses && status.file_statuses.length > 0 && (
                     <div className="mt-1">
@@ -366,6 +371,16 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
                     {status.pending_changes}
                   </span>
                 </div>
+
+                {status.unpushed_commits > 0 && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-600 dark:text-gray-400">Unpushed Commits:</span>
+                    <span className="flex items-center gap-1 text-orange-500 font-medium">
+                      <ArrowUp className="w-3 h-3" />
+                      {status.unpushed_commits}
+                    </span>
+                  </div>
+                )}
                 
                 {status.file_statuses && status.file_statuses.length > 0 && (
                   <div className="mt-3">

@@ -37,6 +37,7 @@ export interface UsePlanDataReturn {
   loading: boolean
   error: string | null
   changes: PlanChanges | null  // Latest detected changes (set via setChanges from granular events)
+  stepOverride: AgentConfigs | null  // Global step override config
   loadPlan: () => Promise<void>  // Loads plan without comparison
   /** @deprecated Legacy method - prefer using updateStep() which calls backend APIs. See method documentation for when to use. */
   savePlan: (plan: PlanningResponse) => Promise<void>
@@ -47,6 +48,7 @@ export interface UsePlanDataReturn {
   updateStep: (stepIndex: number, updates: Partial<PlanStep>) => Promise<void>
   deleteStep: (stepIndex: number) => Promise<void>
   addStep: (step: PlanStep, afterIndex?: number) => Promise<void>
+  saveStepOverride: (agentConfigs: AgentConfigs | null) => Promise<void>  // Save global step override
   refresh: () => Promise<void>  // Refreshes plan without comparison (alias for loadPlan)
   clearChanges: () => void  // Clear the changes state
   setChanges: (changes: PlanChanges | null) => void  // Set changes directly (for granular events)
@@ -165,6 +167,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [changes, setChanges] = useState<PlanChanges | null>(null)
+  const [stepOverride, setStepOverride] = useState<AgentConfigs | null>(null)
   
   // Track workspace path to detect workflow switches
   const currentWorkspaceRef = useRef<string | null>(null)
@@ -209,6 +212,23 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
         } catch {
           // step_config.json doesn't exist or couldn't be loaded - that's okay
           console.log('[WorkflowPlanUpdate] No step_config.json found')
+        }
+      }
+
+      // Also load step_override.json (global overrides)
+      if (workspacePath) {
+        try {
+          const overrideResponse = await agentApi.getStepOverride(workspacePath)
+          if (overrideResponse.success && overrideResponse.data?.agent_configs) {
+            setStepOverride(overrideResponse.data.agent_configs)
+            console.log('[WorkflowPlanUpdate] Loaded step_override.json')
+          } else {
+            setStepOverride(null)
+          }
+        } catch {
+          // step_override.json doesn't exist - that's okay
+          setStepOverride(null)
+          console.log('[WorkflowPlanUpdate] No step_override.json found')
         }
       }
 
@@ -286,18 +306,32 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     } catch (err) {
       planCache.promise = null
 
-      // Check if it's a 404 (plan doesn't exist)
-      if (err && typeof err === 'object' && 'response' in err) {
-        const axiosError = err as { response?: { status?: number } }
-        if (axiosError.response?.status === 404) {
-          setPlan(null)
-          console.log('[usePlanData] Plan not found (404)')
-          return
-        }
+      // Check if it's a 404 or "not found" error (plan doesn't exist yet)
+      const is404 = err && typeof err === 'object' && 'response' in err &&
+        (err as { response?: { status?: number } }).response?.status === 404
+      const httpStatus = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { status?: number } }).response?.status
+        : undefined
+      const errMsg = err instanceof Error ? err.message : String(err)
+      const isNotFound = is404 || /not found|does not exist|no such file/i.test(errMsg)
+
+      console.log('[WORKFLOW_BUILDER] usePlanData catch:', {
+        is404,
+        httpStatus,
+        errMsg,
+        isNotFound,
+        errType: typeof err,
+        errKeys: err && typeof err === 'object' ? Object.keys(err) : [],
+      })
+
+      if (isNotFound) {
+        setPlan(null)
+        console.log('[WORKFLOW_BUILDER] usePlanData: Plan not found, treating as empty plan state')
+        return
       }
 
-      console.error('[usePlanData] Failed to load plan:', err)
-      setError(err instanceof Error ? err.message : 'Failed to load plan')
+      console.error('[WORKFLOW_BUILDER] usePlanData: Setting error state:', errMsg)
+      setError(errMsg || 'Failed to load plan')
       return
     } finally {
       setLoading(false)
@@ -650,6 +684,27 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     await loadPlan()
   }, [plan, workspacePath, loadPlan])
 
+  // Save global step override
+  const saveStepOverride = useCallback(async (agentConfigs: AgentConfigs | null) => {
+    if (!workspacePath) {
+      throw new Error('No workspace path provided')
+    }
+
+    try {
+      const result = await agentApi.updateStepOverride(workspacePath, agentConfigs)
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to save step override')
+      }
+
+      // Update local state
+      setStepOverride(agentConfigs)
+      console.log('[usePlanData] Saved step_override.json:', agentConfigs ? 'updated' : 'cleared')
+    } catch (err) {
+      console.error('[usePlanData] Failed to save step override:', err)
+      throw err
+    }
+  }, [workspacePath])
+
   // Refresh plan (returns detected changes)
   // Refresh function that invalidates cache and reloads
   const refresh = useCallback(async () => {
@@ -683,6 +738,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     loading,
     error,
     changes,
+    stepOverride,
     loadPlan,
     savePlan,
     saveStepConfig,
@@ -690,6 +746,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     updateStep,
     deleteStep,
     addStep,
+    saveStepOverride,
     refresh,
     clearChanges,
     setChanges

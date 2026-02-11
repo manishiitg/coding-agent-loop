@@ -15,6 +15,7 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 // Categories for different parts of the application
 export type LogCategory =
+  | 'ChatArea'
   | 'ChatStore'
   | 'TabStore'
   | 'EventStore'

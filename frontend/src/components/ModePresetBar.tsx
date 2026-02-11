@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Settings, Trash2, Copy } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Settings, Trash2, Copy } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -7,6 +7,7 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
+import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -14,6 +15,8 @@ const getModeIcon = (category: string) => {
       return <MessageCircle className="w-3 h-3" />
     case 'workflow':
       return <Workflow className="w-3 h-3" />
+    case 'multi-agent':
+      return <Users className="w-3 h-3" />
     default:
       return <MessageCircle className="w-3 h-3" />
   }
@@ -25,6 +28,8 @@ const getModeName = (category: string) => {
       return 'Chat Mode'
     case 'workflow':
       return 'Workflow Mode'
+    case 'multi-agent':
+      return 'Multi Agent Chat'
     default:
       return 'Chat Mode'
   }
@@ -71,6 +76,19 @@ export const ModePresetBar: React.FC = () => {
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
+
+  // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
+  const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
+  useEffect(() => {
+    if (showPresetSettings) {
+      useCommandDialogStore.getState().closeDialog('presetSettings')
+      const preset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+      if (preset && customPresets.some(cp => cp.id === preset.id)) {
+        setEditingPreset(preset as CustomPreset)
+        setShowPresetModal(true)
+      }
+    }
+  }, [showPresetSettings, selectedModeCategory, getActivePreset, customPresets])
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
@@ -239,7 +257,9 @@ export const ModePresetBar: React.FC = () => {
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
                     selectedModeCategory === 'chat'
                       ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                      : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
+                      : selectedModeCategory === 'multi-agent'
+                        ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
+                        : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
                   }`}
                   title="Click to change mode"
                   type="button"
@@ -301,6 +321,28 @@ export const ModePresetBar: React.FC = () => {
                             <div className="font-medium">Workflow Mode</div>
                             <div className="text-xs text-gray-500 dark:text-gray-400">
                               Todo-based task execution
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                      {/* Multi Agent Chat Mode */}
+                      <button
+                        onClick={() => {
+                          setModeCategory('multi-agent')
+                          setShowModeSwitch(false)
+                        }}
+                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
+                          selectedModeCategory === 'multi-agent'
+                            ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-900 dark:text-indigo-100'
+                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Users className="w-4 h-4 text-indigo-600" />
+                          <div>
+                            <div className="font-medium">Multi Agent Chat</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                              Plan-driven delegation with sub-agents
                             </div>
                           </div>
                         </div>

@@ -17,6 +17,9 @@ func BuildSafeEnvironment() []string {
 		// Browser automation (agent-browser uses system chromium on Alpine)
 		"AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser",
 
+		// Python: disable output buffering so stdout/stderr are captured even if the process is killed (timeout/signal)
+		"PYTHONUNBUFFERED=1",
+
 		// Allow pip install when Python is externally managed (PEP 668); avoids "break system packages" errors in LLM-run shells
 		"PIP_BREAK_SYSTEM_PACKAGES=1",
 

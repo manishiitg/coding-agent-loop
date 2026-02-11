@@ -129,7 +129,7 @@ func (gvm *GitVersionManager) getFileDiffAtCommit(relPath, commitHash string) (s
 }
 
 // RestoreFileVersion restores a file to a specific version
-func (gvm *GitVersionManager) RestoreFileVersion(filePath, commitHash, commitMessage string) error {
+func (gvm *GitVersionManager) RestoreFileVersion(filePath, commitHash string) error {
 	// Check if git repository exists
 	if _, err := os.Stat(filepath.Join(gvm.docsDir, ".git")); os.IsNotExist(err) {
 		return fmt.Errorf("git repository not found")
@@ -153,32 +153,6 @@ func (gvm *GitVersionManager) RestoreFileVersion(filePath, commitHash, commitMes
 	// Write the content to the file
 	if err := os.WriteFile(filePath, output, 0644); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
-	}
-
-	// If commit message provided, commit the restoration
-	if commitMessage != "" {
-		// Add the file
-		addCmd := exec.Command("git", "-C", gvm.docsDir, "add", relPath)
-		if err := addCmd.Run(); err != nil {
-			return fmt.Errorf("failed to add file to git: %v", err)
-		}
-
-		// Commit the restoration
-		commitCmd := exec.Command("git", "-C", gvm.docsDir, "commit", "-m", commitMessage)
-		if err := commitCmd.Run(); err != nil {
-			return fmt.Errorf("failed to commit restoration: %v", err)
-		}
-
-		// Push changes
-		pushCmd := exec.Command("git", "-C", gvm.docsDir, "push", "origin", "main")
-		if err := pushCmd.Run(); err != nil {
-			// Try without branch specification
-			pushCmd = exec.Command("git", "-C", gvm.docsDir, "push")
-			if err := pushCmd.Run(); err != nil {
-				// Log but don't fail - push is optional
-				fmt.Printf("Warning: Failed to push restoration: %v\n", err)
-			}
-		}
 	}
 
 	return nil

@@ -18,7 +18,6 @@ WORKDIR /app
 
 # Copy workspace module first (for replace directive)
 COPY workspace/go.mod workspace/go.sum ./workspace/
-COPY workspace/ ./workspace/
 
 # Copy agent_go module
 COPY agent_go/go.mod agent_go/go.sum ./agent_go/
@@ -27,8 +26,10 @@ COPY agent_go/go.mod agent_go/go.sum ./agent_go/
 WORKDIR /app/agent_go
 RUN go mod download
 
-# Copy agent source code
-COPY agent_go/ ./
+# Copy source code
+WORKDIR /app
+COPY workspace/ ./workspace/
+COPY agent_go/ ./agent_go/
 
 # Minimal go.work so workspace module resolves (handlers import "workspace/models" etc.)
 RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n)\n' > /app/go.work

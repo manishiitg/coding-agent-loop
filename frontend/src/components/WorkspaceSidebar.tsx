@@ -10,7 +10,7 @@ import LLMConfigurationModal from './LLMConfigurationModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
 import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
-import { useMCPStore, useLLMStore, useAppStore } from '../stores'
+import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { Layers, LogOut, User } from 'lucide-react'
 import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
@@ -36,7 +36,6 @@ export default function WorkspaceSidebar({
   const { showMCPDetails, setShowMCPDetails } = useMCPStore()
   const { showLLMModal, setShowLLMModal, delegationTierConfig } = useLLMStore()
   const { user, logout, isMultiUserMode } = useAuthStore()
-  const delegationMode = useAppStore(state => state.delegationMode)
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
   const closeDialog = useCommandDialogStore(state => state.closeDialog)

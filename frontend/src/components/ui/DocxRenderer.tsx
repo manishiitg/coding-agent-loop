@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import mammoth from 'mammoth'
 
 interface DocxRendererProps {

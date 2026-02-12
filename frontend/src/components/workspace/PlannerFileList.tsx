@@ -4,6 +4,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { isTextBasedFile } from '../../utils/fileUtils'
 import { useAuthStore } from '../../stores/useAuthStore'
+import { copyToClipboard } from '../../utils/textUtils'
 
 interface PlannerFileListProps {
   files: PlannerFile[]
@@ -324,7 +325,7 @@ export default function PlannerFileList({
                         const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
                         const uid = useAuthStore.getState().user?.id || ''
                         const shareUrl = `${window.location.origin}/folder?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
-                        navigator.clipboard.writeText(shareUrl)
+                        copyToClipboard(shareUrl)
                       }}
                       className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                     >
@@ -438,7 +439,7 @@ export default function PlannerFileList({
                         const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
                         const uid = useAuthStore.getState().user?.id || ''
                         const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
-                        navigator.clipboard.writeText(shareUrl)
+                        copyToClipboard(shareUrl)
                       }}
                       className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                     >

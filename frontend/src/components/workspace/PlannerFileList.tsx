@@ -274,8 +274,8 @@ export default function PlannerFileList({
                         Rename
                       </button>
                     )}
-                    {/* Export/Import Backup - Only show for workflow folder */}
-                    {isWorkflowFolder && onExportBackup && onImportBackup && (
+                    {/* Export/Import Backup - Show for any folder */}
+                    {file.type === 'folder' && onExportBackup && onImportBackup && (
                       <>
                         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
                         <button

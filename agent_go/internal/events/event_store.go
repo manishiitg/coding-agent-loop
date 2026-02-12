@@ -56,7 +56,9 @@ const MaxPollingLimit = 1000 // Match frontend MAX_EVENTS limit
 
 // InitialEventsLimit is the number of events returned when starting from the beginning (sinceIndex=0)
 // This is used when switching event modes - show latest events first, then allow loading older events
-const InitialEventsLimit = 50
+// Set to 300 to accommodate parallel multi-agent workflows where hierarchy-defining events
+// (orchestrator_agent_start, delegation_start) may be far back in the event stream
+const InitialEventsLimit = 300
 
 // ShouldShowEventByMode checks if an event should be shown based on event mode
 func ShouldShowEventByMode(eventType string, eventMode string) bool {
@@ -599,8 +601,9 @@ type DelegationStartEventData struct {
 	Instruction    string `json:"instruction"`
 	ReasoningLevel string `json:"reasoning_level,omitempty"`
 	ModelID        string `json:"model_id,omitempty"`
-	ToolMode       string `json:"tool_mode,omitempty"`
-	Timestamp      string `json:"timestamp"`
+	ToolMode       string   `json:"tool_mode,omitempty"`
+	Servers        []string `json:"servers,omitempty"`
+	Timestamp      string   `json:"timestamp"`
 }
 
 func (d *DelegationStartEventData) GetEventType() events.EventType {

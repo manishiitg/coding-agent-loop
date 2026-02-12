@@ -1,8 +1,18 @@
 import React from 'react'
-import { Code2, Sparkles, Search } from 'lucide-react'
+import { Code2, Sparkles, Search, ChevronDown, ChevronRight } from 'lucide-react'
 import type { PollingEvent } from '../../services/api-types'
 import { EventHierarchy } from './EventHierarchy'
 import { EventWithOrchestratorContext } from './common/EventWithOrchestratorContext'
+
+/**
+ * Node structure for hierarchical event rendering
+ */
+export interface EventNode {
+  event: PollingEvent;
+  children: EventNode[];
+  level: number;
+  isExpanded: boolean;
+}
 
 // Import the type-safe helpers from the new event-types module
 import {
@@ -118,8 +128,11 @@ import {
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
+import { BlockingHumanQuestionsDisplay } from './BlockingHumanQuestionsDisplay'
 import { useChatStore } from '../../stores/useChatStore'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import { CircularProgress } from '../ui/CircularProgress'
+import { TooltipProvider } from '../ui/tooltip'
 
 // Sub-agent live streaming text display (subscribes to delegation streaming store independently)
 const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegationId }) => {
@@ -133,7 +146,7 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
           Sub-agent generating...
         </span>
       </div>
-      <div className="text-xs">
+      <div className="text-xs max-h-60 overflow-y-auto custom-scrollbar">
         <MarkdownRenderer content={text} className="text-xs" />
         <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
       </div>
@@ -147,6 +160,10 @@ export interface DelegationStats {
   outputTokens: number
   latestToolName?: string
   completed?: boolean
+  contextUsagePercent?: number
+  contextWindowUsage?: number
+  modelContextWindow?: number
+  modelId?: string
 }
 
 // Live elapsed timer for running delegation events
@@ -188,6 +205,76 @@ interface EventDispatcherProps {
   onToggleCollapse?: () => void
   compact?: boolean
   delegationStats?: Map<string, DelegationStats>
+  // Hierarchy props for sub-agent log containment
+  childrenNodes?: EventNode[]
+  onToggleNode?: (eventId: string) => void
+}
+
+/**
+ * Internal component to render the hierarchical logs of a sub-agent
+ * in a simplified, non-virtualized list within a scrollable area.
+ */
+const SubAgentHierarchy: React.FC<{
+  nodes: EventNode[]
+  onToggleNode: (eventId: string) => void
+  onApproveWorkflow?: (requestId: string) => void
+  onSubmitFeedback?: (requestId: string, feedback: string) => void
+  onFeedbackSubmitted?: () => void
+  isApproving?: boolean
+  delegationStats?: Map<string, DelegationStats>
+  compact?: boolean
+}> = ({ nodes, onToggleNode, ...props }) => {
+  return (
+    <div className="space-y-2">
+      {nodes.map((node) => (
+        <div key={node.event.id} className="relative group/node">
+          <div className="flex items-start gap-1">
+            {/* Minimal toggle for nested items inside sub-agent logs */}
+            {node.children.length > 0 ? (
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onToggleNode(node.event.id)
+                }}
+                className="mt-1.5 p-0.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors flex-shrink-0"
+              >
+                {node.isExpanded ? (
+                  <ChevronDown className="w-3 h-3 text-gray-400" />
+                ) : (
+                  <ChevronRight className="w-3 h-3 text-gray-400" />
+                )}
+              </button>
+            ) : (
+              <div className="w-4 flex-shrink-0" />
+            )}
+            
+            <div className="flex-1 min-w-0">
+              <EventDispatcher
+                event={node.event}
+                compact={true}
+                {...props}
+                onToggleNode={onToggleNode}
+                childrenNodes={node.isExpanded ? node.children : undefined}
+              />
+            </div>
+          </div>
+          
+          {/* Recursion for expanded children (e.g. nested sub-agents) */}
+          {/* Skip recursion for delegation_start because it handles its own children via the internal SubAgentHierarchy */}
+          {node.isExpanded && node.children.length > 0 && node.event.type !== 'delegation_start' && (
+            <div className="ml-2 pl-3 mt-1">
+              <SubAgentHierarchy
+                nodes={node.children}
+                onToggleNode={onToggleNode}
+                {...props}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
 }
 
 // Helper function to wrap event component with orchestrator context
@@ -218,8 +305,66 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   eventCount,
   onToggleCollapse,
   compact = false,
-  delegationStats
+  delegationStats,
+  childrenNodes,
+  onToggleNode
 }) => {
+  // Ref for auto-scrolling sub-agent logs
+  const scrollRef = React.useRef<HTMLDivElement>(null)
+  const isAutoScrollingRef = React.useRef(false)
+  const userScrolledUpRef = React.useRef(false)
+  const prevChildrenLengthRef = React.useRef(0)
+
+  // Handle scroll events to detect if user scrolled up manually
+  const handleScroll = React.useCallback(() => {
+    const div = scrollRef.current
+    if (!div || isAutoScrollingRef.current) return
+    
+    const { scrollTop, scrollHeight, clientHeight } = div
+    // User is considered "at bottom" if within 50px of the bottom (increased tolerance)
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
+    userScrolledUpRef.current = !isAtBottom
+  }, [])
+
+  // Auto-scroll to bottom when childrenNodes change (new events added)
+  React.useEffect(() => {
+    if (event.type === 'delegation_start' && childrenNodes && scrollRef.current) {
+      const div = scrollRef.current
+      
+      const isFirstLoad = prevChildrenLengthRef.current === 0
+      
+      // Auto-scroll if it's the first load OR if user hasn't scrolled up away from bottom
+      // This handles both new events AND streaming content updates within existing events
+      if (isFirstLoad || !userScrolledUpRef.current) {
+        isAutoScrollingRef.current = true
+        
+        const scroll = () => {
+          if (div) div.scrollTop = div.scrollHeight
+        }
+        
+        // Scroll immediately and after render frame for robustness
+        scroll()
+        requestAnimationFrame(() => {
+          scroll()
+          // Reset flag after delay to allow scroll event to fire without setting userScrolledUp
+          setTimeout(() => {
+            isAutoScrollingRef.current = false
+          }, 100)
+        })
+      }
+      prevChildrenLengthRef.current = childrenNodes.length
+    }
+  }, [event.type, childrenNodes]) // Re-run when children nodes array changes
+
+  // Attach scroll listener
+  React.useEffect(() => {
+    const div = scrollRef.current
+    if (div) {
+      div.addEventListener('scroll', handleScroll)
+      return () => div.removeEventListener('scroll', handleScroll)
+    }
+  }, [childrenNodes, handleScroll]) // Re-attach if childrenNodes causes re-render of the div
+
   // Wrapper component to apply compact styling
   const CompactWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     if (!compact) return <>{children}</>
@@ -427,6 +572,26 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         onSubmitFeedback={onSubmitFeedback}
         onFeedbackSubmitted={onFeedbackSubmitted}
         isApproving={isApproving}
+      />
+    )
+  }
+
+  if (event.type === 'blocking_human_questions') {
+    const data = event.data as { data?: Record<string, unknown> } | undefined
+    const payload = (data?.data || event.data) as Record<string, unknown>
+    return (
+      <BlockingHumanQuestionsDisplay
+        event={{
+          type: event.type,
+          data: {
+            request_id: (payload?.request_id as string) || `request_${Date.now()}`,
+            questions: (payload?.questions as Array<{ id: string; question: string }>) || [],
+            session_id: (payload?.session_id as string) || '',
+          },
+          timestamp: event.timestamp || new Date().toISOString()
+        }}
+        onSubmitFeedback={onSubmitFeedback}
+        onFeedbackSubmitted={onFeedbackSubmitted}
       />
     )
   }
@@ -970,6 +1135,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         reasoning_level?: string
         model_id?: string
         tool_mode?: string
+        servers?: string[]
       }
       delegation_id?: string
       depth?: number
@@ -977,6 +1143,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       reasoning_level?: string
       model_id?: string
       tool_mode?: string
+      servers?: string[]
       timestamp?: string
     }
 
@@ -987,6 +1154,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const reasoningLevel = delegationData?.reasoning_level
     const modelId = delegationData?.model_id
     const toolMode = delegationData?.tool_mode
+    const servers = delegationData?.servers
 
     const reasoningColors: Record<string, string> = {
       high: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',
@@ -1016,6 +1184,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                   {liveStats.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
                   {liveStats.inputTokens ? ` · ${((liveStats.inputTokens + liveStats.outputTokens) / 1000).toFixed(1)}k tok` : ''}
                 </span>
+              )}
+              {liveStats?.contextUsagePercent !== undefined && liveStats.contextUsagePercent > 0 && (
+                <TooltipProvider>
+                  <CircularProgress percentage={liveStats.contextUsagePercent} size={16} strokeWidth={2.5}
+                    tokenUsage={{ context_usage_percent: liveStats.contextUsagePercent,
+                      model_context_window: liveStats.modelContextWindow,
+                      context_window_usage: liveStats.contextWindowUsage, model_id: liveStats.modelId }} />
+                </TooltipProvider>
               )}
               {event.timestamp && !isCompleted && (
                 <ElapsedTimer startTimestamp={event.timestamp} className="text-[10px] text-purple-500 dark:text-purple-400 animate-pulse font-mono" />
@@ -1048,13 +1224,15 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             <div className="text-xs text-purple-700 dark:text-purple-300 whitespace-pre-wrap break-words">
               {instruction}
             </div>
-            <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400">
+            <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400 flex-wrap">
               {reasoningLevel && <span>Reasoning: {reasoningLevel}</span>}
               <span>Mode: {!toolMode || toolMode === 'simple' ? 'Simple' : toolMode === 'code_execution' ? 'Code Execution' : 'Tool Search'}</span>
               {modelId && <span>Model: {modelId}</span>}
+              {servers && servers.length > 0 && <span>Servers: {servers.join(', ')}</span>}
               {depth !== undefined && <span>Depth: {depth}</span>}
               {delegationId && <span className="font-mono">{delegationId}</span>}
             </div>
+
             {hasLiveStats && (
               <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400">
                 {liveStats.inputTokens > 0 && <span>In: {liveStats.inputTokens.toLocaleString()} tokens</span>}
@@ -1071,6 +1249,28 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             )}
           </div>
         </details>
+
+        {/* Hierarchical Execution Logs - Shown when expanded via hierarchy arrow */}
+        {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
+          <div className="mt-1 ml-1">
+            <div
+              ref={scrollRef}
+              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words"
+              style={{ maxHeight: '600px' }}
+            >
+              <SubAgentHierarchy
+                nodes={childrenNodes}
+                onToggleNode={onToggleNode}
+                onApproveWorkflow={onApproveWorkflow}
+                onSubmitFeedback={onSubmitFeedback}
+                onFeedbackSubmitted={onFeedbackSubmitted}
+                isApproving={isApproving}
+                delegationStats={delegationStats}
+                compact={true}
+              />
+            </div>
+          </div>
+        )}
       </CompactWrapper>
     )
   }
@@ -1108,6 +1308,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const outputTokens = delegationData?.output_tokens
     const toolCalls = delegationData?.tool_calls
     const hasStats = inputTokens || outputTokens || toolCalls
+    const delegationId = delegationData?.delegation_id
+    const endStats = delegationId ? delegationStats?.get(delegationId) : undefined
 
     // Format Go duration (e.g. "45.123456789s", "2m34.567s") to concise form
     const formatDuration = (d: string): string => {
@@ -1145,6 +1347,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                   {inputTokens ? `${((inputTokens + (outputTokens || 0)) / 1000).toFixed(1)}k tok` : ''}
                   {toolCalls ? ` · ${toolCalls} tools` : ''}
                 </span>
+              )}
+              {endStats?.contextUsagePercent !== undefined && endStats.contextUsagePercent > 0 && (
+                <TooltipProvider>
+                  <CircularProgress percentage={endStats.contextUsagePercent} size={16} strokeWidth={2.5}
+                    tokenUsage={{ context_usage_percent: endStats.contextUsagePercent,
+                      model_context_window: endStats.modelContextWindow,
+                      context_window_usage: endStats.contextWindowUsage, model_id: endStats.modelId }} />
+                </TooltipProvider>
               )}
               {duration && (
                 <span className={colorClasses.muted}>{duration}</span>
@@ -1202,8 +1412,12 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       prevProps.eventCount !== nextProps.eventCount) {
     return false
   }
-  // For delegation_start events, also compare live stats so they re-render with updated tool counts/names
-  if (prevProps.event.type === 'delegation_start' && prevProps.delegationStats !== nextProps.delegationStats) {
+  // For delegation_start/end events, also compare live stats so they re-render with updated tool counts/names
+  if ((prevProps.event.type === 'delegation_start' || prevProps.event.type === 'delegation_end') && prevProps.delegationStats !== nextProps.delegationStats) {
+    return false
+  }
+  // Check if childrenNodes changed (for sub-agent hierarchy expansion)
+  if (prevProps.childrenNodes !== nextProps.childrenNodes) {
     return false
   }
   return true

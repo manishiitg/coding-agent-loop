@@ -620,7 +620,7 @@ export interface ChatSessionConfig {
   workflow_metadata?: WorkflowMetadata; // Workflow-specific metadata (for background workflows)
   selected_skills?: string[]; // Selected skill folder names
   selected_subagents?: string[]; // Selected sub-agent template folder names
-  delegation_mode?: 'spawn' | 'plan'; // Delegation mode for multi-agent sessions
+  delegation_mode?: 'off' | 'spawn' | 'plan'; // Delegation mode for multi-agent sessions
   delegation_tier_config?: DelegationTierConfig; // Delegation tier model config
   plan_id?: string; // Active plan ID (for session resume)
   plan_folder?: string; // Active plan folder path

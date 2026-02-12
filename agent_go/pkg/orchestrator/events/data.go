@@ -171,6 +171,24 @@ func (e *BlockingHumanFeedbackEvent) GetEventType() events.EventType {
 	return BlockingHumanFeedback
 }
 
+// BlockingHumanQuestionsQuestion represents a single question in the human_questions tool
+type BlockingHumanQuestionsQuestion struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
+}
+
+// BlockingHumanQuestionsEvent is emitted when the human_questions tool needs structured answers
+type BlockingHumanQuestionsEvent struct {
+	events.BaseEventData
+	RequestID string                           `json:"request_id"`
+	Questions []BlockingHumanQuestionsQuestion `json:"questions"`
+	SessionID string                           `json:"session_id"`
+}
+
+func (e *BlockingHumanQuestionsEvent) GetEventType() events.EventType {
+	return BlockingHumanQuestions
+}
+
 // TodoStep represents a todo step in the execution
 type TodoStep struct {
 	ID                  string   `json:"id,omitempty"` // Stable step ID (from PlanStep) - required for frontend matching

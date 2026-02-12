@@ -188,13 +188,45 @@ On startup, the agent runs **background tool discovery** — connecting to each 
 - Smithery-hosted servers (`server.smithery.ai/*`) require OAuth tokens — they'll show as failed until configured
 - URL-based servers with `"command": ""` need a `"url"` field and proper auth headers
 
+## Build Architecture
+
+### Local Go Modules
+
+The agent Docker image uses **local source** for `mcpagent` and `multi-llm-provider-go` (sibling repos), not their published GitHub versions. The deploy script handles this automatically:
+
+1. `deploy-k8s.sh` runs `rsync` to copy `../mcpagent/` and `../multi-llm-provider-go/` into the build context
+2. The Dockerfile creates a `go.work` with all 4 modules: `agent_go`, `workspace`, `mcpagent`, `multi-llm-provider-go`
+3. After the Docker build, the copied directories are cleaned up
+
+This means changes to `mcpagent/` or `multi-llm-provider-go/` are included immediately on the next `--build agent` deploy — no need to push to GitHub or update `go.mod` versions.
+
+**Required directory layout:**
+```
+ai-work/
+├── mcp-agent-builder-go/   # This repo (build context)
+├── mcpagent/                # Go module: agent core, MCP client, session registry
+└── multi-llm-provider-go/   # Go module: LLM provider abstraction
+```
+
+### MCP Connection Sharing
+
+MCP server connections are shared globally across all chat sessions to prevent OOM from duplicate subprocesses:
+
+- **Stateless servers** (all except `playwright`/`agent-browser`) use a fixed `"global"` session ID — one subprocess per server regardless of how many tabs/agents are active
+- **Stateful servers** (`playwright`, `agent-browser`) keep per-session connections for browser state isolation
+- The `SessionConnectionRegistry` in `mcpagent/mcpclient/session_registry.go` manages this with per-key mutexes to prevent race conditions
+- If any code path creates an agent without setting `SessionID`, it defaults to `"global"` automatically (see `agent.go`)
+
+**Resource expectations:** ~12 MCP servers = ~1.5-2GB RAM steady state. Memory should stay flat regardless of tab/session count.
+
 ## Troubleshooting
 
 ### Pod OOMKilled
-The agent spawns MCP server subprocesses (Python/Node). Each uses 70-350MB RAM. With 15+ servers, total memory can exceed the pod limit.
+The agent spawns MCP server subprocesses (Python/Node). Each uses 70-350MB RAM. With shared connections, ~12 servers use ~1.5-2GB total.
 - Check: `kubectl top pod -n prod-mcpagent`
-- Check: `kubectl exec <pod> -n prod-mcpagent -- ps aux --sort=-rss | head -20`
-- Fix: Increase memory limit in `agent/deployment.yaml` or disable unused MCP servers
+- Check process count: `kubectl exec <pod> -n prod-mcpagent -- ps aux --sort=-rss | head -20`
+- Check for duplicates: each MCP server should have exactly 1 process. If you see duplicates, check logs for `session=global` vs per-session connections
+- Current limits: 3Gi request / 5Gi limit (in `agent/deployment.yaml`)
 
 ### AUTH_SECRET warning spam
 `[AUTH] WARNING: Using default AUTH_SECRET` on every request means `AUTH_SECRET` is not set in the k8s secret. See [AUTH_SECRET](#auth_secret) section above.

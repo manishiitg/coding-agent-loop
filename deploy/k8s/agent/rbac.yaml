@@ -1,0 +1,103 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mcp-agent-viewer
+rules:
+# Core Resources
+- apiGroups: [""]
+  resources: 
+  - pods
+  - pods/log
+  - pods/status
+  - nodes
+  - nodes/status
+  - services
+  - endpoints
+  - namespaces
+  - events
+  - configmaps
+  - secrets
+  - persistentvolumeclaims
+  - persistentvolumes
+  - serviceaccounts
+  - replicationcontrollers
+  - resourcequotas
+  - limitranges
+  verbs: ["get", "list", "watch"]
+
+# Workloads
+- apiGroups: ["apps"]
+  resources: 
+  - deployments
+  - daemonsets
+  - statefulsets
+  - replicasets
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["batch"]
+  resources: 
+  - jobs
+  - cronjobs
+  verbs: ["get", "list", "watch"]
+
+# Networking
+- apiGroups: ["networking.k8s.io"]
+  resources: 
+  - ingresses
+  - networkpolicies
+  - ingressclasses
+  verbs: ["get", "list", "watch"]
+
+# Storage
+- apiGroups: ["storage.k8s.io"]
+  resources: 
+  - storageclasses
+  - volumeattachments
+  - csidrivers
+  - csinodes
+  verbs: ["get", "list", "watch"]
+
+# Scaling & Policy
+- apiGroups: ["autoscaling"]
+  resources: 
+  - horizontalpodautoscalers
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["policy"]
+  resources: 
+  - poddisruptionbudgets
+  verbs: ["get", "list", "watch"]
+
+# Access Control
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: 
+  - roles
+  - rolebindings
+  - clusterroles
+  - clusterrolebindings
+  verbs: ["get", "list", "watch"]
+
+# Metrics (Common for observability)
+- apiGroups: ["metrics.k8s.io"]
+  resources: 
+  - pods
+  - nodes
+  verbs: ["get", "list", "watch"]
+
+# Discovery
+- apiGroups: ["discovery.k8s.io"]
+  resources: 
+  - endpointslices
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mcp-agent-viewer-binding
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: prod-mcpagent
+roleRef:
+  kind: ClusterRole
+  name: mcp-agent-viewer
+  apiGroup: rbac.authorization.k8s.io

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import type { PollingEvent } from '../../services/api-types';
-import { EventDispatcher, type DelegationStats } from './EventDispatcher';
+import { EventDispatcher, type DelegationStats, type EventNode } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
@@ -15,13 +15,6 @@ interface EventHierarchyProps {
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
   flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
-}
-
-interface EventNode {
-  event: PollingEvent;
-  children: EventNode[];
-  level: number;
-  isExpanded: boolean;
 }
 
 interface FlattenedItem {
@@ -88,7 +81,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // Filter out tool_call events for delegation tools - we show delegation_start/delegation_end
     // and blocking_human_feedback instead of raw tool_call events
     const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
-    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution'];
+    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution', 'human_feedback', 'human_questions'];
     allEvents = allEvents.filter(event => {
       if (!DELEGATE_TOOL_EVENTS.includes(event.type || '')) return true;
       const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
@@ -177,6 +170,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
         s.inputTokens += (payload.input_tokens as number) || 0
         s.outputTokens += (payload.output_tokens as number) || 0
+        // Capture latest context usage (not accumulated - these represent current state)
+        if (typeof payload.context_usage_percent === 'number') {
+          s.contextUsagePercent = payload.context_usage_percent
+        }
+        if (typeof payload.context_window_usage === 'number') {
+          s.contextWindowUsage = payload.context_window_usage
+        }
+        if (typeof payload.model_context_window === 'number') {
+          s.modelContextWindow = payload.model_context_window
+        }
+        if (typeof payload.model_id === 'string') {
+          s.modelId = payload.model_id
+        }
       }
     }
 
@@ -326,11 +332,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
-    const flatten = (node: EventNode, key: string) => {
+    const flatten = (node: EventNode, key: string, isWithinSubAgent = false) => {
       list.push({ node, uniqueKey: key });
+      
+      // If this is a delegation_start (sub-agent), we STOP flattening its children into the main list.
+      // They will be rendered internally by the sub-agent card's scrollable logs area.
+      // We only do this if we are not ALREADY inside a sub-agent log area (to keep nested ones contained too).
+      if (node.event.type === 'delegation_start') {
+        return;
+      }
+
       if (node.isExpanded && node.children.length > 0) {
         node.children.forEach((child, index) => {
-          flatten(child, `${key}-child-${index}`);
+          flatten(child, `${key}-child-${index}`, isWithinSubAgent || node.event.type === 'delegation_start');
         });
       }
     };
@@ -417,6 +431,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 onToggleCollapse={onToggleCollapse}
                 compact={compact}
                 delegationStats={delegationStats}
+                childrenNodes={isExpanded ? children : undefined}
+                onToggleNode={toggleNode}
               />
             </div>
           </div>

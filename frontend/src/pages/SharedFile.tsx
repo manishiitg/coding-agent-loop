@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, FileText, ArrowLeft } from 'lucide-react'
+import { Loader2, FileText, ArrowLeft, LogIn } from 'lucide-react'
 import { MarkdownRenderer } from '../components/ui/MarkdownRenderer'
 import { CsvRenderer } from '../components/ui/CsvRenderer'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
@@ -28,6 +28,7 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [needsAuth, setNeedsAuth] = useState(false)
 
   // Decode the base64 path
   const filePath = (() => {
@@ -57,6 +58,10 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
         if (token) headers['Authorization'] = `Bearer ${token}`
         const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
         const resp = await fetch(`${base}/api/public/file?path=${encodedPath}${uidParam}`, { headers })
+        if (resp.status === 401) {
+          setNeedsAuth(true)
+          return
+        }
         if (!resp.ok) {
           throw new Error(resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
         }
@@ -79,6 +84,26 @@ export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
         <div className="text-center">
           <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-500" />
           <p className="mt-4 text-gray-600 dark:text-gray-400">Loading file...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (needsAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
+        <div className="max-w-md w-full p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg text-center">
+          <LogIn className="h-12 w-12 mx-auto mb-4 text-blue-500" />
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Login Required</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            You need to be logged in to view this shared file.
+          </p>
+          <button
+            onClick={() => { window.location.href = '/' }}
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+          >
+            Go to Login
+          </button>
         </div>
       </div>
     )

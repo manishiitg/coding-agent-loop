@@ -38,7 +38,7 @@ declare global {
   }
 }
 
-import { truncateTabTitle } from './utils/textUtils'
+import { truncateTabTitle, copyToClipboard } from './utils/textUtils'
 
 const queryClient = new QueryClient();
 
@@ -994,9 +994,11 @@ function App() {
                             const encoded = btoa(unescape(encodeURIComponent(selectedFile.path)))
                             const uid = useAuthStore.getState().user?.id || ''
                             const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
-                            navigator.clipboard.writeText(shareUrl).then(() => {
-                              setShareCopied(true)
-                              setTimeout(() => setShareCopied(false), 2000)
+                            copyToClipboard(shareUrl).then((ok) => {
+                              if (ok) {
+                                setShareCopied(true)
+                                setTimeout(() => setShareCopied(false), 2000)
+                              }
                             })
                           }}
                           className="flex items-center gap-1 p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"

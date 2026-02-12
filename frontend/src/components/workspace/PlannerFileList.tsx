@@ -1,4 +1,5 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2, Link } from 'lucide-react'
+import { useState } from 'react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2, Link, Check } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -76,6 +77,7 @@ export default function PlannerFileList({
   onSelectFileAndEnterSelectionMode
 }: PlannerFileListProps) {
   const { scrollToFile } = useWorkspaceStore()
+  const [copiedPath, setCopiedPath] = useState<string | null>(null)
 
   // Render a single item (file or folder) with proper hierarchy
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
@@ -325,12 +327,19 @@ export default function PlannerFileList({
                         const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
                         const uid = useAuthStore.getState().user?.id || ''
                         const shareUrl = `${window.location.origin}/folder?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
-                        copyToClipboard(shareUrl)
+                        copyToClipboard(shareUrl).then((ok) => {
+                          if (ok) {
+                            setCopiedPath(file.filepath)
+                            setTimeout(() => setCopiedPath(null), 2000)
+                          }
+                        })
                       }}
                       className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                     >
-                      <Link className="w-3 h-3" />
-                      Copy Share Link
+                      {copiedPath === file.filepath
+                        ? <><Check className="w-3 h-3 text-green-500" /><span className="text-green-600 dark:text-green-400">Copied!</span></>
+                        : <><Link className="w-3 h-3" />Copy Share Link</>
+                      }
                     </button>
                     {onDeleteAllFilesInFolder && (
                       <button
@@ -439,12 +448,19 @@ export default function PlannerFileList({
                         const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
                         const uid = useAuthStore.getState().user?.id || ''
                         const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
-                        copyToClipboard(shareUrl)
+                        copyToClipboard(shareUrl).then((ok) => {
+                          if (ok) {
+                            setCopiedPath(file.filepath)
+                            setTimeout(() => setCopiedPath(null), 2000)
+                          }
+                        })
                       }}
                       className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                     >
-                      <Link className="w-3 h-3" />
-                      Copy Share Link
+                      {copiedPath === file.filepath
+                        ? <><Check className="w-3 h-3 text-green-500" /><span className="text-green-600 dark:text-green-400">Copied!</span></>
+                        : <><Link className="w-3 h-3" />Copy Share Link</>
+                      }
                     </button>
                     <button
                       onClick={(e) => {

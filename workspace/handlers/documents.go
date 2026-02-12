@@ -262,6 +262,7 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 
 			doc := models.Document{
 				FilePath: relPathFromDocs,
+				Type:     "file",
 				IsImage:  isImage,
 			}
 			documents = append(documents, doc)

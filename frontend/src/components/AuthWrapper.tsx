@@ -24,27 +24,31 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [shareToken, setShareToken] = useState<string | null>(null)
   const [sharedFilePath, setSharedFilePath] = useState<string | null>(null)
   const [sharedFolderPath, setSharedFolderPath] = useState<string | null>(null)
+  const [sharedUid, setSharedUid] = useState<string | null>(null)
   const [isAuthCallback, setIsAuthCallback] = useState(false)
 
   // Check for shared session URL, shared file/folder URL, or OAuth callback
   useEffect(() => {
     const path = window.location.pathname
     const params = new URLSearchParams(window.location.search)
+    const uidParam = params.get('uid')
 
-    // Check for shared file: /file?path=BASE64
+    // Check for shared file: /file?path=BASE64&uid=OWNER_ID
     if (path === '/file') {
       const encodedPath = params.get('path')
       if (encodedPath) {
         setSharedFilePath(encodedPath)
+        if (uidParam) setSharedUid(uidParam)
         return
       }
     }
 
-    // Check for shared folder: /folder?path=BASE64
+    // Check for shared folder: /folder?path=BASE64&uid=OWNER_ID
     if (path === '/folder') {
       const encodedPath = params.get('path')
       if (encodedPath) {
         setSharedFolderPath(encodedPath)
+        if (uidParam) setSharedUid(uidParam)
         return
       }
     }
@@ -87,6 +91,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     return (
       <SharedFile
         encodedPath={sharedFilePath}
+        uid={sharedUid || undefined}
         onBack={() => {
           setSharedFilePath(null)
           window.history.pushState({}, '', '/')
@@ -100,6 +105,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
     return (
       <SharedFolder
         encodedPath={sharedFolderPath}
+        uid={sharedUid || undefined}
         onBack={() => {
           setSharedFolderPath(null)
           window.history.pushState({}, '', '/')

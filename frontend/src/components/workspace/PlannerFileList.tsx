@@ -3,6 +3,7 @@ import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { isTextBasedFile } from '../../utils/fileUtils'
+import { useAuthStore } from '../../stores/useAuthStore'
 
 interface PlannerFileListProps {
   files: PlannerFile[]
@@ -321,7 +322,8 @@ export default function PlannerFileList({
                       onClick={(e) => {
                         e.stopPropagation()
                         const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
-                        const shareUrl = `${window.location.origin}/folder?path=${encoded}`
+                        const uid = useAuthStore.getState().user?.id || ''
+                        const shareUrl = `${window.location.origin}/folder?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
                         navigator.clipboard.writeText(shareUrl)
                       }}
                       className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
@@ -434,7 +436,8 @@ export default function PlannerFileList({
                       onClick={(e) => {
                         e.stopPropagation()
                         const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
-                        const shareUrl = `${window.location.origin}/file?path=${encoded}`
+                        const uid = useAuthStore.getState().user?.id || ''
+                        const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
                         navigator.clipboard.writeText(shareUrl)
                       }}
                       className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"

@@ -1394,7 +1394,11 @@ func (api *StreamingAPI) handlePublicFile(w http.ResponseWriter, r *http.Request
 	}
 	filePath := string(decoded)
 
-	uid := GetUserIDFromContext(r.Context())
+	// Use uid from query param (owner's ID for cross-user sharing), fall back to auth context
+	uid := r.URL.Query().Get("uid")
+	if uid == "" {
+		uid = GetUserIDFromContext(r.Context())
+	}
 	log.Printf("[PUBLIC-FILE] Serving file: %s for user: %s", filePath, uid)
 
 	// URL-encode each path segment for the workspace API
@@ -1459,7 +1463,11 @@ func (api *StreamingAPI) handlePublicFolder(w http.ResponseWriter, r *http.Reque
 	}
 	folderPath := string(decoded)
 
-	uid := GetUserIDFromContext(r.Context())
+	// Use uid from query param (owner's ID for cross-user sharing), fall back to auth context
+	uid := r.URL.Query().Get("uid")
+	if uid == "" {
+		uid = GetUserIDFromContext(r.Context())
+	}
 	log.Printf("[PUBLIC-FOLDER] Listing folder: %s for user: %s", folderPath, uid)
 
 	wsURL := getWorkspaceAPIURL() + "/api/documents"

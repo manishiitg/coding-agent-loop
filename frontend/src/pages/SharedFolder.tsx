@@ -12,6 +12,7 @@ interface FolderItem {
 
 interface SharedFolderProps {
   encodedPath: string
+  uid?: string
   onBack?: () => void
 }
 
@@ -58,7 +59,7 @@ function countFiles(items: FolderItem[]): number {
   return count
 }
 
-export function SharedFolder({ encodedPath, onBack }: SharedFolderProps) {
+export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
   const [items, setItems] = useState<FolderItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -93,7 +94,8 @@ export function SharedFolder({ encodedPath, onBack }: SharedFolderProps) {
       const headers: Record<string, string> = {}
       const token = getAuthToken()
       if (token) headers['Authorization'] = `Bearer ${token}`
-      const resp = await fetch(`${base}/api/public/folder?path=${encoded}`, { headers })
+      const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
+      const resp = await fetch(`${base}/api/public/folder?path=${encoded}${uidParam}`, { headers })
       if (!resp.ok) {
         throw new Error(resp.status === 404 ? 'Folder not found' : `Failed to load folder (${resp.status})`)
       }
@@ -130,6 +132,7 @@ export function SharedFolder({ encodedPath, onBack }: SharedFolderProps) {
     return (
       <SharedFile
         encodedPath={fileEncoded}
+        uid={uid}
         onBack={() => setSelectedFile(null)}
       />
     )

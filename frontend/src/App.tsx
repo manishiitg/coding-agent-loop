@@ -25,6 +25,7 @@ import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDr
 import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { useModeStore } from "./stores/useModeStore";
+import { useAuthStore } from "./stores/useAuthStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import "./App.css";
@@ -991,7 +992,8 @@ function App() {
                           onClick={() => {
                             if (!selectedFile?.path) return
                             const encoded = btoa(unescape(encodeURIComponent(selectedFile.path)))
-                            const shareUrl = `${window.location.origin}/file?path=${encoded}`
+                            const uid = useAuthStore.getState().user?.id || ''
+                            const shareUrl = `${window.location.origin}/file?path=${encoded}${uid ? `&uid=${encodeURIComponent(uid)}` : ''}`
                             navigator.clipboard.writeText(shareUrl).then(() => {
                               setShareCopied(true)
                               setTimeout(() => setShareCopied(false), 2000)

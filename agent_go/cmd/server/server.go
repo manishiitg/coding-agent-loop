@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	_ "net/http/pprof" // Register pprof handlers
 	"os"
 	"os/signal"
@@ -155,6 +158,20 @@ func extractRootCauseError(err error) string {
 
 	// Return the raw error message from the deepest error (no pattern matching, no filtering)
 	return deepestErr.Error()
+}
+
+// collectVirtualToolNames extracts tool names from a list of llmtypes.Tool definitions.
+// Used to build PreDiscoveredTools so all virtual/custom tools stay visible in tool search mode.
+func collectVirtualToolNames(toolSets ...[]llmtypes.Tool) []string {
+	var names []string
+	for _, tools := range toolSets {
+		for _, t := range tools {
+			if t.Function != nil && t.Function.Name != "" {
+				names = append(names, t.Function.Name)
+			}
+		}
+	}
+	return names
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
@@ -1210,6 +1227,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Sub-agent template API routes (from subagent_routes.go)
 	RegisterSubAgentRoutes(apiRouter, api)
 
+	// Public file sharing routes — filepath passed as base64 query param
+	apiRouter.HandleFunc("/public/file", api.handlePublicFile).Methods("GET")
+	apiRouter.HandleFunc("/public/folder", api.handlePublicFolder).Methods("GET")
+
 	// pprof routes for profiling (must be before static file serving)
 	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
 
@@ -1350,6 +1371,120 @@ func (api *StreamingAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"tracing_provider": tracingProvider,
 		},
 	})
+}
+
+// handlePublicFile serves workspace files via a shareable URL.
+// GET /api/public/file?path=<base64-encoded-filepath>
+func (api *StreamingAPI) handlePublicFile(w http.ResponseWriter, r *http.Request) {
+	encoded := r.URL.Query().Get("path")
+	if encoded == "" {
+		http.Error(w, "path query parameter required", http.StatusBadRequest)
+		return
+	}
+
+	// Decode base64 filepath
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		decoded, err = base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			log.Printf("[PUBLIC-FILE] Failed to decode base64 path: %s, error: %v", encoded, err)
+			http.Error(w, "invalid file path encoding", http.StatusBadRequest)
+			return
+		}
+	}
+	filePath := string(decoded)
+
+	uid := GetUserIDFromContext(r.Context())
+	log.Printf("[PUBLIC-FILE] Serving file: %s for user: %s", filePath, uid)
+
+	// URL-encode each path segment for the workspace API
+	segments := strings.Split(filePath, "/")
+	for i, seg := range segments {
+		segments[i] = url.PathEscape(seg)
+	}
+	encodedPath := strings.Join(segments, "/")
+
+	wsURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "/raw"
+	log.Printf("[PUBLIC-FILE] Proxying to workspace: %s", wsURL)
+
+	req, err := http.NewRequestWithContext(r.Context(), "GET", wsURL, nil)
+	if err != nil {
+		log.Printf("[PUBLIC-FILE] Failed to create request: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("X-User-ID", uid)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[PUBLIC-FILE] Workspace request failed: %v", err)
+		http.Error(w, "workspace unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("[PUBLIC-FILE] Workspace returned %d: %s", resp.StatusCode, string(body))
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	// Proxy content-type and body — force inline display (no download)
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	w.Header().Set("Content-Disposition", "inline")
+	io.Copy(w, resp.Body)
+}
+
+// handlePublicFolder lists workspace folder contents via a shareable URL.
+// GET /api/public/folder?path=<base64-encoded-folderpath>
+func (api *StreamingAPI) handlePublicFolder(w http.ResponseWriter, r *http.Request) {
+	encoded := r.URL.Query().Get("path")
+	if encoded == "" {
+		http.Error(w, "path query parameter required", http.StatusBadRequest)
+		return
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		decoded, err = base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			log.Printf("[PUBLIC-FOLDER] Failed to decode base64 path: %s, error: %v", encoded, err)
+			http.Error(w, "invalid path encoding", http.StatusBadRequest)
+			return
+		}
+	}
+	folderPath := string(decoded)
+
+	uid := GetUserIDFromContext(r.Context())
+	log.Printf("[PUBLIC-FOLDER] Listing folder: %s for user: %s", folderPath, uid)
+
+	wsURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(r.Context(), "GET", wsURL, nil)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	q := req.URL.Query()
+	q.Set("folder", folderPath)
+	req.URL.RawQuery = q.Encode()
+	req.Header.Set("X-User-ID", uid)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[PUBLIC-FOLDER] Workspace request failed: %v", err)
+		http.Error(w, "workspace unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
 
 // API Key Validation endpoint - validates API keys for OpenRouter and OpenAI
@@ -2841,6 +2976,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// In plan delegation mode, orchestrator always uses the high reasoning tier model
+		if req.DelegationMode == "plan" {
+			tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
+			if tierConfig != nil && tierConfig.High != nil &&
+				tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
+				finalProvider = tierConfig.High.Provider
+				finalModelID = tierConfig.High.ModelID
+				log.Printf("[DELEGATION] Orchestrator using high tier model: %s/%s",
+					finalProvider, finalModelID)
+			}
+		}
+
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v, UseToolSearchMode: %v", serverList, useCodeExecutionMode, useToolSearchMode)
 		agentConfig := agent.LLMAgentConfig{
@@ -2874,15 +3021,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			UseCodeExecutionMode: useCodeExecutionMode,
 			// Tool search mode: When enabled, LLM discovers tools on-demand via search_tools
 			UseToolSearchMode: useToolSearchMode,
-			// Pre-discovered tools: delegation tools are always available when delegation mode is on
+			// Pre-discovered tools: all virtual/custom tools stay visible in tool search mode
+			// Only MCP server tools require discovery via search_tools
 			PreDiscoveredTools: func() []string {
-				if useToolSearchMode && req.DelegationMode == "plan" {
-					return []string{"delegate", "create_delegation_plan", "confirm_plan_execution", "human_feedback"}
+				if !useToolSearchMode {
+					return nil
 				}
-				if useToolSearchMode && req.DelegationMode == "spawn" {
-					return []string{"delegate"}
+				// Collect all virtual tool names so they're never hidden behind search
+				preDiscovered := collectVirtualToolNames(
+					virtualtools.CreateWorkspaceAdvancedTools(),
+					virtualtools.CreateHumanTools(),
+				)
+				if req.DelegationMode == "plan" {
+					preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateDelegationTools())...)
+				} else if req.DelegationMode == "spawn" {
+					preDiscovered = append(preDiscovered, "delegate")
 				}
-				return nil
+				if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
+					preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
+				}
+				return preDiscovered
 			}(),
 			// Convert API keys from request to LLM format (respecting locked providers)
 			APIKeys: func() *llm.ProviderAPIKeys {
@@ -3167,6 +3325,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if len(req.SelectedSkills) > 0 {
 				enableWorkspaceAccess = true
 				log.Printf("[SKILLS] Automatically enabling workspace access (skills selected: %v)", req.SelectedSkills)
+			}
+
+			// Auto-enable workspace access for plan delegation mode
+			// Plan mode requires workspace tools for shell commands with proper FolderGuard
+			if req.DelegationMode == "plan" {
+				enableWorkspaceAccess = true
 			}
 
 			// Handle browser access: when enabled, auto-enable workspace and add agent-browser skill
@@ -3552,9 +3716,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								continue
 							}
 
-							// Wrap human tools to inject SessionEventEmitter for blocking_human_feedback events
+							// Wrap human tools to inject SessionEventEmitter for blocking events (feedback/questions)
 							registrationFunc := execFunc
-							if toolCategory == virtualtools.GetHumanToolCategory() && req.DelegationMode == "plan" {
+							if toolCategory == virtualtools.GetHumanToolCategory() {
 								originalExec := execFunc
 								registrationFunc = func(ctx context.Context, args map[string]interface{}) (string, error) {
 									ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, &sessionEventEmitter{
@@ -4712,6 +4876,41 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 	log.Printf("[PLAN APPROVAL] Emitted blocking_human_feedback event for plan approval (request_id: %s, session: %s)", requestID, e.sessionID)
 }
 
+func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, questions []map[string]string) {
+	now := time.Now()
+	// Convert questions to the event struct format
+	var eventQuestions []orchEvents.BlockingHumanQuestionsQuestion
+	for _, q := range questions {
+		eventQuestions = append(eventQuestions, orchEvents.BlockingHumanQuestionsQuestion{
+			ID:       q["id"],
+			Question: q["question"],
+		})
+	}
+	eventData := &orchEvents.BlockingHumanQuestionsEvent{
+		BaseEventData: unifiedevents.BaseEventData{
+			Timestamp: now,
+		},
+		RequestID: requestID,
+		Questions:  eventQuestions,
+		SessionID: e.sessionID,
+	}
+	event := events.Event{
+		ID:        fmt.Sprintf("%s_human_questions_%d", e.sessionID, now.UnixNano()),
+		Type:      "blocking_human_questions",
+		Timestamp: now,
+		SessionID: e.sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      orchEvents.BlockingHumanQuestions,
+			Timestamp: now,
+			SessionID: e.sessionID,
+			Component: "human",
+			Data:      eventData,
+		},
+	}
+	e.eventStore.AddEvent(e.sessionID, event)
+	log.Printf("[HUMAN QUESTIONS] Emitted blocking_human_questions event (request_id: %s, session: %s)", requestID, e.sessionID)
+}
+
 // executeDelegatedTask executes a delegated task via a sub-agent
 // This method creates a new agent with the same configuration as the parent
 // and runs it with the given instruction as the prompt
@@ -4783,21 +4982,48 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 	}
 
-	// Emit delegation_start event (after model resolution so we can include reasoning level and model)
+	// Resolve tool_mode for sub-agent
 	toolMode, _ := ctx.Value(virtualtools.ToolModeKey).(string)
 	if toolMode == "" && loadedTemplate != nil && loadedTemplate.Frontmatter.DefaultToolMode != "" {
 		toolMode = loadedTemplate.Frontmatter.DefaultToolMode
 		log.Printf("[DELEGATION] Using template default tool_mode: %s", toolMode)
 	}
-	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode)
 
-	// Build server name from enabled servers
+	// Build server name — use delegation-specific servers if provided, otherwise all parent servers
 	var serverName string
-	if len(parentReq.EnabledServers) > 0 {
+	var serversList []string
+	if delegationServers, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok && len(delegationServers) > 0 {
+		serverName = strings.Join(delegationServers, ",")
+		serversList = delegationServers
+		log.Printf("[DELEGATION] Using sub-agent specific servers: %s", serverName)
+	} else if len(parentReq.EnabledServers) > 0 {
 		serverName = strings.Join(parentReq.EnabledServers, ",")
+		serversList = parentReq.EnabledServers
 	} else if len(parentReq.Servers) > 0 {
 		serverName = strings.Join(parentReq.Servers, ",")
+		serversList = parentReq.Servers
 	}
+
+	// Auto-enable tool search mode for sub-agents with many MCP servers (>3)
+	// This prevents overwhelming the LLM with too many tool definitions
+	useToolSearch := toolMode == "tool_search"
+	useCodeExec := toolMode == "code_execution"
+	if !useToolSearch && !useCodeExec {
+		realServerCount := 0
+		for _, s := range serversList {
+			if s != "all" && s != mcpclient.NoServers {
+				realServerCount++
+			}
+		}
+		if realServerCount > 3 {
+			useToolSearch = true
+			toolMode = "tool_search"
+			log.Printf("[DELEGATION] Auto-enabling tool search mode for sub-agent — %d MCP servers (>3)", realServerCount)
+		}
+	}
+
+	// Emit delegation_start event (after model and server resolution so we can include all info)
+	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList)
 
 	// Convert API keys from parent request to LLM format (respecting locked providers)
 	var apiKeys *llm.ProviderAPIKeys = &llm.ProviderAPIKeys{}
@@ -4889,21 +5115,26 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			return 5 * time.Minute
 		}(),
-		// Sub-agent mode is determined ONLY by the explicit tool_mode on the delegate call.
-		// Do NOT inherit parent session's mode — the orchestrator's mode is irrelevant to sub-agents.
-		UseCodeExecutionMode: func() bool {
-			if toolMode, ok := ctx.Value(virtualtools.ToolModeKey).(string); ok {
-				return toolMode == "code_execution"
+		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
+		UseCodeExecutionMode: useCodeExec,
+		UseToolSearchMode:    useToolSearch,
+		// Pre-discovered tools: all virtual/custom tools stay visible in tool search mode
+		// Only MCP server tools require discovery via search_tools
+		PreDiscoveredTools: func() []string {
+			if !useToolSearch {
+				return nil
 			}
-			return false // Default to simple mode
-		}(),
-		UseToolSearchMode: func() bool {
-			if toolMode, ok := ctx.Value(virtualtools.ToolModeKey).(string); ok {
-				return toolMode == "tool_search"
+			preDiscovered := collectVirtualToolNames(
+				virtualtools.CreateWorkspaceAdvancedTools(),
+				virtualtools.CreateHumanTools(),
+			)
+			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
+				preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
 			}
-			return false // Default to simple mode
+			return preDiscovered
 		}(),
-		APIKeys:              apiKeys,
+		APIKeys: apiKeys,
+		SessionID:            sessionID, // Reuse parent session's MCP connections via registry
 		UserID:               subAgentUserID, // Per-user OAuth token isolation
 		// Context offloading: inherit from environment
 		LargeOutputThreshold: func() int {
@@ -5348,7 +5579,7 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 
 // emitDelegationStartEvent emits an event when delegation starts
 // This event serves as the parent for all sub-agent events (via parent_id linking)
-func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string) {
+func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string, servers []string) {
 	now := time.Now()
 	eventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
 	eventData := &events.DelegationStartEventData{
@@ -5358,6 +5589,7 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 		ReasoningLevel: reasoningLevel,
 		ModelID:        modelID,
 		ToolMode:       toolMode,
+		Servers:        servers,
 		Timestamp:      now.Format(time.RFC3339),
 	}
 	event := events.Event{

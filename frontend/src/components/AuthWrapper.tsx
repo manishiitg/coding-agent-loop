@@ -3,6 +3,8 @@ import { useAuthStore } from '../stores/useAuthStore'
 import { Login } from '../pages/Login'
 import { AuthCallback } from '../pages/AuthCallback'
 import { SharedSession } from '../pages/SharedSession'
+import { SharedFile } from '../pages/SharedFile'
+import { SharedFolder } from '../pages/SharedFolder'
 import { Loader2 } from 'lucide-react'
 
 interface AuthWrapperProps {
@@ -20,11 +22,32 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   } = useAuthStore()
 
   const [shareToken, setShareToken] = useState<string | null>(null)
+  const [sharedFilePath, setSharedFilePath] = useState<string | null>(null)
+  const [sharedFolderPath, setSharedFolderPath] = useState<string | null>(null)
   const [isAuthCallback, setIsAuthCallback] = useState(false)
 
-  // Check for shared session URL or OAuth callback
+  // Check for shared session URL, shared file/folder URL, or OAuth callback
   useEffect(() => {
     const path = window.location.pathname
+    const params = new URLSearchParams(window.location.search)
+
+    // Check for shared file: /file?path=BASE64
+    if (path === '/file') {
+      const encodedPath = params.get('path')
+      if (encodedPath) {
+        setSharedFilePath(encodedPath)
+        return
+      }
+    }
+
+    // Check for shared folder: /folder?path=BASE64
+    if (path === '/folder') {
+      const encodedPath = params.get('path')
+      if (encodedPath) {
+        setSharedFolderPath(encodedPath)
+        return
+      }
+    }
 
     // Check for shared session
     const shareMatch = path.match(/^\/shared\/([^/]+)$/)
@@ -53,6 +76,32 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
         shareToken={shareToken}
         onBack={() => {
           setShareToken(null)
+          window.history.pushState({}, '', '/')
+        }}
+      />
+    )
+  }
+
+  // If viewing a shared file, render it directly
+  if (sharedFilePath) {
+    return (
+      <SharedFile
+        encodedPath={sharedFilePath}
+        onBack={() => {
+          setSharedFilePath(null)
+          window.history.pushState({}, '', '/')
+        }}
+      />
+    )
+  }
+
+  // If viewing a shared folder, render it directly
+  if (sharedFolderPath) {
+    return (
+      <SharedFolder
+        encodedPath={sharedFolderPath}
+        onBack={() => {
+          setSharedFolderPath(null)
           window.history.pushState({}, '', '/')
         }}
       />

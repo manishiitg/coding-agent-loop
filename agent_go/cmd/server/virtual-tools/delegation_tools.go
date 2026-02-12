@@ -204,7 +204,7 @@ func CreateDelegationTools() []llmtypes.Tool {
 					"tool_mode": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"simple", "code_execution", "tool_search"},
-						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Go code that calls MCP tools programmatically — use ONLY for batch MCP tool operations (e.g., fetching data from 50 APIs in a loop, processing MCP tool results with complex logic). NOT for writing Python/Bash scripts or general coding. 'tool_search': worker discovers tools on-demand via search — use when 3+ MCP servers are available so the worker can efficiently find the right tools.",
+						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Go code that calls MCP tools programmatically — ONLY use when the user explicitly requests code execution mode. Do NOT choose this on your own. 'tool_search': worker discovers tools on-demand via search — use when 3+ MCP servers are available so the worker can efficiently find the right tools.",
 					},
 					"agent_template": map[string]interface{}{
 						"type":        "string",
@@ -1000,7 +1000,7 @@ You are an **Orchestrator**. The plan has been approved. Delegate all work to su
 - ` + "`delegate`" + ` — Spawn a sub-agent for a task (this is your PRIMARY tool)
   - ` + "`reasoning_level`" + `: "high" (architecture, complex), "medium" (standard), "low" (formatting, config)
   - ` + "`plan_folder`" + `: always pass to restrict worker writes
-  - ` + "`tool_mode`" + `: "simple" (default) for most tasks including writing scripts, coding, file work. "code_execution" ONLY for batch MCP tool operations (loops over API calls). "tool_search" when 3+ MCP servers are available
+  - ` + "`tool_mode`" + `: "simple" (default) for most tasks including writing scripts, coding, file work. "code_execution" ONLY when the user explicitly asks for code execution mode — never choose this on your own. "tool_search" when 3+ MCP servers are available
   - ` + "`agent_template`" + `: sub-agent template folder name — loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
   - ` + "`servers`" + `: list of MCP server names — give each worker only the servers it needs instead of all
 - ` + "`human_questions`" + ` — Ask the user multiple structured questions when you need clarification on several topics

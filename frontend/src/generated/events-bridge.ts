@@ -139,7 +139,6 @@ export interface EventDataUnion {
   independent_steps_selected?: IndependentStepsSelectedEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
   blocking_human_feedback?: BlockingHumanFeedbackEvent;
-  blocking_human_questions?: BlockingHumanQuestionsEvent;
   human_verification_response?: HumanVerificationResponseEvent;
   structured_output_start?: StructuredOutputStartEvent;
   structured_output_end?: StructuredOutputEndEvent;
@@ -1656,27 +1655,6 @@ export interface BlockingHumanFeedbackEvent {
   yes_label?: string;
   no_label?: string;
   options?: string[];
-}
-export interface BlockingHumanQuestionsQuestion {
-  id: string;
-  question: string;
-}
-export interface BlockingHumanQuestionsEvent {
-  timestamp?: string;
-  trace_id?: string;
-  span_id?: string;
-  event_id?: string;
-  parent_id?: string;
-  is_end_event?: boolean;
-  correlation_id?: string;
-  hierarchy_level?: number;
-  session_id?: string;
-  component?: string;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  request_id?: string;
-  questions?: BlockingHumanQuestionsQuestion[];
 }
 export interface HumanVerificationResponseEvent {
   timestamp?: string;

@@ -42,10 +42,19 @@ func ExportWorkspace(c *gin.Context) {
 	}
 
 	docsDir := viper.GetString("docs-dir")
-	
-	// Sanitize and validate workspace path
-	workspacePath := utils.SanitizeInputPath(req.WorkspacePath, docsDir)
-	fullWorkspacePath := filepath.Join(docsDir, workspacePath)
+	userID := getUserID(c)
+
+	// Resolve workspace path with per-user folder support
+	fullWorkspacePath, err := utils.ResolveUserPath(docsDir, req.WorkspacePath, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid workspace path",
+			Error:   err.Error(),
+		})
+		return
+	}
+	workspacePath, _ := utils.GetRelativePath(fullWorkspacePath, docsDir)
 
 	// Check if workspace directory exists
 	if info, err := os.Stat(fullWorkspacePath); err != nil || !info.IsDir() {
@@ -76,6 +85,9 @@ func ExportWorkspace(c *gin.Context) {
 	zipWriter := zip.NewWriter(zipFile)
 	defer zipWriter.Close()
 
+	// Include the folder name as root directory in ZIP so import recreates the folder
+	folderName := filepath.Base(fullWorkspacePath)
+
 	// Walk through the workspace directory and add all files to ZIP
 	err = filepath.Walk(fullWorkspacePath, func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -92,11 +104,12 @@ func ExportWorkspace(c *gin.Context) {
 			return nil
 		}
 
-		// Calculate relative path from workspace root
+		// Calculate relative path from workspace root, prefixed with folder name
 		relPath, err := filepath.Rel(fullWorkspacePath, filePath)
 		if err != nil {
 			return err
 		}
+		relPath = filepath.Join(folderName, relPath)
 
 		// Open the file
 		file, err := os.Open(filePath)
@@ -219,10 +232,20 @@ func ImportWorkspace(c *gin.Context) {
 	}
 
 	docsDir := viper.GetString("docs-dir")
-	
-	// Sanitize and validate workspace path
-	workspacePath := utils.SanitizeInputPath(req.WorkspacePath, docsDir)
-	fullWorkspacePath := filepath.Join(docsDir, workspacePath)
+	userID := getUserID(c)
+
+	// Resolve workspace path with per-user folder support
+	fullWorkspacePath, resolveErr := utils.ResolveUserPath(docsDir, req.WorkspacePath, userID)
+	if resolveErr != nil {
+		fmt.Printf("❌ Failed to resolve path: %v\n", resolveErr)
+		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+			Success: false,
+			Message: "Invalid workspace path",
+			Error:   resolveErr.Error(),
+		})
+		return
+	}
+	workspacePath, _ := utils.GetRelativePath(fullWorkspacePath, docsDir)
 	fmt.Printf("📍 Target path: %s\n", fullWorkspacePath)
 
 	// Check if workspace directory exists (if not overwriting, we might want to create it)

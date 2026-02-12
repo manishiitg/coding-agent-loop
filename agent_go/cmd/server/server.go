@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -1230,6 +1231,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Public file sharing routes — filepath passed as base64 query param
 	apiRouter.HandleFunc("/public/file", api.handlePublicFile).Methods("GET")
 	apiRouter.HandleFunc("/public/folder", api.handlePublicFolder).Methods("GET")
+	apiRouter.HandleFunc("/public/folder/download", api.handlePublicFolderDownload).Methods("GET")
 
 	// pprof routes for profiling (must be before static file serving)
 	router.PathPrefix("/debug/pprof/").Handler(http.DefaultServeMux)
@@ -1492,6 +1494,67 @@ func (api *StreamingAPI) handlePublicFolder(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+// handlePublicFolderDownload exports a shared folder as a ZIP download.
+// GET /api/public/folder/download?path=<base64-encoded-folderpath>&uid=<owner-id>
+func (api *StreamingAPI) handlePublicFolderDownload(w http.ResponseWriter, r *http.Request) {
+	encoded := r.URL.Query().Get("path")
+	if encoded == "" {
+		http.Error(w, "path query parameter required", http.StatusBadRequest)
+		return
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		decoded, err = base64.RawURLEncoding.DecodeString(encoded)
+		if err != nil {
+			http.Error(w, "invalid path encoding", http.StatusBadRequest)
+			return
+		}
+	}
+	folderPath := string(decoded)
+
+	uid := r.URL.Query().Get("uid")
+	if uid == "" {
+		uid = GetUserIDFromContext(r.Context())
+	}
+	log.Printf("[PUBLIC-FOLDER-DOWNLOAD] Exporting folder: %s for user: %s", folderPath, uid)
+
+	// Proxy to workspace export endpoint
+	wsURL := getWorkspaceAPIURL() + "/api/workspace/export"
+	body, _ := json.Marshal(map[string]string{"workspace_path": folderPath})
+	req, err := http.NewRequestWithContext(r.Context(), "POST", wsURL, bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", uid)
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[PUBLIC-FOLDER-DOWNLOAD] Workspace request failed: %v", err)
+		http.Error(w, "workspace unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		log.Printf("[PUBLIC-FOLDER-DOWNLOAD] Workspace returned %d: %s", resp.StatusCode, string(respBody))
+		http.Error(w, "export failed", resp.StatusCode)
+		return
+	}
+
+	// Proxy ZIP response headers and body
+	for _, h := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+		if v := resp.Header.Get(h); v != "" {
+			w.Header().Set(h, v)
+		}
+	}
 	io.Copy(w, resp.Body)
 }
 

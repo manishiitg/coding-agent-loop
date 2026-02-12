@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Loader2, Folder, FolderOpen, FileText, FileCode, FileJson, Image, ChevronRight, ChevronDown, ArrowLeft, ExternalLink } from 'lucide-react'
+import { Loader2, Folder, FolderOpen, FileText, FileCode, FileJson, Image, ChevronRight, ChevronDown, ArrowLeft, ExternalLink, LogIn } from 'lucide-react'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
 import { SharedFile } from './SharedFile'
 
@@ -63,6 +63,7 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
   const [items, setItems] = useState<FolderItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [needsAuth, setNeedsAuth] = useState(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
@@ -96,6 +97,10 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
       if (token) headers['Authorization'] = `Bearer ${token}`
       const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
       const resp = await fetch(`${base}/api/public/folder?path=${encoded}${uidParam}`, { headers })
+      if (resp.status === 401) {
+        setNeedsAuth(true)
+        return
+      }
       if (!resp.ok) {
         throw new Error(resp.status === 404 ? 'Folder not found' : `Failed to load folder (${resp.status})`)
       }
@@ -135,6 +140,26 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
         uid={uid}
         onBack={() => setSelectedFile(null)}
       />
+    )
+  }
+
+  if (needsAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
+        <div className="max-w-md w-full p-8 bg-white dark:bg-gray-800 rounded-lg shadow-lg text-center">
+          <LogIn className="h-12 w-12 mx-auto mb-4 text-blue-500" />
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Login Required</h2>
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
+            You need to be logged in to view this shared folder.
+          </p>
+          <button
+            onClick={() => { window.location.href = '/' }}
+            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+          >
+            Go to Login
+          </button>
+        </div>
+      </div>
     )
   }
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Loader2, FileText, ArrowLeft } from 'lucide-react'
 import { MarkdownRenderer } from '../components/ui/MarkdownRenderer'
 import { CsvRenderer } from '../components/ui/CsvRenderer'
-import { getApiBaseUrl } from '../services/api'
+import { getApiBaseUrl, getAuthToken } from '../services/api'
 import { isValidJSON } from '../utils/event-helpers'
 
 interface SharedFileProps {
@@ -51,9 +51,10 @@ export function SharedFile({ encodedPath, onBack }: SharedFileProps) {
         setLoading(true)
         setError(null)
         const base = getApiBaseUrl() || ''
-        const resp = await fetch(`${base}/api/public/file?path=${encodedPath}`, {
-          credentials: 'include',
-        })
+        const headers: Record<string, string> = {}
+        const token = getAuthToken()
+        if (token) headers['Authorization'] = `Bearer ${token}`
+        const resp = await fetch(`${base}/api/public/file?path=${encodedPath}`, { headers })
         if (!resp.ok) {
           throw new Error(resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
         }

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Loader2, Folder, FolderOpen, FileText, FileCode, FileJson, Image, ChevronRight, ChevronDown, ArrowLeft, ExternalLink } from 'lucide-react'
-import { getApiBaseUrl } from '../services/api'
+import { getApiBaseUrl, getAuthToken } from '../services/api'
 import { SharedFile } from './SharedFile'
 
 interface FolderItem {
@@ -90,9 +90,10 @@ export function SharedFolder({ encodedPath, onBack }: SharedFolderProps) {
       setError(null)
       const base = getApiBaseUrl() || ''
       const encoded = btoa(unescape(encodeURIComponent(path)))
-      const resp = await fetch(`${base}/api/public/folder?path=${encoded}`, {
-        credentials: 'include',
-      })
+      const headers: Record<string, string> = {}
+      const token = getAuthToken()
+      if (token) headers['Authorization'] = `Bearer ${token}`
+      const resp = await fetch(`${base}/api/public/folder?path=${encoded}`, { headers })
       if (!resp.ok) {
         throw new Error(resp.status === 404 ? 'Folder not found' : `Failed to load folder (${resp.status})`)
       }

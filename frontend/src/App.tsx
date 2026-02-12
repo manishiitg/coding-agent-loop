@@ -15,7 +15,7 @@ import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport, exportPdfChunked } from "./utils/pdfExport";
-import { Edit, Save, X, Loader2, Download } from "lucide-react";
+import { Edit, Save, X, Loader2, Download, Link } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { EventModeProvider } from "./components/events";
@@ -168,6 +168,7 @@ function App() {
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const [isExportingPdf, setIsExportingPdf] = useState(false)
   const [exportProgress, setExportProgress] = useState<string | null>(null)
+  const [shareCopied, setShareCopied] = useState(false)
   const markdownContentRef = useRef<HTMLDivElement>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
@@ -985,6 +986,22 @@ function App() {
                           title="Download file"
                         >
                           <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (!selectedFile?.path) return
+                            const encoded = btoa(unescape(encodeURIComponent(selectedFile.path)))
+                            const shareUrl = `${window.location.origin}/file?path=${encoded}`
+                            navigator.clipboard.writeText(shareUrl).then(() => {
+                              setShareCopied(true)
+                              setTimeout(() => setShareCopied(false), 2000)
+                            })
+                          }}
+                          className="flex items-center gap-1 p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                          title="Copy public share link"
+                        >
+                          <Link className="w-4 h-4" />
+                          {shareCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
                         </button>
                         {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
                          !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&

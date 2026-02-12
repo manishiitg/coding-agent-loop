@@ -1,4 +1,4 @@
-import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2 } from 'lucide-react'
+import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Trash2, MessageSquare, Upload, Plus, Image, MoreHorizontal, Move, Download, Archive, CheckSquare, Edit2, Link } from 'lucide-react'
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
@@ -317,6 +317,18 @@ export default function PlannerFileList({
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
+                        const shareUrl = `${window.location.origin}/folder?path=${encoded}`
+                        navigator.clipboard.writeText(shareUrl)
+                      }}
+                      className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                    >
+                      <Link className="w-3 h-3" />
+                      Copy Share Link
+                    </button>
                     {onDeleteAllFilesInFolder && (
                       <button
                         onClick={(e) => {
@@ -418,6 +430,18 @@ export default function PlannerFileList({
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const encoded = btoa(unescape(encodeURIComponent(file.originalFilepath || file.filepath)))
+                        const shareUrl = `${window.location.origin}/file?path=${encoded}`
+                        navigator.clipboard.writeText(shareUrl)
+                      }}
+                      className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                    >
+                      <Link className="w-3 h-3" />
+                      Copy Share Link
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation()

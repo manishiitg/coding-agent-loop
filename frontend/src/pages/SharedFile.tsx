@@ -7,6 +7,7 @@ import { isValidJSON } from '../utils/event-helpers'
 
 interface SharedFileProps {
   encodedPath: string
+  uid?: string
   onBack?: () => void
 }
 
@@ -23,7 +24,7 @@ const getCodeFileLanguage = (filepath: string): string | null => {
   return codeExtensions[ext] || null
 }
 
-export function SharedFile({ encodedPath, onBack }: SharedFileProps) {
+export function SharedFile({ encodedPath, uid, onBack }: SharedFileProps) {
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +55,8 @@ export function SharedFile({ encodedPath, onBack }: SharedFileProps) {
         const headers: Record<string, string> = {}
         const token = getAuthToken()
         if (token) headers['Authorization'] = `Bearer ${token}`
-        const resp = await fetch(`${base}/api/public/file?path=${encodedPath}`, { headers })
+        const uidParam = uid ? `&uid=${encodeURIComponent(uid)}` : ''
+        const resp = await fetch(`${base}/api/public/file?path=${encodedPath}${uidParam}`, { headers })
         if (!resp.ok) {
           throw new Error(resp.status === 404 ? 'File not found' : `Failed to load file (${resp.status})`)
         }

@@ -4,6 +4,10 @@ import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+import { useAppStore } from '../../stores/useAppStore'
+import { workspaceApi } from '../../services/api'
+import { agentApi } from '../../services/api'
 
 interface MarkdownRendererProps {
   content: string
@@ -62,12 +66,163 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
   const scrollClasses = showScrollbar ? `max-h-[${maxHeight}] overflow-y-auto overflow-x-auto` : ""
 
+  const highlightFile = useWorkspaceStore(state => state.highlightFile)
+  const expandFoldersForFile = useWorkspaceStore(state => state.expandFoldersForFile)
+  const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
+  const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
+  const setFileContent = useWorkspaceStore(state => state.setFileContent)
+  const setLoadingFileContent = useWorkspaceStore(state => state.setLoadingFileContent)
+  const setBinaryFileData = useWorkspaceStore(state => state.setBinaryFileData)
+  const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
+
+  // Standard file opening logic extracted from Workspace.tsx
+  const handleWorkspaceLink = async (filepath: string) => {
+    console.log('[MarkdownWorkspace] handleWorkspaceLink called for:', filepath)
+    try {
+      // Auto-resolve folder paths to their default file (e.g. Plans/foo -> Plans/foo/plan.md)
+      let resolvedPath = filepath
+      if (filepath.startsWith('Plans/') && !filepath.includes('.')) {
+        resolvedPath = filepath + '/plan.md'
+      }
+
+      // 1. Ensure workspace is visible
+      setWorkspaceMinimized(false)
+
+      // 2. Expand folders and highlight in explorer
+      expandFoldersForFile(resolvedPath)
+      highlightFile(resolvedPath)
+
+      // 3. Select file and start loading content
+      const fileName = resolvedPath.split('/').pop() || resolvedPath
+      setSelectedFile({ name: fileName, path: resolvedPath })
+      setLoadingFileContent(true)
+      
+      // Check if binary viewable file (simplified check for link handler)
+      const ext = fileName.split('.').pop()?.toLowerCase() || ''
+      const isViewableBinary = ['xls', 'xlsx', 'docx'].includes(ext)
+
+      if (isViewableBinary) {
+        const response = await workspaceApi.get(
+          `/api/documents/${encodeURIComponent(resolvedPath)}`,
+          { params: { download: 'true' }, responseType: 'arraybuffer' }
+        )
+        setBinaryFileData(response.data as ArrayBuffer)
+        setFileContent('')
+        setShowFileContent(true)
+        setLoadingFileContent(false)
+        return
+      }
+
+      // Normal text file
+      setBinaryFileData(null)
+      const response = await agentApi.getPlannerFileContent(resolvedPath)
+      if (response.success && response.data) {
+        let content = typeof response.data.content === 'string'
+          ? response.data.content
+          : String(response.data.content)
+        
+        // Basic normalization
+        content = content.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r')
+        
+        setFileContent(content || '')
+        setShowFileContent(true)
+      }
+    } catch (error) {
+      console.error('[MarkdownRenderer] Failed to open workspace link:', error)
+    } finally {
+      setLoadingFileContent(false)
+    }
+  }
+
   const processedContent = React.useMemo(() => {
+    if (!content) return ""
+    
+    // 1. Tool definition processing (existing)
     // Replace YAML-like frontmatter/blocks with a custom code block
     // Matches content between --- and --- where the content looks like key-value pairs
-    // Regex: (^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)
-    if (!content) return ""
-    return content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
+    let processed = content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
+
+    // 2. Auto-link workspace paths
+    // Regex matches paths starting with specific prefixes: Chats/, Workflow/, Plans/, skills/
+    // Optionally matches surrounding backticks to unwrap them
+    // CRITICAL FIX: We must handle paths wrapped in backticks (e.g., `Chats/foo.md`) because LLMs often format them as code.
+    // The regex captures:
+    // Group 1: Optional opening backtick
+    // Group 2: The actual path (starting with allowed prefixes)
+    // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
+    const pathRegex = /(`?)\b((?:Chats|Workflow|Plans|skills)\/[\w\-./]+)\1/g
+    
+    // Replace with custom link protocol "#workspace/" to avoid sanitization issues
+    // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.
+    // SOLUTION: Use "#workspace/" (hash-based) which is always allowed, then intercept it in the <a> tag renderer.
+    // CHALLENGE 2: `replace` callback arguments in arrow functions vs `arguments` object.
+    // SOLUTION: Use explicit `...args` rest parameter to reliably capture `offset` and `string` regardless of capture groups.
+    processed = processed.replace(pathRegex, (match, backtick, path, ...args) => {
+      try {
+        console.log('[MarkdownWorkspace] Regex match found:', match)
+        
+        // args contains [offset, string] because we have 2 capture groups
+        let str = args[args.length - 1] as string
+        let offset = args[args.length - 2] as number
+        
+        // Fallback for weird argument passing
+        if (typeof str !== 'string') {
+           const foundStr = args.find(a => typeof a === 'string')
+           if (foundStr) str = foundStr
+        }
+        if (typeof offset !== 'number') {
+           const foundOffset = args.find(a => typeof a === 'number')
+           if (foundOffset !== undefined) offset = foundOffset
+        }
+
+        if (typeof str !== 'string' || typeof offset !== 'number') {
+           console.error('[MarkdownWorkspace] Invalid args in replace callback:', args)
+           return match
+        }
+        
+        const before = str.substring(Math.max(0, offset - 1), offset)
+        const after = str.substring(offset + match.length, offset + match.length + 1)
+        
+        console.log(`[MarkdownWorkspace] Match: "${match}", Path: "${path}", Backtick: "${backtick}", Before: "${before}", After: "${after}"`)
+
+        // If capture group 1 (backtick) is present, we are unwrapping, so we don't skip.
+        // If capture group 1 is empty, we check if we are inside OTHER code/links/formatting.
+        if (!backtick) {
+           if (before === '`' || before === '[' || before === '(' || before === '*' || after === ']' || after === '`' || after === '*') {
+             console.log('[MarkdownWorkspace] Skipping match (inside link or code)')
+             return match
+           }
+        }
+        
+        // Handle trailing punctuation and spaces from the PATH (capture group 2)
+        let cleanPath = path
+        let suffix = ''
+        
+        // Trim trailing spaces, dots, commas, semi-colons
+        const trimmed = cleanPath.replace(/[.,; ]+$/, '')
+        if (trimmed !== cleanPath) {
+           suffix = cleanPath.substring(trimmed.length)
+           cleanPath = trimmed
+        }
+        
+        // Use hash-based link to avoid protocol sanitization issues
+        const result = `[${cleanPath}](#workspace/${encodeURIComponent(cleanPath)})${suffix}`
+        console.log('[MarkdownWorkspace] Replacing with:', result)
+        return result
+      } catch (err) {
+        console.error('[MarkdownWorkspace] Error in regex replace:', err)
+        return match
+      }
+    })
+    
+    const idx = processed.indexOf('#workspace/')
+    if (idx !== -1) {
+      console.log('[MarkdownWorkspace] Final processed markdown (around link):', processed.slice(Math.max(0, idx - 50), idx + 100))
+    } else {
+      console.log('[MarkdownWorkspace] No #workspace/ link found in processed markdown (start):', processed.slice(0, 200))
+    }
+    
+    return processed
   }, [content])
 
   return (
@@ -254,16 +409,43 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           ),
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
-          a: ({ href, children }) => (
-            <a 
-              href={href} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere"
-            >
-              {children}
-            </a>
-          ),
+          a: ({ href, children }) => {
+            console.log('[MarkdownWorkspace] Rendering link with href:', href)
+            
+            if (href?.startsWith('#workspace/')) {
+              const filepath = decodeURIComponent(href.replace('#workspace/', ''))
+              return (
+                <a 
+                  href={href}
+                  onClick={(e) => {
+                    console.log('[MarkdownWorkspace] Clicked link (onClick):', filepath)
+                    e.preventDefault()
+                    e.stopPropagation()
+                    handleWorkspaceLink(filepath)
+                  }}
+                  onMouseDown={(_e) => {
+                     console.log('[MarkdownWorkspace] Mouse down on link:', filepath)
+                  }}
+                  style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                  className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 underline cursor-pointer break-words overflow-wrap-anywhere font-medium transition-colors"
+                  title={`Open ${filepath} in workspace`}
+                >
+                  {children}
+                </a>
+              )
+            }
+            return (
+              <a 
+                href={href} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                onClick={() => console.log('[MarkdownWorkspace] Clicked default link:', href)}
+                className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere"
+              >
+                {children}
+              </a>
+            )
+          },
           img: ({ src, alt }) => (
             <img 
               src={src} 
@@ -290,7 +472,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             </tbody>
           ),
           tr: ({ children }) => (
-            <tr className="transition-colors [&:hover]:bg-gray-50 dark:[&:hover]:bg-gray-800 [&:focus]:bg-gray-50 dark:[&:focus]:bg-gray-800 [&:active]:bg-gray-100 dark:[&:active]:bg-gray-700">
+            <tr className="transition-colors [tbody_&:hover]:bg-gray-50 dark:[tbody_&:hover]:bg-gray-800 [tbody_&:focus]:bg-gray-50 dark:[tbody_&:focus]:bg-gray-800 [tbody_&:active]:bg-gray-100 dark:[tbody_&:active]:bg-gray-700">
               {children}
             </tr>
           ),

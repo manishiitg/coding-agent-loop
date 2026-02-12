@@ -150,15 +150,9 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           </span>
         </div>
         {context && (
-          <details className="mt-2 group">
-            <summary className="text-[10px] text-green-600 dark:text-green-400 cursor-pointer font-medium flex items-center gap-1">
-              <span className="group-open:hidden">+ Show plan</span>
-              <span className="hidden group-open:inline">− Hide plan</span>
-            </summary>
-            <div className="mt-1.5 p-3 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded">
-              <MarkdownRenderer content={context} className="text-xs" />
-            </div>
-          </details>
+          <div className="mt-2 p-3 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded max-h-[500px] overflow-y-auto">
+            <MarkdownRenderer content={context} className="text-xs" />
+          </div>
         )}
       </div>
     )
@@ -259,17 +253,11 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
         </div>
       )}
 
-      {/* Context / Plan content — collapsible details below */}
+      {/* Context / Plan content — shown directly */}
       {context && (
-        <details className="mt-2 group">
-          <summary className="text-[10px] text-indigo-500 dark:text-indigo-400 cursor-pointer font-medium flex items-center gap-1">
-            <span className="group-open:hidden">+ Show plan</span>
-            <span className="hidden group-open:inline">− Hide plan</span>
-          </summary>
-          <div className="mt-1.5 p-3 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded">
-            <MarkdownRenderer content={context} className="text-xs" />
-          </div>
-        </details>
+        <div className="mt-2 p-3 bg-white dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 rounded max-h-[500px] overflow-y-auto">
+          <MarkdownRenderer content={context} className="text-xs" />
+        </div>
       )}
     </div>
   )

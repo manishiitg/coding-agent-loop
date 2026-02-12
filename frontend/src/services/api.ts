@@ -280,7 +280,7 @@ export const agentApi = {
     const params: Record<string, string | number> = {}
     
     // Forward polling mode: use sinceIndex
-    if (sinceIndex !== undefined && sinceIndex >= 0) {
+    if (sinceIndex !== undefined && sinceIndex >= -1) {
       params.since = sinceIndex
       // Add event mode if specified (for polling mode)
       if (options?.eventMode) {

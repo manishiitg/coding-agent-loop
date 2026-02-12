@@ -1502,7 +1502,6 @@ func (s *SupabaseDB) ListChatSessionsWithUser(ctx context.Context, limit, offset
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get total count: %w", err)
 	}
-
 	query := `
 		SELECT
 			cs.id,
@@ -1573,23 +1572,10 @@ func (s *SupabaseDB) ListChatSessionsWithUser(ctx context.Context, limit, offset
 			session.LastActivity = nil
 		}
 
-		// Filter out sessions without valid LLM config (old sessions before LLM config was stored)
-		// Skip this filter when LLM_CONFIG_LOCKED=true because backend uses env vars for LLM config
-		if !isLLMConfigLocked() && !hasValidLLMConfig(session.Config) {
-			continue
-		}
-
 		sessions = append(sessions, session)
 	}
 
-	// Adjust total count to exclude filtered sessions
-	// Note: This is approximate as we filter in-memory; for exact count would need SQL filtering
-	validTotal := total
-	if len(sessions) < limit {
-		validTotal = offset + len(sessions)
-	}
-
-	return sessions, validTotal, nil
+	return sessions, total, nil
 }
 
 // CreatePresetQueryWithUser creates a new preset query with user association

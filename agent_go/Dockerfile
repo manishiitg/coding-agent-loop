@@ -16,24 +16,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 # Set working directory
 WORKDIR /app
 
-# Copy workspace module first (for replace directive)
+# Copy all module definitions first for dependency caching
 COPY workspace/go.mod workspace/go.sum ./workspace/
-
-# Copy agent_go module
 COPY agent_go/go.mod agent_go/go.sum ./agent_go/
+COPY mcpagent/go.mod mcpagent/go.sum ./mcpagent/
+COPY multi-llm-provider-go/go.mod multi-llm-provider-go/go.sum ./multi-llm-provider-go/
 
-# Download dependencies
+# go.work so all local modules resolve (must exist before go mod download)
+RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n\t./mcpagent\n\t./multi-llm-provider-go\n)\n' > /app/go.work
+ENV GOWORK=/app/go.work
+
+# Download dependencies (retry up to 3 times — proxy.golang.org can be flaky)
 WORKDIR /app/agent_go
-RUN go mod download
+RUN for i in 1 2 3; do go mod download && break || echo "Retry $i..."; sleep 5; done
 
 # Copy source code
 WORKDIR /app
 COPY workspace/ ./workspace/
 COPY agent_go/ ./agent_go/
-
-# Minimal go.work so workspace module resolves (handlers import "workspace/models" etc.)
-RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n)\n' > /app/go.work
-ENV GOWORK=/app/go.work
+COPY mcpagent/ ./mcpagent/
+COPY multi-llm-provider-go/ ./multi-llm-provider-go/
 # Build from /app so go.work is found; output binary to agent_go dir (glibc-linked for Debian runtime)
 RUN cd /app && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
 
@@ -83,36 +85,11 @@ RUN which npx && which docker && npm --version && npx --version && docker --vers
 # Verify ripgrep and jq
 RUN which rg && which jq && rg --version && jq --version
 
-# Create non-root user BEFORE pre-warming so caches land in the correct home directory.
-# At runtime the container runs as appuser, so caches must be in /home/appuser/.cache/
+# Create non-root user. Runtime caches (uvx/npx) land in /home/appuser/.cache/
 RUN groupadd -g 1001 appgroup && useradd -m -u 1001 -g appgroup appuser
 
-# =============================================================================
-# Pre-warm MCP server packages at build time as appuser so the uv/npm caches
-# are in the right home directory and reused at runtime (no re-install on pod start).
-# =============================================================================
-USER appuser
-
-# Pre-warm Python (uvx) MCP servers — caches into /home/appuser/.cache/uv/
-RUN uvx awslabs.aws-api-mcp-server@latest --help 2>/dev/null || true \
-    && uvx awslabs.aws-pricing-mcp-server@latest --help 2>/dev/null || true \
-    && uvx awslabs.cost-explorer-mcp-server@latest --help 2>/dev/null || true \
-    && uvx awslabs.cloudwatch-mcp-server@latest --help 2>/dev/null || true \
-    && uvx awslabs.billing-cost-management-mcp-server@latest --help 2>/dev/null || true \
-    && uvx awslabs.aws-documentation-mcp-server@latest --help 2>/dev/null || true
-
-# Pre-warm Node (npx) MCP servers — caches into /home/appuser/.npm/
-RUN npx --yes @sylphx/pdf-reader-mcp --help 2>/dev/null || true \
-    && npx --yes mcp-remote --help 2>/dev/null || true \
-    && npx --yes @negokaz/excel-mcp-server --help 2>/dev/null || true \
-    && npx --yes kubernetes-mcp-server@latest --help 2>/dev/null || true \
-    && npx --yes @leval/mcp-grafana --help 2>/dev/null || true
-
-# Pre-warm Python (uv run) MCP servers
-RUN uv run --with mcp-clickhouse --python 3.13 mcp-clickhouse --help 2>/dev/null || true
-
-# Switch back to root for remaining setup steps (copy binary, chown, etc.)
-USER root
+# MCP server packages (uvx/npx) are installed lazily on first connection at runtime.
+# The ConnectTimeout (15 min) in mcpclient/client.go handles first-run install time.
 
 # Set working directory
 WORKDIR /app

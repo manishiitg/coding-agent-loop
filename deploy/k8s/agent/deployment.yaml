@@ -16,7 +16,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: cs
       app.kubernetes.io/instance: mcpagent-agent
-  # Recreate (not RollingUpdate) so the single RWO PVC (agent-db) is released before a new pod starts; avoids Multi-Attach.
   strategy:
     type: Recreate
   template:
@@ -49,19 +48,24 @@ spec:
                 name: prod-mcpagent-secret
           resources:
             requests:
-              cpu: "500m"
-              memory: "2Gi"
-            limits:
               cpu: "2"
-              memory: "6Gi"
+              memory: "3Gi"
+            limits:
+              cpu: "4"
+              memory: "5Gi"
           volumeMounts:
-            # Persistent chat history and DB; RWO so only one pod can attach (use Recreate strategy).
-            - name: agent-db
-              mountPath: /app/data
             # Persistent OAuth tokens for MCP servers; survives pod restarts.
             - name: agent-db
               mountPath: /home/appuser/.config/mcpagent/tokens
               subPath: oauth-tokens
+            # Cached MCP tool metadata; avoids re-discovery on restart.
+            - name: agent-db
+              mountPath: /app/cache
+              subPath: cache
+            # Generated Go tool wrappers from MCP discovery.
+            - name: agent-db
+              mountPath: /app/generated
+              subPath: generated
             # MCP server list (command/args per server); from ConfigMap mcpagent-agent-config (deploy script syncs agent/mcp_config.json).
             - name: mcp-config
               mountPath: /app/configs/mcp_servers.json

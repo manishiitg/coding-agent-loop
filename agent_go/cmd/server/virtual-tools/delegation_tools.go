@@ -55,6 +55,8 @@ const (
 	PlanSessionStateKey delegationContextKey = "plan_session_state"
 	// SessionEventEmitterKey is the context key for the session event emitter (used by confirm_plan_execution)
 	SessionEventEmitterKey delegationContextKey = "session_event_emitter"
+	// DelegationServersKey is the context key for sub-agent specific MCP server selection
+	DelegationServersKey delegationContextKey = "delegation_servers"
 	// PlanFileFolderPath is the workspace folder for delegation plan files
 	PlanFileFolderPath = "Plans"
 )
@@ -67,6 +69,7 @@ type PlanEventEmitter interface {
 // SessionEventEmitter is the interface for emitting arbitrary events to the session event store
 type SessionEventEmitter interface {
 	EmitBlockingHumanFeedback(requestID, question, context string, yesNoOnly bool, yesLabel, noLabel string, options ...string)
+	EmitBlockingHumanQuestions(requestID string, questions []map[string]string)
 }
 
 // PlanSessionState tracks session-level plan state for multi-agent mode.
@@ -86,20 +89,19 @@ func NewPlanSessionState() *PlanSessionState {
 
 // TryCreate atomically checks if a plan already exists. If not, records the new plan
 // and returns true. During execution phase, allows creating a new plan for follow-up tasks
-// (resets state back to planning). If a plan already exists during planning phase,
-// returns false with existing plan info.
+// (resets state back to planning). During planning phase, allows re-creating/updating
+// the plan since it hasn't been approved yet.
 func (ps *PlanSessionState) TryCreate(planID, planFolder string) (existingPlanID, existingPlanFolder string, ok bool) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.PlanID != "" {
-		if ps.Phase == "execution" {
-			// Allow follow-up: reset and create new plan
-			ps.PlanID = planID
-			ps.PlanFolder = planFolder
-			ps.Phase = "planning"
-			return "", "", true
-		}
-		return ps.PlanID, ps.PlanFolder, false
+		// Allow overwriting during both phases:
+		// - planning: plan hasn't been approved yet, LLM can regenerate/update it
+		// - execution: follow-up task after previous plan completed
+		ps.PlanID = planID
+		ps.PlanFolder = planFolder
+		ps.Phase = "planning"
+		return "", "", true
 	}
 	ps.PlanID = planID
 	ps.PlanFolder = planFolder
@@ -202,11 +204,18 @@ func CreateDelegationTools() []llmtypes.Tool {
 					"tool_mode": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"simple", "code_execution", "tool_search"},
-						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Go code that calls MCP tools programmatically — use ONLY for batch MCP tool operations (e.g., fetching data from 50 APIs in a loop, processing MCP tool results with complex logic). NOT for writing Python/Bash scripts or general coding. 'tool_search': worker discovers tools on-demand via search — use ONLY when 30+ MCP tools are available and the worker needs to find the right ones.",
+						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Go code that calls MCP tools programmatically — use ONLY for batch MCP tool operations (e.g., fetching data from 50 APIs in a loop, processing MCP tool results with complex logic). NOT for writing Python/Bash scripts or general coding. 'tool_search': worker discovers tools on-demand via search — use when 3+ MCP servers are available so the worker can efficiently find the right tools.",
 					},
 					"agent_template": map[string]interface{}{
 						"type":        "string",
 						"description": "Sub-agent template folder name from subagents/. Loads specialized instructions, default reasoning level, default tool mode, and auto-activates the template's configured skills and MCP servers for the sub-agent.",
+					},
+					"servers": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+						"description": "Optional list of MCP server names for this sub-agent. When specified, the sub-agent only connects to these servers instead of all available ones. Use this to give the worker only the tools it needs, reducing noise and improving efficiency.",
 					},
 				},
 				"required": []string{"instruction"},
@@ -303,6 +312,16 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 	agentTemplate, _ := args["agent_template"].(string)
 
+	// Extract optional servers array
+	var delegationServers []string
+	if serversRaw, ok := args["servers"].([]interface{}); ok {
+		for _, s := range serversRaw {
+			if str, ok := s.(string); ok && str != "" {
+				delegationServers = append(delegationServers, str)
+			}
+		}
+	}
+
 	// Check delegation depth to prevent infinite recursion
 	currentDepth := 0
 	if depth, ok := ctx.Value(DelegationDepthKey).(int); ok {
@@ -336,6 +355,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 	if agentTemplate != "" {
 		subCtx = context.WithValue(subCtx, AgentTemplateKey, agentTemplate)
+	}
+	if len(delegationServers) > 0 {
+		subCtx = context.WithValue(subCtx, DelegationServersKey, delegationServers)
 	}
 
 	// Execute the delegated task
@@ -648,7 +670,7 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 		"objective":     objective,
 		"planning_time": planDuration.String(),
 		"result":        plannerResult,
-		"message":       fmt.Sprintf("Plan created at %s. Use delegate to execute tasks. Update checkboxes in plan.md as tasks complete.", planFilePath),
+		"message":       fmt.Sprintf("Plan created at %s. You MUST call confirm_plan_execution to get user approval before delegating any tasks.", planFilePath),
 	}
 	if planContent != "" {
 		result["plan_content"] = planContent
@@ -734,17 +756,22 @@ You have access to sub-agent delegation tools. You are a fully capable agent —
 - Optional ` + "`reasoning_level`" + `: "high" (architecture, complex logic), "medium" (standard implementation), "low" (formatting, tests, config)
 - Optional ` + "`plan_folder`" + `: restricts worker writes to this folder (always pass when executing plan tasks)
 - Optional ` + "`agent_template`" + `: sub-agent template folder name (e.g. "code-review"). Loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
+- Optional ` + "`servers`" + `: list of MCP server names for this sub-agent. When specified, the worker only connects to these servers instead of all available ones. Use to give workers only the tools they need.
 
 **` + "`create_delegation_plan`" + `** — Spawn a planner sub-agent that writes plan.md:
 - Planner researches the objective and creates a phased task breakdown
 - Returns plan_id, plan_folder, and plan_content directly
 - Then execute tasks phase by phase using ` + "`delegate`" + `
 
+**` + "`human_questions`" + `** — Ask the user 3-8 structured questions to clarify requirements before starting work. Use this proactively to avoid wasted effort.
+
+**` + "`human_feedback`" + `** — Ask a single question, present multiple-choice options, or get free-text input from the user.
+
 ### Tool Mode (optional, for ` + "`delegate`" + `):
 
 - **"simple"** (default): Worker gets all tools directly. Best for most tasks, including **writing Python/Bash scripts** — use workspace shell tools (` + "`execute_shell_command`" + `) to create and run scripts.
 - **"code_execution"**: Worker writes Go code to call tools programmatically. Best for **data analysis with MCP tools** — e.g., fetching data from MCP servers, transforming responses, batch operations, loops over tool results. NOT recommended for simple script writing.
-- **"tool_search"**: Worker discovers tools on-demand via search. Best when many MCP servers are available (20+).
+- **"tool_search"**: Worker discovers tools on-demand via search. Use when 3+ MCP servers are available.
 
 **Guideline**: For writing Python scripts, shell scripts, or any file-based work, always prefer **"simple"** mode with workspace shell tools. Use **"code_execution"** only when you need to programmatically orchestrate multiple MCP tool calls and analyze their responses.
 
@@ -806,7 +833,7 @@ func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}
 	uniqueID := fmt.Sprintf("plan-approval-%s", currentPlanID)
 	feedbackStore := GetHumanFeedbackStore()
 
-	message := fmt.Sprintf("**%s** — Plan is ready. Approve to start execution, or type feedback in the chat.", currentPlanFolder)
+	message := fmt.Sprintf("Plan `%s` is ready. Approve to start execution, or type feedback in the chat.", currentPlanFolder)
 
 	// Read plan.md content to show in the approval UI
 	planContent := ""
@@ -831,6 +858,9 @@ func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}
 	}
 
 	// Emit blocking_human_feedback event — approve-only button, plan content as context
+	if planContent == "" {
+		log.Printf("[PLAN APPROVAL] Warning: planContent is empty for %s — plan won't show in approval UI", currentPlanFolder)
+	}
 	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
 		emitter.EmitBlockingHumanFeedback(uniqueID, message, planContent, true, "Approve & Execute", "")
 	}
@@ -893,16 +923,18 @@ Your role: Research → Plan → Get Approval → Delegate execution to sub-agen
 
 **Step 1: Understand & Clarify**
 - Read the user's request carefully
-- Use ` + "`human_feedback`" + ` to ask clarifying questions BEFORE doing anything else:
+- Use ` + "`human_questions`" + ` to ask 3-5 targeted clarifying questions BEFORE doing anything else. Example questions:
   - What is the expected outcome? Any preferences on approach?
   - Are there constraints, priorities, or specific requirements?
   - Which parts are most important or time-sensitive?
+  - What should the scope include/exclude?
+- Alternatively, use ` + "`human_feedback`" + ` for a single question or yes/no confirmation
 - Do NOT skip this step — a good plan requires clear requirements from the human
 
 **Step 2: Research & Analyze**
 - Use ` + "`execute_shell_command`" + ` for research: ` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + ` to read files and explore the workspace
 - Gather context needed for planning
-- Use ` + "`human_feedback`" + ` again if you discover ambiguities during research
+- Use ` + "`human_questions`" + ` or ` + "`human_feedback`" + ` again if you discover ambiguities during research
 
 **Step 3: Create Plan**
 - Use ` + "`create_delegation_plan`" + ` with a clear objective and all context you gathered
@@ -929,13 +961,14 @@ If the user references an existing plan file (e.g., via @ mention of a Plans/ fo
 ### Available Tools
 - ` + "`create_delegation_plan`" + ` — Create a structured plan with phased task breakdown
 - ` + "`delegate`" + ` — Spawn a sub-agent (available but use only after plan approval)
-- ` + "`human_feedback`" + ` — Ask the user questions during research/planning
+- ` + "`human_questions`" + ` — Ask the user 3-8 structured questions (preferred for multi-topic clarification)
+- ` + "`human_feedback`" + ` — Ask a single question, present options, or get free-text input
 - ` + "`confirm_plan_execution`" + ` — Present plan for user approval, switches to Execution Mode
 - ` + "`execute_shell_command`" + ` — For research only (` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + `). NEVER use for executing work.
 
 ### Plan Rules
 - Plan is saved to Plans/{plan_id}/plan.md
-- **Always ask the human** before creating the plan — use ` + "`human_feedback`" + ` to confirm requirements
+- **Always ask the human** before creating the plan — use ` + "`human_questions`" + ` to clarify requirements
 - NEVER execute plan tasks yourself — always delegate
 - After execution completes and you report results, you can create a new plan for follow-up requests
 
@@ -967,9 +1000,11 @@ You are an **Orchestrator**. The plan has been approved. Delegate all work to su
 - ` + "`delegate`" + ` — Spawn a sub-agent for a task (this is your PRIMARY tool)
   - ` + "`reasoning_level`" + `: "high" (architecture, complex), "medium" (standard), "low" (formatting, config)
   - ` + "`plan_folder`" + `: always pass to restrict worker writes
-  - ` + "`tool_mode`" + `: "simple" (default) for most tasks including writing scripts, coding, file work. "code_execution" ONLY for batch MCP tool operations (loops over API calls). "tool_search" ONLY when 30+ MCP tools available
+  - ` + "`tool_mode`" + `: "simple" (default) for most tasks including writing scripts, coding, file work. "code_execution" ONLY for batch MCP tool operations (loops over API calls). "tool_search" when 3+ MCP servers are available
   - ` + "`agent_template`" + `: sub-agent template folder name — loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
-- ` + "`human_feedback`" + ` — Ask the user questions if you are unsure about something
+  - ` + "`servers`" + `: list of MCP server names — give each worker only the servers it needs instead of all
+- ` + "`human_questions`" + ` — Ask the user multiple structured questions when you need clarification on several topics
+- ` + "`human_feedback`" + ` — Ask a single question or get confirmation
 - ` + "`execute_shell_command`" + ` — Read plan.md (` + "`cat Plans/{plan_id}/plan.md`" + `) to check progress and collect learnings
 - ` + "`create_delegation_plan`" + ` — Available but typically not needed (plan already exists)
 

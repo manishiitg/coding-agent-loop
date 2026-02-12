@@ -28,7 +28,7 @@ FROM alpine:latest
 # gcompat provides glibc compatibility for agent-browser binary (which is compiled against glibc)
 # build-base (gcc, g++, make) so venv pip installs (e.g. matplotlib from source) work in execute_shell_command
 RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq nodejs npm chromium chromium-chromedriver gcompat \
-    py3-matplotlib py3-pandas build-base python3-dev curl wget bash clickhouse-client
+    py3-matplotlib py3-pandas build-base python3-dev curl wget bash
 
 # Install agent-browser globally for browser automation
 RUN npm install -g agent-browser

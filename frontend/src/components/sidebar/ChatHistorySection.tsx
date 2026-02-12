@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { agentApi } from '../../services/api'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { Share2, Copy, Check, Loader2 } from 'lucide-react'
+import { agentApi, sessionShareApi } from '../../services/api'
 import type { ChatHistorySummary, ActiveSessionInfo } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import { useModeStore } from '../../stores/useModeStore'
@@ -63,28 +64,6 @@ export default function ChatHistorySection({
     return activeSessions.find(session => session.session_id === sessionId)
   }, [activeSessions])
 
-  // Filter sessions based on mode and active preset
-  const filterSessionsByMode = useCallback((sessions: ChatHistorySummary[]) => {
-    if (!selectedModeCategory) return sessions
-
-    switch (selectedModeCategory) {
-      case 'chat':
-        // Show ALL chat sessions EXCEPT workflows
-        // This includes: simple, code exec, orchestrator, etc.
-        return sessions.filter(session => {
-          const agentMode = (session.agent_mode || '').toLowerCase()
-          return agentMode !== 'workflow'
-        })
-
-      case 'workflow':
-        // Hide all previous chats in workflow mode
-        return []
-      
-      default:
-        return sessions
-    }
-  }, [selectedModeCategory])
-
   // Load chat sessions using store cache
   const loadSessions = useCallback(async (forceRefresh: boolean = false) => {
     // Skip loading in workflow mode since we hide the entire section
@@ -96,51 +75,29 @@ export default function ChatHistorySection({
     setLoading(true)
     setError(null)
     try {
-      console.log('[ChatHistory] Loading chat sessions for mode:', selectedModeCategory, 'forceRefresh:', forceRefresh)
-      
-      // Get sessions from store cache (will fetch from API if needed)
-      // Use 'chat' as default if selectedModeCategory is null
+      // Use 'chat' as default mode for API call
       const modeCategory = selectedModeCategory || 'chat'
       const allSessions = await getChatHistory(modeCategory, forceRefresh)
-      console.log('[ChatHistory] Received sessions from store:', {
-        total: allSessions.length,
-        sessions: allSessions.map(s => ({
-          id: s.session_id,
-          title: s.title,
-          agent_mode: s.agent_mode,
-          status: s.status
-        }))
-      })
-      
-      // Filter sessions based on current mode
-      const filteredSessions = filterSessionsByMode(allSessions)
-      console.log('[ChatHistory] Filtered sessions:', {
-        before: allSessions.length,
-        after: filteredSessions.length,
-        mode: selectedModeCategory
-      })
+
+      // No filtering — show all non-workflow sessions
+      const filteredSessions = allSessions.filter(s => (s.agent_mode || '').toLowerCase() !== 'workflow')
       setSessions(filteredSessions)
-      
+
       // Fetch preset details for sessions that have preset_query_id
       const presetPromises = filteredSessions
         .filter(session => session.preset_query_id && !presetCache[session.preset_query_id])
         .map(session => fetchPresetQuery(session.preset_query_id!))
-      
+
       if (presetPromises.length > 0) {
         await Promise.all(presetPromises)
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load chat history'
       setError(errorMessage)
-      console.error('[ChatHistory] Failed to load chat sessions:', {
-        error: err,
-        message: errorMessage,
-        mode: selectedModeCategory
-      })
     } finally {
       setLoading(false)
     }
-  }, [presetCache, fetchPresetQuery, filterSessionsByMode, selectedModeCategory, getChatHistory])
+  }, [presetCache, fetchPresetQuery, selectedModeCategory, getChatHistory])
 
   // Load sessions on mount or when mode category changes
   // The store cache handles preventing unnecessary API calls
@@ -219,6 +176,65 @@ export default function ChatHistorySection({
       }
     }
   }
+
+  // Share popover state
+  const [shareSessionId, setShareSessionId] = useState<string | null>(null)
+  const [shareUrl, setShareUrl] = useState('')
+  const [isCreatingShare, setIsCreatingShare] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const sharePopoverRef = useRef<HTMLDivElement>(null)
+  const shareButtonRef = useRef<HTMLButtonElement>(null)
+
+  // Close share popover on outside click or Escape
+  useEffect(() => {
+    if (!shareSessionId) return
+    const handleClick = (e: MouseEvent) => {
+      if (
+        sharePopoverRef.current && !sharePopoverRef.current.contains(e.target as Node) &&
+        shareButtonRef.current && !shareButtonRef.current.contains(e.target as Node)
+      ) {
+        setShareSessionId(null)
+      }
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShareSessionId(null)
+    }
+    document.addEventListener('mousedown', handleClick)
+    document.addEventListener('keydown', handleKey)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('keydown', handleKey)
+    }
+  }, [shareSessionId])
+
+  const handleShareSession = useCallback(async (e: React.MouseEvent, session: ChatHistorySummary) => {
+    e.stopPropagation()
+    if (shareSessionId === session.session_id) {
+      setShareSessionId(null)
+      return
+    }
+    setIsCreatingShare(true)
+    setShareUrl('')
+    setCopied(false)
+    setShareSessionId(session.session_id)
+    try {
+      const res = await sessionShareApi.createShare(session.session_id)
+      setShareUrl(`${window.location.origin}/shared/${res.token}`)
+    } catch {
+      setShareUrl('')
+      setShareSessionId(null)
+    } finally {
+      setIsCreatingShare(false)
+    }
+  }, [shareSessionId])
+
+  const handleCopyShareUrl = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!shareUrl) return
+    await navigator.clipboard.writeText(shareUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [shareUrl])
 
   // Hide entire section in workflow mode
   if (selectedModeCategory === 'workflow') {
@@ -331,7 +347,11 @@ export default function ChatHistorySection({
                   </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {formatDate(session.last_activity || session.created_at)}
-                  {session.agent_mode && (
+                  {session.config?.delegation_mode === 'plan' ? (
+                    <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+                      Multi Agent
+                    </span>
+                  ) : session.agent_mode && session.agent_mode !== 'simple' && (
                     <span className="ml-2 px-2 py-0.5 rounded text-xs bg-muted text-muted-foreground">
                       {formatAgentMode(session.agent_mode)}
                     </span>
@@ -365,15 +385,57 @@ export default function ChatHistorySection({
                   })()}
                 </div>
               </div>
-              <button
-                onClick={(e) => handleDeleteSession(e, session)}
-                className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-all"
-                title="Delete session"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-0.5 relative">
+                <button
+                  ref={shareSessionId === session.session_id ? shareButtonRef : undefined}
+                  onClick={(e) => handleShareSession(e, session)}
+                  className="p-1 text-gray-400 hover:text-blue-600 dark:text-gray-500 dark:hover:text-blue-400 transition-all"
+                  title="Share session"
+                >
+                  <Share2 size={12} />
+                </button>
+                <button
+                  onClick={(e) => handleDeleteSession(e, session)}
+                  className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-400 transition-all"
+                  title="Delete session"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+
+                {/* Share popover */}
+                {shareSessionId === session.session_id && (
+                  <div
+                    ref={sharePopoverRef}
+                    onClick={(e) => e.stopPropagation()}
+                    className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-2 w-64"
+                  >
+                    {isCreatingShare ? (
+                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <Loader2 size={12} className="animate-spin" />
+                        Creating share link...
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          readOnly
+                          value={shareUrl}
+                          className="flex-1 text-xs bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-1 text-gray-700 dark:text-gray-300 outline-none min-w-0"
+                        />
+                        <button
+                          onClick={handleCopyShareUrl}
+                          className="flex-shrink-0 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
+                          title="Copy link"
+                        >
+                          {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             )
           })}
@@ -388,7 +450,7 @@ export default function ChatHistorySection({
                   try {
                     const modeCategory = selectedModeCategory || 'chat'
                     const allSessions = await loadMoreChatHistory(modeCategory)
-                    const filteredSessions = filterSessionsByMode(allSessions)
+                    const filteredSessions = allSessions.filter(session => (session.agent_mode || '').toLowerCase() !== 'workflow')
                     setSessions(filteredSessions)
                     
                     // Fetch preset details for newly loaded sessions

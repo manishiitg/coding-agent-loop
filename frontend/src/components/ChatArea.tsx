@@ -1420,7 +1420,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         const orphanedTabs = Object.values(chatStore.chatTabs).filter(tab =>
           tab.metadata?.mode === tabMode && !tab.sessionId
         ).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-        let orphanIndex = 0
 
         // For each active session, create a tab if one doesn't exist
         for (const activeSession of runningSessions) {
@@ -1449,17 +1448,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           sessionsBeingRestored.add(sessionId)
 
           // Try to re-use a persisted tab (from localStorage) instead of creating a new one
-          const orphanedTab = orphanedTabs[orphanIndex]
+          // Match by tab name vs session query to handle non-deterministic backend ordering
+          const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
           let targetTabId: string
 
-          if (orphanedTab) {
-            orphanIndex++
-            console.log(`[AutoRestore] Re-associating persisted tab ${orphanedTab.tabId} with session ${sessionId}`)
+          const matchedOrphanIdx = orphanedTabs.findIndex(tab => tab.name === sessionTitle)
+          if (matchedOrphanIdx >= 0) {
+            const orphanedTab = orphanedTabs[matchedOrphanIdx]
+            orphanedTabs.splice(matchedOrphanIdx, 1)
+            console.log(`[AutoRestore] Re-associating persisted tab ${orphanedTab.tabId} with session ${sessionId} (name match: "${sessionTitle}")`)
+            chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
+            targetTabId = orphanedTab.tabId
+          } else if (orphanedTabs.length > 0) {
+            // Fallback: use first available orphan (better than creating a new tab)
+            const orphanedTab = orphanedTabs.shift()!
+            console.log(`[AutoRestore] Re-associating persisted tab ${orphanedTab.tabId} with session ${sessionId} (fallback, no name match)`)
             chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
             targetTabId = orphanedTab.tabId
           } else {
-            // Create a new tab for this active session
-            const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
+            // No orphans left — create a new tab for this active session
             const agentMode = activeSession.agent_mode?.toLowerCase() || ''
             const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
               agentMode === 'orchestrator' ? 'advanced' : 'tiny'
@@ -1582,7 +1589,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
             // Load events for this session
             const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (targetTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
-            const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
+            // Use -1 to get ALL in-memory events for active sessions being restored
+            // This ensures delegation_start and orchestrator events are included for full hierarchy reconstruction
+            const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
             const pollingEvents: PollingEvent[] = response.events
 
             // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
@@ -1592,6 +1601,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Backend tracks the actual event index which may be higher due to filtering/cleanup
             const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
             setTabLastEventIndex(sessionId, lastIndex)
+            if (response.has_more !== undefined) {
+              useChatStore.getState().setTabHasMoreOlderEvents(sessionId, response.has_more)
+            }
             console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for session ${sessionId}, last_processed_index=${lastIndex}`)
 
             // Set streaming/completed status based on actual session status

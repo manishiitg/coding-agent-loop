@@ -1946,8 +1946,8 @@ export default function Workspace({
                 onFolderRename={handleFolderRename}
                 onFileDownload={handleFileDownload}
                 hideAddToChat={selectedModeCategory === 'workflow' && !!workflowFolderPath}
-                onExportBackup={selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder?.filepath ? handleExportBackup : undefined}
-                onImportBackup={selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder?.filepath ? handleImportBackupClick : undefined}
+                onExportBackup={handleExportBackup}
+                onImportBackup={handleImportBackupClick}
                 workflowFolderPath={workflowFolderPath}
                 isExporting={isExporting}
                 isImporting={isImporting}

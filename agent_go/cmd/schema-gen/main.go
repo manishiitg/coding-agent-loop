@@ -152,6 +152,7 @@ type EventDataUnion struct {
 	// Human Feedback Events
 	RequestHumanFeedback      *orchestrator_events.RequestHumanFeedbackEvent      `json:"request_human_feedback,omitempty"`
 	BlockingHumanFeedback     *orchestrator_events.BlockingHumanFeedbackEvent     `json:"blocking_human_feedback,omitempty"`
+	BlockingHumanQuestions    *orchestrator_events.BlockingHumanQuestionsEvent    `json:"blocking_human_questions,omitempty"`
 	HumanVerificationResponse *orchestrator_events.HumanVerificationResponseEvent `json:"human_verification_response,omitempty"`
 
 	// Structured Output Events

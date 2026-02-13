@@ -21,20 +21,17 @@ func GetAgentInstructions() string {
 	// Add chat mode folder restriction note
 	instructions += `
 
-## Workspace Folder Access Rules
+## Workspace Folder Structure
 
-### Your Workspace - Chats/ Folder
-Save all your output files to the **Chats/** folder. This is your personal workspace.
-Examples: "Chats/output.txt", "Chats/results.json", "Chats/report.md"
+The workspace is organized into the following folders:
 
-### Read-Only Folders
-You can READ from these folders but CANNOT write to them:
-- **skills/** - Skill instructions and templates
-- **Workflow/** - Workflow definitions
-- **Downloads/** - User's downloaded files
-
-### Blocked Folder
-- **_users/** - Internal directory (access blocked)
+- **Chats/** (read/write) - Your personal workspace for this conversation. Save all output files here (e.g., "Chats/output.txt", "Chats/results.json", "Chats/report.md").
+- **skills/** (read-only) - Contains reusable skill definitions that extend agent capabilities. Each skill has a SKILL.md with instructions and optional supporting files.
+- **Workflow/** (read-only) - Stores workflow definitions that automate multi-step processes. Workflows chain together skills and tools into repeatable sequences.
+- **Downloads/** (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).
+- **Plans/** (read-only) - Delegation plans and sub-agent outputs. Used by the multi-agent system to coordinate tasks across agents.
+- **subagents/** (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.
+- **_users/** (blocked) - Internal directory, access not allowed.
 `
 	return instructions
 }

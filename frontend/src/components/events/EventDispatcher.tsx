@@ -1393,6 +1393,149 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
 
+  // Background Agent Started Event
+  if (event.type === 'background_agent_started') {
+    const data = event.data as {
+      data?: { agent_id?: string; name?: string; instruction?: string; fields?: { agent_id?: string; name?: string; instruction?: string } }
+      agent_id?: string
+      name?: string
+      instruction?: string
+    }
+    const fields = data?.data?.fields || data?.data || data
+    const agentName = fields?.name || 'Background Agent'
+    const agentId = fields?.agent_id || ''
+    const instruction = fields?.instruction || ''
+
+    return (
+      <CompactWrapper>
+        <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-blue-700 dark:text-blue-300`}>
+              {agentName}
+            </span>
+            <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-500 dark:text-blue-400`}>
+              started
+            </span>
+            {agentId && (
+              <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-400 dark:text-gray-500 font-mono`}>
+                {agentId}
+              </span>
+            )}
+          </div>
+          {instruction && (
+            <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-600 dark:text-blue-400 mt-1 truncate`} title={instruction}>
+              {instruction}
+            </div>
+          )}
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  // Background Agent Completed Event
+  if (event.type === 'background_agent_completed') {
+    const data = event.data as {
+      data?: { agent_id?: string; name?: string; status?: string; result?: string; error?: string; duration?: string; fields?: { agent_id?: string; name?: string; status?: string; result?: string; error?: string; duration?: string } }
+      agent_id?: string
+      name?: string
+      status?: string
+      result?: string
+      error?: string
+      duration?: string
+    }
+    const fields = data?.data?.fields || data?.data || data
+    const agentName = fields?.name || 'Background Agent'
+    const status = fields?.status || 'completed'
+    const duration = fields?.duration || ''
+    const result = fields?.result || ''
+    const error = fields?.error || ''
+    const isSuccess = status === 'completed'
+    const isFailed = status === 'failed'
+
+    const statusColor = isSuccess ? 'green' : isFailed ? 'red' : 'gray'
+    const bgColor = isSuccess ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' :
+                    isFailed ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
+                    'bg-gray-50 dark:bg-gray-900/20 border-gray-200 dark:border-gray-800'
+    const textColor = isSuccess ? 'text-green-700 dark:text-green-300' :
+                      isFailed ? 'text-red-700 dark:text-red-300' :
+                      'text-gray-700 dark:text-gray-300'
+
+    return (
+      <CompactWrapper>
+        <details className={`${bgColor} border rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+          <summary className="cursor-pointer flex items-center gap-2">
+            <span className={`inline-block w-2 h-2 rounded-full bg-${statusColor}-500`} />
+            <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium ${textColor}`}>
+              {agentName}
+            </span>
+            <span className={`${compact ? 'text-[10px]' : 'text-xs'} ${textColor} opacity-75`}>
+              {status}{duration ? ` (${duration})` : ''}
+            </span>
+          </summary>
+          <div className={`mt-2 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+            {error && (
+              <div className="text-red-600 dark:text-red-400 whitespace-pre-wrap">{error}</div>
+            )}
+            {result && (
+              <div className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap max-h-40 overflow-y-auto">{result}</div>
+            )}
+          </div>
+        </details>
+      </CompactWrapper>
+    )
+  }
+
+  // Background Agent Terminated Event
+  if (event.type === 'background_agent_terminated') {
+    const data = event.data as {
+      data?: { agent_id?: string; name?: string; fields?: { agent_id?: string; name?: string } }
+      agent_id?: string
+      name?: string
+    }
+    const fields = data?.data?.fields || data?.data || data
+    const agentName = fields?.name || 'Background Agent'
+
+    return (
+      <CompactWrapper>
+        <div className={`bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-gray-400" />
+            <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500 dark:text-gray-400`}>
+              {agentName}
+            </span>
+            <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-400 dark:text-gray-500`}>
+              terminated
+            </span>
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
+
+  // Synthetic Turn Ready Event (shown when a background agent has completed and the main agent will process)
+  if (event.type === 'synthetic_turn_ready') {
+    const data = event.data as {
+      data?: { message?: string; fields?: { message?: string } }
+      message?: string
+    }
+    const fields = data?.data?.fields || data?.data || data
+    const message = fields?.message || 'Background agent completed. Processing results...'
+
+    return (
+      <CompactWrapper>
+        <div className={`bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+            <span className={`${compact ? 'text-xs' : 'text-sm'} text-amber-700 dark:text-amber-300`}>
+              {message}
+            </span>
+          </div>
+        </div>
+      </CompactWrapper>
+    )
+  }
+
   // Default case for unknown event types
   return (
     <div className={`bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
@@ -1412,8 +1555,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       prevProps.eventCount !== nextProps.eventCount) {
     return false
   }
-  // For delegation_start/end events, also compare live stats so they re-render with updated tool counts/names
-  if ((prevProps.event.type === 'delegation_start' || prevProps.event.type === 'delegation_end') && prevProps.delegationStats !== nextProps.delegationStats) {
+  // For delegation and background agent events, also compare live stats so they re-render
+  if ((prevProps.event.type === 'delegation_start' || prevProps.event.type === 'delegation_end' ||
+       prevProps.event.type === 'background_agent_started' || prevProps.event.type === 'background_agent_completed') && prevProps.delegationStats !== nextProps.delegationStats) {
     return false
   }
   // Check if childrenNodes changed (for sub-agent hierarchy expansion)

@@ -423,7 +423,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                     e.stopPropagation()
                     handleWorkspaceLink(filepath)
                   }}
-                  onMouseDown={(_e) => {
+                  onMouseDown={() => {
                      console.log('[MarkdownWorkspace] Mouse down on link:', filepath)
                   }}
                   style={{ pointerEvents: 'auto', cursor: 'pointer' }}

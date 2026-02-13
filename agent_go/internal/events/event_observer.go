@@ -86,6 +86,10 @@ func (m *minimalLogger) Fatal(msg string, err error, fields ...loggerv2.Field) {
 func (m *minimalLogger) With(fields ...loggerv2.Field) loggerv2.Logger         { return m }
 func (m *minimalLogger) Close() error                                          { return nil }
 
+// ToolEventCallback is called when tool_call_start or tool_call_end events are observed.
+// Parameters: toolCallID, toolName, eventType ("start"/"end"/"error"), duration (0 for start)
+type ToolEventCallback func(toolCallID, toolName, eventType string, duration time.Duration)
+
 // DelegationEventObserver implements AgentEventListener to capture sub-agent events
 // It tags events with Component field and ParentID to enable hierarchical display in UI
 type DelegationEventObserver struct {
@@ -95,6 +99,7 @@ type DelegationEventObserver struct {
 	delegationID           string
 	delegationStartEventID string // ID of the delegation_start event (for parent_id linking)
 	logger                 loggerv2.Logger
+	OnToolEvent            ToolEventCallback // optional callback for tool call tracking
 }
 
 // NewDelegationEventObserver creates a new event observer for delegated sub-agents
@@ -133,6 +138,18 @@ func (deo *DelegationEventObserver) HandleEvent(ctx context.Context, event *even
 
 	// Store the event by sessionID
 	deo.store.AddEvent(deo.sessionID, storeEvent)
+
+	// Notify tool event callback if set
+	if deo.OnToolEvent != nil && event.Data != nil {
+		switch d := event.Data.(type) {
+		case *events.ToolCallStartEvent:
+			deo.OnToolEvent(d.ToolCallID, d.ToolName, "start", 0)
+		case *events.ToolCallEndEvent:
+			deo.OnToolEvent(d.ToolCallID, d.ToolName, "end", d.Duration)
+		case *events.ToolCallErrorEvent:
+			deo.OnToolEvent(d.ToolCallID, d.ToolName, "error", d.Duration)
+		}
+	}
 
 	return nil
 }

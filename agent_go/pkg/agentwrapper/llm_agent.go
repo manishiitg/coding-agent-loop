@@ -206,9 +206,12 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	// Build agent options with smart routing configuration
 	agentOptions := []mcpagent.AgentOption{
 		mcpagent.WithTemperature(config.Temperature),
-		mcpagent.WithToolChoice(config.ToolChoice),
 		mcpagent.WithMaxTurns(config.MaxTurns),
 		mcpagent.WithToolTimeout(config.ToolTimeout),
+	}
+	// Only set tool_choice when non-empty — Azure/OpenAI reject tool_choice when no tools are present
+	if config.ToolChoice != "" {
+		agentOptions = append(agentOptions, mcpagent.WithToolChoice(config.ToolChoice))
 	}
 
 	// Add cross-provider fallback configuration if any fallbacks have a different provider

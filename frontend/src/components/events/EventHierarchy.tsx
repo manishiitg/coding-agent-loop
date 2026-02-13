@@ -81,7 +81,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // Filter out tool_call events for delegation tools - we show delegation_start/delegation_end
     // and blocking_human_feedback instead of raw tool_call events
     const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
-    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution', 'human_feedback', 'human_questions'];
+    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution', 'human_feedback', 'human_questions', 'query_agent', 'terminate_agent', 'list_agents'];
     allEvents = allEvents.filter(event => {
       if (!DELEGATE_TOOL_EVENTS.includes(event.type || '')) return true;
       const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;

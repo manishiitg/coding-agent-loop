@@ -653,3 +653,32 @@ type DelegationPlanUpdatedEventData struct {
 func (d *DelegationPlanUpdatedEventData) GetEventType() events.EventType {
 	return events.EventType("delegation_plan_updated")
 }
+
+// GenericEventData is a generic event data type that wraps a map
+// Used for events that don't need a specific struct (e.g. background agent events)
+type GenericEventData struct {
+	EventType string                 `json:"event_type"`
+	Fields    map[string]interface{} `json:"fields,omitempty"`
+}
+
+func (d *GenericEventData) GetEventType() events.EventType {
+	return events.EventType(d.EventType)
+}
+
+// MarshalJSON flattens Fields into the top-level JSON
+func (d *GenericEventData) MarshalJSON() ([]byte, error) {
+	result := make(map[string]interface{})
+	for k, v := range d.Fields {
+		result[k] = v
+	}
+	result["event_type"] = d.EventType
+	return json.Marshal(result)
+}
+
+// NewGenericEventData creates a GenericEventData with the given type and fields
+func NewGenericEventData(eventType string, fields map[string]interface{}) *GenericEventData {
+	return &GenericEventData{
+		EventType: eventType,
+		Fields:    fields,
+	}
+}

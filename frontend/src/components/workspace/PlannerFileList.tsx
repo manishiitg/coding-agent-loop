@@ -67,6 +67,7 @@ export default function PlannerFileList({
   hideAddToChat = false,
   onExportBackup,
   onImportBackup,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   workflowFolderPath,
   isExporting = false,
   isImporting = false,
@@ -92,19 +93,6 @@ export default function PlannerFileList({
     // This ensures workspace tool events can highlight files even when paths are adjusted in workflow mode
     const isHighlighted = highlightedFile === file.filepath || highlightedFile === file.originalFilepath
     const isInContext = chatFileContext.some(ctx => ctx.path === file.filepath)
-    
-    // Check if this folder is the workflow folder
-    // In workflow mode, the workflow folder appears as the root folder in filtered view
-    // We check:
-    // 1. If the folder's originalFilepath matches the workflowFolderPath (exact match)
-    // 2. If the folder's filepath matches the workflowFolderPath (when paths aren't adjusted)
-    // 3. If it's at depth 0 (root level) in filtered view and we're in workflow mode
-    //    (the workflow folder is shown as root in filtered view)
-    const isWorkflowFolder = file.type === 'folder' && workflowFolderPath && (
-      (file.originalFilepath && file.originalFilepath === workflowFolderPath) ||
-      (file.filepath && file.filepath === workflowFolderPath) ||
-      (depth === 0 && workflowFolderPath) // Root folder in filtered workflow view
-    )
     
     const isSelected = selectedFiles.has(file.filepath)
 

@@ -59,6 +59,14 @@ const (
 	DelegationServersKey delegationContextKey = "delegation_servers"
 	// PlanFileFolderPath is the workspace folder for delegation plan files
 	PlanFileFolderPath = "Plans"
+	// BGAgentRegistryKey is the context key for the background agent registry
+	BGAgentRegistryKey delegationContextKey = "bg_agent_registry"
+	// BGAgentSessionIDKey is the context key for the session ID used by background agents
+	BGAgentSessionIDKey delegationContextKey = "bg_agent_session_id"
+	// ToolEventCallbackKey is the context key for tool call timing callback (used by background agents)
+	ToolEventCallbackKey delegationContextKey = "tool_event_callback"
+	// BackgroundDelegateKey is the context key for the async delegate function
+	BackgroundDelegateKey delegationContextKey = "background_delegate_func"
 )
 
 // PlanEventEmitter is the interface for emitting workspace file events when plans are saved
@@ -175,6 +183,44 @@ type SubAgentTemplateSummary struct {
 // Injected via context by the server
 type ExecuteDelegatedTaskFunc func(ctx context.Context, instruction string) (string, error)
 
+// BackgroundDelegateFunc is the function signature for async background delegation
+// Used only in plan/multi-agent mode. Returns immediately with an agentID.
+type BackgroundDelegateFunc func(ctx context.Context, name, instruction string) (agentID string, err error)
+
+// BGAgentInfo holds a snapshot of a background agent's state (for tool responses)
+// BGAgentHistoryEntry mirrors HistoryEntry from background_agents.go (avoids import cycle)
+type BGAgentHistoryEntry struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// BGAgentToolCall represents a tool call with timing info
+type BGAgentToolCall struct {
+	ToolName string `json:"tool_name"`
+	Duration string `json:"duration,omitempty"` // e.g. "3s", "" if still running
+	Status   string `json:"status"`            // "running", "completed", "error"
+}
+
+type BGAgentInfo struct {
+	ID              string                `json:"id"`
+	Name            string                `json:"name"`
+	Status          string                `json:"status"`
+	RecentHistory   []BGAgentHistoryEntry `json:"recent_history,omitempty"`
+	RecentToolCalls []BGAgentToolCall     `json:"recent_tool_calls,omitempty"`
+	Result          string                `json:"result,omitempty"`
+	Error           string                `json:"error,omitempty"`
+	Elapsed         string                `json:"elapsed,omitempty"`
+	CreatedAt       string                `json:"created_at,omitempty"`
+	CompletedAt     string                `json:"completed_at,omitempty"`
+}
+
+// BGAgentQuerier is the interface for querying background agent state
+type BGAgentQuerier interface {
+	QueryAgent(sessionID, agentID string, last, offset int) (*BGAgentInfo, error)
+	ListAgents(sessionID string) ([]*BGAgentInfo, error)
+	TerminateAgent(sessionID, agentID string) error
+}
+
 // CreateDelegationTools creates all delegation virtual tools
 func CreateDelegationTools() []llmtypes.Tool {
 	var tools []llmtypes.Tool
@@ -188,6 +234,10 @@ func CreateDelegationTools() []llmtypes.Tool {
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
+					"name": map[string]interface{}{
+						"type":        "string",
+						"description": "Short, descriptive name for this agent (shown to user). E.g. 'Research APIs', 'Write tests', 'Fix auth bug'.",
+					},
 					"instruction": map[string]interface{}{
 						"type":        "string",
 						"description": "Comprehensive, self-contained instructions for the sub-agent. Include all necessary context, requirements, and expected outcomes.",
@@ -218,7 +268,7 @@ func CreateDelegationTools() []llmtypes.Tool {
 						"description": "Optional list of MCP server names for this sub-agent. When specified, the sub-agent only connects to these servers instead of all available ones. Use this to give the worker only the tools it needs, reducing noise and improving efficiency.",
 					},
 				},
-				"required": []string{"instruction"},
+				"required": []string{"name", "instruction"},
 			}),
 		},
 	}
@@ -277,6 +327,68 @@ func CreateDelegationTools() []llmtypes.Tool {
 	}
 	tools = append(tools, confirmPlanTool)
 
+	// query_agent - Check status of a background agent
+	queryAgentTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "query_agent",
+			Description: "Check the status of a background agent. For running agents, returns recent conversation history (tool calls & responses). For completed agents, returns the final result. Use 'last' and 'offset' to paginate through history.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"agent_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The ID of the background agent to query (returned from delegate).",
+					},
+					"last": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of recent history entries to return (default: 2). Use higher values to see more context.",
+					},
+					"offset": map[string]interface{}{
+						"type":        "integer",
+						"description": "Skip this many entries from the end (default: 0). E.g. last=3, offset=5 returns entries 5th-to-8th from the end.",
+					},
+				},
+				"required": []string{"agent_id"},
+			}),
+		},
+	}
+	tools = append(tools, queryAgentTool)
+
+	// terminate_agent - Cancel a running background agent
+	terminateAgentTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "terminate_agent",
+			Description: "Cancel a running background agent. The agent will be stopped and its status set to 'canceled'.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"agent_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The ID of the background agent to terminate.",
+					},
+				},
+				"required": []string{"agent_id"},
+			}),
+		},
+	}
+	tools = append(tools, terminateAgentTool)
+
+	// list_agents - List all background agents in the session
+	listAgentsTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "list_agents",
+			Description: "List all background agents in the current session with their name, status, and elapsed time.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			}),
+		},
+	}
+	tools = append(tools, listAgentsTool)
+
 	return tools
 }
 
@@ -288,12 +400,20 @@ func CreateDelegationToolExecutors() map[string]func(ctx context.Context, args m
 	executors["delegate"] = handleDelegate
 	executors["create_delegation_plan"] = handleCreateDelegationPlan
 	executors["confirm_plan_execution"] = handleConfirmPlanExecution
+	executors["query_agent"] = handleQueryAgent
+	executors["terminate_agent"] = handleTerminateAgent
+	executors["list_agents"] = handleListAgents
 
 	return executors
 }
 
 // handleDelegate executes a delegated task via sub-agent
+// In plan/multi-agent mode with BackgroundDelegateFunc set, delegation is ASYNC.
+// In spawn mode (or when BackgroundDelegateFunc is not set), delegation is synchronous.
 func handleDelegate(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract name argument (required in plan mode, optional in spawn mode)
+	name, _ := args["name"].(string)
+
 	// Extract instruction argument
 	instruction, ok := args["instruction"].(string)
 	if !ok || instruction == "" {
@@ -332,6 +452,49 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		return "", fmt.Errorf("maximum delegation depth (%d) reached - cannot delegate further to prevent infinite recursion", MaxDelegationDepth)
 	}
 
+	// --- ASYNC PATH: Background delegation (plan/multi-agent mode) ---
+	if bgDelegate, ok := ctx.Value(BackgroundDelegateKey).(BackgroundDelegateFunc); ok && bgDelegate != nil {
+		if name == "" {
+			name = "Background Task" // Fallback name
+		}
+
+		// Pass context values to the background delegate function via context
+		bgCtx := context.WithValue(ctx, DelegationDepthKey, currentDepth+1)
+		if reasoningLevel != "" {
+			bgCtx = context.WithValue(bgCtx, ReasoningLevelKey, reasoningLevel)
+		}
+		if planFolder != "" {
+			bgCtx = context.WithValue(bgCtx, PlanFolderKey, planFolder)
+		}
+		if toolMode != "" {
+			bgCtx = context.WithValue(bgCtx, ToolModeKey, toolMode)
+		}
+		if agentTemplate != "" {
+			bgCtx = context.WithValue(bgCtx, AgentTemplateKey, agentTemplate)
+		}
+		if len(delegationServers) > 0 {
+			bgCtx = context.WithValue(bgCtx, DelegationServersKey, delegationServers)
+		}
+
+		agentID, err := bgDelegate(bgCtx, name, instruction)
+		if err != nil {
+			return "", fmt.Errorf("failed to start background agent: %w", err)
+		}
+
+		log.Printf("[DELEGATION] Started background agent '%s' (ID: %s) at depth %d", name, agentID, currentDepth+1)
+
+		result := map[string]interface{}{
+			"async":    true,
+			"agent_id": agentID,
+			"name":     name,
+			"status":   "running",
+			"message":  fmt.Sprintf("Background agent '%s' started. You'll be notified when it completes. Use query_agent(agent_id: \"%s\") to check status.", name, agentID),
+		}
+		resultJSON, _ := json.MarshalIndent(result, "", "  ")
+		return string(resultJSON), nil
+	}
+
+	// --- SYNC PATH: Blocking delegation (spawn mode or no background func) ---
 	// Get the execution function from context
 	executeFunc, ok := ctx.Value(ExecuteDelegatedTaskKey).(ExecuteDelegatedTaskFunc)
 	if !ok || executeFunc == nil {
@@ -382,6 +545,97 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 
 	resultJSON, _ := json.MarshalIndent(delegationResult, "", "  ")
+	return string(resultJSON), nil
+}
+
+// handleQueryAgent checks the status of a background agent
+func handleQueryAgent(ctx context.Context, args map[string]interface{}) (string, error) {
+	agentID, _ := args["agent_id"].(string)
+	if agentID == "" {
+		return "", fmt.Errorf("agent_id is required")
+	}
+
+	// Parse optional pagination params
+	last := 2 // default
+	if v, ok := args["last"].(float64); ok && v > 0 {
+		last = int(v)
+	}
+	offset := 0
+	if v, ok := args["offset"].(float64); ok && v > 0 {
+		offset = int(v)
+	}
+
+	querier, ok := ctx.Value(BGAgentRegistryKey).(BGAgentQuerier)
+	if !ok || querier == nil {
+		return "", fmt.Errorf("background agent management not available")
+	}
+
+	sessionID, _ := ctx.Value(BGAgentSessionIDKey).(string)
+	if sessionID == "" {
+		return "", fmt.Errorf("session ID not available")
+	}
+
+	info, err := querier.QueryAgent(sessionID, agentID, last, offset)
+	if err != nil {
+		return "", err
+	}
+
+	resultJSON, _ := json.MarshalIndent(info, "", "  ")
+	return string(resultJSON), nil
+}
+
+// handleTerminateAgent cancels a running background agent
+func handleTerminateAgent(ctx context.Context, args map[string]interface{}) (string, error) {
+	agentID, _ := args["agent_id"].(string)
+	if agentID == "" {
+		return "", fmt.Errorf("agent_id is required")
+	}
+
+	querier, ok := ctx.Value(BGAgentRegistryKey).(BGAgentQuerier)
+	if !ok || querier == nil {
+		return "", fmt.Errorf("background agent management not available")
+	}
+
+	sessionID, _ := ctx.Value(BGAgentSessionIDKey).(string)
+	if sessionID == "" {
+		return "", fmt.Errorf("session ID not available")
+	}
+
+	if err := querier.TerminateAgent(sessionID, agentID); err != nil {
+		return "", err
+	}
+
+	result := map[string]interface{}{
+		"agent_id": agentID,
+		"status":   "canceled",
+		"message":  fmt.Sprintf("Agent %s has been terminated.", agentID),
+	}
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	return string(resultJSON), nil
+}
+
+// handleListAgents lists all background agents in the session
+func handleListAgents(ctx context.Context, args map[string]interface{}) (string, error) {
+	querier, ok := ctx.Value(BGAgentRegistryKey).(BGAgentQuerier)
+	if !ok || querier == nil {
+		return "", fmt.Errorf("background agent management not available")
+	}
+
+	sessionID, _ := ctx.Value(BGAgentSessionIDKey).(string)
+	if sessionID == "" {
+		return "", fmt.Errorf("session ID not available")
+	}
+
+	agents, err := querier.ListAgents(sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	result := map[string]interface{}{
+		"agents": agents,
+		"count":  len(agents),
+	}
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
 }
 
@@ -548,6 +802,10 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 	if reasoningLevel != "" && reasoningLevel != "high" && reasoningLevel != "medium" && reasoningLevel != "low" {
 		reasoningLevel = "" // Ignore invalid values
 	}
+	// Planning is a high-reasoning task — default to "high" if not specified
+	if reasoningLevel == "" {
+		reasoningLevel = "high"
+	}
 
 	// Check delegation depth
 	currentDepth := 0
@@ -660,6 +918,24 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 				}
 			}
 		}
+
+		// Fallback: if plan.md was not written by the planner sub-agent (common with
+		// smaller models that return the plan as text instead of using tools), write it now.
+		if planContent == "" && plannerResult != "" {
+			// Extract markdown plan from the planner's text response
+			content := extractPlanMarkdown(plannerResult)
+			if content != "" {
+				if _, writeErr := wsClient.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{
+					Filepath: planFilePath,
+					Content:  content,
+				}); writeErr != nil {
+					log.Printf("[DELEGATION PLAN] Warning: fallback write of plan.md failed: %v", writeErr)
+				} else {
+					planContent = content
+					log.Printf("[DELEGATION PLAN] Fallback: wrote planner text response to %s (%d chars)", planFilePath, len(content))
+				}
+			}
+		}
 	}
 
 	// Return summary to the manager with plan content included
@@ -713,6 +989,41 @@ func sanitizePlanName(name string) string {
 		parts = parts[:5]
 	}
 	return strings.Join(parts, "-")
+}
+
+// extractPlanMarkdown extracts the plan markdown from a planner's text response.
+// Smaller models often return the plan as text instead of writing it to a file.
+// This function tries to extract the useful content:
+//  1. If the response contains a markdown code fence (```markdown ... ```), extract that.
+//  2. If the response starts with "# Plan:", use it as-is.
+//  3. Otherwise, return the full response (better than nothing).
+func extractPlanMarkdown(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	// Try to extract from markdown code fence
+	fenceStarters := []string{"```markdown\n", "```md\n", "```\n"}
+	for _, starter := range fenceStarters {
+		if idx := strings.Index(text, starter); idx != -1 {
+			content := text[idx+len(starter):]
+			if endIdx := strings.Index(content, "\n```"); endIdx != -1 {
+				extracted := strings.TrimSpace(content[:endIdx])
+				if extracted != "" {
+					return extracted
+				}
+			}
+		}
+	}
+
+	// If it starts with a heading, use as-is (likely the plan itself)
+	if strings.HasPrefix(text, "# ") {
+		return text
+	}
+
+	// Last resort: return the full text
+	return text
 }
 
 // truncateString truncates a string to maxLen characters, adding "..." if truncated
@@ -862,12 +1173,12 @@ func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}
 		log.Printf("[PLAN APPROVAL] Warning: planContent is empty for %s — plan won't show in approval UI", currentPlanFolder)
 	}
 	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
-		emitter.EmitBlockingHumanFeedback(uniqueID, message, planContent, true, "Approve & Execute", "")
+		emitter.EmitBlockingHumanFeedback(uniqueID, message, planContent, false, "Approve & Execute", "")
 	}
 
-	// Create blocking request — yes/no mode but with empty noLabel so frontend hides reject button
+	// Create blocking request — free-text mode so user can approve or type feedback
 	if err := feedbackStore.CreateRequestWithSlack(ctx, uniqueID, message, "", &services.ButtonOptions{
-		YesNoOnly: true,
+		YesNoOnly: false,
 		YesLabel:  "Approve & Execute",
 		NoLabel:   "",
 	}); err != nil {
@@ -892,135 +1203,96 @@ Plan: %s (folder: %s)
 INSTRUCTIONS (follow these exactly):
 1. Read plan.md from %s/plan.md
 2. Execute one phase at a time — call delegate for ALL tasks in a phase simultaneously (multiple delegate calls in one turn)
-3. After each phase, re-read plan.md to collect worker learnings
-4. Relay learnings to next phase workers
-5. When ALL phases are done, summarize results to the user
+3. delegate calls return IMMEDIATELY — agents run in the background
+4. Use query_agent or list_agents to check progress while agents work
+5. When agents complete, you receive automatic notifications with results
+6. After all tasks in a phase complete, re-read plan.md and start next phase
+7. When ALL phases are done, summarize results to the user
 
 RULES:
 - NEVER call confirm_plan_execution again — the plan is already approved
 - NEVER show the plan to the user again — they already approved it
 - NEVER do work yourself — always delegate
 - Pass plan_folder to every delegate call
-- Each delegate call must have self-contained instructions (workers have no shared memory)`, currentPlanID, currentPlanFolder, currentPlanFolder), nil
+- Each delegate call must have self-contained instructions (workers have no shared memory)
+- You are NOT blocked — keep chatting with the user while agents work`, currentPlanID, currentPlanFolder, currentPlanFolder), nil
 	}
 
 	// User rejected — return their feedback
 	return fmt.Sprintf("User requested changes: %s\nPlease address the feedback and update the plan, then call confirm_plan_execution again.", response), nil
 }
 
-// GetPlanningModeInstructions returns system prompt for the planning phase of multi-agent mode
-func GetPlanningModeInstructions() string {
+// GetPlanWithBackgroundAgentsInstructions returns the combined system prompt for plan mode
+// with async background agents. Covers the full workflow: plan → approve → async execute.
+func GetPlanWithBackgroundAgentsInstructions() string {
 	return `
-## Multi-Agent Planning Mode
+## Multi-Agent Plan Mode (Plan → Approve → Async Execute)
 
-You are an **Orchestrator**. You plan and coordinate — you NEVER execute work yourself.
+You are an orchestrator. Your workflow has two phases:
 
-Your role: Research → Plan → Get Approval → Delegate execution to sub-agents.
+### Phase 1 — Planning (synchronous)
 
-**CRITICAL: You must NEVER directly create, edit, or write files. You must NEVER run shell commands to perform work (build, install, test, etc.). ALL work must be delegated to sub-agents via ` + "`delegate`" + `. You may only use workspace tools (read files, list files) and shell commands for RESEARCH purposes — reading, listing, and understanding the codebase.**
+1. If the user's request is vague or has open questions, use ` + "`human_questions`" + ` to ask clarifying questions about requirements, preferences, or constraints before planning. This avoids wasted effort. Skip this if the request is already clear and specific.
+2. Call ` + "`create_delegation_plan(plan_name, objective)`" + ` to spawn a planner sub-agent that writes plan.md. Include any user answers in the objective/context.
+3. Review the plan content returned in the result
+4. Call ` + "`confirm_plan_execution(plan_summary)`" + ` to present the plan to the user for approval
+5. If rejected, address feedback, update the plan, and call confirm_plan_execution again
 
-### Your Workflow
+### Phase 2 — Execution (async background agents)
 
-**Step 1: Understand & Clarify**
-- Read the user's request carefully
-- Use ` + "`human_questions`" + ` to ask 3-5 targeted clarifying questions BEFORE doing anything else. Example questions:
-  - What is the expected outcome? Any preferences on approach?
-  - Are there constraints, priorities, or specific requirements?
-  - Which parts are most important or time-sensitive?
-  - What should the scope include/exclude?
-- Alternatively, use ` + "`human_feedback`" + ` for a single question or yes/no confirmation
-- Do NOT skip this step — a good plan requires clear requirements from the human
+After the user approves, you enter execution mode:
 
-**Step 2: Research & Analyze**
-- Use ` + "`execute_shell_command`" + ` for research: ` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + ` to read files and explore the workspace
-- Gather context needed for planning
-- Use ` + "`human_questions`" + ` or ` + "`human_feedback`" + ` again if you discover ambiguities during research
-
-**Step 3: Create Plan**
-- Use ` + "`create_delegation_plan`" + ` with a clear objective and all context you gathered
-- The planner sub-agent will research further and write a structured plan.md
-
-**Step 4: Get Approval**
-- Call ` + "`confirm_plan_execution`" + ` with a plan summary (key phases, tasks, reasoning levels)
-- This BLOCKS until the user clicks "Approve & Execute" or "Request Changes"
-- If approved → phase switches to Execution Mode automatically
-- If rejected → read the feedback, adjust the plan, and call ` + "`confirm_plan_execution`" + ` again
-- Do NOT call ` + "`delegate`" + ` until plan is approved
-
-### Resuming an Existing Plan
-If the user references an existing plan file (e.g., via @ mention of a Plans/ folder or plan.md file):
-1. **Do NOT create a new plan** — read the existing plan.md using ` + "`execute_shell_command`" + `
-2. Review the plan content and task statuses (checked = done, unchecked = pending)
-3. Call ` + "`confirm_plan_execution`" + ` to get approval to resume execution
-4. Once approved, continue executing from where the plan left off — only delegate unchecked tasks
-5. The plan_folder is the folder containing the plan.md (e.g., "Plans/my-plan")
-
-### When NOT to Plan
-- Simple questions, explanations, or opinions — answer directly (no plan needed)
+1. Read plan.md from {plan_folder}/plan.md
+2. Execute one phase at a time — call ` + "`delegate(name, instruction)`" + ` for ALL tasks in a phase simultaneously
+3. Each delegate call returns IMMEDIATELY — agents run in the background
+4. Use ` + "`query_agent(agent_id)`" + ` or ` + "`list_agents()`" + ` to check progress while agents work
+5. When agents complete, you receive automatic notifications with results
+6. After all tasks in a phase complete, re-read plan.md to collect worker learnings
+7. Start the next phase, relaying learnings from previous phases
+8. When ALL phases are done, summarize results to the user
 
 ### Available Tools
-- ` + "`create_delegation_plan`" + ` — Create a structured plan with phased task breakdown
-- ` + "`delegate`" + ` — Spawn a sub-agent (available but use only after plan approval)
-- ` + "`human_questions`" + ` — Ask the user 3-8 structured questions (preferred for multi-topic clarification)
-- ` + "`human_feedback`" + ` — Ask a single question, present options, or get free-text input
-- ` + "`confirm_plan_execution`" + ` — Present plan for user approval, switches to Execution Mode
-- ` + "`execute_shell_command`" + ` — For research only (` + "`cat`" + `, ` + "`ls`" + `, ` + "`grep`" + `, ` + "`find`" + `). NEVER use for executing work.
 
-### Plan Rules
-- Plan is saved to Plans/{plan_id}/plan.md
-- **Always ask the human** before creating the plan — use ` + "`human_questions`" + ` to clarify requirements
-- NEVER execute plan tasks yourself — always delegate
-- After execution completes and you report results, you can create a new plan for follow-up requests
+**` + "`create_delegation_plan(plan_name, objective)`" + `** — Spawn a planner sub-agent that writes plan.md
+- Planner researches the objective and creates a phased task breakdown
+- Returns plan_id, plan_folder, and plan_content directly
 
-### IMPORTANT: After Plan Approval
-- Once ` + "`confirm_plan_execution`" + ` returns "APPROVED", you are in Execution Mode
-- **DO NOT** call ` + "`confirm_plan_execution`" + ` again — the plan is already approved
-- **DO NOT** show the plan to the user again — they already approved it
-- Immediately start delegating tasks phase by phase using ` + "`delegate`" + `
-`
-}
+**` + "`confirm_plan_execution(plan_summary)`" + `** — Present plan to user for approval (blocks until response)
+- If approved, you enter execution mode
+- If rejected, returns user feedback so you can adjust
 
-// GetExecutionModeInstructions returns system prompt for the execution phase of multi-agent mode
-func GetExecutionModeInstructions() string {
-	return `
-## Multi-Agent Execution Mode
+**` + "`delegate(name, instruction)`" + `** — Spawn a named background agent (returns immediately)
+- Provide a short descriptive name (shown to user in UI): "Research APIs", "Write tests", "Fix auth bug"
+- Provide comprehensive, self-contained instructions (agents have no shared memory)
+- Returns an agent_id for tracking
+- Optional: reasoning_level, plan_folder, tool_mode, agent_template, servers
 
-You are an **Orchestrator**. The plan has been approved. Delegate all work to sub-agents — you NEVER execute work yourself.
+**` + "`query_agent(agent_id)`" + `** — Check status/progress of a background agent
 
-**CRITICAL: You must NEVER directly create, edit, or write files. You must NEVER run shell commands to perform work (build, install, test, etc.). ALL work must be delegated to sub-agents via ` + "`delegate`" + `. You may only use workspace tools and shell commands to READ plan.md and verify results.**
+**` + "`terminate_agent(agent_id)`" + `** — Cancel a running background agent
 
-### Your Workflow
-1. Read plan.md from the Plans/ folder to get the full task breakdown
-2. Execute one phase at a time — call ` + "`delegate`" + ` for ALL tasks in a phase simultaneously
-3. After each phase completes, re-read plan.md to collect worker learnings (Key Knowledge, Notes)
-4. Relay relevant learnings to the next phase's workers via their delegate instructions
-5. Summarize results to the user when all phases are done
+**` + "`list_agents()`" + `** — See all background agents and their status
 
-### Available Tools
-- ` + "`delegate`" + ` — Spawn a sub-agent for a task (this is your PRIMARY tool)
-  - ` + "`reasoning_level`" + `: "high" (architecture, complex), "medium" (standard), "low" (formatting, config)
-  - ` + "`plan_folder`" + `: always pass to restrict worker writes
-  - ` + "`tool_mode`" + `: "simple" (default) for most tasks including writing scripts, coding, file work. "code_execution" ONLY when the user explicitly asks for code execution mode — never choose this on your own. "tool_search" when 3+ MCP servers are available
-  - ` + "`agent_template`" + `: sub-agent template folder name — loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
-  - ` + "`servers`" + `: list of MCP server names — give each worker only the servers it needs instead of all
-- ` + "`human_questions`" + ` — Ask the user multiple structured questions when you need clarification on several topics
-- ` + "`human_feedback`" + ` — Ask a single question or get confirmation
-- ` + "`execute_shell_command`" + ` — Read plan.md (` + "`cat Plans/{plan_id}/plan.md`" + `) to check progress and collect learnings
-- ` + "`create_delegation_plan`" + ` — Available but typically not needed (plan already exists)
+**` + "`human_questions`" + `** — Ask the user structured questions to clarify requirements
 
-### Execution Rules
-- **NEVER do work yourself** — always delegate via ` + "`delegate`" + `
-- Execute one phase at a time — all tasks within a phase run in parallel
-- Call ` + "`delegate`" + ` multiple times in one turn for parallel execution
-- Pass ` + "`plan_folder`" + ` to every delegate call
-- Self-contained instructions: each worker starts fresh with no shared memory
-- Re-read plan.md after each phase to collect discoveries
-- You are the quality gate — review worker output and verify results before reporting to user
+**` + "`human_feedback`" + `** — Ask a single question or present choices to the user
 
-### Follow-Up Tasks
-- After all phases are done and you've reported results, the user may ask follow-up questions
-- For follow-ups that need new work: call ` + "`create_delegation_plan`" + ` to create a new plan — this automatically resets back to Planning Mode
-- For simple follow-up questions: answer directly without a plan
+### Rules
+- **Always plan first**: Use create_delegation_plan before delegating any tasks
+- **Always get approval**: Call confirm_plan_execution before executing the plan
+- **One plan per conversation**: Never create a second plan unless the first is fully complete
+- **NEVER do work yourself** — always delegate to background agents
+- **Pass plan_folder** to every delegate call to restrict worker writes
+- **Self-contained instructions**: Each delegate call must include ALL context (workers have no shared memory)
+- **You are NOT blocked** — keep chatting with the user while agents work
+- **You are the quality gate** — review agent results before reporting to the user
+- **Re-read plan.md after each phase**: Workers write Key Knowledge and Notes. Collect their discoveries before the next phase.
+- **Relay learnings**: Include relevant Key Knowledge in the next delegate instruction
+
+### Tool Mode (optional, for delegate):
+- **"simple"** (default): Agent gets all tools directly. Best for most tasks.
+- **"code_execution"**: Agent writes Go code to call tools programmatically. ONLY use when user explicitly requests it.
+- **"tool_search"**: Agent discovers tools on-demand via search. Use when 3+ MCP servers are available.
 
 ### Limitations
 - Sub-agents cannot delegate further (max depth enforced)

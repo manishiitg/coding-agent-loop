@@ -1,6 +1,7 @@
 import React from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { EventList } from './events'
+import { BackgroundAgentsStatusBar } from './events/BackgroundAgentsStatusBar'
 import { Card, CardContent } from './ui/Card'
 import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
@@ -109,6 +110,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
               </div>
             )}
           </div>
+          <BackgroundAgentsStatusBar events={events} />
           <div className="min-w-0" data-testid="event-list-wrapper" data-event-count={events.length}>
             <EventList
               events={events}

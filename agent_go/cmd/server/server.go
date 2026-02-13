@@ -718,6 +718,29 @@ type StreamingAPI struct {
 	workflowOrchestrators    map[string]orchestrator.Orchestrator
 	workflowOrchestratorsMux sync.RWMutex
 
+	// Background agent registry for async delegation in multi-agent mode
+	bgAgentRegistry *BackgroundAgentRegistry
+
+	// Session busy tracking — prevents synthetic turns from overlapping with user turns
+	sessionBusy   map[string]bool
+	sessionBusyMu sync.RWMutex
+
+	// Pending completions queue — background agent IDs that finished while session was busy
+	pendingCompletions map[string][]string
+	pendingMu          sync.RWMutex
+
+	// Last query request per session — used to construct synthetic turns
+	lastQueryRequests map[string]QueryRequest
+	lastQueryMu       sync.RWMutex
+
+	// Per-session turn lock — serializes agent turns (real or synthetic) per session
+	sessionTurnLock   map[string]*sync.Mutex
+	sessionTurnLockMu sync.RWMutex
+
+	// Background completion loop tracking — prevents multiple loops per session
+	completionLoopStarted   map[string]bool
+	completionLoopStartedMu sync.Mutex
+
 	toolStatus    map[string]ToolStatus
 	enabledTools  map[string][]string // queryID/sessionID -> enabled tool names
 	toolStatusMux sync.RWMutex
@@ -783,6 +806,9 @@ type QueryRequest struct {
 	DelegationMode string `json:"delegation_mode,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
+
+	// Internal: user ID for synthetic turn reconstruction (not from JSON)
+	userID string `json:"-"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1074,6 +1100,13 @@ func runServer(cmd *cobra.Command, args []string) {
 		workflowOrchestrators: make(map[string]orchestrator.Orchestrator),
 		// Initialize workflow step ID storage
 		workflowStepIDs: make(map[string]string),
+		// Initialize background agent infrastructure
+		bgAgentRegistry:       NewBackgroundAgentRegistry(),
+		sessionBusy:           make(map[string]bool),
+		pendingCompletions:    make(map[string][]string),
+		lastQueryRequests:     make(map[string]QueryRequest),
+		sessionTurnLock:       make(map[string]*sync.Mutex),
+		completionLoopStarted: make(map[string]bool),
 	}
 
 	// Setup routes
@@ -2887,8 +2920,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Don't clear events - let the frontend handle event continuation
 	// The deduplication logic in the frontend will handle any duplicates
 
+	// Store last query request for synthetic turns and set session busy
+	if req.DelegationMode == "plan" {
+		req.userID = currentUserID
+		api.lastQueryMu.Lock()
+		api.lastQueryRequests[sessionID] = req
+		api.lastQueryMu.Unlock()
+		api.setSessionBusy(sessionID, true)
+	}
+
 	// Process the query in the background
 	go func() {
+		// Clear session busy when the agent turn completes
+		if req.DelegationMode == "plan" {
+			defer func() {
+				api.setSessionBusy(sessionID, false)
+				// Drain pending completions after turn ends
+				pending := api.drainPendingCompletions(sessionID)
+				for _, pendingAgentID := range pending {
+					go api.processBackgroundAgentCompletion(sessionID, pendingAgentID)
+				}
+			}()
+		}
+
 		// Helper function to send error and continue (not terminate)
 		sendError := func(errorMsg string, shouldTerminate bool) {
 			if shouldTerminate {
@@ -3104,7 +3158,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					virtualtools.CreateHumanTools(),
 				)
 				if req.DelegationMode == "plan" {
-					preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateDelegationTools())...)
+					// In plan mode, only async tools are registered
+					preDiscovered = append(preDiscovered, "delegate", "query_agent", "terminate_agent", "list_agents")
 				} else if req.DelegationMode == "spawn" {
 					preDiscovered = append(preDiscovered, "delegate")
 				}
@@ -3655,15 +3710,38 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// Get or create session-level plan state (replaces per-message PlanTracker)
 					planState := api.getOrCreatePlanSessionState(sessionID)
 
+					// Create background delegate function for plan mode (async delegation)
+					var bgDelegateFunc virtualtools.BackgroundDelegateFunc
+					var bgQuerier virtualtools.BGAgentQuerier
+					if delegationMode == "plan" {
+						bgDelegateFunc = func(bgCtx context.Context, name, instruction string) (string, error) {
+							return api.executeBackgroundDelegatedTask(bgCtx, req, sessionID, name, instruction)
+						}
+						bgQuerier = &bgAgentQuerierImpl{registry: api.bgAgentRegistry}
+					}
+
+					// Tools allowed in each mode
+					planModeTools := map[string]bool{
+						"create_delegation_plan": true,
+						"confirm_plan_execution": true,
+						"delegate":               true,
+						"query_agent":            true,
+						"terminate_agent":        true,
+						"list_agents":            true,
+					}
+
 					for _, tool := range delegationTools {
 						if tool.Function == nil {
 							continue
 						}
 						toolName := tool.Function.Name
 
-						// In 'spawn' mode, only register the simple 'delegate' tool
-						// In 'plan' mode, register 'delegate', 'create_delegation_plan', and 'confirm_plan_execution'
+						// In 'spawn' mode, only register 'delegate'
 						if delegationMode == "spawn" && toolName != "delegate" {
+							continue
+						}
+						// In 'plan' mode, only register async delegation tools
+						if delegationMode == "plan" && !planModeTools[toolName] {
 							continue
 						}
 
@@ -3701,6 +3779,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								}
 								if caps != nil {
 									ctx = context.WithValue(ctx, virtualtools.CapabilitiesContextKey, caps)
+								}
+								// Inject background delegation and agent querier for plan mode
+								if bgDelegateFunc != nil {
+									ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, bgDelegateFunc)
+								}
+								if bgQuerier != nil {
+									ctx = context.WithValue(ctx, virtualtools.BGAgentRegistryKey, bgQuerier)
+									ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
 								}
 								return exec(ctx, args)
 							}
@@ -3826,8 +3912,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CUSTOM TOOLS] Warning: Failed to update code execution registry: %v", err)
 			}
 
-			// Add base instructions for all agents
-			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+			// Add base instructions — skip for plan mode (multi-agent) since the
+			// main agent is an orchestrator, not a file writer. The Chats/ folder
+			// rules don't apply; background sub-agents get their own instructions.
+			if req.DelegationMode != "plan" {
+				underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+			}
 
 			// Add skill builder instructions when skill-creator is active
 			if hasSkillCreator {
@@ -3850,43 +3940,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Add delegation instructions based on mode and phase
+			// Add delegation instructions based on mode
 			if req.DelegationMode == "plan" {
-				planState := api.getOrCreatePlanSessionState(sessionID)
-
-				// Detect existing plan reference from @ file context in query
-				// e.g. "📁 Files in context: Plans/my-plan/plan.md" or "Plans/my-plan"
-				if planState.PlanID == "" {
-					if idx := strings.Index(req.Query, "Plans/"); idx != -1 {
-						rest := req.Query[idx:]
-						// Extract plan folder path: "Plans/<plan-id>" or "Plans/<plan-id>/plan.md"
-						parts := strings.SplitN(rest, "/", 3)
-						if len(parts) >= 2 {
-							planID := strings.TrimSpace(parts[1])
-							// Clean up: remove trailing punctuation, commas, whitespace
-							planID = strings.TrimRight(planID, " ,\n\t")
-							if strings.HasSuffix(planID, ".md") {
-								planID = "" // "Plans/plan.md" isn't a valid plan reference
-							}
-							if planID != "" {
-								planFolder := fmt.Sprintf("Plans/%s", planID)
-								planState.PlanID = planID
-								planState.PlanFolder = planFolder
-								planState.Phase = "planning" // Start in planning so user gets approval prompt
-								log.Printf("[PLAN STATE] Detected existing plan reference in query: plan=%s folder=%s", planID, planFolder)
-							}
-						}
-					}
-				}
-
-				phase := planState.GetPhase()
-				if phase == "execution" {
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionModeInstructions())
-					log.Printf("[DELEGATION] Added execution mode instructions to system prompt (phase: %s)", phase)
-				} else {
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetPlanningModeInstructions())
-					log.Printf("[DELEGATION] Added planning mode instructions to system prompt (phase: %s)", phase)
-				}
+				// Plan mode: plan→approve→execute with async background agents
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetPlanWithBackgroundAgentsInstructions())
+				log.Printf("[DELEGATION] Added plan+background agent instructions to system prompt (mode: plan)")
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
 				log.Printf("[DELEGATION] Added delegation instructions to system prompt (mode: spawn)")
@@ -4206,6 +4264,10 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	api.updateSessionStatus(sessionID, "stopped")
 
 	// Note: No regular agent cleanup needed - fresh agents created per request
+
+	// Cancel all background agents for this session
+	api.bgAgentRegistry.CancelAll(sessionID)
+	log.Printf("[SESSION DEBUG] Canceled all background agents for session %s", sessionID)
 
 	// Cancel all workflow orchestrator contexts for this session
 	// Since we now use queryID as the key, we need to look up all queryIDs for this session
@@ -4982,10 +5044,10 @@ func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, quest
 	log.Printf("[HUMAN QUESTIONS] Emitted blocking_human_questions event (request_id: %s, session: %s)", requestID, e.sessionID)
 }
 
-// executeDelegatedTask executes a delegated task via a sub-agent
-// This method creates a new agent with the same configuration as the parent
-// and runs it with the given instruction as the prompt
-func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq QueryRequest, sessionID string, instruction string) (string, error) {
+// executeDelegatedTask executes a delegated task via a sub-agent.
+// onCreated is an optional callback invoked after the sub-agent wrapper is created
+// but before Invoke — used by background agents to attach a history func.
+func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq QueryRequest, sessionID string, instruction string, onCreated ...func(wrapper *agent.LLMAgentWrapper)) (string, error) {
 	log.Printf("[DELEGATION] Creating sub-agent for delegated task in session %s", sessionID)
 
 	// Check delegation depth from context
@@ -5175,7 +5237,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			return 100
 		}(),
-		ToolChoice:         "auto",
+		ToolChoice:         "", // Empty — let the library decide; Azure/OpenAI reject tool_choice when no tools are present
 		StreamingChunkSize: 1,
 		// No Timeout set — sub-agent lifetime is controlled by the parent context.
 		ToolTimeout: func() time.Duration {
@@ -5323,6 +5385,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 		// Create in-memory event observer for real-time updates
 		subAgentObserver := events.NewDelegationEventObserver(api.eventStore, sessionID, currentDepth, delegationID, api.logger)
+		// Wire tool event callback if provided (background agents use this for timing)
+		if toolCb, ok := ctx.Value(virtualtools.ToolEventCallbackKey).(events.ToolEventCallback); ok && toolCb != nil {
+			subAgentObserver.OnToolEvent = toolCb
+		}
 		underlyingAgent.AddEventListener(subAgentObserver)
 
 		// Create database event observer to store events in database
@@ -5576,6 +5642,11 @@ Use execute_shell_command or diff_patch_workspace_file to update the file.
 
 	log.Printf("[DELEGATION] Sub-agent created, executing instruction at depth %d", currentDepth)
 
+	// Notify caller that the sub-agent wrapper is ready (used by background agents)
+	if len(onCreated) > 0 && onCreated[0] != nil {
+		onCreated[0](subAgent)
+	}
+
 	// Run the sub-agent with the instruction
 	startTime := time.Now()
 	result, err := subAgent.Invoke(ctx, instruction)
@@ -5600,6 +5671,474 @@ Use execute_shell_command or diff_patch_workspace_file to update the file.
 
 	log.Printf("[DELEGATION] Sub-agent completed at depth %d in %s", currentDepth, duration)
 	return result, nil
+}
+
+// --- Background Agent Infrastructure for Async Delegation ---
+
+// bgAgentQuerierImpl implements virtualtools.BGAgentQuerier using the registry
+type bgAgentQuerierImpl struct {
+	registry *BackgroundAgentRegistry
+}
+
+func (q *bgAgentQuerierImpl) QueryAgent(sessionID, agentID string, last, offset int) (*virtualtools.BGAgentInfo, error) {
+	agent := q.registry.Get(sessionID, agentID)
+	if agent == nil {
+		return nil, fmt.Errorf("agent %s not found", agentID)
+	}
+	snap := agent.GetSnapshot()
+	elapsed := time.Since(snap.CreatedAt)
+	if snap.CompletedAt != nil {
+		elapsed = snap.CompletedAt.Sub(snap.CreatedAt)
+	}
+	info := &virtualtools.BGAgentInfo{
+		ID:        snap.ID,
+		Name:      snap.Name,
+		Status:    string(snap.Status),
+		Elapsed:   elapsed.Truncate(time.Second).String(),
+		CreatedAt: snap.CreatedAt.Format(time.RFC3339),
+	}
+	if snap.CompletedAt != nil {
+		info.CompletedAt = snap.CompletedAt.Format(time.RFC3339)
+	}
+	if snap.Status == BGAgentCompleted || snap.Status == BGAgentFailed {
+		info.Result = truncateForToolResponse(snap.Result, 4000)
+		info.Error = snap.Error
+	}
+	if snap.Status == BGAgentRunning {
+		// Return conversation history with pagination (last N entries, skip offset from end)
+		agent := q.registry.Get(sessionID, agentID)
+		if agent != nil {
+			// Get more entries than needed so we can apply offset
+			allHistory := agent.GetRecentHistory(last + offset)
+			// Apply offset: trim the last `offset` entries
+			if offset > 0 && len(allHistory) > offset {
+				allHistory = allHistory[:len(allHistory)-offset]
+			} else if offset > 0 {
+				allHistory = nil // offset exceeds history length
+			}
+			// Take only the last `last` entries
+			if len(allHistory) > last {
+				allHistory = allHistory[len(allHistory)-last:]
+			}
+			for _, h := range allHistory {
+				info.RecentHistory = append(info.RecentHistory, virtualtools.BGAgentHistoryEntry{
+					Role: h.Role,
+					Text: truncateForToolResponse(h.Text, 1000),
+				})
+			}
+		}
+		// Include recent tool calls with timing
+		if agent != nil {
+			toolCalls := agent.GetRecentToolCalls(5)
+			for _, tc := range toolCalls {
+				dur := ""
+				if tc.Status == "running" {
+					dur = time.Since(tc.StartedAt).Truncate(time.Second).String()
+				} else if tc.Duration > 0 {
+					dur = tc.Duration.Truncate(time.Millisecond).String()
+				}
+				info.RecentToolCalls = append(info.RecentToolCalls, virtualtools.BGAgentToolCall{
+					ToolName: tc.ToolName,
+					Duration: dur,
+					Status:   tc.Status,
+				})
+			}
+		}
+	}
+	return info, nil
+}
+
+func (q *bgAgentQuerierImpl) ListAgents(sessionID string) ([]*virtualtools.BGAgentInfo, error) {
+	agents := q.registry.GetAll(sessionID)
+	infos := make([]*virtualtools.BGAgentInfo, 0, len(agents))
+	for _, agent := range agents {
+		snap := agent.GetSnapshot()
+		elapsed := time.Since(snap.CreatedAt)
+		if snap.CompletedAt != nil {
+			elapsed = snap.CompletedAt.Sub(snap.CreatedAt)
+		}
+		info := &virtualtools.BGAgentInfo{
+			ID:      snap.ID,
+			Name:    snap.Name,
+			Status:  string(snap.Status),
+			Elapsed: elapsed.Truncate(time.Second).String(),
+		}
+		if snap.Status == BGAgentFailed {
+			info.Error = snap.Error
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
+}
+
+func (q *bgAgentQuerierImpl) TerminateAgent(sessionID, agentID string) error {
+	return q.registry.CancelAgent(sessionID, agentID)
+}
+
+// truncateForToolResponse truncates a string for inclusion in tool responses
+func truncateForToolResponse(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "... (truncated)"
+}
+
+// executeBackgroundDelegatedTask spawns a background goroutine for async delegation
+func (api *StreamingAPI) executeBackgroundDelegatedTask(
+	ctx context.Context, parentReq QueryRequest, sessionID, name, instruction string,
+) (string, error) {
+	agentID := api.bgAgentRegistry.NextID(name)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+
+	// Copy only the context values actually needed by executeDelegatedTask.
+	// Note: DelegationDepthKey is NOT copied because background sub-agents don't have
+	// the delegate tool, so they can never create further sub-agents.
+	if rl, ok := ctx.Value(virtualtools.ReasoningLevelKey).(string); ok {
+		bgCtx = context.WithValue(bgCtx, virtualtools.ReasoningLevelKey, rl)
+	}
+	if pf, ok := ctx.Value(virtualtools.PlanFolderKey).(string); ok {
+		bgCtx = context.WithValue(bgCtx, virtualtools.PlanFolderKey, pf)
+	}
+	if tm, ok := ctx.Value(virtualtools.ToolModeKey).(string); ok {
+		bgCtx = context.WithValue(bgCtx, virtualtools.ToolModeKey, tm)
+	}
+	if at, ok := ctx.Value(virtualtools.AgentTemplateKey).(string); ok {
+		bgCtx = context.WithValue(bgCtx, virtualtools.AgentTemplateKey, at)
+	}
+	if ds, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok {
+		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationServersKey, ds)
+	}
+	// Pass user ID for per-user OAuth
+	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
+		bgCtx = context.WithValue(bgCtx, common.UserIDKey, userID)
+	}
+
+	bgAgent := &BackgroundAgent{
+		ID:          agentID,
+		Name:        name,
+		SessionID:   sessionID,
+		Instruction: instruction,
+		Status:      BGAgentRunning,
+		CreatedAt:   time.Now(),
+		cancel:      bgCancel,
+	}
+	api.bgAgentRegistry.Register(sessionID, bgAgent)
+
+	// Inject tool event callback so executeDelegatedTask's observer tracks timing on bgAgent
+	bgCtx = context.WithValue(bgCtx, virtualtools.ToolEventCallbackKey, events.ToolEventCallback(
+		func(toolCallID, toolName, eventType string, duration time.Duration) {
+			switch eventType {
+			case "start":
+				bgAgent.RecordToolCallStart(toolCallID, toolName)
+			case "end":
+				bgAgent.RecordToolCallEnd(toolCallID, toolName, duration, false)
+			case "error":
+				bgAgent.RecordToolCallEnd(toolCallID, toolName, duration, true)
+			}
+		},
+	))
+
+	// Emit background_agent_started event
+	api.emitBackgroundAgentEvent(sessionID, agentID, "background_agent_started", map[string]interface{}{
+		"agent_id":    agentID,
+		"name":        name,
+		"instruction": truncateForToolResponse(instruction, 200),
+	})
+
+	// Start the background completion loop for this session if not already running
+	api.completionLoopStartedMu.Lock()
+	if !api.completionLoopStarted[sessionID] {
+		api.completionLoopStarted[sessionID] = true
+		go api.backgroundCompletionLoop(sessionID)
+	}
+	api.completionLoopStartedMu.Unlock()
+
+	go func() {
+		defer bgCancel()
+		result, err := api.executeDelegatedTask(bgCtx, parentReq, sessionID, instruction, func(wrapper *agent.LLMAgentWrapper) {
+			// Attach history func so query_agent can read the sub-agent's live conversation
+			bgAgent.SetHistoryFunc(func(lastN int) []HistoryEntry {
+				history := wrapper.GetHistory()
+				start := 0
+				if lastN > 0 && len(history) > lastN {
+					start = len(history) - lastN
+				}
+				var entries []HistoryEntry
+				for _, msg := range history[start:] {
+					role := string(msg.Role)
+					var parts []string
+					for _, part := range msg.Parts {
+						switch p := part.(type) {
+						case llmtypes.TextContent:
+							if p.Text != "" {
+								parts = append(parts, p.Text)
+							}
+						case llmtypes.ToolCall:
+							name := ""
+							args := ""
+							if p.FunctionCall != nil {
+								name = p.FunctionCall.Name
+								args = p.FunctionCall.Arguments
+							}
+							parts = append(parts, fmt.Sprintf("[tool_call: %s(%s)]", name, args))
+						case *llmtypes.ToolCall:
+							name := ""
+							args := ""
+							if p != nil && p.FunctionCall != nil {
+								name = p.FunctionCall.Name
+								args = p.FunctionCall.Arguments
+							}
+							parts = append(parts, fmt.Sprintf("[tool_call: %s(%s)]", name, args))
+						case llmtypes.ToolCallResponse:
+							parts = append(parts, fmt.Sprintf("[tool_result: %s] %s", p.Name, p.Content))
+						case *llmtypes.ToolCallResponse:
+							if p != nil {
+								parts = append(parts, fmt.Sprintf("[tool_result: %s] %s", p.Name, p.Content))
+							}
+						}
+					}
+					if len(parts) > 0 {
+						entries = append(entries, HistoryEntry{
+							Role: role,
+							Text: strings.Join(parts, "\n"),
+						})
+					}
+				}
+				return entries
+			})
+		})
+
+		now := time.Now()
+		duration := now.Sub(bgAgent.CreatedAt)
+
+		if err != nil {
+			bgAgent.SetError(err.Error())
+			api.emitBackgroundAgentEvent(sessionID, agentID, "background_agent_completed", map[string]interface{}{
+				"agent_id": agentID,
+				"name":     name,
+				"status":   "failed",
+				"error":    err.Error(),
+				"duration": duration.Truncate(time.Second).String(),
+			})
+			log.Printf("[BG AGENT] Agent '%s' (ID: %s) failed after %s: %v", name, agentID, duration, err)
+		} else {
+			bgAgent.SetResult(result)
+			api.emitBackgroundAgentEvent(sessionID, agentID, "background_agent_completed", map[string]interface{}{
+				"agent_id": agentID,
+				"name":     name,
+				"status":   "completed",
+				"result":   truncateForToolResponse(result, 500),
+				"duration": duration.Truncate(time.Second).String(),
+			})
+			log.Printf("[BG AGENT] Agent '%s' (ID: %s) completed in %s", name, agentID, duration)
+		}
+
+		// Signal completion to the notification loop
+		api.bgAgentRegistry.NotifyCompletion(sessionID, agentID)
+	}()
+
+	return agentID, nil
+}
+
+// emitBackgroundAgentEvent emits a background agent event to the event store
+func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType string, data map[string]interface{}) {
+	now := time.Now()
+	data["timestamp"] = now.Format(time.RFC3339)
+
+	eventID := fmt.Sprintf("%s_%s_%s", sessionID, eventType, agentID)
+	if agentID == "" {
+		eventID = fmt.Sprintf("%s_%s_%d", sessionID, eventType, now.UnixNano())
+	}
+
+	event := events.Event{
+		ID:        eventID,
+		Type:      eventType,
+		Timestamp: now,
+		SessionID: sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      unifiedevents.EventType(eventType),
+			Timestamp: now,
+			SessionID: sessionID,
+			Component: "background-agent",
+			Data:      events.NewGenericEventData(eventType, data),
+		},
+	}
+	api.eventStore.AddEvent(sessionID, event)
+}
+
+// isSessionBusy returns whether the session is currently processing a user turn
+func (api *StreamingAPI) isSessionBusy(sessionID string) bool {
+	api.sessionBusyMu.RLock()
+	defer api.sessionBusyMu.RUnlock()
+	return api.sessionBusy[sessionID]
+}
+
+// setSessionBusy sets the busy state for a session
+func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
+	api.sessionBusyMu.Lock()
+	api.sessionBusy[sessionID] = busy
+	api.sessionBusyMu.Unlock()
+}
+
+// getSessionTurnLock returns the per-session turn lock (creates one if needed)
+func (api *StreamingAPI) getSessionTurnLock(sessionID string) *sync.Mutex {
+	api.sessionTurnLockMu.Lock()
+	defer api.sessionTurnLockMu.Unlock()
+	if api.sessionTurnLock[sessionID] == nil {
+		api.sessionTurnLock[sessionID] = &sync.Mutex{}
+	}
+	return api.sessionTurnLock[sessionID]
+}
+
+// queuePendingCompletion adds a completed agent ID to the pending queue
+func (api *StreamingAPI) queuePendingCompletion(sessionID, agentID string) {
+	api.pendingMu.Lock()
+	defer api.pendingMu.Unlock()
+	api.pendingCompletions[sessionID] = append(api.pendingCompletions[sessionID], agentID)
+}
+
+// drainPendingCompletions returns and clears all pending completion agent IDs
+func (api *StreamingAPI) drainPendingCompletions(sessionID string) []string {
+	api.pendingMu.Lock()
+	defer api.pendingMu.Unlock()
+	pending := api.pendingCompletions[sessionID]
+	delete(api.pendingCompletions, sessionID)
+	return pending
+}
+
+// backgroundCompletionLoop listens for background agent completions and triggers synthetic turns
+func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
+	ch := api.bgAgentRegistry.GetNotificationChannel(sessionID)
+	log.Printf("[BG AGENT] Started completion loop for session %s", sessionID)
+
+	for agentID := range ch {
+		if api.isSessionBusy(sessionID) {
+			// Session is busy — queue the completion for later processing
+			api.queuePendingCompletion(sessionID, agentID)
+			log.Printf("[BG AGENT] Session %s busy, queued completion for agent %s", sessionID, agentID)
+		} else {
+			api.processBackgroundAgentCompletion(sessionID, agentID)
+		}
+	}
+
+	log.Printf("[BG AGENT] Completion loop ended for session %s", sessionID)
+}
+
+// processBackgroundAgentCompletion injects a synthetic message and triggers a new main agent turn
+func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID string) {
+	agent := api.bgAgentRegistry.Get(sessionID, agentID)
+	if agent == nil {
+		log.Printf("[BG AGENT] Warning: agent %s not found for completion processing", agentID)
+		return
+	}
+
+	// Prevent duplicate processing
+	agent.mu.Lock()
+	if agent.notified {
+		agent.mu.Unlock()
+		return
+	}
+	agent.notified = true
+	agent.mu.Unlock()
+
+	snap := agent.GetSnapshot()
+
+	var resultText string
+	if snap.Status == BGAgentCompleted {
+		resultText = truncateForToolResponse(snap.Result, 4000)
+	} else if snap.Status == BGAgentFailed {
+		resultText = fmt.Sprintf("Error: %s", snap.Error)
+	} else {
+		resultText = fmt.Sprintf("Status: %s", snap.Status)
+	}
+
+	syntheticMsg := fmt.Sprintf(
+		"[Background Agent Notification]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s",
+		snap.Name, snap.ID, snap.Status, resultText)
+
+	// Inject into conversation history as a user message
+	api.conversationMux.Lock()
+	history := api.conversationHistory[sessionID]
+	history = append(history, llmtypes.TextPart("user", syntheticMsg))
+	api.conversationHistory[sessionID] = history
+	api.conversationMux.Unlock()
+
+	log.Printf("[BG AGENT] Injected synthetic message for agent '%s' into session %s", snap.Name, sessionID)
+
+	// Trigger a synthetic turn using the stored QueryRequest
+	go api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
+// executeSyntheticTurn triggers a new main agent turn with a synthetic message
+// This reuses the stored QueryRequest config to create a new agent turn without an HTTP request
+func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
+	// Serialize turns per session
+	turnLock := api.getSessionTurnLock(sessionID)
+	turnLock.Lock()
+	defer turnLock.Unlock()
+
+	api.setSessionBusy(sessionID, true)
+	defer func() {
+		api.setSessionBusy(sessionID, false)
+		// After turn completes, drain any pending completions
+		pending := api.drainPendingCompletions(sessionID)
+		for _, pendingAgentID := range pending {
+			go api.processBackgroundAgentCompletion(sessionID, pendingAgentID)
+		}
+	}()
+
+	// Get the stored query request for this session
+	api.lastQueryMu.RLock()
+	req, ok := api.lastQueryRequests[sessionID]
+	api.lastQueryMu.RUnlock()
+
+	if !ok {
+		log.Printf("[BG AGENT] No stored query request for session %s, cannot trigger synthetic turn", sessionID)
+		return
+	}
+
+	// Update the query to be the synthetic message
+	req.Query = syntheticMsg
+
+	// Create a synthetic HTTP-like context
+	ctx := context.Background()
+	if req.userID != "" {
+		ctx = context.WithValue(ctx, common.UserIDKey, req.userID)
+	}
+
+	// Mark session as running
+	api.updateSessionStatus(sessionID, "running")
+
+	// Emit a user_message event for the synthetic turn
+	api.emitBackgroundAgentEvent(sessionID, "", "user_message", map[string]interface{}{
+		"content":   truncateForToolResponse(syntheticMsg, 200),
+		"synthetic": true,
+	})
+
+	log.Printf("[BG AGENT] Executing synthetic turn for session %s", sessionID)
+
+	// Call handleQueryInternal which does the actual agent execution
+	// For now, we re-post to the query endpoint internally
+	// The synthetic message is already in conversation history
+	api.executeSyntheticQueryInternal(ctx, sessionID, req)
+}
+
+// executeSyntheticQueryInternal handles the internal execution of a synthetic query
+// This is a simplified version of handleQuery that doesn't need HTTP request/response
+func (api *StreamingAPI) executeSyntheticQueryInternal(ctx context.Context, sessionID string, req QueryRequest) {
+	// This is complex — for the initial implementation, we emit an event
+	// that the frontend can use to trigger a query via the normal HTTP path
+	api.emitBackgroundAgentEvent(sessionID, "", "synthetic_turn_ready", map[string]interface{}{
+		"session_id": sessionID,
+		"query":      truncateForToolResponse(req.Query, 200),
+		"message":    "Background agent completed. The main agent will process the results.",
+	})
+
+	// Update session status back to completed since we're not actually executing a turn yet
+	// The frontend will pick up the synthetic_turn_ready event and can trigger a new query
+	api.updateSessionStatus(sessionID, "completed")
+
+	log.Printf("[BG AGENT] Emitted synthetic_turn_ready event for session %s", sessionID)
 }
 
 // buildCapabilitiesContext creates a CapabilitiesContext from the chat request

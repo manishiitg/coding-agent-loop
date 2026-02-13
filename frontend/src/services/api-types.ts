@@ -116,6 +116,8 @@ export interface AgentQueryRequest {
   delegation_mode?: 'spawn' | 'plan'
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs
   delegation_tier_config?: DelegationTierConfig
+  // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)
+  decrypted_secrets?: Array<{ name: string; value: string }>
 }
 
 // Delegation tier configuration for multi-LLM support

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path"
@@ -17,6 +18,7 @@ type GitHubURLInfo struct {
 	Repo   string
 	Branch string
 	Path   string
+	Token  string // Optional PAT for private repos
 }
 
 // ParseGitHubURL parses a GitHub folder URL into its components
@@ -57,11 +59,23 @@ func FetchGitHubFolderContents(info *GitHubURLInfo) ([]GitHubFileInfo, error) {
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
 		info.Owner, info.Repo, url.PathEscape(info.Path), info.Branch)
 
-	resp, err := http.Get(apiURL)
+	log.Printf("[GITHUB] Fetching: %s (token provided: %v)", apiURL, info.Token != "")
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if info.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+info.Token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch GitHub contents: %w", err)
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[GITHUB] Response status: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -77,8 +91,16 @@ func FetchGitHubFolderContents(info *GitHubURLInfo) ([]GitHubFileInfo, error) {
 }
 
 // FetchGitHubFileContent fetches the content of a single file from GitHub
-func FetchGitHubFileContent(downloadURL string) (string, error) {
-	resp, err := http.Get(downloadURL)
+func FetchGitHubFileContent(downloadURL, token string) (string, error) {
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch file: %w", err)
 	}
@@ -98,11 +120,12 @@ func FetchGitHubFileContent(downloadURL string) (string, error) {
 }
 
 // ValidateGitHubSkill validates a skill at a GitHub URL without importing it
-func ValidateGitHubSkill(gitHubURL string) (*ValidateSkillResponse, error) {
+func ValidateGitHubSkill(workspaceAPIURL, gitHubURL, token string) (*ValidateSkillResponse, error) {
 	info, err := ParseGitHubURL(gitHubURL)
 	if err != nil {
 		return &ValidateSkillResponse{Valid: false, Error: err.Error()}, nil
 	}
+	info.Token = token
 
 	files, err := FetchGitHubFolderContents(info)
 	if err != nil {
@@ -122,7 +145,7 @@ func ValidateGitHubSkill(gitHubURL string) (*ValidateSkillResponse, error) {
 		return &ValidateSkillResponse{Valid: false, Error: fmt.Sprintf("no %s found", SkillFileName), Files: fileNames}, nil
 	}
 
-	content, err := FetchGitHubFileContent(skillFile.DownloadURL)
+	content, err := FetchGitHubFileContent(skillFile.DownloadURL, token)
 	if err != nil {
 		return &ValidateSkillResponse{Valid: false, Error: fmt.Sprintf("failed to fetch %s: %v", SkillFileName, err), Files: fileNames}, nil
 	}
@@ -132,12 +155,23 @@ func ValidateGitHubSkill(gitHubURL string) (*ValidateSkillResponse, error) {
 		return &ValidateSkillResponse{Valid: false, Error: fmt.Sprintf("invalid %s: %v", SkillFileName, err), Files: fileNames}, nil
 	}
 
-	return &ValidateSkillResponse{Valid: true, Frontmatter: frontmatter, Files: fileNames}, nil
+	// Check if a skill with this name already exists
+	skillName := frontmatter.Name
+	if skillName == "" {
+		skillName = path.Base(info.Path)
+	}
+	skillName = sanitizeFolderName(skillName)
+	exists := false
+	if _, err := GetSkill(workspaceAPIURL, skillName); err == nil {
+		exists = true
+	}
+
+	return &ValidateSkillResponse{Valid: true, Frontmatter: frontmatter, Files: fileNames, Exists: exists}, nil
 }
 
 // ImportGitHubSkill imports a skill from a GitHub URL to the workspace
-func ImportGitHubSkill(workspaceAPIURL, gitHubURL string) (*ImportSkillResponse, error) {
-	validation, err := ValidateGitHubSkill(gitHubURL)
+func ImportGitHubSkill(workspaceAPIURL, gitHubURL, token string) (*ImportSkillResponse, error) {
+	validation, err := ValidateGitHubSkill(workspaceAPIURL, gitHubURL, token)
 	if err != nil {
 		return &ImportSkillResponse{Success: false, Error: err.Error()}, nil
 	}
@@ -149,6 +183,7 @@ func ImportGitHubSkill(workspaceAPIURL, gitHubURL string) (*ImportSkillResponse,
 	if err != nil {
 		return &ImportSkillResponse{Success: false, Error: err.Error()}, nil
 	}
+	info.Token = token
 
 	skillName := validation.Frontmatter.Name
 	if skillName == "" {
@@ -158,7 +193,7 @@ func ImportGitHubSkill(workspaceAPIURL, gitHubURL string) (*ImportSkillResponse,
 
 	client := NewWorkspaceAPIClient(workspaceAPIURL)
 	skillFolderPath := path.Join(SkillsBasePath, skillName)
-	
+
 	if err := client.CreateFolder(skillFolderPath); err != nil {
 		if !strings.Contains(err.Error(), "exists") {
 			return &ImportSkillResponse{Success: false, Error: fmt.Sprintf("failed to create folder: %v", err)}, nil
@@ -187,12 +222,12 @@ func downloadGitHubFolder(client *WorkspaceAPIClient, info *GitHubURLInfo, destP
 					return fmt.Errorf("failed to create folder %s: %w", destFilePath, err)
 				}
 			}
-			subInfo := &GitHubURLInfo{Owner: info.Owner, Repo: info.Repo, Branch: info.Branch, Path: file.Path}
+			subInfo := &GitHubURLInfo{Owner: info.Owner, Repo: info.Repo, Branch: info.Branch, Path: file.Path, Token: info.Token}
 			if err := downloadGitHubFolder(client, subInfo, destFilePath); err != nil {
 				return err
 			}
 		} else if file.Type == "file" {
-			content, err := FetchGitHubFileContent(file.DownloadURL)
+			content, err := FetchGitHubFileContent(file.DownloadURL, info.Token)
 			if err != nil {
 				return fmt.Errorf("failed to download %s: %w", file.Name, err)
 			}

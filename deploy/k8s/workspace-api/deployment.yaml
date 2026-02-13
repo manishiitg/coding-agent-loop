@@ -18,6 +18,8 @@ spec:
     type: Recreate
   template:
     metadata:
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
       labels:
         app.kubernetes.io/name: cs
         app.kubernetes.io/instance: mcpagent-workspace-api
@@ -48,9 +50,11 @@ spec:
             requests:
               cpu: "500m"
               memory: "1Gi"
+              ephemeral-storage: "5Gi"
             limits:
               cpu: "1"
               memory: "2Gi"
+              ephemeral-storage: "10Gi"
           volumeMounts:
             - name: workspace-docs
               mountPath: /app/workspace-docs

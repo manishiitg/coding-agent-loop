@@ -18,6 +18,7 @@ export interface Skill {
 
 export interface ImportSkillRequest {
   github_url: string;
+  github_token?: string;
 }
 
 export interface ImportSkillResponse {
@@ -28,6 +29,7 @@ export interface ImportSkillResponse {
 
 export interface ValidateSkillRequest {
   github_url: string;
+  github_token?: string;
 }
 
 export interface ValidateSkillResponse {
@@ -35,6 +37,7 @@ export interface ValidateSkillResponse {
   frontmatter?: SkillFrontmatter;
   error?: string;
   files?: string[];
+  exists?: boolean;
 }
 
 export interface UpdateSkillRequest {

@@ -10,11 +10,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
     
     // Check system preference
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark'
+    if (window.matchMedia('(prefers-color-scheme: light)').matches) {
+      return 'light'
     }
-    
-    return 'light'
+
+    return 'dark'
   })
 
   useEffect(() => {

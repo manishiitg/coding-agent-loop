@@ -33,6 +33,12 @@ func GetDefaultMaxTurnsFromEnv() int {
 	return 50
 }
 
+// SecretEntry represents a decrypted secret (name + value, where value can be any text)
+type SecretEntry struct {
+	Name  string
+	Value string
+}
+
 // Orchestrator defines the common interface for all orchestrators
 type Orchestrator interface {
 	// Execute performs the orchestration logic
@@ -65,8 +71,9 @@ type BaseOrchestrator struct {
 	agentMode            string
 	selectedServers      []string
 	selectedTools        []string   // Selected tools in "server:tool" format
-	selectedSkills       []string   // Selected skill folder names for workflow
-	useCodeExecutionMode bool       // MCP code execution mode
+	selectedSkills       []string       // Selected skill folder names for workflow
+	secrets              []SecretEntry  // Decrypted secrets to inject into agents
+	useCodeExecutionMode bool           // MCP code execution mode
 	useToolSearchMode    bool       // Enable tool search mode (discover tools on-demand)
 	preDiscoveredTools   []string   // Tools always available without searching
 	llmConfig            *LLMConfig // LLM configuration

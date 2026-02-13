@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"mcp-agent-builder-go/agent_go/pkg/skills"
@@ -16,8 +17,8 @@ func RegisterSkillRoutes(router *mux.Router, api *StreamingAPI) {
 	router.HandleFunc("/skills", listSkillsHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/skills/import", importSkillHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/skills/import-zip", importSkillZipHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
-	router.HandleFunc("/skills/validate", validateSkillHandler()).Methods("POST", "OPTIONS")
-	router.HandleFunc("/skills/validate-zip", validateSkillZipHandler()).Methods("POST", "OPTIONS")
+	router.HandleFunc("/skills/validate", validateSkillHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/skills/validate-zip", validateSkillZipHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
 	router.HandleFunc("/skills/{name}", getSkillHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/skills/{name}", updateSkillHandler(workspaceAPIURL)).Methods("PUT", "OPTIONS")
 	router.HandleFunc("/skills/{name}", deleteSkillHandler(workspaceAPIURL)).Methods("DELETE", "OPTIONS")
@@ -89,7 +90,7 @@ func importSkillHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
-		result, err := skills.ImportGitHubSkill(workspaceAPIURL, req.GitHubURL)
+		result, err := skills.ImportGitHubSkill(workspaceAPIURL, req.GitHubURL, req.GitHubToken)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -103,7 +104,7 @@ func importSkillHandler(workspaceAPIURL string) http.HandlerFunc {
 	}
 }
 
-func validateSkillHandler() http.HandlerFunc {
+func validateSkillHandler(workspaceAPIURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -121,7 +122,9 @@ func validateSkillHandler() http.HandlerFunc {
 			return
 		}
 
-		result, err := skills.ValidateGitHubSkill(req.GitHubURL)
+		log.Printf("[VALIDATE] URL: %s, token provided: %v, token length: %d", req.GitHubURL, req.GitHubToken != "", len(req.GitHubToken))
+
+		result, err := skills.ValidateGitHubSkill(workspaceAPIURL, req.GitHubURL, req.GitHubToken)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -186,7 +189,7 @@ func deleteSkillHandler(workspaceAPIURL string) http.HandlerFunc {
 	}
 }
 
-func validateSkillZipHandler() http.HandlerFunc {
+func validateSkillZipHandler(workspaceAPIURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -206,7 +209,7 @@ func validateSkillZipHandler() http.HandlerFunc {
 		}
 		defer file.Close()
 
-		result, err := skills.ValidateZipSkill(file, header)
+		result, err := skills.ValidateZipSkill(workspaceAPIURL, file, header)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

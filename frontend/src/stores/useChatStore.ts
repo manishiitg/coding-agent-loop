@@ -86,6 +86,7 @@ export interface ChatTabConfig {
   useToolSearchMode: boolean  // Tool search mode toggle (discover tools on-demand)
   selectedServers: string[]  // Selected MCP servers
   selectedSkills: string[]  // Selected skills to include in chat
+  selectedSecrets: string[]  // Selected secret IDs to inject into chat
   selectedSubAgents: string[]  // Selected sub-agent templates for delegation
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
@@ -142,6 +143,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     useToolSearchMode: false,
     selectedServers,
     selectedSkills: [],  // No skills selected by default
+    selectedSecrets: [],  // No secrets selected by default
     selectedSubAgents: [],  // No sub-agent templates selected by default
     llmConfig: llmConfig || {
       provider: 'openrouter',

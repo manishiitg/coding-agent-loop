@@ -783,6 +783,11 @@ type QueryRequest struct {
 	DelegationMode string `json:"delegation_mode,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
+	// Decrypted secrets to inject into agent system prompt
+	DecryptedSecrets []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	} `json:"decrypted_secrets,omitempty"`
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1141,6 +1146,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
 	apiRouter.HandleFunc("/mcp-config/logs", api.handleGetServerLogs).Methods("GET")
 
+	// Secrets encryption API routes (from secrets_routes.go)
+	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
+
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/oauth/callback", api.handleOAuthCallback).Methods("GET")
@@ -1274,6 +1283,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Stop background discovery
 	fmt.Println("⏹️ Stopping background tool discovery...")
 	api.stopPeriodicRefresh()
+
+	// Close all MCP session connections to prevent orphaned subprocesses
+	fmt.Println("🧹 Closing all MCP sessions...")
+	mcpagent.CloseAllSessions()
 
 	// Create a deadline for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -2516,6 +2529,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
+		// Set decrypted secrets on the orchestrator (injected into each step's system prompt)
+		if len(req.DecryptedSecrets) > 0 {
+			entries := make([]orchestrator.SecretEntry, len(req.DecryptedSecrets))
+			for i, s := range req.DecryptedSecrets {
+				entries[i] = orchestrator.SecretEntry{Name: s.Name, Value: s.Value}
+			}
+			workflowOrchestrator.SetSecrets(entries)
+			log.Printf("[SECRETS] Applied %d secrets to workflow orchestrator", len(entries))
+		}
+
 		// Store workflow orchestrator for guidance injection
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
 
@@ -3374,7 +3397,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			_, err := skills.GetSkill(workspaceAPIURL, "skill-creator")
 			if err != nil {
 				log.Printf("[SKILL CREATOR] skill-creator not found, attempting import from GitHub...")
-				_, err := skills.ImportGitHubSkill(workspaceAPIURL, "https://github.com/anthropics/skills/tree/main/skills/skill-creator")
+				_, err := skills.ImportGitHubSkill(workspaceAPIURL, "https://github.com/anthropics/skills/tree/main/skills/skill-creator", "")
 				if err != nil {
 					log.Printf("[SKILL CREATOR] Warning: Failed to import skill-creator: %v", err)
 				} else {
@@ -4022,8 +4045,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelFuncs[sessionID] = agentCancel
 		api.agentCancelMux.Unlock()
 
+		// Inject decrypted secrets into chat query (for non-workflow/chat mode)
+		chatQuery := req.Query
+		if len(req.DecryptedSecrets) > 0 {
+			var secretParts []string
+			for _, s := range req.DecryptedSecrets {
+				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+			}
+			chatQuery = chatQuery + "\n\n🔐 Secrets:\n" + strings.Join(secretParts, "\n")
+			log.Printf("[SECRETS] Injected %d secrets into chat query", len(req.DecryptedSecrets))
+		}
+
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
-		textChan, err := llmAgent.StreamWithEvents(agentCtx, req.Query)
+		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
 		if err != nil {
 			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
 			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)

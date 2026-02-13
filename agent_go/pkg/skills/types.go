@@ -20,7 +20,8 @@ type Skill struct {
 
 // ImportSkillRequest represents a request to import a skill from GitHub
 type ImportSkillRequest struct {
-	GitHubURL string `json:"github_url"` // e.g., https://github.com/user/repo/tree/main/skills/my-skill
+	GitHubURL   string `json:"github_url"`              // e.g., https://github.com/user/repo/tree/main/skills/my-skill
+	GitHubToken string `json:"github_token,omitempty"`  // Optional PAT for private repos
 }
 
 // ImportSkillResponse represents the response from importing a skill
@@ -32,7 +33,8 @@ type ImportSkillResponse struct {
 
 // ValidateSkillRequest represents a request to validate a skill URL
 type ValidateSkillRequest struct {
-	GitHubURL string `json:"github_url"`
+	GitHubURL   string `json:"github_url"`
+	GitHubToken string `json:"github_token,omitempty"` // Optional PAT for private repos
 }
 
 // ValidateSkillResponse represents the response from validating a skill URL
@@ -41,6 +43,7 @@ type ValidateSkillResponse struct {
 	Frontmatter *SkillFrontmatter `json:"frontmatter,omitempty"`
 	Error       string            `json:"error,omitempty"`
 	Files       []string          `json:"files,omitempty"` // List of files in the skill folder
+	Exists      bool              `json:"exists"`          // True if a skill with this name already exists
 }
 
 // UpdateSkillRequest represents a request to update a skill

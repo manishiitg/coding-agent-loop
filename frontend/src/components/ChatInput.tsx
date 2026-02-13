@@ -9,6 +9,7 @@ import { getEventData, isEventType } from '../generated/event-types'
 import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
+import SecretSelectionDropdown from './secrets/SecretSelectionDropdown'
 import SubAgentSelectionDropdown from './subagents/SubAgentSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
@@ -416,6 +417,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const onClearAllSkills = useCallback(() => {
     if (activeTabId) {
       setTabConfig(activeTabId, { selectedSkills: [] })
+    }
+  }, [activeTabId, setTabConfig])
+
+  // Use tab-specific secrets - memoize to prevent re-renders
+  const selectedSecrets = useMemo(() => tabConfig?.selectedSecrets || [], [tabConfig?.selectedSecrets])
+
+  // Secret operations (update tab config)
+  const onSecretToggle = useCallback((secretId: string) => {
+    if (activeTabId) {
+      const newSecrets = selectedSecrets.includes(secretId)
+        ? selectedSecrets.filter(s => s !== secretId)
+        : [...selectedSecrets, secretId]
+      setTabConfig(activeTabId, { selectedSecrets: newSecrets })
+    }
+  }, [activeTabId, selectedSecrets, setTabConfig])
+
+  const onSelectAllSecrets = useCallback((allSecretIds: string[]) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSecrets: allSecretIds })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const onClearAllSecrets = useCallback(() => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSecrets: [] })
     }
   }, [activeTabId, setTabConfig])
 
@@ -1669,7 +1695,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </button>
                   </div>
                 )}
-                
+
+                {/* Secrets dropdown - always visible (independent of presets) */}
+                <SecretSelectionDropdown
+                  selectedSecrets={selectedSecrets}
+                  onSecretToggle={onSecretToggle}
+                  onSelectAll={onSelectAllSecrets}
+                  onClearAll={onClearAllSecrets}
+                  disabled={isStreaming || isSummarizing}
+                />
+
                 {/* Status text - removed observer initialization message */}
               </div>
               {/* Show old buttons */}

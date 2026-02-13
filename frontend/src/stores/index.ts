@@ -10,6 +10,8 @@ export type { ExecutionModeType } from './useWorkflowStore'
 export { useRunningWorkflowsStore, useRunningWorkflows, useShowRunningDrawer, useRunningWorkflowsRunningCount, useRunningWorkflowsTotalCount } from './useRunningWorkflowsStore'
 export type { RunningWorkflow } from './useRunningWorkflowsStore'
 export { useCapabilitiesStore } from './useCapabilitiesStore'
+export { useSecretsStore } from './useSecretsStore'
+export type { StoredSecret } from './useSecretsStore'
 
 // Export types
 export type * from './types'

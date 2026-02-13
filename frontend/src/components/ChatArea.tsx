@@ -19,9 +19,12 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
 import type { ChatTab, ChatTabConfig } from '../stores/useChatStore'
+import type { CustomPreset } from '../types/preset'
 import { WORKSPACE_TOOLS } from '../utils/customToolNames'
 import { truncateTabTitle } from '../utils/textUtils'
 import { logger } from '../utils/logger'
+import { secretsApi } from '../api/secrets'
+import { useSecretsStore } from '../stores'
 import {
   determineModeFlag,
   buildLLMConfigWithApiKeys,
@@ -2584,15 +2587,43 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }]
     }
 
-    const queryWithContext = effectiveFileContext.length > 0
+    let queryWithContext = effectiveFileContext.length > 0
       ? `${query.trim()}\n\n📁 Files in context: ${effectiveFileContext.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
+
+    // Decrypt selected secrets for payload (passed separately, never in query text)
+    // Merge secrets from tab config (chat/multi-agent) and workflow preset
+    let decryptedSecrets: Array<{ name: string; value: string }> | undefined
+    const tabSecretIds = currentTab?.config?.selectedSecrets || []
+    const presetSecretIds = (selectedModeCategory === 'workflow' && activeWorkflowPreset)
+      ? ((activeWorkflowPreset as CustomPreset).selectedSecrets || [])
+      : []
+    const selectedSecretIds = [...new Set([...tabSecretIds, ...presetSecretIds])]
+    if (selectedSecretIds.length > 0) {
+      try {
+        const secretsStore = useSecretsStore.getState()
+        const secretsToInject = selectedSecretIds
+          .map(id => secretsStore.getSecret(id))
+          .filter((s): s is NonNullable<typeof s> => !!s)
+
+        if (secretsToInject.length > 0) {
+          decryptedSecrets = await Promise.all(
+            secretsToInject.map(async (s) => {
+              const { value } = await secretsApi.decrypt(s.encryptedValue)
+              return { name: s.name, value }
+            })
+          )
+        }
+      } catch (err) {
+        logger.error('ChatArea', 'Failed to decrypt secrets:', err)
+      }
+    }
 
     if (selectedModeCategory === 'workflow') {
       useAppStore.getState().setCurrentQuery(queryWithContext)
     }
 
-    // Add user message event
+    // Add user message event (without secrets for display safety)
     chatStore.addTabEvents(tabSessionId, [createUserMessageEvent(query.trim())])
 
     // Enable auto-scroll and scroll to bottom
@@ -2694,6 +2725,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         chatPresetId,
         filteredPresetTools,
         hasActivePreset: !!activePreset,
+        decryptedSecrets,
       })
 
       // Validate execution groups for workflow mode

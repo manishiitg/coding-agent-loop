@@ -132,7 +132,8 @@ export const ModePresetBar: React.FC = () => {
     useCodeExecutionMode?: boolean,
     enableContextSummarization?: boolean,
     useToolSearchMode?: boolean,
-    enableBrowserAccess?: boolean
+    enableBrowserAccess?: boolean,
+    selectedSecrets?: string[]
   ) => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
@@ -149,7 +150,9 @@ export const ModePresetBar: React.FC = () => {
         editingPreset?.id,
         enableContextSummarization,
         useToolSearchMode,
-        enableBrowserAccess
+        enableBrowserAccess,
+        undefined, // enableContextEditing
+        selectedSecrets
       )
 
       // Apply the preset immediately if it's a new one

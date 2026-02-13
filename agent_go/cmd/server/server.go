@@ -1081,6 +1081,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		workflowStepIDs: make(map[string]string),
 	}
 
+	// Load global secrets from GLOBAL_SECRET_* environment variables
+	loadGlobalSecrets()
+
 	// Setup routes
 	router := mux.NewRouter()
 
@@ -1149,6 +1152,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Secrets encryption API routes (from secrets_routes.go)
 	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/global", api.handleGetGlobalSecrets).Methods("GET", "OPTIONS")
 
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
@@ -1308,6 +1312,41 @@ func (api *StreamingAPI) GetAPIURL() string {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s:%d", host, api.config.Port)
+}
+
+// mergeGlobalSecrets prepends global secrets to user-supplied secrets.
+// User secrets take priority on name collision.
+func mergeGlobalSecrets(userSecrets []struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}) []struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+} {
+	globals := getGlobalSecrets()
+	if len(globals) == 0 {
+		return userSecrets
+	}
+	// Build a set of user-supplied secret names for dedup
+	userNames := make(map[string]bool, len(userSecrets))
+	for _, s := range userSecrets {
+		userNames[s.Name] = true
+	}
+	// Prepend globals that don't collide with user secrets
+	var merged []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	for _, g := range globals {
+		if !userNames[g.Name] {
+			merged = append(merged, struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			}{Name: g.Name, Value: g.Value})
+		}
+	}
+	merged = append(merged, userSecrets...)
+	return merged
 }
 
 // getOrCreatePlanSessionState returns the session-level plan state, creating one if needed.
@@ -2529,14 +2568,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
-		// Set decrypted secrets on the orchestrator (injected into each step's system prompt)
-		if len(req.DecryptedSecrets) > 0 {
-			entries := make([]orchestrator.SecretEntry, len(req.DecryptedSecrets))
-			for i, s := range req.DecryptedSecrets {
+		// Merge global secrets with user-supplied secrets, then set on orchestrator
+		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets)
+		if len(allSecrets) > 0 {
+			entries := make([]orchestrator.SecretEntry, len(allSecrets))
+			for i, s := range allSecrets {
 				entries[i] = orchestrator.SecretEntry{Name: s.Name, Value: s.Value}
 			}
 			workflowOrchestrator.SetSecrets(entries)
-			log.Printf("[SECRETS] Applied %d secrets to workflow orchestrator", len(entries))
+			log.Printf("[SECRETS] Applied %d secrets (%d global + %d user) to workflow orchestrator", len(entries), len(entries)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
 		}
 
 		// Store workflow orchestrator for guidance injection
@@ -4045,15 +4085,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelFuncs[sessionID] = agentCancel
 		api.agentCancelMux.Unlock()
 
-		// Inject decrypted secrets into chat query (for non-workflow/chat mode)
+		// Merge global secrets with user-supplied secrets, then inject into chat query
 		chatQuery := req.Query
-		if len(req.DecryptedSecrets) > 0 {
+		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets)
+		if len(allChatSecrets) > 0 {
 			var secretParts []string
-			for _, s := range req.DecryptedSecrets {
+			for _, s := range allChatSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
 			chatQuery = chatQuery + "\n\n🔐 Secrets:\n" + strings.Join(secretParts, "\n")
-			log.Printf("[SECRETS] Injected %d secrets into chat query", len(req.DecryptedSecrets))
+			log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into chat query", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
@@ -5425,6 +5466,18 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				loadedTemplate.Frontmatter.Name, loadedTemplate.Content)
 			underlyingAgent.AppendSystemPrompt(templatePrompt)
 			log.Printf("[DELEGATION] Injected sub-agent template instructions: %s", loadedTemplate.Frontmatter.Name)
+		}
+
+		// Merge global secrets with parent's decrypted secrets, then inject into sub-agent
+		allDelegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets)
+		if len(allDelegationSecrets) > 0 {
+			var secretParts []string
+			for _, s := range allDelegationSecrets {
+				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+			}
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. Use them as needed:\n\n" + strings.Join(secretParts, "\n")
+			underlyingAgent.AppendSystemPrompt(secretPrompt)
+			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
 		}
 	}
 

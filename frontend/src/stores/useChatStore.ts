@@ -1646,10 +1646,10 @@ export const useChatStore = create<ChatState>()(
       {
         name: 'chat-store',
         partialize: (state) => ({
-          // Persist workflow and multi-agent tabs (for reconnection), not chat tabs (ephemeral)
+          // Persist workflow, multi-agent, and chat tabs (for reconnection)
           chatTabs: Object.fromEntries(
             Object.entries(state.chatTabs)
-              .filter(([, tab]) => tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent')
+              .filter(([, tab]) => tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'chat')
               .map(([tabId, tab]) => [
               tabId,
               {
@@ -1673,10 +1673,10 @@ export const useChatStore = create<ChatState>()(
               }
             ])
           ),
-          // Only persist activeTabId if it's a workflow or multi-agent tab
+          // Persist activeTabId for workflow, multi-agent, and chat tabs
           activeTabId: (() => {
             const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
+            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent' || activeTab?.metadata?.mode === 'chat') ? state.activeTabId : null
           })()
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         }),

@@ -32,6 +32,14 @@ The workspace is organized into the following folders:
 - **Plans/** (read-only) - Delegation plans and sub-agent outputs. Used by the multi-agent system to coordinate tasks across agents.
 - **subagents/** (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.
 - **_users/** (blocked) - Internal directory, access not allowed.
+
+## How to Read Skills
+Skills are stored at skills/<skill-name>/SKILL.md. To use a skill:
+1. Read the SKILL.md file: execute_shell_command(command: "cat skills/<skill-name>/SKILL.md", working_directory: ".")
+2. If SKILL.md references supporting files (scripts, templates, examples), read those files too from the same skill folder.
+3. Follow the instructions in the SKILL.md to complete the user's request.
+
+Skills are located at the **workspace root** — always use working_directory: "." when accessing them.
 `
 	return instructions
 }
@@ -108,30 +116,7 @@ func buildSkillPrompt(selectedSkills []string) string {
 	promptParts = append(promptParts, `
 ## Active Skills
 
-### What is a Skill?
-A skill is a reusable set of instructions stored in the workspace. Each skill contains:
-- **SKILL.md**: The main instruction file with detailed guidance
-- **Additional files**: Reference files, templates, or examples
-
-### Workspace Folder Layout
-The workspace has this structure:
-- skills/          — Skill definitions (read-only reference)
-- Chats/           — Chat history
-- Plans/           — Delegation plans and sub-agent outputs
-- Workspace/       — User documents and files
-- Downloads/       — Downloaded files
-
-Skills are at the **workspace root** (e.g., skills/my-skill/SKILL.md).
-Your plan folder (if any) is under Plans/.
-These are different locations — always use working_directory: "." (workspace root) when accessing skills.
-
-### How to Use Skills:
-1. **Read the skill**: execute_shell_command(command: "cat skills/<skill-name>/SKILL.md", working_directory: ".")
-2. **List skill files**: execute_shell_command(command: "ls -R skills/<skill-name>/", working_directory: ".")
-3. **Read supporting files**: If the skill has additional files, read them too for full context
-4. **Follow the instructions**: Apply the skill's methodology to the user's request
-
-**IMPORTANT: You MUST read the skill instructions BEFORE responding to the user's request.**
+The following skills are activated for this conversation. You **MUST** read each skill's SKILL.md before responding to the user's request.
 
 ### Activated Skills:
 `)
@@ -155,11 +140,7 @@ These are different locations — always use working_directory: "." (workspace r
 	}
 
 	promptParts = append(promptParts, `
-
-**Action Required:** Before proceeding, use execute_shell_command with working_directory: "." to:
-1. Read each SKILL.md (e.g., command: "cat skills/<name>/SKILL.md")
-2. List skill files (e.g., command: "ls -R skills/<name>/")
-3. Read any supporting files found
+**Action Required:** Before proceeding, read each SKILL.md using execute_shell_command(command: "cat skills/<name>/SKILL.md", working_directory: ".").
 `)
 
 	return strings.Join(promptParts, "\n")

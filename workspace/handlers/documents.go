@@ -186,16 +186,31 @@ func CreateDocument(c *gin.Context) {
 }
 
 // getAllDocumentsRecursively recursively reads all files and folders from a directory
-func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]models.Document, error) {
+func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit, offset int) ([]models.Document, error) {
 	var documents []models.Document
+	count := 0
+	skipped := 0
+
+	// Common heavy directories to ignore
+	ignoredDirs := map[string]bool{
+		".git":         true,
+		"node_modules": true,
+		".next":        true,
+		"dist":         true,
+		"build":        true,
+		"coverage":     true,
+		"__pycache__":  true,
+		".venv":        true,
+		"venv":         true,
+	}
 
 	err := filepath.Walk(searchPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip .git directory entirely
-		if info.IsDir() && info.Name() == ".git" {
+		// Skip heavy directories entirely
+		if info.IsDir() && ignoredDirs[info.Name()] {
 			return filepath.SkipDir
 		}
 
@@ -214,7 +229,22 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 					FilePath: relPathFromDocs,
 					Type:     "folder", // Mark as folder
 				}
+				
+				// Apply offset and limit for folders too? Usually we want folders.
+				// For now, let's treat folders as part of the count if we want strictly flat list pagination.
+				// But mostly we want files. Let's keep folders but limit files?
+				// To be safe and simple, we count everything.
+				if offset > 0 && skipped < offset {
+					skipped++
+					return nil
+				}
+				
+				if limit > 0 && count >= limit {
+					return filepath.SkipAll // Stop walking
+				}
+				
 				documents = append(documents, doc)
+				count++
 			}
 			return nil
 		}
@@ -245,6 +275,23 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 			return nil // Skip files/folders that can't be relativized
 		}
 
+		// Apply pagination
+		if offset > 0 && skipped < offset {
+			skipped++
+			if info.IsDir() {
+				// Don't skip dir children just because the dir itself is skipped in pagination
+				// unless we are way past. But filepath.Walk is depth-first usually.
+				// Actually, if we skip a dir, we might skip its children if we return SkipDir.
+				// We should just return nil to continue walking but not add to result.
+				return nil 
+			}
+			return nil
+		}
+
+		if limit > 0 && count >= limit {
+			return filepath.SkipAll // Stop walking
+		}
+
 		if info.IsDir() {
 			// This is a folder - add it to the list
 			doc := models.Document{
@@ -252,6 +299,7 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 				Type:     "folder", // Mark as folder
 			}
 			documents = append(documents, doc)
+			count++
 		} else {
 			// This is a file - include all files regardless of type
 			// For listing, we don't read file content to improve performance
@@ -266,10 +314,17 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int) ([]mod
 				IsImage:  isImage,
 			}
 			documents = append(documents, doc)
+			count++
 		}
 
 		return nil
 	})
+	
+	// Handle SkipAll error as success (it's our signal to stop)
+	if err == filepath.SkipAll {
+		err = nil
+	}
+	
 	return documents, err
 }
 
@@ -441,7 +496,7 @@ func ListDocuments(c *gin.Context) {
 	}
 
 	// Use recursive function to get all documents with max depth
-	documents, err := getAllDocumentsRecursively(searchPath, logicalDocsDir, req.MaxDepth)
+	documents, err := getAllDocumentsRecursively(searchPath, logicalDocsDir, req.MaxDepth, req.Limit, req.Offset)
 	if err != nil {
 		// Check if error is due to directory not existing
 		if os.IsNotExist(err) {
@@ -482,7 +537,7 @@ func ListDocuments(c *gin.Context) {
 		userDir := filepath.Join(docsDir, utils.UsersDirectory, userID)
 		if _, statErr := os.Stat(userDir); statErr == nil {
 			// User directory exists, get its contents
-			userDocuments, userErr := getAllDocumentsRecursively(userDir, userDir, req.MaxDepth)
+			userDocuments, userErr := getAllDocumentsRecursively(userDir, userDir, req.MaxDepth, -1, 0)
 			if userErr == nil {
 				// Map user documents to appear at root level (Chats/ instead of _users/{userID}/Chats/)
 				for i := range userDocuments {
@@ -599,7 +654,7 @@ func GlobDocuments(c *gin.Context) {
 	}
 
 	// Get all documents recursively
-	allDocuments, err := getAllDocumentsRecursively(searchPath, docsDir, maxDepth)
+	allDocuments, err := getAllDocumentsRecursively(searchPath, docsDir, maxDepth, -1, 0)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,

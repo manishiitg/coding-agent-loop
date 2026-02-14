@@ -3758,7 +3758,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			delegationMode := req.DelegationMode // "spawn", "plan", or ""
 
 			if delegationMode == "spawn" || delegationMode == "plan" {
-				delegationTools := virtualtools.CreateDelegationTools()
+				// Build delegation tier config early so we can pass it to tool creation (for dynamic enum)
+				tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
+				delegationTools := virtualtools.CreateDelegationTools(tierConfig)
 				delegationExecutors := virtualtools.CreateDelegationToolExecutors()
 				delegationCategory := virtualtools.GetDelegationToolCategory()
 
@@ -3784,9 +3786,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}),
 						workspace.WithUserID(currentUserID),
 					)
-
-					// Build delegation tier config from request or env vars
-					tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
 
 					// Build capabilities context for the planner
 					caps := buildCapabilitiesContext(req)
@@ -4031,9 +4030,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if req.DelegationMode == "plan" {
 				// Plan mode: plan→approve→execute with async background agents
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetPlanWithBackgroundAgentsInstructions())
+				// Inject custom tier descriptions into system prompt so the manager knows about them
+				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
+					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
+						underlyingAgent.AppendSystemPrompt(tierSection)
+					}
+				}
 				log.Printf("[DELEGATION] Added plan+background agent instructions to system prompt (mode: plan)")
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
+				// Inject custom tier descriptions into system prompt so the manager knows about them
+				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
+					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
+						underlyingAgent.AppendSystemPrompt(tierSection)
+					}
+				}
 				log.Printf("[DELEGATION] Added delegation instructions to system prompt (mode: spawn)")
 			}
 		}
@@ -5263,6 +5274,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				tierModel = tierConfig.Medium
 			case "low":
 				tierModel = tierConfig.Low
+			default:
+				// Custom tier lookup
+				if tierConfig.Custom != nil {
+					if ct, ok := tierConfig.Custom[reasoningLevel]; ok {
+						tierModel = &virtualtools.TierModel{Provider: ct.Provider, ModelID: ct.ModelID}
+					}
+				}
 			}
 			if tierModel != nil && tierModel.Provider != "" && tierModel.ModelID != "" {
 				provider = llm.Provider(tierModel.Provider)
@@ -6531,6 +6549,11 @@ func resolveDelegationTierConfig(frontendConfig *virtualtools.DelegationTierConf
 		}
 		if frontendConfig.Low != nil && frontendConfig.Low.Provider != "" && frontendConfig.Low.ModelID != "" {
 			result.Low = frontendConfig.Low
+			hasAny = true
+		}
+		// Pass through custom tiers from frontend (no env var equivalent)
+		if len(frontendConfig.Custom) > 0 {
+			result.Custom = frontendConfig.Custom
 			hasAny = true
 		}
 	}

@@ -127,9 +127,16 @@ export interface DelegationTierConfig {
   high?: TierModel
   medium?: TierModel
   low?: TierModel
+  custom?: Record<string, CustomTierModel>  // slug → custom tier
 }
 
 export interface TierModel {
+  provider: string
+  model_id: string
+}
+
+export interface CustomTierModel {
+  description: string // LLM guidance, e.g. "low cost model for code reviews"
   provider: string
   model_id: string
 }

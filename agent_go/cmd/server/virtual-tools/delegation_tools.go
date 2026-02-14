@@ -142,15 +142,23 @@ func NewPlanTracker() *PlanTracker {
 
 // DelegationTierConfig holds provider/model for each reasoning tier
 type DelegationTierConfig struct {
-	High   *TierModel `json:"high,omitempty"`
-	Medium *TierModel `json:"medium,omitempty"`
-	Low    *TierModel `json:"low,omitempty"`
+	High   *TierModel                `json:"high,omitempty"`
+	Medium *TierModel                `json:"medium,omitempty"`
+	Low    *TierModel                `json:"low,omitempty"`
+	Custom map[string]*CustomTierModel `json:"custom,omitempty"`
 }
 
 // TierModel represents a specific provider+model for a tier
 type TierModel struct {
 	Provider string `json:"provider"`
 	ModelID  string `json:"model_id"`
+}
+
+// CustomTierModel represents a user-defined reasoning tier with description and model
+type CustomTierModel struct {
+	Description string `json:"description"`
+	Provider    string `json:"provider"`
+	ModelID     string `json:"model_id"`
 }
 
 // CapabilitiesContext describes the available tools, servers, and skills for the planner
@@ -223,9 +231,59 @@ type BGAgentQuerier interface {
 	TerminateAgent(sessionID, agentID string) error
 }
 
-// CreateDelegationTools creates all delegation virtual tools
-func CreateDelegationTools() []llmtypes.Tool {
+// BuildReasoningLevelParam builds the reasoning_level parameter definition dynamically,
+// including any custom tier slugs from the tier config.
+func BuildReasoningLevelParam(tierConfig *DelegationTierConfig) map[string]interface{} {
+	enumVals := []string{"high", "medium", "low"}
+	desc := "'high' for complex planning/architecture, 'medium' for standard implementation, 'low' for simple tasks like formatting/tests."
+	if tierConfig != nil && len(tierConfig.Custom) > 0 {
+		for slug, ct := range tierConfig.Custom {
+			enumVals = append(enumVals, slug)
+			desc += fmt.Sprintf(" '%s': %s.", slug, ct.Description)
+		}
+	}
+	desc += " If not specified, uses the parent agent's model."
+	return map[string]interface{}{
+		"type": "string", "enum": enumVals, "description": "Optional reasoning tier for this task. " + desc,
+	}
+}
+
+// ValidateReasoningLevel checks if a reasoning level is valid (built-in or custom tier).
+// Returns the level if valid, empty string if not.
+func ValidateReasoningLevel(ctx context.Context, level string) string {
+	if level == "high" || level == "medium" || level == "low" {
+		return level
+	}
+	// Check if it's a valid custom tier
+	if tc, ok := ctx.Value(DelegationTierConfigKey).(*DelegationTierConfig); ok && tc != nil {
+		if _, exists := tc.Custom[level]; exists {
+			return level
+		}
+	}
+	return "" // invalid
+}
+
+// BuildCustomTierPromptSection returns a markdown section describing custom tiers for system prompts.
+// Returns empty string if no custom tiers are configured.
+func BuildCustomTierPromptSection(tierConfig *DelegationTierConfig) string {
+	if tierConfig == nil || len(tierConfig.Custom) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n### Custom Reasoning Tiers\n")
+	sb.WriteString("In addition to high/medium/low, these custom tiers are available:\n")
+	for slug, ct := range tierConfig.Custom {
+		sb.WriteString(fmt.Sprintf("- `%s`: %s\n", slug, ct.Description))
+	}
+	return sb.String()
+}
+
+// CreateDelegationTools creates all delegation virtual tools.
+// tierConfig is optional — when provided, custom tier slugs are included in reasoning_level enum.
+func CreateDelegationTools(tierConfig *DelegationTierConfig) []llmtypes.Tool {
 	var tools []llmtypes.Tool
+
+	reasoningLevelParam := BuildReasoningLevelParam(tierConfig)
 
 	// delegate tool - Execute a sub-agent to handle a task
 	delegateTool := llmtypes.Tool{
@@ -244,11 +302,7 @@ func CreateDelegationTools() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Comprehensive, self-contained instructions for the sub-agent. Include all necessary context, requirements, and expected outcomes.",
 					},
-					"reasoning_level": map[string]interface{}{
-						"type":        "string",
-						"enum":        []string{"high", "medium", "low"},
-						"description": "Optional reasoning tier for this task. 'high' for complex planning/architecture, 'medium' for standard implementation, 'low' for simple tasks like formatting/tests. If not specified, uses the parent agent's model.",
-					},
+					"reasoning_level": reasoningLevelParam,
 					"plan_folder": map[string]interface{}{
 						"type":        "string",
 						"description": "Optional plan folder path (e.g. 'Plans/{plan_id}'). When set, the worker's write access is restricted to this folder only. Always pass this when executing tasks from a plan.",
@@ -297,11 +351,7 @@ func CreateDelegationTools() []llmtypes.Tool {
 						"type":        "string",
 						"description": "Optional additional context for the planner: constraints, file paths, tech stack, or any information that helps create a better plan.",
 					},
-					"reasoning_level": map[string]interface{}{
-						"type":        "string",
-						"enum":        []string{"high", "medium", "low"},
-						"description": "Optional reasoning tier for the planner sub-agent. 'high' for complex multi-step projects, 'medium' for standard planning, 'low' for simple task breakdowns. If not specified, uses the parent agent's model.",
-					},
+					"reasoning_level": reasoningLevelParam,
 				},
 				"required": []string{"plan_name", "objective"},
 			}),
@@ -424,8 +474,8 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 
 	// Extract optional reasoning_level, plan_folder, and tool_mode
 	reasoningLevel, _ := args["reasoning_level"].(string)
-	if reasoningLevel != "" && reasoningLevel != "high" && reasoningLevel != "medium" && reasoningLevel != "low" {
-		reasoningLevel = "" // Ignore invalid values
+	if reasoningLevel != "" {
+		reasoningLevel = ValidateReasoningLevel(ctx, reasoningLevel)
 	}
 	planFolder, _ := args["plan_folder"].(string)
 	toolMode, _ := args["tool_mode"].(string)
@@ -642,8 +692,9 @@ func handleListAgents(ctx context.Context, args map[string]interface{}) (string,
 }
 
 // buildPlannerPrompt creates the system instruction for the planner sub-agent
-// It includes capabilities context so the planner knows what tools/servers/skills are available
-func buildPlannerPrompt(caps *CapabilitiesContext, planFolder string) string {
+// It includes capabilities context so the planner knows what tools/servers/skills are available.
+// tierConfig is optional — when provided, custom tier descriptions are added to reasoning level guidance.
+func buildPlannerPrompt(caps *CapabilitiesContext, planFolder string, tierConfig ...*DelegationTierConfig) string {
 	var sb strings.Builder
 
 	sb.WriteString(`You are a Planner. Your job is to analyze an objective and produce a structured plan as a markdown file.
@@ -786,6 +837,15 @@ Write the plan as a structured markdown document with these sections:
 		sb.WriteString("\nConsider these capabilities when designing tasks — reference specific servers, tools, skills, or sub-agent templates where relevant.\n")
 	}
 
+	// Append custom tier descriptions if available
+	var tc *DelegationTierConfig
+	if len(tierConfig) > 0 {
+		tc = tierConfig[0]
+	}
+	if section := BuildCustomTierPromptSection(tc); section != "" {
+		sb.WriteString(section)
+	}
+
 	return sb.String()
 }
 
@@ -801,8 +861,8 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 	}
 	additionalContext, _ := args["context"].(string)
 	reasoningLevel, _ := args["reasoning_level"].(string)
-	if reasoningLevel != "" && reasoningLevel != "high" && reasoningLevel != "medium" && reasoningLevel != "low" {
-		reasoningLevel = "" // Ignore invalid values
+	if reasoningLevel != "" {
+		reasoningLevel = ValidateReasoningLevel(ctx, reasoningLevel)
 	}
 	// Planning is a high-reasoning task — default to "high" if not specified
 	if reasoningLevel == "" {
@@ -862,8 +922,14 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 		caps = c
 	}
 
+	// Extract tier config for custom tier descriptions in planner prompt
+	var planTierConfig *DelegationTierConfig
+	if tc, ok := ctx.Value(DelegationTierConfigKey).(*DelegationTierConfig); ok {
+		planTierConfig = tc
+	}
+
 	// Build the planner instruction
-	plannerInstruction := buildPlannerPrompt(caps, planFolder)
+	plannerInstruction := buildPlannerPrompt(caps, planFolder, planTierConfig)
 	plannerInstruction += fmt.Sprintf("\n\n## Objective\n%s", objective)
 
 	if additionalContext != "" {

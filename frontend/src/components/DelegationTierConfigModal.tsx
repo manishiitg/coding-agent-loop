@@ -1,8 +1,8 @@
-import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles } from 'lucide-react'
+import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2 } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
 import { useChatStore } from '../stores'
-import type { DelegationTierConfig, TierModel } from '../services/api-types'
+import type { DelegationTierConfig, TierModel, CustomTierModel } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 
@@ -13,6 +13,30 @@ const syncTierConfigToActiveTab = (newConfig: DelegationTierConfig | null) => {
   if (activeTab?.metadata?.mode === 'multi-agent') {
     chatStore.setTabConfig(activeTab.tabId, { delegationTierConfig: newConfig ?? undefined })
   }
+}
+
+// Generate a slug from the first 4 words of a description, guarding against reserved names
+const descToSlug = (desc: string): string => {
+  const slug = desc
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 4)
+    .join('-')
+    .replace(/-+/g, '-')
+    .slice(0, 30) || 'custom'
+  if (slug === 'high' || slug === 'medium' || slug === 'low') {
+    return `${slug}-tier`
+  }
+  return slug
+}
+
+// Check if config has any values (built-in or custom)
+const hasAnyConfig = (config: DelegationTierConfig | null): boolean => {
+  if (!config) return false
+  return !!(config.high || config.medium || config.low ||
+    (config.custom && Object.keys(config.custom).length > 0))
 }
 
 interface DelegationTierConfigModalProps {
@@ -38,14 +62,95 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
   if (!isOpen) return null
 
+  const customTiers = delegationTierConfig?.custom ?? {}
+  const customEntries = Object.entries(customTiers)
+
+  const handleAddCustomTier = () => {
+    const base = 'custom-tier'
+    let slug = base
+    let i = 1
+    while (customTiers[slug]) {
+      slug = `${base}-${i}`
+      i++
+    }
+    const newCustom: CustomTierModel = {
+      description: '',
+      provider: '',
+      model_id: '',
+    }
+    const newConfig: DelegationTierConfig = {
+      ...delegationTierConfig,
+      custom: { ...customTiers, [slug]: newCustom },
+    }
+    setDelegationTierConfig(newConfig)
+    syncTierConfigToActiveTab(newConfig)
+  }
+
+  const handleRemoveCustomTier = (slug: string) => {
+    const newCustom = { ...customTiers }
+    delete newCustom[slug]
+    const newConfig: DelegationTierConfig = {
+      ...delegationTierConfig,
+      custom: Object.keys(newCustom).length > 0 ? newCustom : undefined,
+    }
+    const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
+    setDelegationTierConfig(finalConfig)
+    syncTierConfigToActiveTab(finalConfig)
+  }
+
+  const handleDescriptionChange = (slug: string, value: string) => {
+    const tier = customTiers[slug]
+    if (!tier) return
+    const updatedTier = { ...tier, description: value }
+    const newCustom = { ...customTiers, [slug]: updatedTier }
+    const newConfig: DelegationTierConfig = {
+      ...delegationTierConfig,
+      custom: newCustom,
+    }
+    setDelegationTierConfig(newConfig)
+    syncTierConfigToActiveTab(newConfig)
+  }
+
+  // Regenerate slug from description on blur (first 4 words)
+  const handleDescriptionBlur = (slug: string) => {
+    const tier = customTiers[slug]
+    if (!tier || !tier.description) return
+
+    const candidate = descToSlug(tier.description)
+    if (candidate === slug || customTiers[candidate]) return // no change or collision
+
+    const newCustom = { ...customTiers }
+    delete newCustom[slug]
+    newCustom[candidate] = tier
+
+    const newConfig: DelegationTierConfig = {
+      ...delegationTierConfig,
+      custom: newCustom,
+    }
+    setDelegationTierConfig(newConfig)
+    syncTierConfigToActiveTab(newConfig)
+  }
+
+  const handleCustomTierLLMSelect = (slug: string, llm: LLMOption) => {
+    const tier = customTiers[slug]
+    if (!tier) return
+    const updatedTier: CustomTierModel = { ...tier, provider: llm.provider, model_id: llm.model }
+    const newConfig: DelegationTierConfig = {
+      ...delegationTierConfig,
+      custom: { ...customTiers, [slug]: updatedTier },
+    }
+    setDelegationTierConfig(newConfig)
+    syncTierConfigToActiveTab(newConfig)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-4xl mx-4"
+        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl w-full max-w-5xl mx-4 max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-slate-700 shrink-0">
           <div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Multi-Agent Mode</h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Configure how your AI team works together</p>
@@ -58,10 +163,10 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
           </button>
         </div>
 
-        {/* Two-column body */}
-        <div className="flex divide-x divide-gray-200 dark:divide-slate-700">
+        {/* Two-column body — scrollable */}
+        <div className="flex divide-x divide-gray-200 dark:divide-slate-700 overflow-y-auto min-h-0">
           {/* Left: How it works + features */}
-          <div className="w-1/2 p-5 space-y-4">
+          <div className="w-2/5 p-5 space-y-4 shrink-0">
             <div className="bg-slate-50 dark:bg-slate-700/50 rounded-lg p-4">
               <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">How it works</h3>
               <div className="text-sm text-gray-600 dark:text-gray-300 space-y-1">
@@ -89,12 +194,13 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
           </div>
 
           {/* Right: Tier config */}
-          <div className="w-1/2 p-5">
+          <div className="w-3/5 p-5 overflow-y-auto">
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Sub-Agent Models</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
               Assign models by complexity tier. Leave empty to use the parent model.
             </p>
 
+            {/* Built-in tiers */}
             <div className="space-y-3">
               {TIERS.map(({ key, label, desc, icon: Icon, color }) => {
                 const tierModel = delegationTierConfig?.[key]
@@ -122,8 +228,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                           onClick={() => {
                             const newConfig: DelegationTierConfig = { ...delegationTierConfig }
                             delete newConfig[key]
-                            const hasAny = newConfig.high || newConfig.medium || newConfig.low
-                            const finalConfig = hasAny ? newConfig : null
+                            const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
                             setDelegationTierConfig(finalConfig)
                             syncTierConfigToActiveTab(finalConfig)
                           }}
@@ -150,11 +255,83 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                 )
               })}
             </div>
+
+            {/* Custom tiers */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Custom Tiers</h3>
+                <button
+                  onClick={handleAddCustomTier}
+                  className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Custom Tier
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                Define named tiers so the AI picks the right model per task type. The tag is auto-generated from the description.
+              </p>
+
+              {customEntries.length === 0 && (
+                <p className="text-xs text-gray-400 dark:text-gray-500 italic py-2">
+                  No custom tiers yet.
+                </p>
+              )}
+
+              <div className="space-y-3">
+                {customEntries.map(([slug, tier]) => {
+                  const selectedLLM: LLMOption | null = tier.provider && tier.model_id
+                    ? {
+                        provider: tier.provider,
+                        model: tier.model_id,
+                        label: `${tier.provider} - ${tier.model_id}`,
+                        description: slug,
+                      }
+                    : null
+
+                  return (
+                    <div key={slug} className="border border-dashed border-gray-300 dark:border-slate-500 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Tag className="w-4 h-4 text-orange-500" />
+                          <span className="text-xs font-mono text-gray-400 dark:text-gray-500">{slug}</span>
+                        </div>
+                        <button
+                          onClick={() => handleRemoveCustomTier(slug)}
+                          className="text-xs text-red-400 hover:text-red-600 flex items-center gap-0.5"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Remove
+                        </button>
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder="Description (e.g. low cost model for code reviews)"
+                        value={tier.description}
+                        onChange={(e) => handleDescriptionChange(slug, e.target.value)}
+                        onBlur={() => handleDescriptionBlur(slug)}
+                        className="w-full text-sm px-2 py-1 mb-2 rounded border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
+                      />
+
+                      <LLMSelectionDropdown
+                        availableLLMs={availableLLMs}
+                        selectedLLM={selectedLLM}
+                        onLLMSelect={(llm: LLMOption) => handleCustomTierLLMSelect(slug, llm)}
+                        inModal={true}
+                        openDirection="up"
+                        title={`Select model for ${slug}`}
+                      />
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end px-6 py-3 border-t border-gray-200 dark:border-slate-700">
+        <div className="flex justify-end px-6 py-3 border-t border-gray-200 dark:border-slate-700 shrink-0">
           <Button onClick={onClose} size="sm">Done</Button>
         </div>
       </div>

@@ -861,7 +861,7 @@ function App() {
         console.log(`[RESTORE_DEBUG] Step 5: Fetching events for session ${sessionId} (since=-1, eventMode=tiny)`)
         try {
           const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode: 'tiny' })
-          console.log(`[RESTORE_DEBUG] Step 5 result: events=${response.events?.length}, last_processed_index=${response.last_processed_index}, has_more=${response.has_more}, session_status=${(response as Record<string, unknown>).session_status}`)
+          console.log(`[RESTORE_DEBUG] Step 5 result: events=${response.events?.length}, last_processed_index=${response.last_processed_index}, has_more=${response.has_more}, session_status=${(response as unknown as Record<string, unknown>).session_status}`)
           if (response.events && response.events.length > 0) {
             console.log(`[RESTORE_DEBUG] Step 5 first event type: ${response.events[0]?.type}, last event type: ${response.events[response.events.length - 1]?.type}`)
           }

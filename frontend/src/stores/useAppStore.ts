@@ -64,7 +64,7 @@ export const useAppStore = create<AppState>()(
           sidebarMinimized: false,
           workspaceMinimized: false,
           useCodeExecutionMode: true, // Default to enabled
-          delegationMode: 'off' as const, // Default to off (user enables via /spawn)
+          delegationMode: 'spawn' as const, // Default to spawn (delegation enabled by default)
           // Actions
           setAgentMode: (mode) => {
             const currentMode = get().agentMode

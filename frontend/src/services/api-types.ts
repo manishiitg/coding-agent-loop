@@ -118,6 +118,8 @@ export interface AgentQueryRequest {
   delegation_tier_config?: DelegationTierConfig
   // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)
   decrypted_secrets?: Array<{ name: string; value: string }>
+  // Selected global secret names to include (if omitted, all global secrets are included)
+  selected_global_secrets?: string[]
 }
 
 // Delegation tier configuration for multi-LLM support

@@ -96,6 +96,11 @@ model: openrouter/anthropic/claude-sonnet-4
     -   OR use ` + "`web_fetch`" + ` to call the API...
 ` + "```" + `
 
+### Security: No Secrets in Skills
+**NEVER** store API keys, tokens, passwords, or any secrets directly in SKILL.md or supporting scripts.
+- Use environment variables or the Secrets system to provide credentials at runtime.
+- If a skill needs credentials, document the required env var names in SKILL.md but do NOT include actual values.
+
 ### Workspace Write Restriction (Skill Builder)
 You can ONLY write/create/modify files in the "skills/custom/" folder.
 Use this access to create and update custom skills. You can read other folders to see existing skills.
@@ -200,6 +205,11 @@ You are a specialized agent for...
 - Include the sub-agent's expertise, methodology, expected output format, and any constraints
 - Reference relevant skills if they enhance the sub-agent's capabilities
 - Keep templates focused on a single role or task type
+
+### Security: No Secrets in Templates
+**NEVER** store API keys, tokens, passwords, or any secrets in SUBAGENT.md files (frontmatter or instructions body).
+- Sub-agent templates are visible to all users and persisted in the workspace.
+- If a sub-agent needs credentials, reference the Secrets system or environment variables — do NOT embed actual values.
 
 ### Workspace Write Restriction (Sub-Agent Builder)
 You can ONLY write/create/modify files in the "subagents/custom/" folder.

@@ -89,7 +89,8 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     useCodeExecutionMode?: boolean,
     enableContextSummarization?: boolean,
     useToolSearchMode?: boolean,
-    enableBrowserAccess?: boolean
+    enableBrowserAccess?: boolean,
+    selectedSecrets?: string[]
   ) => {
     // Set the agent mode based on the mode category
     const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'simple' | 'workflow'
@@ -103,7 +104,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     
     try {
       // Create the preset and get the returned preset object directly
-      const newPreset = await addPreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess)
+      const newPreset = await addPreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, enableContextSummarization, useToolSearchMode, enableBrowserAccess, undefined, selectedSecrets)
       
       if (!newPreset) {
         console.error('Failed to create preset')

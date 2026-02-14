@@ -128,6 +128,7 @@ import {
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
 import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
+import { PlanApprovalDisplay } from './PlanApprovalDisplay'
 import { BlockingHumanQuestionsDisplay } from './BlockingHumanQuestionsDisplay'
 import { useChatStore } from '../../stores/useChatStore'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
@@ -143,7 +144,7 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
       <div className="flex items-center gap-1.5 mb-1">
         <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
         <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">
-          Sub-agent generating...
+          Working...
         </span>
       </div>
       <div className="text-xs max-h-60 overflow-y-auto custom-scrollbar">
@@ -199,12 +200,14 @@ interface EventDispatcherProps {
   onApproveWorkflow?: (requestId: string) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
+  onSendMessage?: (msg: string) => void
   isApproving?: boolean
   isCollapsed?: boolean
   eventCount?: number
   onToggleCollapse?: () => void
   compact?: boolean
   delegationStats?: Map<string, DelegationStats>
+  backgroundAgentStats?: Map<string, DelegationStats>
   // Hierarchy props for sub-agent log containment
   childrenNodes?: EventNode[]
   onToggleNode?: (eventId: string) => void
@@ -222,6 +225,7 @@ const SubAgentHierarchy: React.FC<{
   onFeedbackSubmitted?: () => void
   isApproving?: boolean
   delegationStats?: Map<string, DelegationStats>
+  backgroundAgentStats?: Map<string, DelegationStats>
   compact?: boolean
 }> = ({ nodes, onToggleNode, ...props }) => {
   return (
@@ -300,12 +304,14 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   onApproveWorkflow,
   onSubmitFeedback,
   onFeedbackSubmitted,
+  onSendMessage,
   isApproving,
   isCollapsed,
   eventCount,
   onToggleCollapse,
   compact = false,
   delegationStats,
+  backgroundAgentStats,
   childrenNodes,
   onToggleNode
 }) => {
@@ -592,6 +598,26 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         }}
         onSubmitFeedback={onSubmitFeedback}
         onFeedbackSubmitted={onFeedbackSubmitted}
+      />
+    )
+  }
+
+  // Plan Approval Event (non-blocking — sends response as chat message)
+  if (event.type === 'plan_approval') {
+    const data = event.data as { data?: Record<string, unknown> } | undefined
+    const payload = (data?.data || event.data) as Record<string, unknown>
+    return (
+      <PlanApprovalDisplay
+        event={{
+          type: event.type,
+          data: {
+            question: (payload?.question as string) || 'Plan is ready for review.',
+            context: (payload?.context as string) || '',
+            yes_label: (payload?.yes_label as string) || 'Approve & Execute',
+          },
+          timestamp: event.timestamp || new Date().toISOString()
+        }}
+        onSendMessage={onSendMessage || (() => {})}
       />
     )
   }
@@ -1175,7 +1201,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             <span className="text-[10px] text-purple-400 group-open:hidden">+</span>
             <span className="text-[10px] text-purple-400 hidden group-open:inline">−</span>
             <div className="text-xs font-medium text-purple-700 dark:text-purple-300 flex-1 truncate" title={instruction}>
-              Sub-agent: {instruction.length > 80 ? instruction.substring(0, 80) + '...' : instruction}
+              {instruction.length > 80 ? instruction.substring(0, 80) + '...' : instruction}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
               {hasLiveStats && (
@@ -1229,8 +1255,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               <span>Mode: {!toolMode || toolMode === 'simple' ? 'Simple' : toolMode === 'code_execution' ? 'Code Execution' : 'Tool Search'}</span>
               {modelId && <span>Model: {modelId}</span>}
               {servers && servers.length > 0 && <span>Servers: {servers.join(', ')}</span>}
-              {depth !== undefined && <span>Depth: {depth}</span>}
-              {delegationId && <span className="font-mono">{delegationId}</span>}
             </div>
 
             {hasLiveStats && (
@@ -1256,7 +1280,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             <div
               ref={scrollRef}
               className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words"
-              style={{ maxHeight: '600px' }}
+              style={{ maxHeight: '50vh' }}
             >
               <SubAgentHierarchy
                 nodes={childrenNodes}
@@ -1266,6 +1290,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
                 onFeedbackSubmitted={onFeedbackSubmitted}
                 isApproving={isApproving}
                 delegationStats={delegationStats}
+                backgroundAgentStats={backgroundAgentStats}
                 compact={true}
               />
             </div>
@@ -1338,7 +1363,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
             <span className={`text-[10px] ${colorClasses.muted} group-open:hidden`}>+</span>
             <span className={`text-[10px] ${colorClasses.muted} hidden group-open:inline`}>−</span>
             <div className={`text-xs font-medium flex-1 ${colorClasses.text}`}>
-              {isSuccess ? 'Sub-agent done' : 'Sub-agent failed'}
+              {isSuccess ? 'Task completed' : 'Task failed'}
               {error && <span className="font-normal ml-1">- {error.length > 50 ? error.substring(0, 50) + '...' : error}</span>}
             </div>
             <div className="flex items-center gap-1.5 text-[10px] flex-shrink-0">
@@ -1402,9 +1427,17 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       instruction?: string
     }
     const fields = data?.data?.fields || data?.data || data
-    const agentName = fields?.name || 'Background Agent'
     const agentId = fields?.agent_id || ''
-    const instruction = fields?.instruction || ''
+    const rawName = fields?.name || ''
+    // Strip internal prefixes like "Planner: " for user-facing display
+    const displayName = rawName.replace(/^Planner:\s*/i, '').trim() || 'Task'
+
+    // Look up live stats via background agent ID → delegation stats mapping
+    const liveStats = agentId ? backgroundAgentStats?.get(agentId) : undefined
+    const hasLiveStats = liveStats && (liveStats.toolCalls > 0 || liveStats.inputTokens > 0)
+    if (agentId) {
+      console.log('[BG_AGENT_RENDER]', agentId, 'liveStats:', liveStats, 'hasLiveStats:', hasLiveStats, 'bgStatsSize:', backgroundAgentStats?.size)
+    }
 
     return (
       <CompactWrapper>
@@ -1412,22 +1445,31 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
             <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-blue-700 dark:text-blue-300`}>
-              {agentName}
+              {displayName}
             </span>
-            <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-500 dark:text-blue-400`}>
-              started
-            </span>
-            {agentId && (
-              <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-400 dark:text-gray-500 font-mono`}>
-                {agentId}
+            {hasLiveStats && (
+              <span className="text-[10px] text-blue-500 dark:text-blue-400 animate-pulse">
+                {liveStats.toolCalls ? `${liveStats.toolCalls} tools` : ''}
+                {liveStats.latestToolName ? ` · ${liveStats.latestToolName}` : ''}
               </span>
             )}
+            {!hasLiveStats && (
+              <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-500 dark:text-blue-400`}>
+                in progress...
+              </span>
+            )}
+            {liveStats?.contextUsagePercent !== undefined && liveStats.contextUsagePercent > 0 && (
+              <TooltipProvider>
+                <CircularProgress percentage={liveStats.contextUsagePercent} size={16} strokeWidth={2.5}
+                  tokenUsage={{ context_usage_percent: liveStats.contextUsagePercent,
+                    model_context_window: liveStats.modelContextWindow,
+                    context_window_usage: liveStats.contextWindowUsage, model_id: liveStats.modelId }} />
+              </TooltipProvider>
+            )}
+            {event.timestamp && (
+              <ElapsedTimer startTimestamp={event.timestamp} className="text-[10px] text-blue-500 dark:text-blue-400 animate-pulse font-mono" />
+            )}
           </div>
-          {instruction && (
-            <div className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-600 dark:text-blue-400 mt-1 truncate`} title={instruction}>
-              {instruction}
-            </div>
-          )}
         </div>
       </CompactWrapper>
     )
@@ -1445,7 +1487,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       duration?: string
     }
     const fields = data?.data?.fields || data?.data || data
-    const agentName = fields?.name || 'Background Agent'
+    const rawName = fields?.name || ''
+    const displayName = rawName.replace(/^Planner:\s*/i, '').trim() || 'Task'
     const status = fields?.status || 'completed'
     const duration = fields?.duration || ''
     const result = fields?.result || ''
@@ -1453,24 +1496,25 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const isSuccess = status === 'completed'
     const isFailed = status === 'failed'
 
-    const statusColor = isSuccess ? 'green' : isFailed ? 'red' : 'gray'
     const bgColor = isSuccess ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' :
                     isFailed ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
                     'bg-gray-50 dark:bg-gray-900/20 border-gray-200 dark:border-gray-800'
     const textColor = isSuccess ? 'text-green-700 dark:text-green-300' :
                       isFailed ? 'text-red-700 dark:text-red-300' :
                       'text-gray-700 dark:text-gray-300'
+    const dotColor = isSuccess ? 'bg-green-500' : isFailed ? 'bg-red-500' : 'bg-gray-400'
+    const statusLabel = isSuccess ? 'completed' : isFailed ? 'failed' : status
 
     return (
       <CompactWrapper>
         <details className={`${bgColor} border rounded-md ${compact ? 'p-2' : 'p-3'}`}>
           <summary className="cursor-pointer flex items-center gap-2">
-            <span className={`inline-block w-2 h-2 rounded-full bg-${statusColor}-500`} />
+            <span className={`inline-block w-2 h-2 rounded-full ${dotColor}`} />
             <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium ${textColor}`}>
-              {agentName}
+              {displayName}
             </span>
             <span className={`${compact ? 'text-[10px]' : 'text-xs'} ${textColor} opacity-75`}>
-              {status}{duration ? ` (${duration})` : ''}
+              {statusLabel}{duration ? ` (${duration})` : ''}
             </span>
           </summary>
           <div className={`mt-2 ${compact ? 'text-[10px]' : 'text-xs'}`}>
@@ -1494,7 +1538,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       name?: string
     }
     const fields = data?.data?.fields || data?.data || data
-    const agentName = fields?.name || 'Background Agent'
+    const rawName = fields?.name || ''
+    const displayName = rawName.replace(/^Planner:\s*/i, '').trim() || 'Task'
 
     return (
       <CompactWrapper>
@@ -1502,10 +1547,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-gray-400" />
             <span className={`${compact ? 'text-xs' : 'text-sm'} font-medium text-gray-500 dark:text-gray-400`}>
-              {agentName}
+              {displayName}
             </span>
             <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-gray-400 dark:text-gray-500`}>
-              terminated
+              cancelled
             </span>
           </div>
         </div>
@@ -1513,22 +1558,15 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
 
-  // Synthetic Turn Ready Event (shown when a background agent has completed and the main agent will process)
+  // Synthetic Turn Ready Event (shown when a background task has completed and results are being processed)
   if (event.type === 'synthetic_turn_ready') {
-    const data = event.data as {
-      data?: { message?: string; fields?: { message?: string } }
-      message?: string
-    }
-    const fields = data?.data?.fields || data?.data || data
-    const message = fields?.message || 'Background agent completed. Processing results...'
-
     return (
       <CompactWrapper>
-        <div className={`bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
+        <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2">
-            <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            <span className={`${compact ? 'text-xs' : 'text-sm'} text-amber-700 dark:text-amber-300`}>
-              {message}
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            <span className={`${compact ? 'text-xs' : 'text-sm'} text-blue-700 dark:text-blue-300`}>
+              Processing results...
             </span>
           </div>
         </div>
@@ -1560,6 +1598,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
        prevProps.event.type === 'background_agent_started' || prevProps.event.type === 'background_agent_completed') && prevProps.delegationStats !== nextProps.delegationStats) {
     return false
   }
+  if ((prevProps.event.type === 'background_agent_started') && prevProps.backgroundAgentStats !== nextProps.backgroundAgentStats) {
+    return false
+  }
   // Check if childrenNodes changed (for sub-agent hierarchy expansion)
   if (prevProps.childrenNodes !== nextProps.childrenNodes) {
     return false
@@ -1570,28 +1611,32 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 // Event list component for displaying multiple events
 // NOTE: Event filtering is now done on the backend based on event_mode
 // Frontend no longer filters events - backend returns pre-filtered events
-export const EventList: React.FC<{ 
+export const EventList: React.FC<{
   events: PollingEvent[]
   onApproveWorkflow?: (requestId: string) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
+  onSendMessage?: (msg: string) => void
   isApproving?: boolean
   compact?: boolean
   flatHierarchy?: boolean
-}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact = false, flatHierarchy = false }) => {
+  eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro'
+}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact = false, flatHierarchy = false, eventMode }) => {
   if (events.length === 0) {
     return <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>No events to display</div>
   }
-  
+
   return (
-    <EventHierarchy 
-      events={events} 
+    <EventHierarchy
+      events={events}
       onApproveWorkflow={onApproveWorkflow}
       onSubmitFeedback={onSubmitFeedback}
       onFeedbackSubmitted={onFeedbackSubmitted}
+      onSendMessage={onSendMessage}
       isApproving={isApproving}
       compact={compact}
       flatHierarchy={flatHierarchy}
+      eventMode={eventMode}
     />
   )
 })

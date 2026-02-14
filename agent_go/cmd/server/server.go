@@ -733,6 +733,11 @@ type StreamingAPI struct {
 	lastQueryRequests map[string]QueryRequest
 	lastQueryMu       sync.RWMutex
 
+	// Stored agent instances for synthetic turns (plan mode only)
+	// Reused directly via StreamWithEvents() instead of re-creating agents per synthetic turn
+	sessionAgents    map[string]*agent.LLMAgentWrapper
+	sessionAgentsMux sync.RWMutex
+
 	// Per-session turn lock — serializes agent turns (real or synthetic) per session
 	sessionTurnLock   map[string]*sync.Mutex
 	sessionTurnLockMu sync.RWMutex
@@ -806,6 +811,11 @@ type QueryRequest struct {
 	DelegationMode string `json:"delegation_mode,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
+	// Decrypted secrets to inject into agent system prompt
+	DecryptedSecrets []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	} `json:"decrypted_secrets,omitempty"`
 
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
@@ -1105,9 +1115,13 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionBusy:           make(map[string]bool),
 		pendingCompletions:    make(map[string][]string),
 		lastQueryRequests:     make(map[string]QueryRequest),
+		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
 		sessionTurnLock:       make(map[string]*sync.Mutex),
 		completionLoopStarted: make(map[string]bool),
 	}
+
+	// Load global secrets from GLOBAL_SECRET_* environment variables
+	loadGlobalSecrets()
 
 	// Setup routes
 	router := mux.NewRouter()
@@ -1173,6 +1187,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp-config/discover", api.handleDiscoverServers).Methods("POST")
 	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
 	apiRouter.HandleFunc("/mcp-config/logs", api.handleGetServerLogs).Methods("GET")
+
+	// Secrets encryption API routes (from secrets_routes.go)
+	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/global", api.handleGetGlobalSecrets).Methods("GET", "OPTIONS")
 
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
@@ -1308,6 +1327,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Println("⏹️ Stopping background tool discovery...")
 	api.stopPeriodicRefresh()
 
+	// Close all MCP session connections to prevent orphaned subprocesses
+	fmt.Println("🧹 Closing all MCP sessions...")
+	mcpagent.CloseAllSessions()
+
 	// Create a deadline for shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -1328,6 +1351,41 @@ func (api *StreamingAPI) GetAPIURL() string {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s:%d", host, api.config.Port)
+}
+
+// mergeGlobalSecrets prepends global secrets to user-supplied secrets.
+// User secrets take priority on name collision.
+func mergeGlobalSecrets(userSecrets []struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}) []struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+} {
+	globals := getGlobalSecrets()
+	if len(globals) == 0 {
+		return userSecrets
+	}
+	// Build a set of user-supplied secret names for dedup
+	userNames := make(map[string]bool, len(userSecrets))
+	for _, s := range userSecrets {
+		userNames[s.Name] = true
+	}
+	// Prepend globals that don't collide with user secrets
+	var merged []struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	for _, g := range globals {
+		if !userNames[g.Name] {
+			merged = append(merged, struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			}{Name: g.Name, Value: g.Value})
+		}
+	}
+	merged = append(merged, userSecrets...)
+	return merged
 }
 
 // getOrCreatePlanSessionState returns the session-level plan state, creating one if needed.
@@ -2549,6 +2607,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SKILLS] Applied %d skills to workflow orchestrator: %v", len(selectedSkills), selectedSkills)
 		}
 
+		// Merge global secrets with user-supplied secrets, then set on orchestrator
+		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets)
+		if len(allSecrets) > 0 {
+			entries := make([]orchestrator.SecretEntry, len(allSecrets))
+			for i, s := range allSecrets {
+				entries[i] = orchestrator.SecretEntry{Name: s.Name, Value: s.Value}
+			}
+			workflowOrchestrator.SetSecrets(entries)
+			log.Printf("[SECRETS] Applied %d secrets (%d global + %d user) to workflow orchestrator", len(entries), len(entries)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
+		}
+
 		// Store workflow orchestrator for guidance injection
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
 
@@ -3429,7 +3498,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			_, err := skills.GetSkill(workspaceAPIURL, "skill-creator")
 			if err != nil {
 				log.Printf("[SKILL CREATOR] skill-creator not found, attempting import from GitHub...")
-				_, err := skills.ImportGitHubSkill(workspaceAPIURL, "https://github.com/anthropics/skills/tree/main/skills/skill-creator")
+				_, err := skills.ImportGitHubSkill(workspaceAPIURL, "https://github.com/anthropics/skills/tree/main/skills/skill-creator", "")
 				if err != nil {
 					log.Printf("[SKILL CREATOR] Warning: Failed to import skill-creator: %v", err)
 				} else {
@@ -3768,11 +3837,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								ctx = context.WithValue(ctx, virtualtools.PlanEventEmitterKey, &planEventEmitter{
 									eventStore: api.eventStore,
 									sessionID:  sessionID,
+									chatDB:     api.chatDB,
 								})
 								ctx = context.WithValue(ctx, virtualtools.PlanSessionStateKey, planState)
 								ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, &sessionEventEmitter{
 									eventStore: api.eventStore,
 									sessionID:  sessionID,
+									chatDB:     api.chatDB,
 								})
 								if tierConfig != nil {
 									ctx = context.WithValue(ctx, virtualtools.DelegationTierConfigKey, tierConfig)
@@ -3881,6 +3952,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, &sessionEventEmitter{
 										eventStore: api.eventStore,
 										sessionID:  sessionID,
+										chatDB:     api.chatDB,
 									})
 									return originalExec(ctx, args)
 								}
@@ -4080,8 +4152,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelFuncs[sessionID] = agentCancel
 		api.agentCancelMux.Unlock()
 
+		// Merge global secrets with user-supplied secrets, then inject into chat query
+		chatQuery := req.Query
+		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets)
+		if len(allChatSecrets) > 0 {
+			var secretParts []string
+			for _, s := range allChatSecrets {
+				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+			}
+			chatQuery = chatQuery + "\n\n🔐 Secrets:\n" + strings.Join(secretParts, "\n")
+			log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into chat query", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
+		}
+
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
-		textChan, err := llmAgent.StreamWithEvents(agentCtx, req.Query)
+		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
 		if err != nil {
 			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
 			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)
@@ -4168,6 +4252,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.conversationMux.Unlock()
 		log.Printf("[CONVERSATION DEBUG] Final save: %d messages to conversation history for session %s", len(llmAgent.GetHistory()), sessionID)
 
+		// Store agent for reuse by synthetic turns (plan mode only)
+		// The stored agent retains all tools, prompts, observers, and conversation history
+		if req.DelegationMode == "plan" {
+			api.sessionAgentsMux.Lock()
+			api.sessionAgents[sessionID] = llmAgent
+			api.sessionAgentsMux.Unlock()
+			log.Printf("[BG AGENT] Stored agent for session %s for synthetic turn reuse", sessionID)
+		}
+
 		// Clean up the agent cancel function when streaming is complete
 		api.agentCancelMux.Lock()
 		delete(api.agentCancelFuncs, sessionID)
@@ -4205,7 +4298,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// --- BEGIN: Update chat session status to completed ---
 		if chatSession != nil {
 			// Update session status to completed with completion timestamp
-			// Only update status and completed_at to avoid foreign key constraint issues
 			completedAt := time.Now()
 			updateReq := &database.UpdateChatSessionRequest{
 				Status:      "completed",
@@ -4263,11 +4355,12 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// Update active session status to stopped
 	api.updateSessionStatus(sessionID, "stopped")
 
-	// Note: No regular agent cleanup needed - fresh agents created per request
-
-	// Cancel all background agents for this session
-	api.bgAgentRegistry.CancelAll(sessionID)
-	log.Printf("[SESSION DEBUG] Canceled all background agents for session %s", sessionID)
+	// NOTE: Do NOT clean up sessionAgents or cancel background agents here.
+	// handleStopSession is called when the user sends a new message (to stop the current turn)
+	// or presses the stop button. Background agents and stored agents must survive across turns
+	// so that synthetic turns can fire when background agents complete.
+	// Background agents are only canceled explicitly via terminate_agent tool or when the
+	// session is fully closed/deleted.
 
 	// Cancel all workflow orchestrator contexts for this session
 	// Since we now use queryID as the key, we need to look up all queryIDs for this session
@@ -4947,6 +5040,7 @@ func (api *StreamingAPI) handleDismissSession(w http.ResponseWriter, r *http.Req
 type planEventEmitter struct {
 	eventStore *events.EventStore
 	sessionID  string
+	chatDB     database.Database
 }
 
 func (e *planEventEmitter) EmitFileEvent(filepath string) {
@@ -4966,6 +5060,11 @@ func (e *planEventEmitter) EmitFileEvent(filepath string) {
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
+	if e.chatDB != nil {
+		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
+			log.Printf("[DELEGATION PLAN] Failed to persist event to DB: %v", err)
+		}
+	}
 	log.Printf("[DELEGATION PLAN] Emitted workspace_file_operation event for plan file: %s (session: %s)", filepath, e.sessionID)
 }
 
@@ -4974,6 +5073,7 @@ func (e *planEventEmitter) EmitFileEvent(filepath string) {
 type sessionEventEmitter struct {
 	eventStore *events.EventStore
 	sessionID  string
+	chatDB     database.Database
 }
 
 func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, contextText string, yesNoOnly bool, yesLabel, noLabel string, options ...string) {
@@ -5006,7 +5106,44 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
+	if e.chatDB != nil {
+		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
+			log.Printf("[PLAN APPROVAL] Failed to persist event to DB: %v", err)
+		}
+	}
 	log.Printf("[PLAN APPROVAL] Emitted blocking_human_feedback event for plan approval (request_id: %s, session: %s)", requestID, e.sessionID)
+}
+
+func (e *sessionEventEmitter) EmitPlanApproval(question, contextText, yesLabel string) {
+	now := time.Now()
+	eventData := &orchEvents.PlanApprovalEvent{
+		BaseEventData: unifiedevents.BaseEventData{
+			Timestamp: now,
+		},
+		Question: question,
+		Context:  contextText,
+		YesLabel: yesLabel,
+	}
+	event := events.Event{
+		ID:        fmt.Sprintf("%s_plan_approval_%d", e.sessionID, now.UnixNano()),
+		Type:      "plan_approval",
+		Timestamp: now,
+		SessionID: e.sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      orchEvents.PlanApproval,
+			Timestamp: now,
+			SessionID: e.sessionID,
+			Component: "delegation",
+			Data:      eventData,
+		},
+	}
+	e.eventStore.AddEvent(e.sessionID, event)
+	if e.chatDB != nil {
+		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
+			log.Printf("[PLAN APPROVAL] Failed to persist plan_approval to DB: %v", err)
+		}
+	}
+	log.Printf("[PLAN APPROVAL] Emitted plan_approval event (session: %s)", e.sessionID)
 }
 
 func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, questions []map[string]string) {
@@ -5041,6 +5178,11 @@ func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, quest
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
+	if e.chatDB != nil {
+		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
+			log.Printf("[HUMAN QUESTIONS] Failed to persist event to DB: %v", err)
+		}
+	}
 	log.Printf("[HUMAN QUESTIONS] Emitted blocking_human_questions event (request_id: %s, session: %s)", requestID, e.sessionID)
 }
 
@@ -5155,8 +5297,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 	}
 
+	// Extract background agent ID if this delegation was spawned by a background agent
+	backgroundAgentID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
+
 	// Emit delegation_start event (after model and server resolution so we can include all info)
-	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList)
+	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList, backgroundAgentID)
 
 	// Convert API keys from parent request to LLM format (respecting locked providers)
 	var apiKeys *llm.ProviderAPIKeys = &llm.ProviderAPIKeys{}
@@ -5371,6 +5516,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			return 0
 		}(),
+		// Parallel tool execution: enabled by default, can be disabled via ENABLE_PARALLEL_TOOL_EXECUTION=false
+		EnableParallelToolExecution: func() bool {
+			if envVal := os.Getenv("ENABLE_PARALLEL_TOOL_EXECUTION"); envVal == "false" {
+				return false
+			}
+			return true
+		}(),
 	}
 
 	// Create sub-agent using the wrapper (same as parent agent creation)
@@ -5384,16 +5536,18 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Events from sub-agent will be tagged with Component field for identification
 	if underlyingAgent := subAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 		// Create in-memory event observer for real-time updates
+		// DelegationEventObserver tags events with correlation_id/parent_id and also persists to DB
+		// (replaces the separate EventDatabaseObserver to avoid untagged duplicates)
 		subAgentObserver := events.NewDelegationEventObserver(api.eventStore, sessionID, currentDepth, delegationID, api.logger)
 		// Wire tool event callback if provided (background agents use this for timing)
 		if toolCb, ok := ctx.Value(virtualtools.ToolEventCallbackKey).(events.ToolEventCallback); ok && toolCb != nil {
 			subAgentObserver.OnToolEvent = toolCb
 		}
+		// Wire DB persistence so tagged sub-agent events are stored for shared sessions / restore
+		subAgentObserver.DBStore = func(ctx context.Context, sid string, evt *unifiedevents.AgentEvent) error {
+			return api.chatDB.StoreEvent(ctx, sid, evt)
+		}
 		underlyingAgent.AddEventListener(subAgentObserver)
-
-		// Create database event observer to store events in database
-		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB)
-		underlyingAgent.AddEventListener(dbEventObserver)
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
 		// Merge template skills/servers into parent request if a template is loaded
@@ -5457,6 +5611,18 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				loadedTemplate.Frontmatter.Name, loadedTemplate.Content)
 			underlyingAgent.AppendSystemPrompt(templatePrompt)
 			log.Printf("[DELEGATION] Injected sub-agent template instructions: %s", loadedTemplate.Frontmatter.Name)
+		}
+
+		// Merge global secrets with parent's decrypted secrets, then inject into sub-agent
+		allDelegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets)
+		if len(allDelegationSecrets) > 0 {
+			var secretParts []string
+			for _, s := range allDelegationSecrets {
+				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
+			}
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. Use them as needed:\n\n" + strings.Join(secretParts, "\n")
+			underlyingAgent.AppendSystemPrompt(secretPrompt)
+			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
 		}
 	}
 
@@ -5824,6 +5990,9 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	}
 	api.bgAgentRegistry.Register(sessionID, bgAgent)
 
+	// Inject background agent ID so delegation_start event can link back to this agent
+	bgCtx = context.WithValue(bgCtx, virtualtools.BackgroundAgentIDKey, agentID)
+
 	// Inject tool event callback so executeDelegatedTask's observer tracks timing on bgAgent
 	bgCtx = context.WithValue(bgCtx, virtualtools.ToolEventCallbackKey, events.ToolEventCallback(
 		func(toolCallID, toolName, eventType string, duration time.Duration) {
@@ -5964,6 +6133,12 @@ func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType 
 		},
 	}
 	api.eventStore.AddEvent(sessionID, event)
+	// Also persist to database so shared/restored sessions include background agent events
+	if api.chatDB != nil {
+		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
+			log.Printf("[BG_AGENT] Failed to persist %s event to DB: %v", eventType, err)
+		}
+	}
 }
 
 // isSessionBusy returns whether the session is currently processing a user turn
@@ -6056,89 +6231,115 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		"[Background Agent Notification]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s",
 		snap.Name, snap.ID, snap.Status, resultText)
 
-	// Inject into conversation history as a user message
-	api.conversationMux.Lock()
-	history := api.conversationHistory[sessionID]
-	history = append(history, llmtypes.TextPart("user", syntheticMsg))
-	api.conversationHistory[sessionID] = history
-	api.conversationMux.Unlock()
+	// NOTE: Don't inject syntheticMsg into conversation history here.
+	// handleQuery will add it via StreamWithEvents when the synthetic turn runs.
 
-	log.Printf("[BG AGENT] Injected synthetic message for agent '%s' into session %s", snap.Name, sessionID)
+	// Emit synthetic_turn_ready event so frontend shows amber banner before the turn fires
+	statusLabel := "completed"
+	if snap.Status == BGAgentFailed {
+		statusLabel = "failed"
+	}
+	api.emitBackgroundAgentEvent(sessionID, agentID, "synthetic_turn_ready", map[string]interface{}{
+		"message":  fmt.Sprintf("Background agent '%s' %s. The main agent will process the results.", snap.Name, statusLabel),
+		"agent_id": snap.ID,
+		"name":     snap.Name,
+		"status":   string(snap.Status),
+	})
 
 	// Trigger a synthetic turn using the stored QueryRequest
-	go api.executeSyntheticTurn(sessionID, syntheticMsg)
+	// Called synchronously so handleQuery sets session busy before returning,
+	// preventing concurrent synthetic turns for the same session.
+	api.executeSyntheticTurn(sessionID, syntheticMsg)
 }
 
-// executeSyntheticTurn triggers a new main agent turn with a synthetic message
-// This reuses the stored QueryRequest config to create a new agent turn without an HTTP request
+// executeSyntheticTurn drives the stored agent directly with a synthetic message.
+// Instead of creating an internal HTTP request and re-building the entire agent/tools/history,
+// it reuses the agent stored after the last plan-mode turn via StreamWithEvents().
+// This is called synchronously from processBackgroundAgentCompletion — it sets session busy
+// before spawning the goroutine, preventing concurrent synthetic turns.
 func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
-	// Serialize turns per session
-	turnLock := api.getSessionTurnLock(sessionID)
-	turnLock.Lock()
-	defer turnLock.Unlock()
+	// Get stored agent for this session
+	api.sessionAgentsMux.RLock()
+	llmAgent, ok := api.sessionAgents[sessionID]
+	api.sessionAgentsMux.RUnlock()
 
-	api.setSessionBusy(sessionID, true)
-	defer func() {
-		api.setSessionBusy(sessionID, false)
-		// After turn completes, drain any pending completions
-		pending := api.drainPendingCompletions(sessionID)
-		for _, pendingAgentID := range pending {
-			go api.processBackgroundAgentCompletion(sessionID, pendingAgentID)
-		}
-	}()
-
-	// Get the stored query request for this session
-	api.lastQueryMu.RLock()
-	req, ok := api.lastQueryRequests[sessionID]
-	api.lastQueryMu.RUnlock()
-
-	if !ok {
-		log.Printf("[BG AGENT] No stored query request for session %s, cannot trigger synthetic turn", sessionID)
+	if !ok || llmAgent == nil {
+		log.Printf("[BG AGENT] No stored agent for session %s, cannot trigger synthetic turn", sessionID)
 		return
 	}
 
-	// Update the query to be the synthetic message
-	req.Query = syntheticMsg
+	// Get stored query request for user ID context
+	api.lastQueryMu.RLock()
+	req, hasReq := api.lastQueryRequests[sessionID]
+	api.lastQueryMu.RUnlock()
 
-	// Create a synthetic HTTP-like context
-	ctx := context.Background()
-	if req.userID != "" {
-		ctx = context.WithValue(ctx, common.UserIDKey, req.userID)
-	}
+	// Set session busy synchronously BEFORE spawning goroutine
+	// This prevents concurrent synthetic turns from the completion listener
+	api.setSessionBusy(sessionID, true)
 
-	// Mark session as running
+	// Update session status to running
 	api.updateSessionStatus(sessionID, "running")
 
-	// Emit a user_message event for the synthetic turn
-	api.emitBackgroundAgentEvent(sessionID, "", "user_message", map[string]interface{}{
-		"content":   truncateForToolResponse(syntheticMsg, 200),
-		"synthetic": true,
-	})
+	// Create cancellable context for this synthetic turn
+	agentCtx, agentCancel := context.WithCancel(context.Background())
 
-	log.Printf("[BG AGENT] Executing synthetic turn for session %s", sessionID)
+	// Inject user ID into context for per-user folder isolation
+	if hasReq && req.userID != "" {
+		agentCtx = context.WithValue(agentCtx, common.UserIDKey, req.userID)
+	}
 
-	// Call handleQueryInternal which does the actual agent execution
-	// For now, we re-post to the query endpoint internally
-	// The synthetic message is already in conversation history
-	api.executeSyntheticQueryInternal(ctx, sessionID, req)
-}
+	// Store cancel function so handleStopSession can cancel this turn
+	api.agentCancelMux.Lock()
+	api.agentCancelFuncs[sessionID] = agentCancel
+	api.agentCancelMux.Unlock()
 
-// executeSyntheticQueryInternal handles the internal execution of a synthetic query
-// This is a simplified version of handleQuery that doesn't need HTTP request/response
-func (api *StreamingAPI) executeSyntheticQueryInternal(ctx context.Context, sessionID string, req QueryRequest) {
-	// This is complex — for the initial implementation, we emit an event
-	// that the frontend can use to trigger a query via the normal HTTP path
-	api.emitBackgroundAgentEvent(sessionID, "", "synthetic_turn_ready", map[string]interface{}{
-		"session_id": sessionID,
-		"query":      truncateForToolResponse(req.Query, 200),
-		"message":    "Background agent completed. The main agent will process the results.",
-	})
+	log.Printf("[BG AGENT] Executing synthetic turn for session %s via stored agent", sessionID)
 
-	// Update session status back to completed since we're not actually executing a turn yet
-	// The frontend will pick up the synthetic_turn_ready event and can trigger a new query
-	api.updateSessionStatus(sessionID, "completed")
+	go func() {
+		defer func() {
+			// Clean up cancel function
+			api.agentCancelMux.Lock()
+			delete(api.agentCancelFuncs, sessionID)
+			api.agentCancelMux.Unlock()
 
-	log.Printf("[BG AGENT] Emitted synthetic_turn_ready event for session %s", sessionID)
+			// Clear session busy and drain pending completions
+			api.setSessionBusy(sessionID, false)
+			pending := api.drainPendingCompletions(sessionID)
+			for _, pendingAgentID := range pending {
+				go api.processBackgroundAgentCompletion(sessionID, pendingAgentID)
+			}
+		}()
+
+		// Stream the synthetic message through the stored agent
+		// Events flow through already-attached EventObservers (in-memory + DB)
+		textChan, err := llmAgent.StreamWithEvents(agentCtx, syntheticMsg)
+		if err != nil {
+			log.Printf("[BG AGENT] StreamWithEvents error for synthetic turn on session %s: %v", sessionID, err)
+			api.updateSessionStatus(sessionID, "error")
+			return
+		}
+
+		// Consume text chunks and save conversation history incrementally
+		for range textChan {
+			api.conversationMux.Lock()
+			api.conversationHistory[sessionID] = llmAgent.GetHistory()
+			api.conversationMux.Unlock()
+		}
+
+		// Final save of conversation history
+		api.conversationMux.Lock()
+		api.conversationHistory[sessionID] = llmAgent.GetHistory()
+		api.conversationMux.Unlock()
+		log.Printf("[BG AGENT] Synthetic turn completed for session %s, history: %d messages", sessionID, len(llmAgent.GetHistory()))
+
+		// Update stored agent (it now has the latest history from this turn)
+		api.sessionAgentsMux.Lock()
+		api.sessionAgents[sessionID] = llmAgent
+		api.sessionAgentsMux.Unlock()
+
+		// Update session status to completed
+		api.updateSessionStatus(sessionID, "completed")
+	}()
 }
 
 // buildCapabilitiesContext creates a CapabilitiesContext from the chat request
@@ -6189,18 +6390,19 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 
 // emitDelegationStartEvent emits an event when delegation starts
 // This event serves as the parent for all sub-agent events (via parent_id linking)
-func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string, servers []string) {
+func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string, servers []string, backgroundAgentID string) {
 	now := time.Now()
 	eventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
 	eventData := &events.DelegationStartEventData{
-		DelegationID:   delegationID,
-		Depth:          depth,
-		Instruction:    instruction,
-		ReasoningLevel: reasoningLevel,
-		ModelID:        modelID,
-		ToolMode:       toolMode,
-		Servers:        servers,
-		Timestamp:      now.Format(time.RFC3339),
+		DelegationID:      delegationID,
+		Depth:             depth,
+		Instruction:       instruction,
+		ReasoningLevel:    reasoningLevel,
+		ModelID:           modelID,
+		ToolMode:          toolMode,
+		Servers:           servers,
+		BackgroundAgentID: backgroundAgentID,
+		Timestamp:         now.Format(time.RFC3339),
 	}
 	event := events.Event{
 		ID:        eventID,
@@ -6218,6 +6420,12 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 		},
 	}
 	api.eventStore.AddEvent(sessionID, event)
+	// Also persist to database so shared sessions and restored sessions include delegation events
+	if api.chatDB != nil {
+		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
+			log.Printf("[DELEGATION] Failed to persist delegation_start to DB: %v", err)
+		}
+	}
 	log.Printf("[DELEGATION] Emitted delegation_start event %s for %s at depth %d", eventID, delegationID, depth)
 }
 
@@ -6265,6 +6473,12 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 		},
 	}
 	api.eventStore.AddEvent(sessionID, event)
+	// Also persist to database so shared sessions and restored sessions include delegation events
+	if api.chatDB != nil {
+		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
+			log.Printf("[DELEGATION] Failed to persist delegation_end to DB: %v", err)
+		}
+	}
 	log.Printf("[DELEGATION] Emitted delegation_end event for %s at depth %d (success: %v)", delegationID, depth, errorMsg == "")
 }
 

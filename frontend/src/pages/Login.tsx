@@ -158,7 +158,7 @@ export function Login() {
           </div>
           <CardTitle className="text-2xl">Welcome Back</CardTitle>
           <CardDescription className="text-base">
-            Sign in to continue to MCP Agent Builder
+            Sign in to continue to Multi Agent Builder
           </CardDescription>
         </CardHeader>
 

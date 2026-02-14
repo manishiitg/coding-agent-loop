@@ -20,6 +20,8 @@ spec:
     type: Recreate
   template:
     metadata:
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
       labels:
         app.kubernetes.io/name: cs
         app.kubernetes.io/instance: mcpagent-agent
@@ -50,9 +52,11 @@ spec:
             requests:
               cpu: "2"
               memory: "3Gi"
+              ephemeral-storage: "5Gi"
             limits:
               cpu: "4"
               memory: "5Gi"
+              ephemeral-storage: "10Gi"
           volumeMounts:
             # Persistent OAuth tokens for MCP servers; survives pod restarts.
             - name: agent-db

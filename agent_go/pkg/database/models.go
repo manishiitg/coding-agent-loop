@@ -245,6 +245,7 @@ type PresetQuery struct {
 	UseToolSearchMode    bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`       // Tool search mode
 	PreDiscoveredTools   string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`       // JSON array of pre-discovered tools
 	SelectedSkills       string          `json:"selected_skills" db:"selected_skills"`                 // JSON array of skill folder names
+	SelectedSecrets      string          `json:"selected_secrets" db:"selected_secrets"`               // JSON array of secret IDs
 	EnableBrowserAccess  bool            `json:"enable_browser_access" db:"enable_browser_access"`     // Browser automation access
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
@@ -267,6 +268,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseToolSearchMode    bool            `json:"use_tool_search_mode"`
 		PreDiscoveredTools   string          `json:"pre_discovered_tools"`
 		SelectedSkills       string          `json:"selected_skills"`
+		SelectedSecrets      string          `json:"selected_secrets"`
 		EnableBrowserAccess  bool            `json:"enable_browser_access"`
 		IsPredefined         bool            `json:"is_predefined"`
 		CreatedAt            time.Time       `json:"created_at"`
@@ -284,6 +286,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseToolSearchMode:    p.UseToolSearchMode,
 		PreDiscoveredTools:   p.PreDiscoveredTools,
 		SelectedSkills:       p.SelectedSkills,
+		SelectedSecrets:      p.SelectedSecrets,
 		EnableBrowserAccess:  p.EnableBrowserAccess,
 		IsPredefined:         p.IsPredefined,
 		CreatedAt:            p.CreatedAt,
@@ -312,6 +315,7 @@ type CreatePresetQueryRequest struct {
 	UseToolSearchMode    bool             `json:"use_tool_search_mode,omitempty"`    // Tool search mode
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
+	SelectedSecrets      []string         `json:"selected_secrets,omitempty"`        // Secret IDs for workflow
 	EnableBrowserAccess  bool             `json:"enable_browser_access,omitempty"`   // Browser automation access
 	IsPredefined         bool             `json:"is_predefined,omitempty"`
 }

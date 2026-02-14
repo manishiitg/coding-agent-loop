@@ -23,7 +23,9 @@ import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
 import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
 import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
-import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
+import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore, useLLMStore } from "./stores";
+import type { ChatTabConfig } from "./stores/useChatStore";
+import type { ExtendedLLMConfiguration } from "./services/api-types";
 import { useModeStore } from "./stores/useModeStore";
 import { useAuthStore } from "./stores/useAuthStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
@@ -633,23 +635,95 @@ function App() {
   // Handle chat session selection
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, _sessionType?: 'active' | 'completed', _activeSessionInfo?: ActiveSessionInfo) => {
+    console.log(`[RESTORE_DEBUG] handleChatSessionSelect called: sessionId=${sessionId}, title=${sessionTitle}, type=${_sessionType}`)
     // Check if a tab with this session ID already exists
     const chatStore = useChatStore.getState()
     const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
 
     if (existingTab) {
-      // Tab already exists, just switch to it
-      console.log(`[App] Tab ${existingTab.tabId} already exists for session ${sessionId}, switching to it`)
+      // Tab already exists, switch to it
+      const existingEvents = chatStore.getTabEvents(sessionId)
+      console.log(`[RESTORE_DEBUG] Tab ${existingTab.tabId} already exists for session ${sessionId}, events=${existingEvents.length}, switching to it`)
       chatStore.switchTab(existingTab.tabId)
-
-      // Auto-minimize sidebar when restoring a chat
       setSidebarMinimized(true)
-
-      // Don't set chatSessionId/Title here - this triggers redundant effects in ChatArea
-      // The tab switch is sufficient for the UI to update via activeTabId
-
-      // Clear file content view
       setShowFileContent(false)
+
+      // If the existing tab has no events, hydrate it now (tab was created empty)
+      if (existingEvents.length === 0) {
+        console.log(`[RESTORE_DEBUG] Existing tab has 0 events, hydrating session ${sessionId}`)
+        ;(async () => {
+          try {
+            // Fetch session details for config
+            const chatSession = await agentApi.getChatSession(sessionId)
+            const config = chatSession?.config
+
+            // Detect + fix multi-agent mode if needed
+            const isMultiAgent = config?.delegation_mode === 'plan'
+            if (isMultiAgent && existingTab.metadata?.mode !== 'multi-agent') {
+              useModeStore.getState().setModeCategory('multi-agent')
+            }
+
+            // Restore config if available
+            if (config) {
+              const configUpdate: Partial<ChatTabConfig> = {}
+              if (config.enabled_servers?.length) configUpdate.selectedServers = config.enabled_servers
+              else if (config.selected_servers?.length) configUpdate.selectedServers = config.selected_servers
+              if (config.use_code_execution_mode !== undefined) configUpdate.useCodeExecutionMode = config.use_code_execution_mode
+              if (config.enable_context_summarization !== undefined) configUpdate.enableContextSummarization = config.enable_context_summarization
+              if (config.llm_config) {
+                let provider = config.llm_config.provider as string
+                if (!provider || provider === '.' || provider.trim() === '') provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+                let modelId = config.llm_config.model_id || ''
+                if (!modelId || modelId.trim() === '') modelId = useLLMStore.getState().primaryConfig.model_id || ''
+                const llmConfig: ExtendedLLMConfiguration = {
+                  provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                  model_id: modelId,
+                  fallback_models: config.llm_config.fallback_models || [],
+                }
+                if (config.llm_config.cross_provider_fallback) {
+                  llmConfig.cross_provider_fallback = {
+                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                    models: config.llm_config.cross_provider_fallback.models || [],
+                  }
+                }
+                configUpdate.llmConfig = llmConfig
+              }
+              if (config.file_context && Array.isArray(config.file_context)) {
+                configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
+                  name: item.name || item.path || '', path: item.path || '',
+                  type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                }))
+              }
+              if (config.enable_workspace_access !== undefined) configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+              if (config.selected_skills && Array.isArray(config.selected_skills)) configUpdate.selectedSkills = config.selected_skills
+              if (config.selected_subagents && Array.isArray(config.selected_subagents)) configUpdate.selectedSubAgents = config.selected_subagents
+              if (config.delegation_tier_config) configUpdate.delegationTierConfig = config.delegation_tier_config
+              if (Object.keys(configUpdate).length > 0) {
+                chatStore.setTabConfig(existingTab.tabId, configUpdate)
+                console.log(`[RESTORE_DEBUG] Hydrated config for existing tab: ${Object.keys(configUpdate).join(', ')}`)
+              }
+            }
+
+            // Load events
+            const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode: 'tiny' })
+            console.log(`[RESTORE_DEBUG] Hydrated ${response.events?.length} events for existing tab ${existingTab.tabId}`)
+            useChatStore.getState().setTabEvents(sessionId, response.events)
+            const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
+            useChatStore.getState().setTabLastEventIndex(sessionId, lastIndex)
+            if (response.has_more !== undefined) {
+              useChatStore.getState().setTabHasMoreOlderEvents(sessionId, response.has_more)
+            }
+
+            // Set completion state
+            if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
+              chatStore.setTabCompleted(existingTab.tabId, true)
+              chatStore.setTabStreaming(existingTab.tabId, false)
+            }
+          } catch (err) {
+            console.error(`[RESTORE_DEBUG] Failed to hydrate existing tab for session ${sessionId}:`, err)
+          }
+        })()
+      }
       return
     }
 
@@ -669,23 +743,158 @@ function App() {
         const currentTabs = Object.values(useChatStore.getState().chatTabs)
         const existingTabNow = currentTabs.find(tab => tab.sessionId === sessionId)
         if (existingTabNow) {
-          console.log(`[App] Tab was created by another process for session ${sessionId}, switching to it`)
+          console.log(`[RESTORE_DEBUG] Tab already created by another process for session ${sessionId}, switching`)
           chatStore.switchTab(existingTabNow.tabId)
           setSidebarMinimized(true)
           setShowFileContent(false)
           return
         }
 
-        // Default to tiny mode, ChatArea will update to advanced if needed (e.g. for orchestrator)
+        // 1. Fetch session details for config + mode detection
+        console.log(`[RESTORE_DEBUG] Step 1: Fetching session details for ${sessionId}`)
+        let chatSession: Awaited<ReturnType<typeof agentApi.getChatSession>> | null = null
+        try {
+          chatSession = await agentApi.getChatSession(sessionId)
+          console.log(`[RESTORE_DEBUG] Step 1 result: status=${chatSession?.status}, hasConfig=${!!chatSession?.config}, delegation_mode=${chatSession?.config?.delegation_mode}`)
+        } catch (err) {
+          console.warn(`[RESTORE_DEBUG] Step 1 FAILED: getChatSession error for ${sessionId}:`, err)
+        }
+        const config = chatSession?.config
+
+        // 2. Detect multi-agent mode
+        const isMultiAgent = config?.delegation_mode === 'plan'
+        const tabMode = isMultiAgent ? 'multi-agent' as const : 'chat' as const
+        console.log(`[RESTORE_DEBUG] Step 2: isMultiAgent=${isMultiAgent}, tabMode=${tabMode}`)
+        if (isMultiAgent) {
+          useModeStore.getState().setModeCategory('multi-agent')
+        }
+
+        // 3. Create tab with correct mode
         const newTabId = await chatStore.createChatTab(
           truncateTabTitle(sessionTitle || 'Chat'),
-          { mode: 'chat' },
+          { mode: tabMode },
           sessionId,
           'tiny'
         )
-        chatStore.switchTab(newTabId)
+        console.log(`[RESTORE_DEBUG] Step 3: Created tab ${newTabId} with mode=${tabMode} for session ${sessionId}`)
 
-        // Now set the session ID to trigger hydration in ChatArea
+        // 4. Restore config from stored session (same pattern as ChatArea auto-restore)
+        if (config) {
+          const configUpdate: Partial<ChatTabConfig> = {}
+
+          // Restore selected servers
+          if (config.enabled_servers && config.enabled_servers.length > 0) {
+            configUpdate.selectedServers = config.enabled_servers
+          } else if (config.selected_servers && config.selected_servers.length > 0) {
+            configUpdate.selectedServers = config.selected_servers
+          }
+
+          if (config.use_code_execution_mode !== undefined) {
+            configUpdate.useCodeExecutionMode = config.use_code_execution_mode
+          }
+
+          if (config.enable_context_summarization !== undefined) {
+            configUpdate.enableContextSummarization = config.enable_context_summarization
+          }
+
+          // Restore LLM config
+          if (config.llm_config) {
+            let provider = config.llm_config.provider as string
+            if (!provider || provider === '.' || provider.trim() === '') {
+              provider = useLLMStore.getState().primaryConfig.provider || 'openai'
+            }
+            let modelId = config.llm_config.model_id || ''
+            if (!modelId || modelId.trim() === '') {
+              modelId = useLLMStore.getState().primaryConfig.model_id || ''
+            }
+            const llmConfig: ExtendedLLMConfiguration = {
+              provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+              model_id: modelId,
+              fallback_models: config.llm_config.fallback_models || [],
+            }
+            if (config.llm_config.cross_provider_fallback) {
+              llmConfig.cross_provider_fallback = {
+                provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                models: config.llm_config.cross_provider_fallback.models || [],
+              }
+            }
+            configUpdate.llmConfig = llmConfig
+          }
+
+          // Restore workspace file context
+          if (config.file_context && Array.isArray(config.file_context)) {
+            configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
+              name: item.name || item.path || '',
+              path: item.path || '',
+              type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+            }))
+          }
+
+          if (config.enable_workspace_access !== undefined) {
+            configUpdate.enableWorkspaceAccess = config.enable_workspace_access
+          }
+
+          if (config.selected_skills && Array.isArray(config.selected_skills)) {
+            configUpdate.selectedSkills = config.selected_skills
+          }
+
+          if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
+            configUpdate.selectedSubAgents = config.selected_subagents
+          }
+
+          // Restore delegation tier config (for multi-agent sessions)
+          if (config.delegation_tier_config) {
+            configUpdate.delegationTierConfig = config.delegation_tier_config
+          }
+
+          if (Object.keys(configUpdate).length > 0) {
+            chatStore.setTabConfig(newTabId, configUpdate)
+            console.log(`[RESTORE_DEBUG] Step 4: Restored config keys: ${Object.keys(configUpdate).join(', ')}`)
+          } else {
+            console.log(`[RESTORE_DEBUG] Step 4: No config keys to restore`)
+          }
+        } else {
+          console.log(`[RESTORE_DEBUG] Step 4: No config in session response`)
+        }
+
+        // 5. Load events
+        console.log(`[RESTORE_DEBUG] Step 5: Fetching events for session ${sessionId} (since=-1, eventMode=tiny)`)
+        try {
+          const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode: 'tiny' })
+          console.log(`[RESTORE_DEBUG] Step 5 result: events=${response.events?.length}, last_processed_index=${response.last_processed_index}, has_more=${response.has_more}, session_status=${(response as Record<string, unknown>).session_status}`)
+          if (response.events && response.events.length > 0) {
+            console.log(`[RESTORE_DEBUG] Step 5 first event type: ${response.events[0]?.type}, last event type: ${response.events[response.events.length - 1]?.type}`)
+          }
+          useChatStore.getState().setTabEvents(sessionId, response.events)
+          const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
+          useChatStore.getState().setTabLastEventIndex(sessionId, lastIndex)
+          if (response.has_more !== undefined) {
+            useChatStore.getState().setTabHasMoreOlderEvents(sessionId, response.has_more)
+          }
+          console.log(`[RESTORE_DEBUG] Step 5: Set ${response.events.length} events in store, lastIndex=${lastIndex}`)
+        } catch (err) {
+          console.error(`[RESTORE_DEBUG] Step 5 FAILED: getSessionEvents error for ${sessionId}:`, err)
+        }
+
+        // 6. Set completion state
+        if (chatSession) {
+          const isCompleted = chatSession.status === 'completed' || chatSession.status === 'stopped'
+          console.log(`[RESTORE_DEBUG] Step 6: session status=${chatSession.status}, setting completed=${isCompleted}, streaming=${!isCompleted}`)
+          if (isCompleted) {
+            chatStore.setTabCompleted(newTabId, true)
+            chatStore.setTabStreaming(newTabId, false)
+          } else {
+            chatStore.setTabStreaming(newTabId, true)
+            chatStore.setTabCompleted(newTabId, false)
+          }
+        } else {
+          console.log(`[RESTORE_DEBUG] Step 6: No chatSession, skipping status`)
+        }
+
+        chatStore.switchTab(newTabId)
+        console.log(`[RESTORE_DEBUG] Step 7: Switched to tab ${newTabId}, setting session state`)
+
+        // Set the session ID to trigger any additional hydration in ChatArea
         setChatSessionId(sessionId);
         setSidebarMinimized(true);
         setChatSessionTitle(sessionTitle || '');

@@ -43,7 +43,7 @@ func TestValidateZipSkill_RootLevel(t *testing.T) {
 	})
 
 	file, header := createMultipartFile(zipData, "test.zip")
-	result, err := ValidateZipSkill(file, header)
+	result, err := ValidateZipSkill("", file, header)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestValidateZipSkill_SingleFolderWrapper(t *testing.T) {
 	})
 
 	file, header := createMultipartFile(zipData, "test.zip")
-	result, err := ValidateZipSkill(file, header)
+	result, err := ValidateZipSkill("", file, header)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestValidateZipSkill_NoSkillMd(t *testing.T) {
 	})
 
 	file, header := createMultipartFile(zipData, "test.zip")
-	result, err := ValidateZipSkill(file, header)
+	result, err := ValidateZipSkill("", file, header)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestValidateZipSkill_NoSkillMd(t *testing.T) {
 
 func TestValidateZipSkill_InvalidExtension(t *testing.T) {
 	file, header := createMultipartFile([]byte{}, "test.txt")
-	result, err := ValidateZipSkill(file, header)
+	result, err := ValidateZipSkill("", file, header)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestValidateZipSkill_InvalidFrontmatter(t *testing.T) {
 	})
 
 	file, header := createMultipartFile(zipData, "test.zip")
-	result, err := ValidateZipSkill(file, header)
+	result, err := ValidateZipSkill("", file, header)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

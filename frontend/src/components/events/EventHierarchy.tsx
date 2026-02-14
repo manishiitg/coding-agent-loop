@@ -12,9 +12,11 @@ interface EventHierarchyProps {
   onApproveWorkflow?: (requestId: string) => void
   onSubmitFeedback?: (requestId: string, feedback: string) => void
   onFeedbackSubmitted?: () => void
+  onSendMessage?: (msg: string) => void
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
   flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
+  eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro'  // Override event mode (e.g. for shared sessions with no active tab)
 }
 
 interface FlattenedItem {
@@ -22,14 +24,16 @@ interface FlattenedItem {
   uniqueKey: string;
 }
 
-export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({ 
-  events, 
-  onApproveWorkflow, 
-  onSubmitFeedback, 
-  onFeedbackSubmitted, 
-  isApproving, 
-  compact = false, 
-  flatHierarchy = false 
+export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
+  events,
+  onApproveWorkflow,
+  onSubmitFeedback,
+  onFeedbackSubmitted,
+  onSendMessage,
+  isApproving,
+  compact = false,
+  flatHierarchy = false,
+  eventMode: eventModeProp
 }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
@@ -60,7 +64,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // Get active tab for sessionId and eventMode
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
-  const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+  const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = eventModeProp || (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
   
   // Merge loaded older events with current events
   const displayEvents = useMemo(() => {
@@ -166,10 +170,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           s.latestToolName = toolName
         }
       }
-      if (event.type === 'token_usage') {
+      // Extract context window data from tool_call_end events (available live, per tool call)
+      // and from token_usage events (emitted at session end with cumulative totals)
+      if (event.type === 'tool_call_end' || event.type === 'token_usage') {
         const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
-        s.inputTokens += (payload.input_tokens as number) || 0
-        s.outputTokens += (payload.output_tokens as number) || 0
+        if (event.type === 'token_usage') {
+          s.inputTokens += (payload.input_tokens as number) || 0
+          s.outputTokens += (payload.output_tokens as number) || 0
+        }
         // Capture latest context usage (not accumulated - these represent current state)
         if (typeof payload.context_usage_percent === 'number') {
           s.contextUsagePercent = payload.context_usage_percent
@@ -200,6 +208,31 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     return stats
   }, [displayEvents])
+
+  // Map background agent IDs to their delegation stats via delegation_start events
+  const backgroundAgentStats = useMemo(() => {
+    const stats = new Map<string, DelegationStats>()
+    for (const event of displayEvents) {
+      if (event.type !== 'delegation_start') continue
+      const data = event.data as Record<string, unknown>
+      const delegationData = (data.data && typeof data.data === 'object')
+        ? data.data as Record<string, unknown> : data
+      const bgAgentId = delegationData?.background_agent_id as string | undefined
+      const delegationId = delegationData?.delegation_id as string | undefined
+      if (bgAgentId && delegationId) {
+        const dStats = delegationStats.get(delegationId)
+        if (dStats) {
+          stats.set(bgAgentId, dStats)
+        } else {
+          console.log('[BG_AGENT_STATS] delegation_start has bgAgentId but no delegationStats entry yet', { bgAgentId, delegationId, delegationStatsKeys: [...delegationStats.keys()] })
+        }
+      }
+    }
+    if (stats.size > 0) {
+      console.log('[BG_AGENT_STATS] mapped', stats.size, 'background agents to delegation stats')
+    }
+    return stats
+  }, [displayEvents, delegationStats])
 
   // Helpers to extract hierarchy info
   const getParentId = useCallback((event: PollingEvent): string | undefined => {
@@ -425,12 +458,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 onApproveWorkflow={onApproveWorkflow}
                 onSubmitFeedback={onSubmitFeedback}
                 onFeedbackSubmitted={onFeedbackSubmitted}
+                onSendMessage={onSendMessage}
                 isApproving={isApproving}
                 isCollapsed={isCollapsed}
                 eventCount={eventCount}
                 onToggleCollapse={onToggleCollapse}
                 compact={compact}
                 delegationStats={delegationStats}
+                backgroundAgentStats={backgroundAgentStats}
                 childrenNodes={isExpanded ? children : undefined}
                 onToggleNode={toggleNode}
               />
@@ -439,7 +474,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         </div>
       </div>
     );
-  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, isApproving, compact, flatHierarchy, delegationStats]);
+  }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats]);
 
   if (flattenedItems.length === 0) {
     return <div className="text-gray-500 text-center py-4">No hierarchical events to display</div>;

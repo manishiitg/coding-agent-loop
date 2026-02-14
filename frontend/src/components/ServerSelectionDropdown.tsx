@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Server, ChevronDown, Check, Settings, Search } from 'lucide-react';
+import { Server, Check, Settings, Search } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Checkbox } from './ui/checkbox';
 import { Card } from './ui/Card';
@@ -77,21 +77,30 @@ export default function ServerSelectionDropdown({
       <div className="relative">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="sm"
               onClick={() => setIsOpen(!isOpen)}
               disabled={disabled || availableServers.length === 0}
-              className="h-8 px-2 text-xs font-medium bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+              className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                !hasNoServers && actualSelectedServers.length > 0
+                  ? 'bg-indigo-100 dark:bg-indigo-900/40 border-indigo-400 dark:border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                  : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+              } ${disabled || availableServers.length === 0 ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
             >
-              <Server className="w-3 h-3 mr-1" />
-              {displayText}
-              <ChevronDown className="w-3 h-3 ml-1" />
-            </Button>
+              <Server className="w-4 h-4 flex-shrink-0" />
+              <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[100px] transition-all duration-200">
+                {displayText}
+              </span>
+            </button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{availableServers.length === 0 ? 'No MCP servers available' : 'Select MCP servers to use'}</p>
+            <p>
+              {availableServers.length === 0
+                ? 'No MCP servers available'
+                : !hasNoServers && actualSelectedServers.length > 0
+                  ? `${actualSelectedServers.length} server${actualSelectedServers.length !== 1 ? 's' : ''} selected`
+                  : 'Select MCP servers to use'}
+            </p>
           </TooltipContent>
         </Tooltip>
 

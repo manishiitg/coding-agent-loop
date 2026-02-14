@@ -116,6 +116,8 @@ export interface AgentQueryRequest {
   delegation_mode?: 'spawn' | 'plan'
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs
   delegation_tier_config?: DelegationTierConfig
+  // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)
+  decrypted_secrets?: Array<{ name: string; value: string }>
 }
 
 // Delegation tier configuration for multi-LLM support
@@ -314,6 +316,7 @@ export interface GetEventsResponse {
   session_id: string
   session_status: string // Session status: "running", "completed", "error", "stopped", "inactive" (required - source of truth)
   last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
+  has_running_background_agents?: boolean // Whether background agents are still running for this session
 }
 
 // Observer APIs removed - no longer needed

@@ -171,6 +171,18 @@ func (e *BlockingHumanFeedbackEvent) GetEventType() events.EventType {
 	return BlockingHumanFeedback
 }
 
+// PlanApprovalEvent is emitted when confirm_plan_execution presents the plan for user approval (non-blocking).
+type PlanApprovalEvent struct {
+	events.BaseEventData
+	Question string `json:"question"`
+	Context  string `json:"context"`
+	YesLabel string `json:"yes_label,omitempty"`
+}
+
+func (e *PlanApprovalEvent) GetEventType() events.EventType {
+	return PlanApproval
+}
+
 // BlockingHumanQuestionsQuestion represents a single question in the human_questions tool
 type BlockingHumanQuestionsQuestion struct {
 	ID       string `json:"id"`

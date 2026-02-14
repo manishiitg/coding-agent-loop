@@ -13,6 +13,8 @@ type ImportMethod = 'github' | 'zip'
 export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDialogProps) {
   const [importMethod, setImportMethod] = useState<ImportMethod>('github')
   const [url, setUrl] = useState('')
+  const [isPrivate, setIsPrivate] = useState(false)
+  const [pat, setPat] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isValidating, setIsValidating] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
@@ -78,7 +80,7 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
 
     try {
       const result = importMethod === 'github'
-        ? await skillsApi.validateSkill({ github_url: url.trim() })
+        ? await skillsApi.validateSkill({ github_url: url.trim(), ...(pat ? { github_token: pat } : {}) })
         : await skillsApi.validateSkillZip(selectedFile!)
       setValidationResult(result)
       if (!result.valid) {
@@ -109,7 +111,7 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
 
     try {
       const result = importMethod === 'github'
-        ? await skillsApi.importSkill({ github_url: url.trim() })
+        ? await skillsApi.importSkill({ github_url: url.trim(), ...(pat ? { github_token: pat } : {}) })
         : await skillsApi.importSkillZip(selectedFile!)
       if (result.success) {
         onSuccess()
@@ -185,6 +187,34 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Paste a URL to a skill folder containing SKILL.md
               </p>
+
+              <label className="flex items-center gap-2 mt-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isPrivate}
+                  onChange={(e) => {
+                    setIsPrivate(e.target.checked)
+                    if (!e.target.checked) setPat('')
+                  }}
+                  className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500"
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-300">Private repository</span>
+              </label>
+
+              {isPrivate && (
+                <div className="mt-2">
+                  <input
+                    type="password"
+                    value={pat}
+                    onChange={(e) => setPat(e.target.value)}
+                    placeholder="ghp_..."
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Personal Access Token with repo scope. Your token is only used for this request and is not stored anywhere.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -272,6 +302,15 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
                   <p className="text-xs text-green-600 dark:text-green-400">
                     Files: {validationResult.files.join(', ')}
                   </p>
+                </div>
+              )}
+
+              {validationResult.exists && (
+                <div className="flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-md">
+                  <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                  <span className="text-sm text-amber-700 dark:text-amber-300">
+                    A skill with this name already exists. Importing will overwrite it.
+                  </span>
                 </div>
               )}
             </div>

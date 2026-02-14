@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { X, Settings, Layers } from 'lucide-react'
+import { X, Settings, Layers, Lock } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
@@ -66,8 +66,12 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     refreshAvailableLLMs,
     // Supported providers filter
     isProviderSupported,
-    llmConfigLocked
+    llmConfigLocked,
+    lockedProviders
   } = useLLMStore()
+
+  const isProviderLocked = (provider: ProviderType) =>
+    lockedProviders.includes('all') || lockedProviders.includes(provider)
 
   // Get mode-specific configs
   const modeConfig = getConfigForMode(currentMode)
@@ -410,9 +414,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     <div className="flex-1">
                       <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider}</div>
                       <div className="text-xs opacity-75">
-                        {provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : 'API Key'}
+                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : 'API Key'}
                       </div>
                     </div>
+                    {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
                   </button>
                 ))}
               </div>
@@ -433,7 +438,24 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 <LibraryTab onSelect={handleLibrarySelect} />
               )}
 
-              {activeTab === 'openrouter' && (
+              {/* Locked provider read-only banner */}
+              {activeTab !== 'fallbacks' && activeTab !== 'library' && isProviderLocked(activeTab) && (
+                <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
+                  <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
+                  <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
+                  <p className="text-sm text-muted-foreground max-w-sm">
+                    The API key for this provider is set server-side. Contact your administrator to change it.
+                  </p>
+                  {providerConfigMap[activeTab]?.config.model_id && (
+                    <p className="text-sm text-muted-foreground mt-4">
+                      Current model: <span className="font-mono text-foreground">{providerConfigMap[activeTab].config.model_id}</span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Editable provider sections (only when not locked) */}
+              {activeTab === 'openrouter' && !isProviderLocked('openrouter') && (
                 <OpenRouterSection
                   config={openrouterConfig}
                   onUpdate={(config) => handleProviderConfigUpdate('openrouter', config)}
@@ -444,7 +466,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 />
               )}
 
-              {activeTab === 'bedrock' && (
+              {activeTab === 'bedrock' && !isProviderLocked('bedrock') && (
                 <BedrockSection
                   config={bedrockConfig}
                   onUpdate={(config) => handleProviderConfigUpdate('bedrock', config)}
@@ -455,7 +477,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 />
               )}
 
-              {activeTab === 'openai' && (
+              {activeTab === 'openai' && !isProviderLocked('openai') && (
                 <OpenAISection
                   config={openaiConfig}
                   onUpdate={(config) => handleProviderConfigUpdate('openai', config)}
@@ -466,7 +488,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 />
               )}
 
-              {activeTab === 'vertex' && (
+              {activeTab === 'vertex' && !isProviderLocked('vertex') && (
                 <VertexSection
                   config={vertexConfig}
                   onUpdate={(config) => handleProviderConfigUpdate('vertex', config)}
@@ -477,7 +499,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 />
               )}
 
-              {activeTab === 'anthropic' && (
+              {activeTab === 'anthropic' && !isProviderLocked('anthropic') && (
                 <AnthropicSection
                   config={anthropicConfig}
                   onUpdate={(config) => handleProviderConfigUpdate('anthropic', config)}
@@ -488,7 +510,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 />
               )}
 
-              {activeTab === 'azure' && (
+              {activeTab === 'azure' && !isProviderLocked('azure') && (
                 <AzureSection
                   config={azureConfig}
                   onUpdate={(config) => handleProviderConfigUpdate('azure', config)}

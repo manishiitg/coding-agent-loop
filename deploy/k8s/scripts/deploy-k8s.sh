@@ -331,6 +331,9 @@ if [ -f "$ENV_FILE" ]; then
     # Authentication (required for MULTI_USER_MODE=true)
     AUTH_SECRET=$(extract_env_value "AUTH_SECRET" "$ENV_FILE")
 
+    # Global secrets (JSON values passed as env vars)
+    GLOBAL_SECRET_GRAFANA=$(extract_env_value "GLOBAL_SECRET_GRAFANA" "$ENV_FILE")
+
     if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &> /dev/null; then
         echo -e "${YELLOW}Secret ${SECRET_NAME} exists. Updating...${NC}"
         kubectl delete secret "$SECRET_NAME" -n "$NAMESPACE" 2>/dev/null || true
@@ -355,6 +358,7 @@ if [ -f "$ENV_FILE" ]; then
     [ -n "$GITHUB_TOKEN" ] && SECRET_CMD="$SECRET_CMD --from-literal=GITHUB_TOKEN=\"$GITHUB_TOKEN\""
     [ -n "$GITHUB_REPO" ] && SECRET_CMD="$SECRET_CMD --from-literal=GITHUB_REPO=\"$GITHUB_REPO\""
     [ -n "$AUTH_SECRET" ] && SECRET_CMD="$SECRET_CMD --from-literal=AUTH_SECRET=\"$AUTH_SECRET\""
+    [ -n "$GLOBAL_SECRET_GRAFANA" ] && SECRET_CMD="$SECRET_CMD --from-literal=GLOBAL_SECRET_GRAFANA='$GLOBAL_SECRET_GRAFANA'"
 
     eval $SECRET_CMD
     echo -e "${GREEN}✓ Secret ${SECRET_NAME} created/updated${NC}"

@@ -128,9 +128,6 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	lastProcessedIndex := getEventsResult.LastProcessedIndex
 	hasMoreFromStore := getEventsResult.HasMore
 
-	log.Printf("[RESTORE_DEBUG] handleGetSessionEvents: sessionID=%s, exists_in_memory=%v, events_in_memory=%d, sinceIndex=%d, eventMode=%s, lastProcessedIndex=%d",
-		sessionID, exists, len(sessionEvents), opts.SinceIndex, opts.EventMode, lastProcessedIndex)
-
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())
 
@@ -138,7 +135,6 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	var sessionStatus string
 	var chatSession *database.ChatSession
 	activeSession, existsInActive := api.getActiveSession(sessionID)
-	log.Printf("[RESTORE_DEBUG] sessionID=%s, existsInActive=%v, currentUserID=%s", sessionID, existsInActive, currentUserID)
 	if existsInActive {
 		// Verify user ownership for active session
 		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
@@ -146,44 +142,30 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			return
 		}
 		sessionStatus = activeSession.Status
-		api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in active sessions (status: %s)", sessionID, sessionStatus))
 	} else {
 		// Check database for completed/error sessions - filter by user for isolation
 		var err error
 		chatSession, err = api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
 		if err == nil && chatSession != nil {
 			sessionStatus = chatSession.Status
-			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in database (status: %s)", sessionID, sessionStatus))
-		} else {
-			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not found in database for user %s: %v", sessionID, currentUserID, err))
 		}
 		// If not found, leave empty (session might not exist yet or belongs to another user)
 	}
-
-	api.logger.Debug(fmt.Sprintf("[POLLING] Session %s: exists=%v, events_in_memory=%d, status=%s", sessionID, exists, len(sessionEvents), sessionStatus))
 
 	// Check if we need to fallback to database:
 	// 1. Session doesn't exist in memory (!exists), OR
 	// 2. Session exists in memory but has 0 events AND session is completed/stopped
 	shouldFallbackToDB := !exists || (exists && len(sessionEvents) == 0 && chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped"))
 
-	log.Printf("[RESTORE_DEBUG] sessionID=%s, shouldFallbackToDB=%v, sessionStatus=%s, chatSession_nil=%v",
-		sessionID, shouldFallbackToDB, sessionStatus, chatSession == nil)
-
 	if shouldFallbackToDB {
 		// Session doesn't exist in memory or has no events - check if it's a completed/stopped session in database
 		// For non-active sessions (completed, stopped, error), fetch events from database
 		if chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped") {
 			// Fallback to database for non-active sessions
-			log.Printf("[RESTORE_DEBUG] DB fallback: sessionID=%s, status=%s, fetching events from DB", sessionID, chatSession.Status)
 			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 10000, 0)
 			if err != nil {
-				log.Printf("[POLLING ERROR] Failed to fetch events from database for session %s: %v", sessionID, err)
 				api.logger.Warn(fmt.Sprintf("[POLLING] Failed to fetch events from database for session %s: %v", sessionID, err))
-			} else {
-				api.logger.Debug(fmt.Sprintf("[POLLING] Fetched %d events from database for session %s", len(dbEvents), sessionID))
 			}
-			log.Printf("[RESTORE_DEBUG] DB fallback result: sessionID=%s, dbEvents=%d, err=%v", sessionID, len(dbEvents), err)
 			if err == nil && len(dbEvents) > 0 {
 				// Convert database events to polling events format
 				convertedEvents := make([]events.Event, 0, len(dbEvents))
@@ -301,15 +283,6 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 					})
 				}
 
-				// Log summary of conversion results (including any errors beyond the first 3)
-				if parseErrors > 0 || filteredOut > 0 {
-					log.Printf("[POLLING] Session %s conversion summary: %d events converted, %d parse errors, %d filtered out (total db events: %d)",
-						sessionID, len(convertedEvents), parseErrors, filteredOut, len(dbEvents))
-				}
-				if parseErrors > 3 {
-					log.Printf("[POLLING WARNING] Session %s had %d total parse errors (only first 3 were logged in detail)", sessionID, parseErrors)
-				}
-
 				// Fix EventIndex for DB-loaded events: they're stored with EventIndex=0
 				// Assign sequential indices so sinceIndex filtering works correctly
 				for i := range convertedEvents {
@@ -350,9 +323,6 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 					}
 				}
 
-				log.Printf("[RESTORE_DEBUG] DB fallback response: sessionID=%s, converted=%d, filteredBySince=%d, maxEventIndex=%d, sessionStatus=%s",
-					sessionID, len(convertedEvents), len(filteredBySinceIndex), maxEventIndex, sessionStatus)
-
 				response := GetEventsResponse{
 					Events:                     filteredBySinceIndex,
 					HasMore:                    false, // Completed sessions don't have more events
@@ -372,7 +342,6 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 
 		// Session doesn't exist yet (no events have been added)
 		// Return empty events array instead of 404 - this is expected when polling starts before events are generated
-		log.Printf("[RESTORE_DEBUG] Returning empty events: sessionID=%s, sessionStatus=%s (not in memory, not in DB or DB had no events)", sessionID, sessionStatus)
 		response := GetEventsResponse{
 			Events:                     []events.Event{},
 			HasMore:                    false,

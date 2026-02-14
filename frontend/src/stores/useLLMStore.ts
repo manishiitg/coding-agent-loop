@@ -316,7 +316,8 @@ export const useLLMStore = create<LLMState>()(
             const currentConfig = get().delegationTierConfig
             // Only set defaults if user hasn't already configured tiers
             if (!currentConfig) {
-              const hasDefaults = defaults.high || defaults.medium || defaults.low
+              const hasDefaults = defaults.high || defaults.medium || defaults.low ||
+                (defaults.custom && Object.keys(defaults.custom).length > 0)
               if (hasDefaults) {
                 set({ delegationTierConfig: defaults })
               }

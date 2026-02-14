@@ -11,7 +11,7 @@ import (
 )
 
 // ValidateZipSkill validates a skill from an uploaded zip file without extracting to workspace
-func ValidateZipSkill(file multipart.File, header *multipart.FileHeader) (*ValidateSkillResponse, error) {
+func ValidateZipSkill(workspaceAPIURL string, file multipart.File, header *multipart.FileHeader) (*ValidateSkillResponse, error) {
 	// Verify .zip extension
 	if !strings.HasSuffix(strings.ToLower(header.Filename), ".zip") {
 		return &ValidateSkillResponse{Valid: false, Error: "file must be a .zip file"}, nil
@@ -67,7 +67,18 @@ func ValidateZipSkill(file multipart.File, header *multipart.FileHeader) (*Valid
 		}
 	}
 
-	return &ValidateSkillResponse{Valid: true, Frontmatter: frontmatter, Files: fileNames}, nil
+	// Check if a skill with this name already exists
+	skillName := frontmatter.Name
+	if skillName == "" {
+		skillName = strings.TrimSuffix(header.Filename, ".zip")
+	}
+	skillName = sanitizeFolderName(skillName)
+	exists := false
+	if _, err := GetSkill(workspaceAPIURL, skillName); err == nil {
+		exists = true
+	}
+
+	return &ValidateSkillResponse{Valid: true, Frontmatter: frontmatter, Files: fileNames, Exists: exists}, nil
 }
 
 // ImportZipSkill validates and extracts a skill from an uploaded zip file to workspace

@@ -213,14 +213,37 @@ export default function ChatHistorySection({
       setShareSessionId(null)
       return
     }
+    console.log(`[RESTORE_DEBUG] Share: starting for session ${session.session_id}`)
     setIsCreatingShare(true)
     setShareUrl('')
     setCopied(false)
     setShareSessionId(session.session_id)
     try {
+      const t0 = performance.now()
       const res = await sessionShareApi.createShare(session.session_id)
-      setShareUrl(`${window.location.origin}/shared/${res.token}`)
-    } catch {
+      const url = `${window.location.origin}/shared/${res.token}`
+      console.log(`[RESTORE_DEBUG] Share: API returned in ${(performance.now() - t0).toFixed(0)}ms, token=${res.token}`)
+      setShareUrl(url)
+      // Auto-copy to clipboard
+      try {
+        await navigator.clipboard.writeText(url)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      } catch {
+        // Fallback for non-HTTPS contexts
+        const textarea = document.createElement('textarea')
+        textarea.value = url
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }
+    } catch (err) {
+      console.error(`[RESTORE_DEBUG] Share: API error`, err)
       setShareUrl('')
       setShareSessionId(null)
     } finally {

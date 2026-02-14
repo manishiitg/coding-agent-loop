@@ -10,6 +10,7 @@ import type { PollingEvent } from '../services/api-types'
 
 interface EventDisplayProps {
   onFeedbackSubmitted?: () => void
+  onSendMessage?: (msg: string) => void
   compact?: boolean
   flatHierarchy?: boolean
   events?: PollingEvent[]  // Required: events should always be passed from ChatArea (tab-specific)
@@ -45,7 +46,7 @@ const getMarkdownComponents = (compact: boolean) => ({
 })
 
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, compact = false, flatHierarchy = false, events: propEvents, sessionId }) => {
+export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, flatHierarchy = false, events: propEvents, sessionId }) => {
   // Store subscriptions (only for finalResponse and isCompleted - not events)
   const {
     finalResponse,
@@ -117,6 +118,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
               onApproveWorkflow={handleApproveWorkflow}
               onSubmitFeedback={handleSubmitFeedback}
               onFeedbackSubmitted={onFeedbackSubmitted}
+              onSendMessage={onSendMessage}
               isApproving={false}
               compact={compact}
               flatHierarchy={flatHierarchy}

@@ -831,6 +831,17 @@ func (s *SQLiteDB) GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*
 // The sessionID parameter is the chat_session_id (UUID from chat_sessions table),
 // not the internal trace/session_id used during event emission
 func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error) {
+	// Resolve session_id UUID → internal hex id first, then query by chat_session_id.
+	// Two-step approach avoids OR which prevents index usage on large tables.
+	var internalID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM chat_sessions WHERE session_id = ?`, sessionID,
+	).Scan(&internalID)
+	if err != nil {
+		// Fallback: try using sessionID directly as chat_session_id
+		internalID = sessionID
+	}
+
 	query := `
 		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
 		FROM events
@@ -839,7 +850,7 @@ func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, lim
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := s.db.QueryContext(ctx, query, sessionID, limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, internalID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events by session: %w", err)
 	}

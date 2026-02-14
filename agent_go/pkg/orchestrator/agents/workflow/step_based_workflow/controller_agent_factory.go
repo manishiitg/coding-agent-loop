@@ -1207,6 +1207,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		}
 	}
 
+	// Add secrets to execution agent's system prompt
+	effectiveSecrets := GetEffectiveSecrets(hcpo.BaseOrchestrator)
+	if len(effectiveSecrets) > 0 {
+		secretPrompt := BuildWorkflowSecretPrompt(effectiveSecrets)
+		if secretPrompt != "" {
+			mcpAgent.AppendSystemPrompt(secretPrompt)
+			hcpo.GetLogger().Info(fmt.Sprintf("🔐 Added secret prompt to execution agent (%d secrets)", len(effectiveSecrets)))
+		}
+	}
+
 	// Apply post-setup configuration (folder guard paths and optional registry update)
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
 		// Log warning but don't fail agent creation

@@ -135,10 +135,13 @@ func getChatSession(db database.Database) gin.HandlerFunc {
 		// Get session with user scope to ensure user owns the session
 		session, err := db.GetChatSessionWithUser(c.Request.Context(), sessionID, userID)
 		if err != nil {
+			log.Printf("[RESTORE_DEBUG] getChatSession FAILED: sessionID=%s, userID=%s, err=%v", sessionID, userID, err)
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
 		}
 
+		log.Printf("[RESTORE_DEBUG] getChatSession OK: sessionID=%s, status=%s, hasConfig=%v, configJSON_len=%d",
+			sessionID, session.Status, len(session.Config) > 0, len(session.Config))
 		c.JSON(http.StatusOK, session)
 	}
 }

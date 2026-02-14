@@ -103,13 +103,14 @@ export function buildQueryRequestPayload(params: {
   chatPresetId: string | null
   filteredPresetTools: string[]
   hasActivePreset: boolean
+  decryptedSecrets?: Array<{ name: string; value: string }>
 }): AgentQueryRequest {
   const {
     queryWithContext, correctAgentMode, selectedModeCategory,
     enabledTools, effectiveServers, currentTab, effectiveLLMConfig,
     llmConfigWithApiKeys, useCodeExecutionMode, useToolSearchMode,
     executionOptions, workflowPresetId, chatPresetId,
-    filteredPresetTools, hasActivePreset,
+    filteredPresetTools, hasActivePreset, decryptedSecrets,
   } = params
 
   const isChatMode = selectedModeCategory === 'chat'
@@ -167,6 +168,7 @@ export function buildQueryRequestPayload(params: {
       ? currentTab.config.selectedSubAgents
       : undefined,
     enable_context_editing: enableContextEditing,
+    decrypted_secrets: decryptedSecrets?.length ? decryptedSecrets : undefined,
   }
 }
 

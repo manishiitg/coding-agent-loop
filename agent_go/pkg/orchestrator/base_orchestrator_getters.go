@@ -106,6 +106,17 @@ func (bo *BaseOrchestrator) SetSelectedSkills(skills []string) {
 	bo.GetLogger().Info(fmt.Sprintf("🎯 Set selected skills: %v", skills))
 }
 
+// GetSecrets returns the decrypted secrets
+func (bo *BaseOrchestrator) GetSecrets() []SecretEntry {
+	return bo.secrets
+}
+
+// SetSecrets sets the decrypted secrets to inject into agents
+func (bo *BaseOrchestrator) SetSecrets(secrets []SecretEntry) {
+	bo.secrets = secrets
+	bo.GetLogger().Info(fmt.Sprintf("🔐 Set %d secrets for agent injection", len(secrets)))
+}
+
 // GetUseCodeExecutionMode returns the code execution mode setting
 func (bo *BaseOrchestrator) GetUseCodeExecutionMode() bool {
 	return bo.useCodeExecutionMode

@@ -4,6 +4,7 @@ import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
 import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
+import { SecretsSection } from './secrets'
 import { SubAgentsSection } from './subagents'
 import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
@@ -170,6 +171,9 @@ export default function WorkspaceSidebar({
 
             {/* Skills */}
             <SkillsSection />
+
+            {/* Secrets */}
+            <SecretsSection />
 
             {/* Sub-Agent Templates */}
             <SubAgentsSection />

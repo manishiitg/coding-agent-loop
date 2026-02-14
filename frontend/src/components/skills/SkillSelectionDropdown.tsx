@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, ChevronDown, Check } from 'lucide-react';
+import { Sparkles, Check } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/checkbox';
 import { Card } from '../ui/Card';
@@ -65,21 +65,24 @@ export default function SkillSelectionDropdown({
       <div className="relative">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="sm"
               onClick={() => setIsOpen(!isOpen)}
               disabled={disabled}
-              className="h-8 px-2 text-xs font-medium bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+              className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                selectedSkills.length > 0
+                  ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-600 text-purple-600 dark:text-purple-400'
+                  : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+              } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
             >
-              <Sparkles className="w-3 h-3 mr-1 text-purple-500" />
-              {getDisplayText()}
-              <ChevronDown className="w-3 h-3 ml-1" />
-            </Button>
+              <Sparkles className="w-4 h-4 flex-shrink-0" />
+              <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
+                {getDisplayText()}
+              </span>
+            </button>
           </TooltipTrigger>
           <TooltipContent>
-            <p>Select skills to include in chat</p>
+            <p>{selectedSkills.length > 0 ? `${selectedSkills.length} skill${selectedSkills.length !== 1 ? 's' : ''} selected` : 'Select skills to include in chat'}</p>
           </TooltipContent>
         </Tooltip>
 

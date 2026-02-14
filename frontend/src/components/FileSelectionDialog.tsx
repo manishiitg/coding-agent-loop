@@ -7,6 +7,8 @@ interface FileSelectionDialogProps {
   isOpen: boolean
   onClose: () => void
   onSelectFile: (file: PlannerFile) => void
+  /** When user presses → on a folder, call with folder path so parent can set search context to that folder */
+  onNavigateIntoFolder?: (folderPath: string) => void
   searchQuery: string
   position: { top: number; left: number }
 }
@@ -15,6 +17,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   isOpen,
   onClose,
   onSelectFile,
+  onNavigateIntoFolder,
   searchQuery,
   position
 }) => {
@@ -100,7 +103,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
 
     const query = searchQuery.toLowerCase().trim()
     
-    const filtered = allFlattenedFiles.filter(file => {
+    let filtered = allFlattenedFiles.filter(file => {
       // Filter by filepath with fuzzy matching (like VS Code) - includes both files and folders
       const filepath = file.filepath.toLowerCase()
       
@@ -120,6 +123,11 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
       
       return fuzzyMatch || substringMatch
     })
+
+    // When query ends with / we're "inside" a folder — show only items under that path
+    if (query.endsWith('/')) {
+      filtered = filtered.filter(file => file.filepath.toLowerCase().startsWith(query))
+    }
     
     // Sort by relevance: exact matches first, then partial matches
     const sorted = filtered.sort((a, b) => {
@@ -181,20 +189,36 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
           prev > 0 ? prev - 1 : visibleCount - 1
         )
         break
+      case 'ArrowLeft':
+        e.preventDefault()
+        if (searchQuery.trim().endsWith('/') && onNavigateIntoFolder) {
+          const path = searchQuery.replace(/\/$/, '').split('/').filter(Boolean)
+          if (path.length > 0) {
+            const parentPath = path.length === 1 ? '' : path.slice(0, -1).join('/') + '/'
+            onNavigateIntoFolder(parentPath)
+          }
+        }
+        break
       case 'ArrowRight': {
         e.preventDefault()
         const selectedItem = displayedFiles[selectedIndex]
-        if (selectedItem && selectedItem.type === 'folder') {
-          // Toggle folder expansion
-          setExpandedFolders(prev => {
-            const newSet = new Set(prev)
-            if (newSet.has(selectedItem.filepath)) {
-              newSet.delete(selectedItem.filepath)
-            } else {
-              newSet.add(selectedItem.filepath)
-            }
-            return newSet
-          })
+        if (!selectedItem) break
+        if (selectedItem.type === 'folder') {
+          if (searchQuery.trim() && onNavigateIntoFolder) {
+            // Go inside folder: parent updates input so search context becomes this folder
+            onNavigateIntoFolder(selectedItem.filepath + '/')
+          } else if (!searchQuery.trim()) {
+            // Hierarchical view: toggle folder expansion
+            setExpandedFolders(prev => {
+              const newSet = new Set(prev)
+              if (newSet.has(selectedItem.filepath)) {
+                newSet.delete(selectedItem.filepath)
+              } else {
+                newSet.add(selectedItem.filepath)
+              }
+              return newSet
+            })
+          }
         }
         break
       }
@@ -209,7 +233,7 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
         onClose()
         break
     }
-  }, [isOpen, displayedFiles, selectedIndex, onSelectFile, onClose])
+  }, [isOpen, displayedFiles, selectedIndex, searchQuery, onNavigateIntoFolder, onSelectFile, onClose])
 
 
   // Add keyboard event listeners
@@ -275,19 +299,19 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
 
   const highlightMatch = (text: string, query: string) => {
     if (!query.trim()) return text
-    
+
     const queryLower = query.toLowerCase()
-    
+
     // Split query into parts for highlighting
     const queryParts = queryLower.split(/[/\\]/).filter(part => part.length > 0)
-    
+
     if (queryParts.length === 0) return text
-    
+
     // Create a regex that matches any of the query parts
     const regex = new RegExp(`(${queryParts.map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi')
     const parts = text.split(regex)
-    
-    return parts.map((part, index) => 
+
+    return parts.map((part, index) =>
       regex.test(part) ? (
         <mark key={index} className="bg-warning/20 text-warning px-0.5 rounded">
           {part}
@@ -296,63 +320,112 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
     )
   }
 
+  // For deep paths: show basename + truncated parent path (from the left so the end is visible)
+  const maxDirChars = 42
+  const formatPathParts = (filepath: string): { basename: string; dirDisplay: string | null } => {
+    const lastSlash = filepath.lastIndexOf('/')
+    if (lastSlash === -1) return { basename: filepath, dirDisplay: null }
+    const basename = filepath.slice(lastSlash + 1)
+    const dirPath = filepath.slice(0, lastSlash)
+    const dirDisplay = dirPath.length > maxDirChars ? `…${dirPath.slice(-(maxDirChars - 1))}` : dirPath
+    return { basename, dirDisplay }
+  }
+
   return (
     <div
       ref={dialogRef}
-      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg max-w-md w-full max-h-80 overflow-hidden"
+      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg min-w-[320px] max-w-xl w-full max-h-80 overflow-hidden"
       style={{
         top: position.top,
         left: position.left
       }}
     >
-      {/* Header */}
-      <div className="px-3 py-2 border-b border-border bg-secondary">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Search className="w-4 h-4" />
-          <span>Select file or folder</span>
-          {searchQuery && (
-            <span className="text-muted-foreground">• {filteredFiles.length} results</span>
+      {/* Header - compact: one line for title + filter, one for shortcuts */}
+      <div className="px-3 py-1.5 border-b border-border bg-secondary">
+        <div className="flex items-center gap-2 text-sm flex-wrap">
+          <span className="text-muted-foreground">Add file or folder</span>
+          {searchQuery ? (
+            <>
+              <span className="text-muted-foreground">·</span>
+              <span
+                className="font-mono text-xs px-2 py-0.5 rounded bg-muted/80 text-foreground truncate max-w-[180px]"
+                title={searchQuery.includes('/') ? `${searchQuery}\n\nUse / in paths — it won’t open slash commands.` : searchQuery}
+              >
+                {searchQuery || ' '}
+              </span>
+              <span className="text-muted-foreground text-xs">{filteredFiles.length} results</span>
+            </>
+          ) : (
+            <span className="text-muted-foreground text-xs">(type @ then path to filter)</span>
           )}
+          <span className="text-[11px] text-muted-foreground ml-auto flex items-center gap-1.5 flex-shrink-0">
+            <kbd className="px-1 py-0.5 bg-muted rounded font-mono">↑</kbd><kbd className="px-1 py-0.5 bg-muted rounded font-mono">↓</kbd>
+            <kbd className="px-1 py-0.5 bg-muted rounded font-mono">→</kbd>
+            <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Enter</kbd>
+            <kbd className="px-1 py-0.5 bg-muted rounded font-mono">Esc</kbd>
+          </span>
         </div>
       </div>
 
       {/* File List */}
       <div 
         ref={listRef}
-        className="overflow-y-auto max-h-64"
+        className="overflow-y-auto max-h-72 min-h-[120px]"
       >
         {displayedFiles.length === 0 ? (
-          <div className="px-3 py-4 text-center text-muted-foreground text-sm">
-            {searchQuery ? 'No files found' : 'No files available'}
+          <div className="px-3 py-5 text-center text-muted-foreground text-sm space-y-1">
+            {searchQuery ? (
+              <>
+                <p>No files or folders match “{searchQuery}”</p>
+                <p className="text-xs">Try a shorter path or different spelling. Paths can include <kbd className="px-1 py-0.5 bg-muted rounded font-mono text-[10px]">/</kbd>.</p>
+              </>
+            ) : (
+              <p>No files available. Type after <kbd className="px-1 py-0.5 bg-muted rounded font-mono text-[10px]">@</kbd> to filter by path.</p>
+            )}
           </div>
         ) : (
           <>
-            {displayedFiles.map((file, index) => (
-              <div
-                key={file.filepath}
-                className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
-                  index === selectedIndex
-                    ? 'bg-primary/10 text-primary border-l-2 border-primary'
-                    : 'hover:bg-secondary'
-                }`}
-                onClick={() => onSelectFile(file)}
-                style={{ paddingLeft: `${12 + (file.depth || 0) * 16}px` }}
-              >
-                {getFileIcon(file)}
-                <div className="flex-1 min-w-0">
-                  <div className="truncate">
-                    {highlightMatch(file.filepath, searchQuery)}
+            {displayedFiles.map((file, index) => {
+              const { basename, dirDisplay } = formatPathParts(file.filepath)
+              return (
+                <div
+                  key={file.filepath}
+                  title={file.filepath}
+                  className={`px-3 py-2.5 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
+                    index === selectedIndex
+                      ? 'bg-primary/10 text-primary border-l-2 border-primary'
+                      : 'hover:bg-secondary'
+                  }`}
+                  onClick={() => onSelectFile(file)}
+                  style={{ paddingLeft: `${12 + (file.depth || 0) * 16}px` }}
+                >
+                  {getFileIcon(file)}
+                  <div className="flex-1 min-w-0">
+                    {dirDisplay !== null ? (
+                      <>
+                        <div className="truncate font-medium">
+                          {highlightMatch(basename, searchQuery)}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground mt-0.5">
+                          {highlightMatch(dirDisplay, searchQuery)}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="truncate">
+                        {highlightMatch(file.filepath, searchQuery)}
+                      </div>
+                    )}
                   </div>
+                  {file.type === 'folder' && (
+                    expandedFolders.has(file.filepath) ? (
+                      <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                    ) : (
+                      <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                    )
+                  )}
                 </div>
-                {file.type === 'folder' && (
-                  expandedFolders.has(file.filepath) ? (
-                    <ChevronDown className="w-3 h-3 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="w-3 h-3 text-muted-foreground" />
-                  )
-                )}
-              </div>
-            ))}
+              )
+            })}
             {remainingCount > 0 && (
               <div className="px-3 py-2 text-center text-xs text-muted-foreground bg-secondary/30 italic border-t border-border/50">
                 ...and {remainingCount} more results. Keep typing to narrow down.
@@ -362,11 +435,23 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
         )}
       </div>
 
-      {/* Footer */}
+      {/* Footer - repeat shortcuts for visibility when list is long */}
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
-        <div className="flex items-center justify-between">
-          <span>↑↓ to navigate • → to expand folders</span>
-          <span>Enter to select • Esc to close</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 flex-wrap">
+            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">↑</kbd>
+            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">↓</kbd>
+            navigate
+            <span className="text-border">·</span>
+            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">→</kbd>
+            expand
+            <span className="text-border">·</span>
+            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">Enter</kbd>
+            select
+            <span className="text-border">·</span>
+            <kbd className="px-1 py-0.5 bg-muted dark:bg-muted/80 rounded font-mono text-[11px]">Esc</kbd>
+            close
+          </span>
         </div>
       </div>
     </div>

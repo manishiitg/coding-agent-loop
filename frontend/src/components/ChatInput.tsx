@@ -9,6 +9,7 @@ import { getEventData, isEventType } from '../generated/event-types'
 import type { TokenUsageEvent } from '../generated/events'
 import ServerSelectionDropdown from './ServerSelectionDropdown'
 import SkillSelectionDropdown from './skills/SkillSelectionDropdown'
+import SecretSelectionDropdown from './secrets/SecretSelectionDropdown'
 import SubAgentSelectionDropdown from './subagents/SubAgentSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
@@ -139,17 +140,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
   }, [tabSessionId, allTabEvents])
 
-  // Detect plan phase from events: check if confirm_plan_execution completed successfully
+  // Detect plan phase from events: scan backwards for the most recent phase-changing event.
+  // - plan_approval event → execution (plan presented for approval)
+  // - create_delegation_plan tool call → planning (new plan being created)
+  // Whichever is most recent wins. Default: planning.
   const planPhase = useMemo(() => {
     if (!isMultiAgentMode) return null
-    // Look for a successful tool_call_end for confirm_plan_execution
     for (let i = tabEvents.length - 1; i >= 0; i--) {
       const event = tabEvents[i]
-      if (event.type === 'tool_call_end') {
+      if (event.type === 'plan_approval') {
+        return 'execution'
+      }
+      if (event.type === 'tool_call_start' || event.type === 'tool_call_end') {
         const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined
         const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name
-        if (toolName === 'confirm_plan_execution') {
-          return 'execution'
+        if (toolName === 'create_delegation_plan') {
+          return 'planning'
         }
       }
     }
@@ -419,6 +425,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig])
 
+  // Use tab-specific secrets - memoize to prevent re-renders
+  const selectedSecrets = useMemo(() => tabConfig?.selectedSecrets || [], [tabConfig?.selectedSecrets])
+
+  // Secret operations (update tab config)
+  const onSecretToggle = useCallback((secretId: string) => {
+    if (activeTabId) {
+      const newSecrets = selectedSecrets.includes(secretId)
+        ? selectedSecrets.filter(s => s !== secretId)
+        : [...selectedSecrets, secretId]
+      setTabConfig(activeTabId, { selectedSecrets: newSecrets })
+    }
+  }, [activeTabId, selectedSecrets, setTabConfig])
+
+  const onSelectAllSecrets = useCallback((allSecretIds: string[]) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSecrets: allSecretIds })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const onClearAllSecrets = useCallback(() => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { selectedSecrets: [] })
+    }
+  }, [activeTabId, setTabConfig])
+
   // Use tab-specific sub-agent templates - memoize to prevent re-renders
   const selectedSubAgents = useMemo(() => tabConfig?.selectedSubAgents || [], [tabConfig?.selectedSubAgents])
 
@@ -660,16 +691,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
     
-    // Check for / symbol and update command dialog state (prioritize over @)
     const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
     const lastAtIndex = textBeforeCursor.lastIndexOf('@')
     
-    // Determine which dialog to show (prioritize the one closest to cursor)
+    // If @ appears before the current /, the / is part of a path (e.g. "@ workflow /") — stay in file dialog
+    const slashIsPartOfAtPath = lastAtIndex >= 0 && lastSlashIndex > lastAtIndex
+    
     const slashDistance = lastSlashIndex >= 0 ? cursorPosition - lastSlashIndex : Infinity
     const atDistance = lastAtIndex >= 0 ? cursorPosition - lastAtIndex : Infinity
     
-    // Check for / command
-    if (lastSlashIndex >= 0 && (lastAtIndex < 0 || slashDistance < atDistance)) {
+    // Check for / command (only when / is not part of an @ path)
+    if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && (lastAtIndex < 0 || slashDistance < atDistance)) {
       const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1)
       const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_]*$/)
       
@@ -1366,6 +1398,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     textareaRef.current?.focus()
   }, [])
 
+  // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
+  const handleNavigateIntoFolder = useCallback((folderPath: string) => {
+    if (atPosition === -1 || !activeTabId) return
+    const beforeAt = inputText.substring(0, atPosition + 1)
+    const newText = beforeAt + folderPath
+    setLocalInputText(newText)
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    setTabConfig(activeTabId, { inputText: newText })
+    setFileSearchQuery(folderPath)
+  }, [atPosition, inputText, activeTabId, setTabConfig])
+
   // Removed editing preset query functionality - not needed for chat mode
 
   // Check if query is valid
@@ -1480,7 +1526,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       disabled={isStreaming || isSummarizing}
                       data-testid="agent-mode-simple"
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        !useCodeExecutionMode && !useToolSearchMode
+                        !useToolSearchMode
                           ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-600 text-purple-600 dark:text-purple-400'
                           : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
                       } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
@@ -1488,26 +1534,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       <Sparkles className="w-4 h-4 flex-shrink-0" />
                       <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
                         Simple
-                      </span>
-                    </button>
-                    {/* Code Exec Mode */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUseCodeExecutionMode(true)
-                        setUseToolSearchMode(false)
-                      }}
-                      disabled={isStreaming || isSummarizing}
-                      data-testid="agent-mode-code-exec"
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        useCodeExecutionMode && !useToolSearchMode
-                          ? 'bg-orange-100 dark:bg-orange-900/40 border-orange-400 dark:border-orange-600 text-orange-600 dark:text-orange-400'
-                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <Code2 className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[40px] transition-all duration-200">
-                        Code
                       </span>
                     </button>
                     {/* Tool Search Mode */}
@@ -1669,7 +1695,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </button>
                   </div>
                 )}
-                
+
+                {/* Secrets dropdown - always visible (independent of presets) */}
+                <SecretSelectionDropdown
+                  selectedSecrets={selectedSecrets}
+                  onSecretToggle={onSecretToggle}
+                  onSelectAll={onSelectAllSecrets}
+                  onClearAll={onClearAllSecrets}
+                  disabled={isStreaming || isSummarizing}
+                />
+
                 {/* Status text - removed observer initialization message */}
               </div>
               {/* Show old buttons */}
@@ -1705,22 +1740,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       )}
 
-                      {/* Multi-agent phase indicator */}
+                      {/* Multi-agent phase indicator — clickable in execution phase to go back to planning */}
                       {isMultiAgentMode && planPhase && (
-                        <div className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium ${
-                          planPhase === 'execution'
-                            ? 'border-green-300 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400'
-                            : 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
-                        }`}>
-                          {planPhase === 'execution' ? <Play className="w-3 h-3" /> : <FileSearch className="w-3 h-3" />}
-                          <span>{planPhase === 'execution' ? 'Executing' : 'Planning'}</span>
-                        </div>
+                        planPhase === 'execution' ? (
+                          <button
+                            type="button"
+                            onClick={() => onSubmit('I want to start a new task. Plan it out before executing.')}
+                            className="flex items-center gap-1 px-2 py-1 rounded-md border border-green-300 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs font-medium hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors cursor-pointer"
+                            title="Click to go back to planning mode"
+                          >
+                            <Play className="w-3 h-3" />
+                            <span>Executing</span>
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-md border border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-xs font-medium">
+                            <FileSearch className="w-3 h-3" />
+                            <span>Planning</span>
+                          </div>
+                        )
                       )}
 
-                      {isStreaming ? (
+                      {isStreaming && !(activeTab?.hasRunningBgAgents) ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button 
+                            <Button
                               type="button"
                               variant="destructive"
                               onClick={onStopStreaming}
@@ -1784,6 +1827,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showFileDialog}
         onClose={handleFileDialogClose}
         onSelectFile={handleFileSelect}
+        onNavigateIntoFolder={handleNavigateIntoFolder}
         searchQuery={fileSearchQuery}
         position={fileDialogPosition}
       />

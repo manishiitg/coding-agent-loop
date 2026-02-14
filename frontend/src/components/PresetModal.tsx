@@ -7,6 +7,7 @@ import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search } from 'lucide
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
+import { SecretSelectionSection } from './secrets/SecretSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 import type { CustomPreset } from '../types/preset';
 import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/api-types';
@@ -18,7 +19,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[]) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -41,6 +42,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
   const [internalAgentMode, setInternalAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
@@ -117,6 +119,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
       setSelectedSkills(editingPreset.selectedSkills || []);
+      setSelectedSecrets(editingPreset.selectedSecrets || []);
       setInternalAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
       setSelectedFolder(editingPreset.selectedFolder || null);
       const presetLLM = editingPreset.llmConfig || {
@@ -145,6 +148,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedServers([]);
       setSelectedTools([]); // NEW
       setSelectedSkills([]);
+      setSelectedSecrets([]);
       // Default to workflow mode as chat presets are disabled
       const defaultMode = 'workflow';
       setInternalAgentMode(defaultMode);
@@ -297,11 +301,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         codeExecutionModeToPass,  // Always pass explicit boolean, never undefined
         enableContextSummarization,
         toolSearchModeToPass, // Always pass explicit boolean
-        enableBrowserAccess // Browser automation access
+        enableBrowserAccess, // Browser automation access
+        selectedSecrets // Secret IDs for injection
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -854,6 +859,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <SkillSelectionSection
                     selectedSkills={selectedSkills}
                     onSkillChange={setSelectedSkills}
+                  />
+                )}
+
+                {/* Secrets Selection - Workflow mode only */}
+                {effectiveAgentMode === 'workflow' && (
+                  <SecretSelectionSection
+                    selectedSecrets={selectedSecrets}
+                    onSecretChange={setSelectedSecrets}
                   />
                 )}
 

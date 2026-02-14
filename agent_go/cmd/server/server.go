@@ -816,6 +816,8 @@ type QueryRequest struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
 	} `json:"decrypted_secrets,omitempty"`
+	// Selected global secret names to include (if nil/absent, all global secrets are included)
+	SelectedGlobalSecrets *[]string `json:"selected_global_secrets,omitempty"`
 
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
@@ -1355,10 +1357,11 @@ func (api *StreamingAPI) GetAPIURL() string {
 
 // mergeGlobalSecrets prepends global secrets to user-supplied secrets.
 // User secrets take priority on name collision.
+// If selectedGlobalNames is non-nil, only global secrets whose name is in the list are included.
 func mergeGlobalSecrets(userSecrets []struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
-}) []struct {
+}, selectedGlobalNames *[]string) []struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 } {
@@ -1366,23 +1369,35 @@ func mergeGlobalSecrets(userSecrets []struct {
 	if len(globals) == 0 {
 		return userSecrets
 	}
+	// Build filter set from selected global names (nil = include all)
+	var allowedGlobals map[string]bool
+	if selectedGlobalNames != nil {
+		allowedGlobals = make(map[string]bool, len(*selectedGlobalNames))
+		for _, name := range *selectedGlobalNames {
+			allowedGlobals[name] = true
+		}
+	}
 	// Build a set of user-supplied secret names for dedup
 	userNames := make(map[string]bool, len(userSecrets))
 	for _, s := range userSecrets {
 		userNames[s.Name] = true
 	}
-	// Prepend globals that don't collide with user secrets
+	// Prepend globals that don't collide with user secrets and are in the allowed set
 	var merged []struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
 	}
 	for _, g := range globals {
-		if !userNames[g.Name] {
-			merged = append(merged, struct {
-				Name  string `json:"name"`
-				Value string `json:"value"`
-			}{Name: g.Name, Value: g.Value})
+		if userNames[g.Name] {
+			continue
 		}
+		if allowedGlobals != nil && !allowedGlobals[g.Name] {
+			continue
+		}
+		merged = append(merged, struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: g.Name, Value: g.Value})
 	}
 	merged = append(merged, userSecrets...)
 	return merged
@@ -2608,7 +2623,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Merge global secrets with user-supplied secrets, then set on orchestrator
-		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets)
+		allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allSecrets) > 0 {
 			entries := make([]orchestrator.SecretEntry, len(allSecrets))
 			for i, s := range allSecrets {
@@ -4154,7 +4169,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Merge global secrets with user-supplied secrets, then inject into chat query
 		chatQuery := req.Query
-		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets)
+		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allChatSecrets) > 0 {
 			var secretParts []string
 			for _, s := range allChatSecrets {
@@ -5614,7 +5629,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 
 		// Merge global secrets with parent's decrypted secrets, then inject into sub-agent
-		allDelegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets)
+		allDelegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
 		if len(allDelegationSecrets) > 0 {
 			var secretParts []string
 			for _, s := range allDelegationSecrets {

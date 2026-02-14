@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Bot, Check } from 'lucide-react';
+import { Bot, Check, HelpCircle } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/checkbox';
 import { Card } from '../ui/Card';
@@ -25,6 +25,7 @@ export default function SubAgentSelectionDropdown({
   const [isOpen, setIsOpen] = useState(false);
   const [subagents, setSubAgents] = useState<SubAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   // Load templates when dropdown opens
   useEffect(() => {
@@ -100,9 +101,19 @@ export default function SubAgentSelectionDropdown({
                 <div className="space-y-3">
                   {/* Header */}
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      Sub-Agent Templates
-                    </h3>
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        Sub-Agent Templates
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowHelp(!showHelp)}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                        title="What are sub-agents?"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <Button
                       type="button"
                       variant="ghost"
@@ -113,6 +124,14 @@ export default function SubAgentSelectionDropdown({
                       ✕
                     </Button>
                   </div>
+
+                  {/* Help description */}
+                  {showHelp && (
+                    <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 rounded-md p-2 border border-gray-200 dark:border-gray-600">
+                      <p className="font-medium text-gray-700 dark:text-gray-300 mb-1">Sub-agents are reusable profiles for delegated agents.</p>
+                      <p>When selected, the agent can spawn a separate specialist agent with pre-configured instructions, reasoning level, tools, and skills. Think of them as "specialist roles you can hire" for specific tasks.</p>
+                    </div>
+                  )}
 
                   {/* Quick Actions */}
                   <div className="flex gap-2">

@@ -428,6 +428,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Use tab-specific secrets - memoize to prevent re-renders
   const selectedSecrets = useMemo(() => tabConfig?.selectedSecrets || [], [tabConfig?.selectedSecrets])
 
+
   // Secret operations (update tab config)
   const onSecretToggle = useCallback((secretId: string) => {
     if (activeTabId) {
@@ -449,6 +450,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, { selectedSecrets: [] })
     }
   }, [activeTabId, setTabConfig])
+
 
   // Use tab-specific sub-agent templates - memoize to prevent re-renders
   const selectedSubAgents = useMemo(() => tabConfig?.selectedSubAgents || [], [tabConfig?.selectedSubAgents])

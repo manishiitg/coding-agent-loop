@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,6 +44,12 @@ func ExecuteShellCommand(c *gin.Context) {
 
 	// Get docs directory
 	docsDir := viper.GetString("docs-dir")
+
+	// Log user ID from request header for debugging
+	rawUserIDHeader := c.GetHeader("X-User-ID")
+	resolvedUserID := getUserID(c)
+	log.Printf("[USER_ID_DEBUGGING] Shell handler: X-User-ID header=%q, resolved=%q, command=%q, working_dir=%q",
+		rawUserIDHeader, resolvedUserID, req.Command, req.WorkingDirectory)
 
 	// Determine working directory
 	workingDir := docsDir

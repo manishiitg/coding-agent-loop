@@ -202,6 +202,9 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	// Check both static UserID and context-based user ID
 	if userID := c.getUserIDFromContext(ctx); userID != "" {
 		req.Header.Set("X-User-ID", userID)
+		log.Printf("[USER_ID_DEBUGGING] HTTP request: %s %s with X-User-ID=%q", method, path, userID)
+	} else {
+		log.Printf("[USER_ID_DEBUGGING] HTTP request: %s %s with NO X-User-ID header", method, path)
 	}
 
 	resp, err := c.HTTPClient.Do(req)

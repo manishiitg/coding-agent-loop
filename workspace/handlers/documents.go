@@ -382,6 +382,8 @@ func ListDocuments(c *gin.Context) {
 
 	docsDir := viper.GetString("docs-dir")
 	userID := getUserID(c)
+	log.Printf("[USER_ID_DEBUGGING] ListDocuments: X-User-ID=%q, resolved=%q, folder=%q",
+		c.GetHeader("X-User-ID"), userID, req.Folder)
 
 	// Normalize folder path by removing trailing slashes
 	// This fixes issues where trailing slashes cause comparison failures in buildHierarchicalStructure

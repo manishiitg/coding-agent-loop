@@ -2,6 +2,7 @@
 export { EventDispatcher, EventList } from './EventDispatcher'
 export { EventHierarchy } from './EventHierarchy'
 export { EventModeToggle } from './EventModeToggle'
+export { ToolCallToggle } from './ToolCallToggle'
 export { EventModeProvider } from './EventModeContext'
 export { useEventMode } from './useEventMode'
 

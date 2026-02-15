@@ -1,0 +1,87 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-4.1",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:53:17.762572+05:30",
+  "request_hash": "3156ccd7baa5c3185d140f6212b877e2ad0074a4649b8f4fcd2e09aff3099874",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Check the server status"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-4.1",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{}",
+                "name": "get_server_status"
+              },
+              "id": "call_4ABARRYCmcfAbwOeDTlfdrD6",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1764343397,
+    "id": "chatcmpl-CgubVtyGShffu9iv3h1B3AWEOQoYc",
+    "model": "gpt-4.1-2025-04-14",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "fp_433e8c8649",
+    "usage": {
+      "completion_tokens": 11,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 62,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 73
+    }
+  },
+  "chunk_count": 1
+}

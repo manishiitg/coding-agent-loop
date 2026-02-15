@@ -164,8 +164,8 @@ func NewBaseOrchestrator(
 	}
 
 	// Load context editing configuration from environment variables
-	// Default to enabled (true), can be disabled via ENABLE_CONTEXT_EDITING=false
-	enableContextEditing := os.Getenv("ENABLE_CONTEXT_EDITING") != "false"
+	// Default to disabled (false), can be enabled via ENABLE_CONTEXT_EDITING=true
+	enableContextEditing := os.Getenv("ENABLE_CONTEXT_EDITING") == "true"
 	contextEditingThreshold := 10000 // Default to 10k tokens - compact outputs larger than this (matches library default)
 	if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
 		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {

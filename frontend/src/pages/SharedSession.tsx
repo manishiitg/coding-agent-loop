@@ -6,7 +6,7 @@ import { EventModeContext } from '../components/events/EventContext'
 import type { PollingEvent } from '../services/api-types'
 import '../components/events/EventHierarchy.css'
 
-const noop = (_mode: 'basic' | 'advanced' | 'tiny' | 'micro') => {}
+const noop = () => {}
 
 // Mirror backend event mode filtering (event_store.go)
 const NEVER_SHOW_EVENTS = new Set([

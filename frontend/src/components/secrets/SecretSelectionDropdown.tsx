@@ -27,7 +27,6 @@ export default function SecretSelectionDropdown({
   const globalSecrets = useSecretsStore((s) => s.globalSecrets);
   const fetchGlobalSecrets = useSecretsStore((s) => s.fetchGlobalSecrets);
   const selectedGlobalSecrets = useSecretsStore((s) => s.selectedGlobalSecretNames);
-  const setSelectedGlobalSecrets = useSecretsStore((s) => s.setSelectedGlobalSecretNames);
 
   useEffect(() => {
     if (globalSecrets.length === 0) {

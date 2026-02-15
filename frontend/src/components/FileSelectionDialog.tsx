@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { File, Folder, Search, ChevronRight, ChevronDown } from 'lucide-react'
+import { File, Folder, ChevronRight, ChevronDown } from 'lucide-react'
 import type { PlannerFile } from '../services/api-types'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 

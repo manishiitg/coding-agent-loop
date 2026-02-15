@@ -1,0 +1,26 @@
+{
+  "name": "mcpagent-nodejs-sdk-example",
+  "version": "1.0.0",
+  "description": "Example of using MCPAgent Node.js SDK with gRPC streaming",
+  "main": "dist/basic.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node -r dotenv/config dist/basic.js",
+    "start:multi-turn": "node -r dotenv/config dist/multi-turn.js",
+    "start:custom-tools": "node -r dotenv/config dist/custom-tools.js",
+    "start:multi-mcp-server": "node -r dotenv/config dist/multi-mcp-server.js",
+    "dev": "npx ts-node -r dotenv/config src/basic.ts",
+    "dev:multi-turn": "npx ts-node -r dotenv/config src/multi-turn.ts",
+    "dev:custom-tools": "npx ts-node -r dotenv/config src/custom-tools.ts",
+    "dev:multi-mcp-server": "npx ts-node -r dotenv/config src/multi-mcp-server.ts"
+  },
+  "dependencies": {
+    "@mcpagent/node": "file:../../sdk-node",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.2"
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-3-pro-preview",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:21:01.095995+05:30",
+  "request_hash": "5f543264855462147179f9d33a66575ad49735ba797bb14ffecdbe5599d31f18",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Check the server status"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-3-pro-preview",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_server_status"
+                },
+                "thoughtSignature": "EpADCo0DAXLI2nwGkOGmB6SLV19v1C0MKsxyuPpz+EPPfF2y0AS9KvlMsUBgZvf7FnEYaTyRq09wIuqe0sNRsjmayvp+ePaz57KCl7GCYwePySRRqaku7bJSfnXf+qVAN8ZnZSJmnoKO1lc2gj1leSDeezaBImJsq4WewPaBL+bQ4YxkYXHaFsKt1aYZXBXL3mvcli5FEpwXaRmz2SpfXiyLT/Ja9gClpemL2Pey0YJ1gTBAl8I8K95kFatFwQCjZWBWJ8M0CPhthMGUSbbGlMUS+8pE/KYbAJ9RbIOlq4EIf4N4GLsmRKLphKVB+SsdoMI40N2M0SgS5kAc6eDnoZskEpQ+Bwt5Wbh5jA3QmnX7yW83SWF3MoxM2qw0YU2pwr7YzxosK5ohbFcdqNEHLcD09mU7Gwx5w3K5j4h7vOq/H4K0jO58rAYNhrfbDSXJ4/JsLNFG4utCNGxuYF63TOPieVrvOL9Jjr0ERGOwpthRCW8f7H0EZrD3JU81C4NR1FaIze/w5zS84/zNZODmNpzApw=="
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "1LYpaej3OYuqjuMPiOG4-Q8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:51:01 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=4424"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 12,
+        "promptTokenCount": 33,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 33
+          }
+        ],
+        "thoughtsTokenCount": 63,
+        "totalTokenCount": 108
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {}
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "1LYpaej3OYuqjuMPiOG4-Q8",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 14:51:01 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=4424"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 12,
+        "promptTokenCount": 33,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 33
+          }
+        ],
+        "thoughtsTokenCount": 63,
+        "totalTokenCount": 108
+      }
+    }
+  ],
+  "chunk_count": 2
+}

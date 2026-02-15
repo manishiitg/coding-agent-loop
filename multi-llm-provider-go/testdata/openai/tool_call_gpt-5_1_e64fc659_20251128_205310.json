@@ -1,0 +1,87 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-5.1",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:53:10.626724+05:30",
+  "request_hash": "e64fc659424a828ab76d21796157ea320eeee6c88aa8d502caa15055601faedf",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "What's the weather in San Francisco?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-5.1",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{\"location\":\"San Francisco\"}",
+                "name": "get_weather"
+              },
+              "id": "call_Mvbbwix7fSvM0NItpkyL0Nnv",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1764343389,
+    "id": "chatcmpl-CgubN8ThapAppUfm6NNGjojRNr1gG",
+    "model": "gpt-5.1-2025-11-13",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "",
+    "usage": {
+      "completion_tokens": 24,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 162,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 186
+    }
+  },
+  "chunk_count": 1
+}

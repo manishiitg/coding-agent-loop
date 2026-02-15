@@ -1,0 +1,94 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-pro",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:59.089423+05:30",
+  "request_hash": "6593dc43b740775f9da8c062a1ff05eda3762ba827537f1d36a8592c0ae67d30",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Check the server status"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-pro",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_server_status"
+                },
+                "thoughtSignature": "CiQBcsjafMg9gWdyz4z3bqTzfaOdYR0QHSuwPCYJtm1gY7isi2oKbAFyyNp8h2lhWxP+FkVQHXDm9dNli4CoRSuvuYacAqELMAtLTMyaqIOBtn1dgEpgz2b0ne/Iz2Gu2snzbR00LqwL9cPVQ4BMj3UOJBAlRiBfJIGxLrvz3CM+v5gz5Z+SgPcrMpnJV6WegbJx2wqVAQFyyNp8FgNftVClyF2MGwayHmL8h5DoiNnx9auS5viTA9B6GJZhQ6Jp/9Kzdf01rFoRtoZE/r4ms6qP/Wxs1VfrEs52hto8nnVDYX65NU88DCg3hGXwJae42lcdib1pi80mo+KZq5WOouS355vz5G7Pa7g61EnDBgMwvZ01JVrzWtnsZysZB4FzgAUmE9vgCIiNo5GGCpUBAXLI2nwlDQcagOyzu22osoX9gdpVz9kbR+VvwlWlkpxDT0H50knzsVUcJl5dUdrljiGjXAOLAD5socerAS5YEHpYoDqPT2BFo9bGZF+/HHQ/rVTnc0iviooAbOjUFc2g8J4gXICWWXRBy59kL0qaOqK9y139kL5SxmZWPnpqTVpT/Sp7xVHZbmw+2wDakxmFsyvJIpQKKwFyyNp8MZdZKqpEk9QbVhteAZk45XB0qMolORiInrSR9KB/jd3FOquOPBA="
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "3rkpaYqXDuKvjuMP-fTkwQg",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:59 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=1770"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 12,
+        "promptTokenCount": 33,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 33
+          }
+        ],
+        "thoughtsTokenCount": 75,
+        "totalTokenCount": 120
+      }
+    }
+  ],
+  "chunk_count": 1
+}

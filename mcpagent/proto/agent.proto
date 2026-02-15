@@ -1,0 +1,340 @@
+syntax = "proto3";
+
+package mcpagent.v1;
+
+option go_package = "github.com/mcpagent/mcpagent/grpcserver/pb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ============================================================================
+// AgentService - Main entry point for MCPAgent operations
+// ============================================================================
+
+service AgentService {
+  // Agent Lifecycle
+  rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
+  rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+  rpc DestroyAgent(DestroyAgentRequest) returns (DestroyAgentResponse);
+
+  // Token Usage
+  rpc GetTokenUsage(GetTokenUsageRequest) returns (TokenUsageResponse);
+
+  // Bidirectional Streaming Conversation
+  // Client sends: questions, tool results, cancel
+  // Server sends: text chunks, tool calls, events, final response
+  rpc Converse(stream ConversationRequest) returns (stream ConversationResponse);
+
+  // Unary RPCs (backward compatibility, non-streaming)
+  rpc Ask(AskRequest) returns (AskResponse);
+  rpc AskWithHistory(AskWithHistoryRequest) returns (AskWithHistoryResponse);
+
+  // Health Check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ============================================================================
+// Agent Lifecycle Messages
+// ============================================================================
+
+message CreateAgentRequest {
+  // Optional session ID (auto-generated if empty)
+  string session_id = 1;
+  // Agent configuration
+  AgentConfig config = 2;
+}
+
+message AgentConfig {
+  // LLM provider: bedrock, openai, anthropic, openrouter, vertex
+  string provider = 1;
+  // Model ID (e.g., gpt-4o, anthropic.claude-sonnet-4-20250514-v1:0)
+  string model_id = 2;
+  // Sampling temperature (0.0 - 1.0)
+  double temperature = 3;
+  // Maximum conversation turns
+  int32 max_turns = 4;
+  // Path to MCP servers configuration file
+  string mcp_config_path = 5;
+  // Filter to specific MCP servers
+  repeated string selected_servers = 6;
+  // Filter to specific tools (format: "server:tool")
+  repeated string selected_tools = 7;
+  // Custom system prompt
+  string system_prompt = 8;
+  // Enable automatic context summarization
+  bool enable_context_summarization = 9;
+  // Enable context offloading for large outputs
+  bool enable_context_offloading = 10;
+  // Enable streaming responses
+  bool enable_streaming = 11;
+  // Custom tools with handlers on client side
+  repeated CustomToolDefinition custom_tools = 12;
+}
+
+message CustomToolDefinition {
+  // Unique tool name
+  string name = 1;
+  // Description for the LLM
+  string description = 2;
+  // JSON Schema for tool parameters
+  google.protobuf.Struct parameters = 3;
+  // Timeout for tool execution in milliseconds
+  int32 timeout_ms = 4;
+  // Tool category (e.g., "utility", "data")
+  string category = 5;
+}
+
+message CreateAgentResponse {
+  string agent_id = 1;
+  string session_id = 2;
+  string status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  Capabilities capabilities = 5;
+}
+
+message Capabilities {
+  // Available tools (format: "server:tool")
+  repeated string tools = 1;
+  // Connected MCP servers
+  repeated string servers = 2;
+}
+
+message GetAgentRequest {
+  string agent_id = 1;
+}
+
+message GetAgentResponse {
+  string agent_id = 1;
+  string session_id = 2;
+  string status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  Capabilities capabilities = 5;
+  TokenUsage token_usage = 6;
+}
+
+message ListAgentsRequest {}
+
+message ListAgentsResponse {
+  repeated AgentSummary agents = 1;
+}
+
+message AgentSummary {
+  string agent_id = 1;
+  string session_id = 2;
+  string status = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message DestroyAgentRequest {
+  string agent_id = 1;
+}
+
+message DestroyAgentResponse {
+  string agent_id = 1;
+  bool destroyed = 2;
+}
+
+// ============================================================================
+// Token Usage Messages
+// ============================================================================
+
+message GetTokenUsageRequest {
+  string agent_id = 1;
+}
+
+message TokenUsage {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+  int32 cache_tokens = 4;
+  int32 reasoning_tokens = 5;
+  int32 llm_call_count = 6;
+}
+
+message Costs {
+  double input_cost = 1;
+  double output_cost = 2;
+  double reasoning_cost = 3;
+  double cache_cost = 4;
+  double total_cost = 5;
+}
+
+message TokenUsageResponse {
+  TokenUsage token_usage = 1;
+  Costs costs = 2;
+}
+
+// ============================================================================
+// Bidirectional Streaming Conversation
+// ============================================================================
+
+message ConversationRequest {
+  // Agent ID for the conversation
+  string agent_id = 1;
+
+  oneof payload {
+    // Client asks a question (optionally with history)
+    QuestionMessage question = 2;
+    // Client returns result of a tool call
+    ToolResultMessage tool_result = 3;
+    // Client requests cancellation
+    CancelMessage cancel = 4;
+  }
+}
+
+message QuestionMessage {
+  // The question/prompt text
+  string text = 1;
+  // Optional conversation history for multi-turn
+  repeated Message history = 2;
+}
+
+message ToolResultMessage {
+  // Call ID from ToolCallEvent
+  string call_id = 1;
+  // Whether tool execution succeeded
+  bool success = 2;
+  // Tool output (if success)
+  string result = 3;
+  // Error details (if not success)
+  ToolError error = 4;
+  // Execution duration in milliseconds
+  int64 duration_ms = 5;
+}
+
+message ToolError {
+  string code = 1;
+  string message = 2;
+  google.protobuf.Struct details = 3;
+}
+
+message CancelMessage {
+  string reason = 1;
+}
+
+message ConversationResponse {
+  oneof payload {
+    // Streaming text chunk from LLM
+    TextChunkEvent text_chunk = 1;
+    // Server requests tool execution from client
+    ToolCallEvent tool_call = 2;
+    // Agent event for observability
+    AgentEvent agent_event = 3;
+    // Final response (conversation complete)
+    FinalResponse final_response = 4;
+    // Error event
+    ErrorEvent error = 5;
+  }
+}
+
+message TextChunkEvent {
+  // Text content chunk
+  string text = 1;
+  // Whether this is thinking/reasoning (for reasoning models)
+  bool is_thinking = 2;
+}
+
+message ToolCallEvent {
+  // Unique call ID for matching result
+  string call_id = 1;
+  // Tool name to execute
+  string tool_name = 2;
+  // Tool arguments as JSON object
+  google.protobuf.Struct arguments = 3;
+  // Timeout for this tool call in milliseconds
+  int32 timeout_ms = 4;
+}
+
+message FinalResponse {
+  // Final response text
+  string response = 1;
+  // Updated conversation messages
+  repeated Message updated_messages = 2;
+  // Token usage for this conversation
+  TokenUsage token_usage = 3;
+  // Total duration in milliseconds
+  int64 duration_ms = 4;
+}
+
+message ErrorEvent {
+  // Error code (e.g., AGENT_NOT_FOUND, ASK_FAILED)
+  string code = 1;
+  // Human-readable error message
+  string message = 2;
+  // Additional error details
+  google.protobuf.Struct details = 3;
+  // If true, the stream is terminated
+  bool fatal = 4;
+}
+
+// ============================================================================
+// Agent Events (Observability)
+// ============================================================================
+
+message AgentEvent {
+  // Event type (e.g., "agent_start", "tool_call", "llm_request")
+  string type = 1;
+  // Event timestamp
+  google.protobuf.Timestamp timestamp = 2;
+  // Trace ID for distributed tracing
+  string trace_id = 3;
+  // Span ID within the trace
+  string span_id = 4;
+  // Parent span ID
+  string parent_id = 5;
+  // Correlation ID for related events
+  string correlation_id = 6;
+  // Hierarchy level in the call stack
+  int32 hierarchy_level = 7;
+  // Session ID
+  string session_id = 8;
+  // Component that emitted the event
+  string component = 9;
+  // Event-specific data as JSON object
+  google.protobuf.Struct data = 10;
+}
+
+// ============================================================================
+// Unary Ask RPCs (Backward Compatibility)
+// ============================================================================
+
+message Message {
+  // Role: "user", "assistant", "system"
+  string role = 1;
+  // Message content
+  string content = 2;
+}
+
+message AskRequest {
+  string agent_id = 1;
+  string question = 2;
+}
+
+message AskResponse {
+  string response = 1;
+  TokenUsage token_usage = 2;
+  int64 duration_ms = 3;
+}
+
+message AskWithHistoryRequest {
+  string agent_id = 1;
+  repeated Message messages = 2;
+}
+
+message AskWithHistoryResponse {
+  string response = 1;
+  repeated Message updated_messages = 2;
+  TokenUsage token_usage = 3;
+  int64 duration_ms = 4;
+}
+
+// ============================================================================
+// Health Check
+// ============================================================================
+
+message HealthCheckRequest {}
+
+message HealthCheckResponse {
+  string status = 1;
+}

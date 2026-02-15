@@ -40,6 +40,8 @@ type CreateDocumentResponse struct {
 type ListDocumentsRequest struct {
 	Folder       string `form:"folder"`               // Base directory
 	MaxDepth     int    `form:"max_depth,default=-1"` // Max directory depth (-1 = unlimited)
+	Limit        int    `form:"limit,default=-1"`     // Max number of files to return (-1 = unlimited)
+	Offset       int    `form:"offset,default=0"`     // Number of files to skip
 	BlockedPaths string `form:"blocked_paths"`        // Comma-separated list of paths to exclude
 }
 

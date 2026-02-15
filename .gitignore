@@ -26,6 +26,11 @@ bin/*
 *credential*
 *password*
 !scripts/*secret*.sh
+!frontend/src/**/secret*
+!frontend/src/**/*ecret*
+!frontend/src/api/secrets.ts
+!agent_go/cmd/server/secrets_routes.go
+!agent_go/pkg/orchestrator/**/secrets_*.go
 
 # Binary files
 *.exe

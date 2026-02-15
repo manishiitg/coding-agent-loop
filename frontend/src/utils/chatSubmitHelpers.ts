@@ -104,6 +104,7 @@ export function buildQueryRequestPayload(params: {
   filteredPresetTools: string[]
   hasActivePreset: boolean
   decryptedSecrets?: Array<{ name: string; value: string }>
+  selectedGlobalSecrets?: string[]
 }): AgentQueryRequest {
   const {
     queryWithContext, correctAgentMode, selectedModeCategory,
@@ -111,6 +112,7 @@ export function buildQueryRequestPayload(params: {
     llmConfigWithApiKeys, useCodeExecutionMode, useToolSearchMode,
     executionOptions, workflowPresetId, chatPresetId,
     filteredPresetTools, hasActivePreset, decryptedSecrets,
+    selectedGlobalSecrets,
   } = params
 
   const isChatMode = selectedModeCategory === 'chat'
@@ -169,6 +171,10 @@ export function buildQueryRequestPayload(params: {
       : undefined,
     enable_context_editing: enableContextEditing,
     decrypted_secrets: decryptedSecrets?.length ? decryptedSecrets : undefined,
+    selected_global_secrets: selectedGlobalSecrets,
+    workflow_context_paths: isChatLikeMode && currentTab?.config?.workflowContext?.length
+      ? currentTab.config.workflowContext.map(w => w.workspacePath)
+      : undefined,
   }
 }
 

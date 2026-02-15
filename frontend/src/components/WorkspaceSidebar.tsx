@@ -51,6 +51,15 @@ export default function WorkspaceSidebar({
     }
   }, [showDelegationTiersDialog, selectedModeCategory, closeDialog])
 
+  // Auto-show tier config modal when entering multi-agent mode without tiers configured
+  useEffect(() => {
+    if (selectedModeCategory !== 'multi-agent') return
+    const hasTiers = delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low)
+    if (!hasTiers) {
+      setShowTierModal(true)
+    }
+  }, [selectedModeCategory, delegationTierConfig])
+
   // Handle ESC and Enter keys for shortcuts modal
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

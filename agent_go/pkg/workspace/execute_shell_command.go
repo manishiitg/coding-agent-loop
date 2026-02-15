@@ -18,6 +18,11 @@ type ExecuteShellCommandParams struct {
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
+	// Default empty working directory to "." (workspace root)
+	if params.WorkingDirectory == "" {
+		params.WorkingDirectory = "."
+	}
+
 	// Validate working directory against folder guard (write operation since commands can modify files)
 	if params.WorkingDirectory != "" {
 		if err := c.ValidatePath(params.WorkingDirectory, true); err != nil {

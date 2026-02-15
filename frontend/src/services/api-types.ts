@@ -118,6 +118,10 @@ export interface AgentQueryRequest {
   delegation_tier_config?: DelegationTierConfig
   // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)
   decrypted_secrets?: Array<{ name: string; value: string }>
+  // Selected global secret names to include (if omitted, all global secrets are included)
+  selected_global_secrets?: string[]
+  // Workspace paths of workflows to inject context for (via # selector in chat)
+  workflow_context_paths?: string[]
 }
 
 // Delegation tier configuration for multi-LLM support
@@ -125,9 +129,16 @@ export interface DelegationTierConfig {
   high?: TierModel
   medium?: TierModel
   low?: TierModel
+  custom?: Record<string, CustomTierModel>  // slug → custom tier
 }
 
 export interface TierModel {
+  provider: string
+  model_id: string
+}
+
+export interface CustomTierModel {
+  description: string // LLM guidance, e.g. "low cost model for code reviews"
   provider: string
   model_id: string
 }
@@ -316,6 +327,7 @@ export interface GetEventsResponse {
   session_id: string
   session_status: string // Session status: "running", "completed", "error", "stopped", "inactive" (required - source of truth)
   last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
+  has_running_background_agents?: boolean // Whether background agents are still running for this session
 }
 
 // Observer APIs removed - no longer needed

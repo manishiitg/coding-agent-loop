@@ -45,9 +45,9 @@ func TestSanitizeUserID(t *testing.T) {
 		userID string
 		want   string
 	}{
-		{"empty-returns-default", "", DefaultUserID},
+		{"empty-returns-default", "", GetDefaultUserID()},
 		{"valid-passthrough", "user1", "user1"},
-		{"invalid-returns-default", "user@domain", DefaultUserID},
+		{"invalid-returns-default", "user@domain", GetDefaultUserID()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -161,7 +161,7 @@ func TestResolveUserPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed: %v", err)
 		}
-		expected := filepath.Join(docsDir, "_users", DefaultUserID, "Chats", "session.json")
+		expected := filepath.Join(docsDir, "_users", GetDefaultUserID(), "Chats", "session.json")
 		if resolved != expected {
 			t.Errorf("got %q, want %q (should fall back to default user)", resolved, expected)
 		}
@@ -172,7 +172,7 @@ func TestResolveUserPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed: %v", err)
 		}
-		if !strings.Contains(resolved, filepath.Join("_users", DefaultUserID)) {
+		if !strings.Contains(resolved, filepath.Join("_users", GetDefaultUserID())) {
 			t.Errorf("Expected default user path, got %q", resolved)
 		}
 	})
@@ -369,7 +369,7 @@ func TestMigratePerUserFolders(t *testing.T) {
 		}
 
 		// Verify file moved to _users/default/Chats
-		migratedFile := filepath.Join(docsDir, "_users", DefaultUserID, "Chats", "old-session.json")
+		migratedFile := filepath.Join(docsDir, "_users", GetDefaultUserID(), "Chats", "old-session.json")
 		if _, err := os.Stat(migratedFile); os.IsNotExist(err) {
 			t.Error("File was not migrated to _users/default/Chats/")
 		}
@@ -388,9 +388,9 @@ func TestMigratePerUserFolders(t *testing.T) {
 		defer os.RemoveAll(docsDir)
 
 		// Create symlink (already migrated state)
-		userChats := filepath.Join(docsDir, "_users", DefaultUserID, "Chats")
+		userChats := filepath.Join(docsDir, "_users", GetDefaultUserID(), "Chats")
 		os.MkdirAll(userChats, 0755)
-		os.Symlink(filepath.Join("_users", DefaultUserID, "Chats"), filepath.Join(docsDir, "Chats"))
+		os.Symlink(filepath.Join("_users", GetDefaultUserID(), "Chats"), filepath.Join(docsDir, "Chats"))
 
 		count, err := MigratePerUserFolders(docsDir)
 		if err != nil {
@@ -429,7 +429,7 @@ func TestMigratePerUserFolders(t *testing.T) {
 
 		// Create both root-level and _users/default/ Chats with different files
 		rootChats := filepath.Join(docsDir, "Chats")
-		userChats := filepath.Join(docsDir, "_users", DefaultUserID, "Chats")
+		userChats := filepath.Join(docsDir, "_users", GetDefaultUserID(), "Chats")
 		os.MkdirAll(rootChats, 0755)
 		os.MkdirAll(userChats, 0755)
 		os.WriteFile(filepath.Join(rootChats, "root-file.json"), []byte("from-root"), 0644)

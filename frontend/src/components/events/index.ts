@@ -36,4 +36,7 @@ export * from './orchestrator'
 export * from './workflow'
 
 // Structured output event components
-export * from './structured' 
+export * from './structured'
+
+// Background agents status bar
+export { BackgroundAgentsStatusBar } from './BackgroundAgentsStatusBar'

@@ -94,6 +94,11 @@ export interface ChatTabConfig {
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
+  workflowContext: Array<{
+    presetId: string
+    label: string
+    workspacePath: string
+  }>  // Workflow presets selected via # in chat input
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
@@ -105,6 +110,7 @@ export interface ChatTab {
   sessionId: string | null  // Chat session ID if exists
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
+  hasRunningBgAgents: boolean  // Whether background agents are still running for this session
   eventMode: 'basic' | 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
@@ -145,6 +151,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     selectedSkills: [],  // No skills selected by default
     selectedSecrets: [],  // No secrets selected by default
     selectedSubAgents: [],  // No sub-agent templates selected by default
+    workflowContext: [],  // No workflow context selected by default
     llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',
@@ -338,6 +345,7 @@ interface ChatState extends StoreActions {
   getTabsByPhaseId: (phaseId: string) => ChatTab[]  // Find workflow tabs by phaseId
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
+  setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
   setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny' | 'micro') => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
@@ -953,6 +961,7 @@ export const useChatStore = create<ChatState>()(
           sessionId: sessionIdForTab,
           isStreaming: false,
           isCompleted: false,
+          hasRunningBgAgents: false,
           eventMode: finalEventMode,
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
@@ -1143,7 +1152,23 @@ export const useChatStore = create<ChatState>()(
           }
         }))
       },
-      
+
+      setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+
+        set(() => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              hasRunningBgAgents
+            }
+          }
+        }))
+      },
+
       updateTabSessionId: (tabId: string, newSessionId: string) => {
         const state = get()
         const tab = state.chatTabs[tabId]
@@ -1655,9 +1680,10 @@ export const useChatStore = create<ChatState>()(
               {
                 tabId: tab.tabId,
                 name: tab.name,
-                sessionId: null, // Don't persist session IDs (sessions are ephemeral)
+                sessionId: tab.sessionId, // Persist session ID for direct restore on page refresh
                 isStreaming: false, // Reset streaming state on reload
-                isCompleted: false, // Reset completion state on reload
+                isCompleted: false,
+                hasRunningBgAgents: false,
                 eventMode: tab.eventMode, // Persist user preference
                 config: tab.config, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)

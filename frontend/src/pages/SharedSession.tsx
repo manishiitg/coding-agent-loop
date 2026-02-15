@@ -1,6 +1,37 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { sessionShareApi, type SharedSessionResponse } from '../services/api'
 import { Loader2, Share2, Clock, ExternalLink } from 'lucide-react'
+import { EventList } from '../components/events'
+import { EventModeContext } from '../components/events/EventContext'
+import type { PollingEvent } from '../services/api-types'
+import '../components/events/EventHierarchy.css'
+
+const noop = (_mode: 'basic' | 'advanced' | 'tiny' | 'micro') => {}
+
+// Mirror backend event mode filtering (event_store.go)
+const NEVER_SHOW_EVENTS = new Set([
+  'tool_execution', 'tool_output', 'tool_response', 'tool_call_progress',
+  'cache_event', 'comprehensive_cache_event', 'cache_hit', 'cache_miss',
+  'cache_write', 'cache_expired', 'cache_cleanup', 'cache_error', 'cache_operation_start',
+])
+
+const ADVANCED_MODE_EVENTS = new Set([
+  'llm_generation_start', 'llm_generation_with_retry',
+  'conversation_start', 'conversation_turn',
+])
+
+const TINY_MODE_ADDITIONAL_EVENTS = new Set([
+  'user_message', 'system_prompt', 'agent_error',
+  'llm_generation_end', 'batch_execution_canceled',
+])
+
+function shouldShowEventMicro(eventType: string): boolean {
+  if (!eventType) return false
+  if (NEVER_SHOW_EVENTS.has(eventType)) return false
+  if (ADVANCED_MODE_EVENTS.has(eventType)) return false
+  if (TINY_MODE_ADDITIONAL_EVENTS.has(eventType)) return false
+  return true
+}
 
 interface SharedSessionProps {
   shareToken: string
@@ -29,6 +60,25 @@ export function SharedSession({ shareToken, onBack }: SharedSessionProps) {
 
     loadSession()
   }, [shareToken])
+
+  // Transform raw DB events and apply micro-mode filtering
+  const events = useMemo(() => {
+    if (!session?.events || !Array.isArray(session.events)) return []
+
+    return session.events
+      .map((raw: unknown, index: number) => {
+        const r = raw as Record<string, unknown>
+        return {
+          id: (r.id as string) || `shared-event-${index}`,
+          type: (r.type as string) || (r.event_type as string) || 'unknown',
+          data: (r.data as Record<string, unknown>) || (r.event_data as Record<string, unknown>) || {},
+          timestamp: (r.timestamp as string) || '',
+          session_id: (r.session_id as string) || session.session_id,
+          parent_id: (r.parent_id as string) || undefined,
+        } as PollingEvent
+      })
+      .filter(e => shouldShowEventMicro(e.type || ''))
+  }, [session])
 
   if (loading) {
     return (
@@ -73,98 +123,68 @@ export function SharedSession({ shareToken, onBack }: SharedSessionProps) {
     <div className="min-h-screen bg-gray-100 dark:bg-gray-900">
       {/* Header */}
       <div className="bg-white dark:bg-gray-800 shadow">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+        <div className="px-4 sm:px-6 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
-              <Share2 className="h-6 w-6 text-blue-500" />
+              <Share2 className="h-5 w-5 text-blue-500" />
               <div>
-                <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+                <h1 className="text-lg font-bold text-gray-900 dark:text-white">
                   {session.title || 'Shared Session'}
                 </h1>
-                <div className="flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
+                <div className="flex items-center space-x-4 text-xs text-gray-500 dark:text-gray-400">
                   <span className="flex items-center">
-                    <Clock className="h-4 w-4 mr-1" />
+                    <Clock className="h-3 w-3 mr-1" />
                     {new Date(session.created_at).toLocaleString()}
                   </span>
                   <span className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-0.5 rounded text-xs font-medium">
-                    Shared Session (Read-only)
+                    Read-only
+                  </span>
+                  <span className="text-gray-400">
+                    {session.agent_mode}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                    session.status === 'completed'
+                      ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400'
+                      : session.status === 'active'
+                      ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-400'
+                  }`}>
+                    {session.status}
+                  </span>
+                  <span className="text-gray-400">
+                    {events.length} events
                   </span>
                 </div>
               </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-500 dark:text-gray-400">
-                Mode: <span className="font-medium">{session.agent_mode}</span>
-              </span>
-              <span className={`px-2 py-1 rounded text-xs font-medium ${
-                session.status === 'completed'
-                  ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400'
-                  : session.status === 'active'
-                  ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-400'
-              }`}>
-                {session.status}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-          <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 className="text-lg font-medium text-gray-900 dark:text-white">
-              Session Events
-            </h2>
-          </div>
-          <div className="p-4 max-h-[calc(100vh-300px)] overflow-y-auto">
-            {session.events && Array.isArray(session.events) && session.events.length > 0 ? (
-              <div className="space-y-4">
-                {session.events.map((event: unknown, index: number) => {
-                  const e = event as Record<string, unknown>
-                  return (
-                    <div
-                      key={index}
-                      className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-gray-900 dark:text-white">
-                          {String(e.event_type || e.type || 'Event')}
-                        </span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {e.timestamp ? new Date(String(e.timestamp)).toLocaleTimeString() : ''}
-                        </span>
-                      </div>
-                      <pre className="text-xs text-gray-600 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap">
-                        {JSON.stringify(e, null, 2)}
-                      </pre>
-                    </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                No events to display
-              </div>
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center text-sm"
+              >
+                Return to app <ExternalLink className="h-3 w-3 ml-1" />
+              </button>
             )}
           </div>
         </div>
       </div>
 
-      {/* Footer */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 py-3">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-500 dark:text-gray-400">
-          This is a read-only view of a shared session.{' '}
-          {onBack && (
-            <button
-              onClick={onBack}
-              className="text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center"
-            >
-              Return to app <ExternalLink className="h-3 w-3 ml-1" />
-            </button>
-          )}
-        </div>
+      {/* Content - full width, minimal padding */}
+      <div className="px-2 sm:px-4 py-2 h-[calc(100vh-64px)] overflow-y-auto">
+        {events.length > 0 ? (
+          <EventModeContext.Provider value={{ mode: 'micro', setMode: noop }}>
+            <EventList
+              events={events}
+              compact
+              flatHierarchy
+              eventMode="micro"
+            />
+          </EventModeContext.Provider>
+        ) : (
+          <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+            No events to display
+          </div>
+        )}
       </div>
     </div>
   )

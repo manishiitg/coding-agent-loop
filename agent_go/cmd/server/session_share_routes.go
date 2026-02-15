@@ -4,15 +4,25 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"errors"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/database"
 
 	"github.com/gorilla/mux"
 )
+
+// isPostgresDB returns true if the underlying database is Postgres (SupabaseDB)
+func isPostgresDB(db database.Database) bool {
+	_, ok := db.(*database.SupabaseDB)
+	return ok
+}
 
 // SessionShare represents a shared session link
 type SessionShare struct {
@@ -157,14 +167,26 @@ func (api *StreamingAPI) handleGetSharedSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Get events for the session
-	events, err := api.chatDB.GetEventsBySession(ctx, share.SessionID, 1000, 0)
+	// Determine event mode for filtering (default: micro to reduce payload)
+	eventMode := r.URL.Query().Get("event_mode")
+	if eventMode == "" {
+		eventMode = "micro"
+	}
+
+	// Use a detached context for DB query (client disconnect shouldn't cancel mid-query)
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dbCancel()
+
+	// Get filtered events using SQL-level filtering for performance
+	// session.ID is the internal hex ID used as chat_session_id in the events table
+	filteredEvents, err := api.getFilteredEventsForShare(dbCtx, session.ID, eventMode)
 	if err != nil {
 		log.Printf("[SHARE] Failed to get events: %v", err)
 		// Continue without events
 	}
+	log.Printf("[SHARE] Session %s: %d events after %s SQL filtering", share.SessionID, len(filteredEvents), eventMode)
 
-	eventsJSON, _ := json.Marshal(events)
+	eventsJSON, _ := json.Marshal(filteredEvents)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(SharedSessionResponse{
@@ -268,10 +290,14 @@ func (api *StreamingAPI) handleListShares(w http.ResponseWriter, r *http.Request
 func (api *StreamingAPI) createSessionShare(ctx context.Context, id, sessionID, shareToken, createdBy string, expiresAt *time.Time) error {
 	db := api.chatDB.GetDB()
 
-	query := `
-		INSERT INTO session_shares (id, session_id, share_token, created_by, expires_at, access_level)
-		VALUES (?, ?, ?, ?, ?, 'read')
-	`
+	var query string
+	if isPostgresDB(api.chatDB) {
+		query = `INSERT INTO session_shares (id, session_id, share_token, created_by, expires_at, access_level)
+			VALUES ($1, $2, $3, $4, $5, 'read')`
+	} else {
+		query = `INSERT INTO session_shares (id, session_id, share_token, created_by, expires_at, access_level)
+			VALUES (?, ?, ?, ?, ?, 'read')`
+	}
 
 	_, err := db.ExecContext(ctx, query, id, sessionID, shareToken, createdBy, expiresAt)
 	return err
@@ -280,11 +306,14 @@ func (api *StreamingAPI) createSessionShare(ctx context.Context, id, sessionID, 
 func (api *StreamingAPI) getSessionShareByToken(ctx context.Context, token string) (*SessionShare, error) {
 	db := api.chatDB.GetDB()
 
-	query := `
-		SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
-		FROM session_shares
-		WHERE share_token = ?
-	`
+	var query string
+	if isPostgresDB(api.chatDB) {
+		query = `SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
+			FROM session_shares WHERE share_token = $1`
+	} else {
+		query = `SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
+			FROM session_shares WHERE share_token = ?`
+	}
 
 	var share SessionShare
 	err := db.QueryRowContext(ctx, query, token).Scan(
@@ -301,11 +330,14 @@ func (api *StreamingAPI) getSessionShareByToken(ctx context.Context, token strin
 func (api *StreamingAPI) getSessionShareByID(ctx context.Context, id string) (*SessionShare, error) {
 	db := api.chatDB.GetDB()
 
-	query := `
-		SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
-		FROM session_shares
-		WHERE id = ?
-	`
+	var query string
+	if isPostgresDB(api.chatDB) {
+		query = `SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
+			FROM session_shares WHERE id = $1`
+	} else {
+		query = `SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
+			FROM session_shares WHERE id = ?`
+	}
 
 	var share SessionShare
 	err := db.QueryRowContext(ctx, query, id).Scan(
@@ -322,12 +354,14 @@ func (api *StreamingAPI) getSessionShareByID(ctx context.Context, id string) (*S
 func (api *StreamingAPI) getSessionShares(ctx context.Context, sessionID string) ([]SessionShare, error) {
 	db := api.chatDB.GetDB()
 
-	query := `
-		SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
-		FROM session_shares
-		WHERE session_id = ?
-		ORDER BY created_at DESC
-	`
+	var query string
+	if isPostgresDB(api.chatDB) {
+		query = `SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
+			FROM session_shares WHERE session_id = $1 ORDER BY created_at DESC`
+	} else {
+		query = `SELECT id, session_id, share_token, created_by, created_at, expires_at, access_level
+			FROM session_shares WHERE session_id = ? ORDER BY created_at DESC`
+	}
 
 	rows, err := db.QueryContext(ctx, query, sessionID)
 	if err != nil {
@@ -354,7 +388,12 @@ func (api *StreamingAPI) getSessionShares(ctx context.Context, sessionID string)
 func (api *StreamingAPI) deleteSessionShare(ctx context.Context, id string) error {
 	db := api.chatDB.GetDB()
 
-	query := `DELETE FROM session_shares WHERE id = ?`
+	var query string
+	if isPostgresDB(api.chatDB) {
+		query = `DELETE FROM session_shares WHERE id = $1`
+	} else {
+		query = `DELETE FROM session_shares WHERE id = ?`
+	}
 	_, err := db.ExecContext(ctx, query, id)
 	return err
 }
@@ -362,7 +401,12 @@ func (api *StreamingAPI) deleteSessionShare(ctx context.Context, id string) erro
 func (api *StreamingAPI) getSessionUserID(ctx context.Context, sessionID string) string {
 	db := api.chatDB.GetDB()
 
-	query := `SELECT user_id FROM chat_sessions WHERE session_id = ?`
+	var query string
+	if isPostgresDB(api.chatDB) {
+		query = `SELECT user_id FROM chat_sessions WHERE session_id = $1`
+	} else {
+		query = `SELECT user_id FROM chat_sessions WHERE session_id = ?`
+	}
 	var userID sql.NullString
 	err := db.QueryRowContext(ctx, query, sessionID).Scan(&userID)
 	if err != nil || !userID.Valid {
@@ -375,4 +419,105 @@ func generateShareToken() string {
 	bytes := make([]byte, 16)
 	rand.Read(bytes)
 	return hex.EncodeToString(bytes)
+}
+
+// getFilteredEventsForShare retrieves events for a shared session with SQL-level event type filtering.
+// This avoids fetching and unmarshaling events that will be discarded, improving performance significantly.
+func (api *StreamingAPI) getFilteredEventsForShare(ctx context.Context, chatSessionID, eventMode string) ([]database.Event, error) {
+	db := api.chatDB.GetDB()
+	isPostgres := isPostgresDB(api.chatDB)
+
+	// Build excluded event types based on mode
+	var excludedTypes []string
+	if eventMode != "advanced" {
+		// NEVER_SHOW_EVENTS + ADVANCED_MODE_EVENTS (hidden in basic/tiny/micro)
+		excludedTypes = append(excludedTypes,
+			"tool_execution", "tool_output", "tool_response", "tool_call_progress",
+			"cache_event", "comprehensive_cache_event", "cache_hit", "cache_miss",
+			"cache_write", "cache_expired", "cache_cleanup", "cache_error", "cache_operation_start",
+			"llm_generation_start", "llm_generation_with_retry",
+			"conversation_start", "conversation_turn",
+		)
+		if eventMode == "tiny" || eventMode == "micro" {
+			// TINY_MODE_ADDITIONAL_EVENTS
+			excludedTypes = append(excludedTypes,
+				"user_message", "system_prompt", "agent_error",
+				"llm_generation_end", "batch_execution_canceled",
+			)
+		}
+	}
+
+	// Build query with optional NOT IN filter
+	var query string
+	var args []interface{}
+
+	if isPostgres {
+		if len(excludedTypes) > 0 {
+			placeholders := make([]string, len(excludedTypes))
+			args = append(args, chatSessionID)
+			for i, et := range excludedTypes {
+				placeholders[i] = fmt.Sprintf("$%d", i+2)
+				args = append(args, et)
+			}
+			query = fmt.Sprintf(`
+				SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+				FROM events
+				WHERE chat_session_id = $1 AND event_type NOT IN (%s)
+				ORDER BY timestamp ASC
+				LIMIT $%d`, strings.Join(placeholders, ", "), len(excludedTypes)+2)
+			args = append(args, 5000)
+		} else {
+			query = `SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+				FROM events WHERE chat_session_id = $1 ORDER BY timestamp ASC LIMIT $2`
+			args = []interface{}{chatSessionID, 5000}
+		}
+	} else {
+		if len(excludedTypes) > 0 {
+			placeholders := make([]string, len(excludedTypes))
+			args = append(args, chatSessionID)
+			for i, et := range excludedTypes {
+				placeholders[i] = "?"
+				args = append(args, et)
+			}
+			query = fmt.Sprintf(`
+				SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+				FROM events
+				WHERE chat_session_id = ? AND event_type NOT IN (%s)
+				ORDER BY timestamp ASC
+				LIMIT ?`, strings.Join(placeholders, ", "))
+			args = append(args, 5000)
+		} else {
+			query = `SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+				FROM events WHERE chat_session_id = ? ORDER BY timestamp ASC LIMIT ?`
+			args = []interface{}{chatSessionID, 5000}
+		}
+	}
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events: %w", err)
+	}
+	defer rows.Close()
+
+	var dbEvents []database.Event
+	for rows.Next() {
+		var event database.Event
+		var eventDataJSON string
+		err := rows.Scan(
+			&event.ID, &event.SessionID, &event.ChatSessionID,
+			&event.EventType, &event.Timestamp, &eventDataJSON,
+		)
+		if err != nil {
+			log.Printf("[SHARE] Skipping event with scan error: %v", err)
+			continue
+		}
+		err = json.Unmarshal([]byte(eventDataJSON), &event.EventData)
+		if err != nil {
+			log.Printf("[SHARE] Skipping event with bad JSON: %v", err)
+			continue
+		}
+		dbEvents = append(dbEvents, event)
+	}
+
+	return dbEvents, nil
 }

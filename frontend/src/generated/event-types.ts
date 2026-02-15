@@ -576,6 +576,37 @@ export interface DelegationEndEvent {
   duration?: string;
 }
 
+// Background agent event data types (async delegation in multi-agent mode)
+export interface BackgroundAgentStartedEvent {
+  agent_id?: string;
+  name?: string;
+  instruction?: string;
+  timestamp?: string;
+}
+
+export interface BackgroundAgentCompletedEvent {
+  agent_id?: string;
+  name?: string;
+  status?: string;
+  result?: string;
+  error?: string;
+  duration?: string;
+  timestamp?: string;
+}
+
+export interface BackgroundAgentTerminatedEvent {
+  agent_id?: string;
+  name?: string;
+  timestamp?: string;
+}
+
+export interface SyntheticTurnReadyEvent {
+  session_id?: string;
+  query?: string;
+  message?: string;
+  timestamp?: string;
+}
+
 // Workflow event data types (not in generated schema)
 export interface WorkflowStartEventData {
   workflow_id?: string;

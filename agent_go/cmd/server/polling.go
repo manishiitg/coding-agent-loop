@@ -37,11 +37,12 @@ func (f *flatEventData) MarshalJSON() ([]byte, error) {
 
 // GetEventsResponse represents the response for event polling
 type GetEventsResponse struct {
-	Events             []events.Event `json:"events"`
-	HasMore            bool           `json:"has_more"`
-	SessionID          string         `json:"session_id"`
-	SessionStatus      string         `json:"session_status,omitempty"` // Session status: "running", "completed", "error", "stopped", "inactive"
-	LastProcessedIndex int            `json:"last_processed_index"`     // Last index processed in unfiltered array (for correct sinceIndex tracking)
+	Events                     []events.Event `json:"events"`
+	HasMore                    bool           `json:"has_more"`
+	SessionID                  string         `json:"session_id"`
+	SessionStatus              string         `json:"session_status,omitempty"`                // Session status: "running", "completed", "error", "stopped", "inactive"
+	LastProcessedIndex         int            `json:"last_processed_index"`                    // Last index processed in unfiltered array (for correct sinceIndex tracking)
+	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"` // Whether background agents are still running for this session
 }
 
 // --- POLLING API HANDLERS ---
@@ -141,21 +142,15 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			return
 		}
 		sessionStatus = activeSession.Status
-		api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in active sessions (status: %s)", sessionID, sessionStatus))
 	} else {
 		// Check database for completed/error sessions - filter by user for isolation
 		var err error
 		chatSession, err = api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
 		if err == nil && chatSession != nil {
 			sessionStatus = chatSession.Status
-			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s found in database (status: %s)", sessionID, sessionStatus))
-		} else {
-			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not found in database for user %s: %v", sessionID, currentUserID, err))
 		}
 		// If not found, leave empty (session might not exist yet or belongs to another user)
 	}
-
-	api.logger.Debug(fmt.Sprintf("[POLLING] Session %s: exists=%v, events_in_memory=%d, status=%s", sessionID, exists, len(sessionEvents), sessionStatus))
 
 	// Check if we need to fallback to database:
 	// 1. Session doesn't exist in memory (!exists), OR
@@ -167,16 +162,9 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		// For non-active sessions (completed, stopped, error), fetch events from database
 		if chatSession != nil && (chatSession.Status == "completed" || chatSession.Status == "error" || chatSession.Status == "stopped") {
 			// Fallback to database for non-active sessions
-			// Fetch events from database and convert to polling format
-			// Use larger limit (10000) for completed sessions to handle full history
-			// Frontend will filter/paginate as needed
-			api.logger.Debug(fmt.Sprintf("[POLLING] Session %s not in memory, falling back to database (status: %s)", sessionID, chatSession.Status))
 			dbEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 10000, 0)
 			if err != nil {
-				log.Printf("[POLLING ERROR] Failed to fetch events from database for session %s: %v", sessionID, err)
 				api.logger.Warn(fmt.Sprintf("[POLLING] Failed to fetch events from database for session %s: %v", sessionID, err))
-			} else {
-				api.logger.Debug(fmt.Sprintf("[POLLING] Fetched %d events from database for session %s", len(dbEvents), sessionID))
 			}
 			if err == nil && len(dbEvents) > 0 {
 				// Convert database events to polling events format
@@ -295,46 +283,36 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 					})
 				}
 
-				// Log summary of conversion results (including any errors beyond the first 3)
-				if parseErrors > 0 || filteredOut > 0 {
-					log.Printf("[POLLING] Session %s conversion summary: %d events converted, %d parse errors, %d filtered out (total db events: %d)",
-						sessionID, len(convertedEvents), parseErrors, filteredOut, len(dbEvents))
-				}
-				if parseErrors > 3 {
-					log.Printf("[POLLING WARNING] Session %s had %d total parse errors (only first 3 were logged in detail)", sessionID, parseErrors)
+				// Fix EventIndex for DB-loaded events: they're stored with EventIndex=0
+				// Assign sequential indices so sinceIndex filtering works correctly
+				for i := range convertedEvents {
+					if convertedEvents[i].Data != nil && convertedEvents[i].Data.EventIndex == 0 {
+						convertedEvents[i].Data.EventIndex = i
+					}
 				}
 
 				// Apply sinceIndex filtering if specified
-				// CRITICAL: sinceIndex is the EventIndex from AgentEvent, NOT the array position
-				// After event mode filtering, array positions don't match EventIndex values
-				// We need to filter based on the actual EventIndex stored in each event
 				var filteredBySinceIndex []events.Event
 				maxEventIndex := -1
 				if opts.SinceIndex >= 0 {
-					// Filter events by their actual EventIndex, not array position
 					for _, event := range convertedEvents {
 						eventIndex := -1
 						if event.Data != nil {
 							eventIndex = event.Data.EventIndex
 						}
-						// Track the maximum EventIndex we've seen
 						if eventIndex > maxEventIndex {
 							maxEventIndex = eventIndex
 						}
-						// Only include events with EventIndex > sinceIndex
 						if eventIndex > opts.SinceIndex {
 							filteredBySinceIndex = append(filteredBySinceIndex, event)
 						}
 					}
-					// If we didn't find any events with higher index, use max seen
 					if maxEventIndex < 0 && len(convertedEvents) > 0 {
-						// Fallback: use array length if no EventIndex found
 						maxEventIndex = len(convertedEvents) - 1
 					}
 				} else {
 					// No sinceIndex filtering, return all
 					filteredBySinceIndex = convertedEvents
-					// Calculate max EventIndex from all events
 					for _, event := range convertedEvents {
 						if event.Data != nil && event.Data.EventIndex > maxEventIndex {
 							maxEventIndex = event.Data.EventIndex
@@ -346,11 +324,12 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 				}
 
 				response := GetEventsResponse{
-					Events:             filteredBySinceIndex,
-					HasMore:            false, // Completed sessions don't have more events
-					SessionID:          sessionID,
-					SessionStatus:      sessionStatus,
-					LastProcessedIndex: maxEventIndex, // Use actual max EventIndex, not array length
+					Events:                     filteredBySinceIndex,
+					HasMore:                    false, // Completed sessions don't have more events
+					SessionID:                  sessionID,
+					SessionStatus:              sessionStatus,
+					LastProcessedIndex:         maxEventIndex, // Use actual max EventIndex, not array length
+					HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
 				}
 
 				if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -364,11 +343,12 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		// Session doesn't exist yet (no events have been added)
 		// Return empty events array instead of 404 - this is expected when polling starts before events are generated
 		response := GetEventsResponse{
-			Events:             []events.Event{},
-			HasMore:            false,
-			SessionID:          sessionID,
-			SessionStatus:      sessionStatus,
-			LastProcessedIndex: -1, // No events processed
+			Events:                     []events.Event{},
+			HasMore:                    false,
+			SessionID:                  sessionID,
+			SessionStatus:              sessionStatus,
+			LastProcessedIndex:         -1, // No events processed
+			HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -401,11 +381,12 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	// Frontend doesn't need hasMore for streaming - it keeps polling until session completes
 
 	response := GetEventsResponse{
-		Events:             sessionEvents,
-		HasMore:            hasMore,
-		SessionID:          sessionID,
-		SessionStatus:      sessionStatus,
-		LastProcessedIndex: lastProcessedIndex,
+		Events:                     sessionEvents,
+		HasMore:                    hasMore,
+		SessionID:                  sessionID,
+		SessionStatus:              sessionStatus,
+		LastProcessedIndex:         lastProcessedIndex,
+		HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -485,11 +466,11 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 				if isActive || isRecentlyCompleted {
 					// Convert to ActiveSessionInfo
 					sessionInfo := &ActiveSessionInfo{
-						SessionID:    dbSession.SessionID,
-						AgentMode:    dbSession.AgentMode,
-						Status:       dbSession.Status,
-						CreatedAt:    dbSession.CreatedAt,
-						Query:        dbSession.Title, // Use title as query summary
+						SessionID: dbSession.SessionID,
+						AgentMode: dbSession.AgentMode,
+						Status:    dbSession.Status,
+						CreatedAt: dbSession.CreatedAt,
+						Query:     dbSession.Title, // Use title as query summary
 					}
 					if dbSession.LastActivity != nil {
 						sessionInfo.LastActivity = *dbSession.LastActivity

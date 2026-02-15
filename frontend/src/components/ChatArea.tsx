@@ -904,10 +904,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
       
       // Skip if completed (definitely done)
+      // BUT: In multi-agent mode, keep polling — background agents can restart the session
       if (currentTab.isCompleted) {
-        return false
+        const isMultiAgent = currentTab.metadata?.mode === 'multi-agent'
+        if (!isMultiAgent) {
+          return false
+        }
       }
-      
+
       return true
     })
     
@@ -1044,6 +1048,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             chatStore.setTabCompleted(currentTab.tabId, false)
             chatStore.setTabStreaming(currentTab.tabId, false) // UI: Show send button, hide stop button
           }
+          // Update background agents flag from polling response
+          chatStore.setTabHasRunningBgAgents(
+            currentTab.tabId,
+            response.has_running_background_agents ?? false
+          )
         } else {
           // No tab - update global UI state
           if (sessionStatus === 'completed' || sessionStatus === 'error') {
@@ -1419,39 +1428,58 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         // Determine tab mode — match current mode so tabs appear in correct tab bar
         const tabMode = (selectedModeCategory === 'multi-agent' ? 'multi-agent' : 'chat') as 'chat' | 'multi-agent'
 
-        // Collect persisted tabs without sessionId (restored from localStorage with sessionId: null)
-        const orphanedTabs = Object.values(chatStore.chatTabs).filter(tab =>
-          tab.metadata?.mode === tabMode && !tab.sessionId
-        ).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        // Collect persisted tabs that already have a sessionId (restored from localStorage)
+        const persistedTabsBySession = new Map<string, typeof chatStore.chatTabs[string]>()
+        // Collect orphaned tabs (no sessionId — legacy or cleared)
+        const orphanedTabs = [] as typeof chatStore.chatTabs[string][]
+        for (const tab of Object.values(chatStore.chatTabs)) {
+          if (tab.metadata?.mode !== tabMode) continue
+          if (tab.sessionId) {
+            persistedTabsBySession.set(tab.sessionId, tab)
+          } else {
+            orphanedTabs.push(tab)
+          }
+        }
+        orphanedTabs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
 
-        // For each active session, create a tab if one doesn't exist
-        for (const activeSession of runningSessions) {
+        // Build set of session IDs that have persisted tabs
+        const persistedSessionIds = new Set(persistedTabsBySession.keys())
+
+        // Only restore sessions that either:
+        // 1. Have a matching persisted tab (user had this tab open before refresh)
+        // 2. Are actively running (new session started since last refresh)
+        const sessionsToRestore = runningSessions.filter(s =>
+          persistedSessionIds.has(s.session_id) || s.status === 'running'
+        )
+
+        if (sessionsToRestore.length < runningSessions.length) {
+          console.log(`[AutoRestore] Filtered ${runningSessions.length} sessions down to ${sessionsToRestore.length} (only persisted tabs + running)`)
+        }
+
+        // For each session to restore, find or create a tab
+        for (const activeSession of sessionsToRestore) {
           const sessionId = activeSession.session_id
 
-          // Check if a tab already exists for this session (by sessionId match)
-          const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
+          // Check if a tab already exists for this session (by sessionId match — works with persisted sessionIds)
+          const existingTab = persistedTabsBySession.get(sessionId) ||
+            Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
 
           if (existingTab) {
-            console.log(`[AutoRestore] Tab already exists for active session ${sessionId}, skipping`)
-            // Still switch to first session's tab
-            if (runningSessions.indexOf(activeSession) === 0) {
+            console.log(`[AutoRestore] Tab already exists for session ${sessionId}, skipping`)
+            if (sessionsToRestore.indexOf(activeSession) === 0) {
               switchTab(existingTab.tabId)
             }
             continue
           }
 
           // CRITICAL: Check if this session is already being restored by another code path
-          // This prevents race conditions between auto-restore and manual session detection
           if (sessionsBeingRestored.has(sessionId)) {
             console.log(`[AutoRestore] Session ${sessionId} is already being restored, skipping`)
             continue
           }
-
-          // Mark as being restored to prevent duplicate tab creation
           sessionsBeingRestored.add(sessionId)
 
-          // Try to re-use a persisted tab (from localStorage) instead of creating a new one
-          // Match by tab name vs session query to handle non-deterministic backend ordering
+          // Try to re-use an orphaned persisted tab (legacy: sessionId was null)
           const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
           let targetTabId: string
 
@@ -1459,26 +1487,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           if (matchedOrphanIdx >= 0) {
             const orphanedTab = orphanedTabs[matchedOrphanIdx]
             orphanedTabs.splice(matchedOrphanIdx, 1)
-            console.log(`[AutoRestore] Re-associating persisted tab ${orphanedTab.tabId} with session ${sessionId} (name match: "${sessionTitle}")`)
+            console.log(`[AutoRestore] Re-associating orphaned tab ${orphanedTab.tabId} with session ${sessionId} (name match)`)
             chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
             targetTabId = orphanedTab.tabId
           } else if (orphanedTabs.length > 0) {
-            // Fallback: use first available orphan (better than creating a new tab)
             const orphanedTab = orphanedTabs.shift()!
-            console.log(`[AutoRestore] Re-associating persisted tab ${orphanedTab.tabId} with session ${sessionId} (fallback, no name match)`)
+            console.log(`[AutoRestore] Re-associating orphaned tab ${orphanedTab.tabId} with session ${sessionId} (fallback)`)
             chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
             targetTabId = orphanedTab.tabId
           } else {
-            // No orphans left — create a new tab for this active session
+            // No orphans left — create a new tab (only for truly new running sessions)
             const agentMode = activeSession.agent_mode?.toLowerCase() || ''
             const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
               agentMode === 'orchestrator' ? 'advanced' : 'tiny'
 
             try {
-              console.log(`[AutoRestore] Creating tab for active session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
+              console.log(`[AutoRestore] Creating tab for running session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
               targetTabId = await createChatTab(sessionTitle, { mode: tabMode }, sessionId, defaultEventMode)
             } catch (error) {
-              console.error(`[AutoRestore] Failed to create tab for active session ${sessionId}:`, error)
+              console.error(`[AutoRestore] Failed to create tab for session ${sessionId}:`, error)
               sessionsBeingRestored.delete(sessionId)
               continue
             }
@@ -1658,8 +1685,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         return false
       }
       
-      // Skip completed sessions (definitely done)
-      if (tab.isCompleted) {
+      // Skip completed sessions (definitely done) — unless bg agents are still running
+      // In multi-agent mode, always keep polling (background agents can restart the session)
+      const freshTab = chatStore.getTab(tab.tabId)
+      if (tab.isCompleted && !(freshTab?.hasRunningBgAgents) && tab.metadata?.mode !== 'multi-agent') {
         return false
       }
       
@@ -1674,7 +1703,17 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       if (isStreaming) {
         return true
       }
-      
+
+      // Include tabs with running background agents (even if session is "completed")
+      if (currentTab?.hasRunningBgAgents) {
+        return true
+      }
+
+      // In multi-agent mode, always keep polling (background agents can restart session at any time)
+      if (tab.metadata?.mode === 'multi-agent') {
+        return true
+      }
+
       // Must be in backend's active sessions list (or we haven't checked yet - allow polling)
       // If backend says it's active, poll it even if local isStreaming is false
       // This ensures we catch events that come after stop is pressed
@@ -2564,11 +2603,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       return
     }
 
-    // Stop any ongoing streaming
-    if (isStreaming) {
-      await stopStreaming()
-    }
-
     // Resolve or create tab
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory })
     if (!resolved) return
@@ -2726,6 +2760,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         filteredPresetTools,
         hasActivePreset: !!activePreset,
         decryptedSecrets,
+        selectedGlobalSecrets: useSecretsStore.getState().selectedGlobalSecretNames ?? undefined,
       })
 
       // Validate execution groups for workflow mode
@@ -3018,7 +3053,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             )}
             
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -3029,7 +3064,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} compact={compact} sessionId={activeTab.sessionId} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} />
             )}
           </>
         )}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -164,15 +165,18 @@ func isPathUnder(inputPath, basePath string) bool {
 func (c *Client) getUserIDFromContext(ctx context.Context) string {
 	// First check if user ID is set on the client directly
 	if c.UserID != "" {
+		log.Printf("[USER_ID_DEBUGGING] getUserIDFromContext: using client.UserID=%q", c.UserID)
 		return c.UserID
 	}
 
 	// Then check the context for user ID (set by auth middleware)
 	if userID, ok := ctx.Value(common.UserIDKey).(string); ok && userID != "" {
+		log.Printf("[USER_ID_DEBUGGING] getUserIDFromContext: using context UserIDKey=%q", userID)
 		return userID
 	}
 
 	// Return empty string - workspace API will use default user
+	log.Printf("[USER_ID_DEBUGGING] WARNING: no user ID available (client.UserID empty, context key missing)")
 	return ""
 }
 
@@ -198,6 +202,9 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	// Check both static UserID and context-based user ID
 	if userID := c.getUserIDFromContext(ctx); userID != "" {
 		req.Header.Set("X-User-ID", userID)
+		log.Printf("[USER_ID_DEBUGGING] HTTP request: %s %s with X-User-ID=%q", method, path, userID)
+	} else {
+		log.Printf("[USER_ID_DEBUGGING] HTTP request: %s %s with NO X-User-ID header", method, path)
 	}
 
 	resp, err := c.HTTPClient.Do(req)

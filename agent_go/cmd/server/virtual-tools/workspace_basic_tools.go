@@ -39,3 +39,14 @@ func CreateWorkspaceBasicToolExecutors() map[string]func(ctx context.Context, ar
 	)
 	return workspace.NewBasicExecutor(client)
 }
+
+// CreateWorkspaceBasicToolExecutorsWithUserID creates workspace basic tool executors
+// with an explicit user ID set on the client.
+func CreateWorkspaceBasicToolExecutorsWithUserID(userID string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	client := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithUserID(userID),
+	)
+	return workspace.NewBasicExecutor(client)
+}

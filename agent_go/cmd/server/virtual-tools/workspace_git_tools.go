@@ -27,3 +27,14 @@ func CreateWorkspaceGitToolExecutors() map[string]func(ctx context.Context, args
 	)
 	return workspace.NewGitExecutor(client)
 }
+
+// CreateWorkspaceGitToolExecutorsWithUserID creates workspace git tool executors
+// with an explicit user ID set on the client.
+func CreateWorkspaceGitToolExecutorsWithUserID(userID string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	client := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithUserID(userID),
+	)
+	return workspace.NewGitExecutor(client)
+}

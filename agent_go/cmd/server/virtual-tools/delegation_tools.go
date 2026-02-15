@@ -98,20 +98,17 @@ func NewPlanSessionState() *PlanSessionState {
 }
 
 // TryCreate atomically checks if a plan already exists. If not, records the new plan
-// and returns true. During execution phase, allows creating a new plan for follow-up tasks
-// (resets state back to planning). During planning phase, allows re-creating/updating
-// the plan since it hasn't been approved yet.
+// and returns true. If a plan already exists, returns the existing plan's ID and folder
+// so the caller can reuse it (plan.md gets overwritten in the same folder).
 func (ps *PlanSessionState) TryCreate(planID, planFolder string) (existingPlanID, existingPlanFolder string, ok bool) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if ps.PlanID != "" {
-		// Allow overwriting during both phases:
-		// - planning: plan hasn't been approved yet, LLM can regenerate/update it
-		// - execution: follow-up task after previous plan completed
-		ps.PlanID = planID
-		ps.PlanFolder = planFolder
-		ps.Phase = "planning"
-		return "", "", true
+		// Plan already exists — return existing folder so caller reuses it
+		existingPlanID = ps.PlanID
+		existingPlanFolder = ps.PlanFolder
+		ps.Phase = "planning" // Reset to planning phase for re-planning
+		return existingPlanID, existingPlanFolder, true
 	}
 	ps.PlanID = planID
 	ps.PlanFolder = planFolder
@@ -280,7 +277,8 @@ func BuildCustomTierPromptSection(tierConfig *DelegationTierConfig) string {
 
 // CreateDelegationTools creates all delegation virtual tools.
 // tierConfig is optional — when provided, custom tier slugs are included in reasoning_level enum.
-func CreateDelegationTools(tierConfig *DelegationTierConfig) []llmtypes.Tool {
+// requireReasoningLevel — when true, reasoning_level is required on the delegate tool (used in plan/multi-agent mode).
+func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLevel bool) []llmtypes.Tool {
 	var tools []llmtypes.Tool
 
 	reasoningLevelParam := BuildReasoningLevelParam(tierConfig)
@@ -324,7 +322,12 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig) []llmtypes.Tool {
 						"description": "Optional list of MCP server names for this sub-agent. When specified, the sub-agent only connects to these servers instead of all available ones. Use this to give the worker only the tools it needs, reducing noise and improving efficiency.",
 					},
 				},
-				"required": []string{"name", "instruction"},
+				"required": func() []string {
+				if requireReasoningLevel {
+					return []string{"name", "instruction", "reasoning_level"}
+				}
+				return []string{"name", "instruction"}
+			}(),
 			}),
 		},
 	}
@@ -472,10 +475,15 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		return "", fmt.Errorf("instruction is required")
 	}
 
-	// Extract optional reasoning_level, plan_folder, and tool_mode
+	// Extract reasoning_level, plan_folder, and tool_mode
 	reasoningLevel, _ := args["reasoning_level"].(string)
 	if reasoningLevel != "" {
 		reasoningLevel = ValidateReasoningLevel(ctx, reasoningLevel)
+	}
+
+	// In plan/multi-agent mode, reasoning_level is mandatory
+	if _, isPlanMode := ctx.Value(BackgroundDelegateKey).(BackgroundDelegateFunc); isPlanMode && reasoningLevel == "" {
+		return "", fmt.Errorf("reasoning_level is required in multi-agent mode. Use 'high' for complex tasks, 'medium' for standard implementation, or 'low' for simple tasks")
 	}
 	planFolder, _ := args["plan_folder"].(string)
 	toolMode, _ := args["tool_mode"].(string)
@@ -890,14 +898,19 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 	} else if pt, ok := ctx.Value(PlanTrackerKey).(*PlanTracker); ok && pt != nil {
 		tracker = pt
 	}
+	planArchived := false
 	if tracker != nil {
-		if existingID, existingFolder, ok := tracker.TryCreate(planID, planFolder); !ok {
-			return "", fmt.Errorf(
-				"a plan already exists in this conversation (plan_id: %s, folder: %s). "+
-					"Do not create a second plan. Read the existing plan.md and delegate tasks from it. "+
-					"If the plan needs changes, delegate a sub-agent to update it",
-				existingID, existingFolder,
-			)
+		existingID, existingFolder, _ := tracker.TryCreate(planID, planFolder)
+		if existingID != "" {
+			// Reuse the existing plan folder — archive old plan.md to plan_tracking.md
+			planID = existingID
+			planFolder = existingFolder
+			log.Printf("[DELEGATION PLAN] Reusing existing plan folder: %s (original request: %s)", planFolder, planName)
+
+			// Archive existing plan.md into plan_tracking.md before overwriting
+			if wsClient, ok := ctx.Value(WorkspaceClientKey).(*workspace.Client); ok && wsClient != nil {
+				planArchived = archivePlanToTracking(ctx, wsClient, planFolder)
+			}
 		}
 	}
 
@@ -964,6 +977,12 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 			"objective":   objective,
 			"status":      "planning",
 			"message":     fmt.Sprintf("Planner agent started in background. You will be notified when the plan is ready at %s. END YOUR TURN now and tell the user planning is underway.", planFilePath),
+		}
+		if planArchived {
+			trackingFile := fmt.Sprintf("%s/plan_tracking.md", planFolder)
+			result["plan_archived"] = true
+			result["plan_tracking_file"] = trackingFile
+			result["archive_note"] = fmt.Sprintf("The previous plan was archived to %s. You can read this file to reference past plans, progress, and learnings. Consider reviewing it before approving the new plan.", trackingFile)
 		}
 		resultJSON, _ := json.MarshalIndent(result, "", "  ")
 		return string(resultJSON), nil
@@ -1049,6 +1068,12 @@ func handleCreateDelegationPlan(ctx context.Context, args map[string]interface{}
 	if planContent != "" {
 		result["plan_content"] = planContent
 	}
+	if planArchived {
+		trackingFile := fmt.Sprintf("%s/plan_tracking.md", planFolder)
+		result["plan_archived"] = true
+		result["plan_tracking_file"] = trackingFile
+		result["archive_note"] = fmt.Sprintf("The previous plan was archived to %s. You can read this file to reference past plans, progress, and learnings. Consider reviewing it before approving the new plan.", trackingFile)
+	}
 	resultJSON, _ := json.MarshalIndent(result, "", "  ")
 	return string(resultJSON), nil
 }
@@ -1122,6 +1147,66 @@ func extractPlanMarkdown(text string) string {
 
 	// Last resort: return the full text
 	return text
+}
+
+// archivePlanToTracking reads the current plan.md and appends it to plan_tracking.md
+// with a timestamp separator, preserving history of all previous plans in the same folder.
+// Returns true if archiving succeeded (i.e. there was a previous plan to archive).
+func archivePlanToTracking(ctx context.Context, wsClient *workspace.Client, planFolder string) bool {
+	planFilePath := fmt.Sprintf("%s/plan.md", planFolder)
+	trackingFilePath := fmt.Sprintf("%s/plan_tracking.md", planFolder)
+
+	// Read current plan.md
+	readResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
+		Filepath: planFilePath,
+	})
+	if err != nil {
+		log.Printf("[DELEGATION PLAN] No existing plan.md to archive: %v", err)
+		return false
+	}
+
+	// Extract content from JSON response
+	var readData map[string]interface{}
+	if json.Unmarshal([]byte(readResult), &readData) != nil {
+		return false
+	}
+	planContent, ok := readData["content"].(string)
+	if !ok || strings.TrimSpace(planContent) == "" {
+		return false
+	}
+
+	// Read existing plan_tracking.md (may not exist yet)
+	var existingTracking string
+	if trackResult, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
+		Filepath: trackingFilePath,
+	}); err == nil {
+		var trackData map[string]interface{}
+		if json.Unmarshal([]byte(trackResult), &trackData) == nil {
+			existingTracking, _ = trackData["content"].(string)
+		}
+	}
+
+	// Build new tracking content: existing tracking + archived plan
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	archiveEntry := fmt.Sprintf("\n\n---\n## Archived Plan (%s)\n\n%s", timestamp, planContent)
+
+	var newTracking string
+	if existingTracking == "" {
+		newTracking = "# Plan History\n\nThis file tracks previous plans from this conversation." + archiveEntry
+	} else {
+		newTracking = existingTracking + archiveEntry
+	}
+
+	// Write plan_tracking.md
+	if _, err := wsClient.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{
+		Filepath: trackingFilePath,
+		Content:  newTracking,
+	}); err != nil {
+		log.Printf("[DELEGATION PLAN] Warning: failed to write plan_tracking.md: %v", err)
+		return false
+	}
+	log.Printf("[DELEGATION PLAN] Archived previous plan to %s", trackingFilePath)
+	return true
 }
 
 // truncateString truncates a string to maxLen characters, adding "..." if truncated
@@ -1321,7 +1406,8 @@ After the user approves, execute the plan:
 **` + "`delegate(name, instruction)`" + `** — Start a named task (returns immediately, runs in parallel)
 - Provide a short descriptive name: "Analyze Sales Data", "Generate Report", "Query Database"
 - Provide comprehensive, self-contained instructions
-- Optional: reasoning_level, plan_folder, tool_mode, agent_template, servers
+- Required: reasoning_level ("high", "medium", "low", or a custom tier)
+- Optional: plan_folder, tool_mode, agent_template, servers
 
 **` + "`query_agent(agent_id)`" + `** — Check status/progress of a running task
 
@@ -1333,18 +1419,36 @@ After the user approves, execute the plan:
 
 **` + "`human_feedback`" + `** — Ask a single question or present choices to the user
 
+### Plan Folder Structure
+All plans in a conversation share the same folder (` + "`Plans/{plan_id}/`" + `). You can organize work using sub-folders:
+
+` + "```" + `
+Plans/{plan_id}/
+  plan.md              ← Current active plan (always here)
+  plan_tracking.md     ← Auto-generated: archived previous plans with timestamps
+  research/            ← Sub-folder for research outputs
+  phase-1/             ← Sub-folder for phase 1 deliverables
+  reports/             ← Sub-folder for generated reports
+` + "```" + `
+
+- **plan.md** is always the active plan at the folder root
+- When you create a new plan, the previous plan.md is automatically archived to **plan_tracking.md** with a timestamp. Review this file to reference past plans, progress, and learnings.
+- Create sub-folders to organize outputs by phase, topic, or task type
+- Tell sub-agents to write their outputs to specific sub-folders via their instructions (e.g., "Save your analysis to Plans/{plan_id}/research/analysis.md")
+
 ### Rules
 - **Always plan first**: Use create_delegation_plan before delegating any tasks
 - **Always get approval**: Call confirm_plan_execution before executing the plan
-- **One plan per conversation**: Never create a second plan unless the first is fully complete
 - **NEVER do work yourself** — always delegate
 - **Pass plan_folder** to every delegate call
+- **Always pass reasoning_level** on every delegate call — pick the right tier for the task complexity
 - **Self-contained instructions**: Each delegate call must include ALL context needed
 - **End your turn after calling** create_delegation_plan, confirm_plan_execution, or delegate — you will be notified automatically when work finishes.
 - **Respond to user messages** — while work is in progress, the user can chat with you. Answer questions, give status updates, or cancel tasks as requested.
 - **You are the quality gate** — review results before reporting to the user
 - **Re-read plan.md after each phase**: Completed tasks write Key Knowledge and Notes. Collect their discoveries before the next phase.
 - **Relay learnings**: Include relevant findings in the next delegate instruction
+- **Review plan_tracking.md** when creating follow-up plans — it contains archived plans and progress from earlier in the conversation
 
 ### Tool Mode (optional, for delegate):
 - **"simple"** (default): Best for most tasks.

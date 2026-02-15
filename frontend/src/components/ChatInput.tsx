@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -14,6 +14,7 @@ import SubAgentSelectionDropdown from './subagents/SubAgentSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
+import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
@@ -551,6 +552,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
 
+  // Workflow selection dialog state (# trigger)
+  const [showWorkflowDialog, setShowWorkflowDialog] = useState(false)
+  const [workflowDialogPosition, setWorkflowDialogPosition] = useState({ bottom: 0, left: 0 })
+  const [workflowSearchQuery, setWorkflowSearchQuery] = useState('')
+  const [hashPosition, setHashPosition] = useState(-1) // Position of # in text
+
   // Tier config modal state (for plan mode chip)
   const [showTierModal, setShowTierModal] = useState(false)
 
@@ -692,27 +699,39 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
-    
+
     const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
     const lastAtIndex = textBeforeCursor.lastIndexOf('@')
-    
+    const lastHashIndex = textBeforeCursor.lastIndexOf('#')
+
     // If @ appears before the current /, the / is part of a path (e.g. "@ workflow /") — stay in file dialog
     const slashIsPartOfAtPath = lastAtIndex >= 0 && lastSlashIndex > lastAtIndex
-    
+
     const slashDistance = lastSlashIndex >= 0 ? cursorPosition - lastSlashIndex : Infinity
     const atDistance = lastAtIndex >= 0 ? cursorPosition - lastAtIndex : Infinity
-    
+    const hashDistance = lastHashIndex >= 0 ? cursorPosition - lastHashIndex : Infinity
+
+    // Check if # is a markdown heading (at line start AND followed by a space) — don't trigger dialog for headings
+    // e.g. "# Heading" is a heading, but "#workflow" is a workflow trigger
+    const charAfterHash = lastHashIndex >= 0 ? newValue[lastHashIndex + 1] : undefined
+    const hashIsAtLineStart = lastHashIndex >= 0 && (lastHashIndex === 0 || textBeforeCursor[lastHashIndex - 1] === '\n')
+    const hashIsHeading = hashIsAtLineStart && charAfterHash === ' '
+
+    // Find the closest trigger to cursor
+    const closestTrigger = Math.min(slashDistance, atDistance, hashDistance)
+
     // Check for / command (only when / is not part of an @ path)
-    if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && (lastAtIndex < 0 || slashDistance < atDistance)) {
+    if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && closestTrigger === slashDistance) {
       const textAfterSlash = textBeforeCursor.substring(lastSlashIndex + 1)
       const hasValidSlash = textAfterSlash === '' || textAfterSlash.match(/^[a-zA-Z0-9_]*$/)
-      
+
       if (hasValidSlash) {
         setSlashPosition(lastSlashIndex)
         setCommandSearchQuery(textAfterSlash)
         setShowCommandDialog(true)
-        setShowFileDialog(false) // Hide file dialog if command dialog is active
-        
+        setShowFileDialog(false)
+        setShowWorkflowDialog(false)
+
         // Calculate dialog position — anchor from bottom so it grows upward
         const textarea = e.target
         const rect = textarea.getBoundingClientRect()
@@ -727,8 +746,34 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setCommandSearchQuery('')
       }
     }
-    // Check for @ symbol and update file dialog state (only if no / command active and workspace access is enabled)
-    else if (lastAtIndex >= 0 && !showCommandDialog && enableWorkspaceAccess) {
+    // Check for # workflow trigger (not a markdown heading, in chat/multi-agent mode)
+    else if (!hashIsHeading && lastHashIndex >= 0 && closestTrigger === hashDistance) {
+      const textAfterHash = textBeforeCursor.substring(lastHashIndex + 1)
+      const hasValidHash = textAfterHash === '' || textAfterHash.match(/^[a-zA-Z0-9_-]*$/)
+
+      if (hasValidHash) {
+        setHashPosition(lastHashIndex)
+        setWorkflowSearchQuery(textAfterHash)
+        setShowWorkflowDialog(true)
+        setShowCommandDialog(false)
+        setShowFileDialog(false)
+
+        // Calculate dialog position — anchor from bottom so it grows upward
+        const textarea = e.target
+        const rect = textarea.getBoundingClientRect()
+
+        setWorkflowDialogPosition({
+          bottom: window.innerHeight - rect.top + 8,
+          left: rect.left + window.scrollX
+        })
+      } else {
+        setShowWorkflowDialog(false)
+        setHashPosition(-1)
+        setWorkflowSearchQuery('')
+      }
+    }
+    // Check for @ symbol and update file dialog state (only if no other dialog active and workspace access is enabled)
+    else if (lastAtIndex >= 0 && !showCommandDialog && !showWorkflowDialog && enableWorkspaceAccess) {
       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
       const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
 
@@ -759,13 +804,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setFileSearchQuery('')
       }
     } else {
-      // Close both dialogs if neither is active
+      // Close all dialogs if none is active
       setShowFileDialog(false)
       setAtPosition(-1)
       setFileSearchQuery('')
       setShowCommandDialog(false)
       setSlashPosition(-1)
       setCommandSearchQuery('')
+      setShowWorkflowDialog(false)
+      setHashPosition(-1)
+      setWorkflowSearchQuery('')
     }
 
     // Debounce file reference removal check (500ms delay)
@@ -793,10 +841,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         removedFiles.forEach(filePath => {
           removeFileFromContext(filePath)
         })
+
+        // Check if any #workflow references were removed
+        if (activeTabId) {
+          const currentWorkflowContext = useChatStore.getState().getTabConfig(activeTabId)?.workflowContext || []
+          const removedWorkflows = currentWorkflowContext.filter(w => {
+            const wRef = '#' + w.label
+            return previousValue.includes(wRef) && !newValue.includes(wRef)
+          })
+          if (removedWorkflows.length > 0) {
+            const remaining = currentWorkflowContext.filter(w => !removedWorkflows.some(r => r.presetId === w.presetId))
+            setTabConfig(activeTabId, { workflowContext: remaining })
+          }
+        }
       }
       fileRemovalTimeoutRef.current = null
     }, 500)
-  }, [chatFileContext, removeFileFromContext, showCommandDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight])
+  }, [chatFileContext, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -856,15 +917,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // If command dialog is open, let it handle keyboard events
-    if (showCommandDialog) {
-      // Don't prevent default for arrow keys, enter, escape - let dialog handle them
-      if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
-        return
-      }
-    }
-    // If file dialog is open, let it handle keyboard events
-    if (showFileDialog) {
+    // If any selection dialog is open, let it handle keyboard events
+    if (showCommandDialog || showFileDialog || showWorkflowDialog) {
       // Don't prevent default for arrow keys, enter, escape - let dialog handle them
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
         return
@@ -1137,7 +1191,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -1400,6 +1454,56 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     textareaRef.current?.focus()
   }, [])
 
+  const handleWorkflowSelect = useCallback((workflow: { presetId: string; label: string; workspacePath: string }) => {
+    if (!textareaRef.current || hashPosition === -1 || !activeTabId) return
+
+    const beforeHash = inputText.substring(0, hashPosition)
+    const afterSearch = inputText.substring(hashPosition + 1 + workflowSearchQuery.length)
+    const newQuery = beforeHash + '#' + workflow.label + ' ' + afterSearch
+
+    // Update local state immediately
+    setLocalInputText(newQuery)
+    setShowWorkflowDialog(false)
+    setHashPosition(-1)
+    setWorkflowSearchQuery('')
+
+    // Add workflow to context (avoid duplicates)
+    const currentWorkflowContext = useChatStore.getState().getTabConfig(activeTabId)?.workflowContext || []
+    const isAlreadyInContext = currentWorkflowContext.some(w => w.presetId === workflow.presetId)
+    if (!isAlreadyInContext) {
+      const updated = [...currentWorkflowContext, {
+        presetId: workflow.presetId,
+        label: workflow.label,
+        workspacePath: workflow.workspacePath
+      }]
+      // Auto-enable workspace access when workflow context is selected
+      setTabConfig(activeTabId, { workflowContext: updated, enableWorkspaceAccess: true })
+    }
+
+    // Sync store
+    if (syncToStoreTimeoutRef.current) {
+      clearTimeout(syncToStoreTimeoutRef.current)
+      syncToStoreTimeoutRef.current = null
+    }
+    setTabConfig(activeTabId, { inputText: newQuery })
+
+    // Focus back to textarea and position cursor
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus()
+        const cursorPosition = beforeHash.length + '#'.length + workflow.label.length + ' '.length
+        textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
+      }
+    }, 0)
+  }, [inputText, hashPosition, workflowSearchQuery, activeTabId, setTabConfig])
+
+  const handleWorkflowDialogClose = useCallback(() => {
+    setShowWorkflowDialog(false)
+    setHashPosition(-1)
+    setWorkflowSearchQuery('')
+    textareaRef.current?.focus()
+  }, [])
+
   // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
   const handleNavigateIntoFolder = useCallback((folderPath: string) => {
     if (atPosition === -1 || !activeTabId) return
@@ -1422,7 +1526,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
-    return "Ask me anything... I can use tools to help you! (Type /summarize to summarize)"
+    return "Ask anything... (@ files, / commands, # workflows)"
   }, [])
 
   return (
@@ -1442,13 +1546,62 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       )}
 
 
-      {/* Hint when no files in context - only show if workspace access is enabled */}
-      {chatFileContext.length === 0 && enableWorkspaceAccess && (
+      {/* Workflow Context Display — same style as FileContextDisplay */}
+      {(tabConfig?.workflowContext?.length ?? 0) > 0 && (
         <div className="px-4">
-          <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded px-1.5 py-0.5 mb-0">
-            <span className="text-[10px] text-gray-500 dark:text-gray-400">
-              💡 Click chat icon in workspace to add files, or type @ to search and add files
-            </span>
+          <div className="border rounded px-1.5 py-0.5 mb-1 bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                <Layers className="w-3 h-3 inline-block mr-0.5 -mt-0.5" />
+                Workflows:
+              </span>
+              {tabConfig!.workflowContext.map((w, index) => (
+                <div key={w.presetId} className="flex items-center gap-0.5">
+                  <span className="text-xs text-gray-700 dark:text-gray-300 font-mono">
+                    {w.label}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeTabId) {
+                        const remaining = tabConfig!.workflowContext.filter(wc => wc.presetId !== w.presetId)
+                        setTabConfig(activeTabId, { workflowContext: remaining })
+                        const ref = '#' + w.label
+                        if (inputText.includes(ref)) {
+                          const newText = inputText.replace(ref, '').replace(/  +/g, ' ').trim()
+                          setLocalInputText(newText)
+                          setTabConfig(activeTabId, { inputText: newText })
+                        }
+                      }
+                    }}
+                    className="p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
+                    title="Remove workflow context"
+                  >
+                    <X className="w-2 h-2" />
+                  </button>
+                  {index < tabConfig!.workflowContext.length - 1 && (
+                    <span className="text-xs text-gray-400">&bull;</span>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  if (activeTabId) {
+                    const labels = tabConfig!.workflowContext.map(w => '#' + w.label)
+                    setTabConfig(activeTabId, { workflowContext: [] })
+                    let newText = inputText
+                    labels.forEach(ref => { newText = newText.replace(ref, '') })
+                    newText = newText.replace(/  +/g, ' ').trim()
+                    setLocalInputText(newText)
+                    setTabConfig(activeTabId, { inputText: newText })
+                  }
+                }}
+                className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:underline ml-0.5"
+              >
+                Clear
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1833,6 +1986,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         searchQuery={fileSearchQuery}
         position={fileDialogPosition}
       />
+
+      {/* Workflow Selection Dialog */}
+      <WorkflowSelectionDialog
+        isOpen={showWorkflowDialog}
+        onClose={handleWorkflowDialogClose}
+        onSelectWorkflow={handleWorkflowSelect}
+        searchQuery={workflowSearchQuery}
+        position={workflowDialogPosition}
+      />
+
       {/* Slash command dialogs */}
       {showSkillImport && (
         <SkillImportDialog

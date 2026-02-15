@@ -172,6 +172,9 @@ export function buildQueryRequestPayload(params: {
     enable_context_editing: enableContextEditing,
     decrypted_secrets: decryptedSecrets?.length ? decryptedSecrets : undefined,
     selected_global_secrets: selectedGlobalSecrets,
+    workflow_context_paths: isChatLikeMode && currentTab?.config?.workflowContext?.length
+      ? currentTab.config.workflowContext.map(w => w.workspacePath)
+      : undefined,
   }
 }
 

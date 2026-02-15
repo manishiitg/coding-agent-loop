@@ -818,6 +818,8 @@ type QueryRequest struct {
 	} `json:"decrypted_secrets,omitempty"`
 	// Selected global secret names to include (if nil/absent, all global secrets are included)
 	SelectedGlobalSecrets *[]string `json:"selected_global_secrets,omitempty"`
+	// Workspace paths of workflows to inject context for (via # selector in chat)
+	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
 
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
@@ -2084,6 +2086,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Record start time for duration calculation
 	startTime := time.Now()
+	log.Printf("[LATENCY_DEBUG] T+0ms | Request received | query_preview=%q", truncateForLog(req.Query, 80))
 
 	// Generate query ID
 	queryID := fmt.Sprintf("query_%d", time.Now().UnixNano())
@@ -2340,13 +2343,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			api.sessionReactivationMux.Lock()
 
 			// Calculate existing event count to use as baseIndex for polling
+			// Use COUNT query instead of fetching all events — much faster for large sessions
 			var baseIndex int
-			existingEvents, err := api.chatDB.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
-			if err == nil {
-				baseIndex = len(existingEvents)
-				log.Printf("[SESSION REACTIVATION] Found %d existing events for session %s, setting baseIndex", baseIndex, sessionID)
-			} else {
+			countQuery := "SELECT COUNT(*) FROM events WHERE chat_session_id = ?"
+			if isPostgresDB(api.chatDB) {
+				countQuery = "SELECT COUNT(*) FROM events WHERE chat_session_id = $1"
+			}
+			err := api.chatDB.GetDB().QueryRowContext(r.Context(), countQuery, chatSession.ID).Scan(&baseIndex)
+			if err != nil {
 				log.Printf("[SESSION REACTIVATION] Failed to count existing events for session %s: %v", sessionID, err)
+				baseIndex = 0
+			} else {
+				log.Printf("[SESSION REACTIVATION] Found %d existing events for session %s, setting baseIndex", baseIndex, sessionID)
 			}
 			api.eventStore.InitializeSession(sessionID, baseIndex)
 
@@ -2356,6 +2364,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
+	log.Printf("[LATENCY_DEBUG] T+%dms | Session setup complete | sessionID=%s", time.Since(startTime).Milliseconds(), sessionID)
 
 	// Create fresh agent for this request
 	// Use LLM configuration from request if provided, otherwise use request defaults
@@ -3472,6 +3481,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		log.Printf("[SMART ROUTING DEBUG] Smart routing enabled - MaxTools: %d, MaxServers: %d (using defaults for temperature/tokens)",
 			agentConfig.SmartRoutingMaxTools, agentConfig.SmartRoutingMaxServers)
+		log.Printf("[LATENCY_DEBUG] T+%dms | Agent config built, creating agent wrapper | provider=%s model=%s", time.Since(startTime).Milliseconds(), finalProvider, finalModelID)
 		// Create LLM agent wrapper with trace using streamCtx
 		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, api.logger)
 		if err != nil {
@@ -3479,6 +3489,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			sendError(fmt.Sprintf("Failed to create agent: %v", err), true)
 			return
 		}
+		log.Printf("[LATENCY_DEBUG] T+%dms | Agent wrapper created", time.Since(startTime).Milliseconds())
 
 		// Add workspace tools to simple agents (chat mode)
 		// This matches how workspace tools are registered in workflow/orchestrator agents
@@ -3593,7 +3604,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithUserID(currentUserID)
 				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (advanced only)
 
 				// Extract @context file paths for additional write access
@@ -3760,7 +3771,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if delegationMode == "spawn" || delegationMode == "plan" {
 				// Build delegation tier config early so we can pass it to tool creation (for dynamic enum)
 				tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
-				delegationTools := virtualtools.CreateDelegationTools(tierConfig)
+				delegationTools := virtualtools.CreateDelegationTools(tierConfig, delegationMode == "plan")
 				delegationExecutors := virtualtools.CreateDelegationToolExecutors()
 				delegationCategory := virtualtools.GetDelegationToolCategory()
 
@@ -4026,6 +4037,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Add workflow context if workflow paths are selected (via # in chat)
+			if len(req.WorkflowContextPaths) > 0 {
+				workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
+				if workflowPrompt != "" {
+					underlyingAgent.AppendSystemPrompt(workflowPrompt)
+					log.Printf("[WORKFLOW-CTX] Added workflow context to system prompt (%d workflows)", len(req.WorkflowContextPaths))
+				}
+			}
+
 			// Add delegation instructions based on mode
 			if req.DelegationMode == "plan" {
 				// Plan mode: plan→approve→execute with async background agents
@@ -4191,12 +4211,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
+		log.Printf("[LATENCY_DEBUG] T+%dms | Starting StreamWithEvents (LLM call) | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
 		if err != nil {
 			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
 			sendError(fmt.Sprintf("Failed to start streaming: %v", err), true)
 			return
 		}
+		log.Printf("[LATENCY_DEBUG] T+%dms | StreamWithEvents channel opened | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() started successfully for query %s", queryID)
 
 		// Stream response chunks with enhanced error handling
@@ -5673,7 +5695,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		if enableWorkspaceAccess {
 			// Sub-agents get advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-			workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+			workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithUserID(subAgentUserID)
 			_, _, toolCategories := createCustomTools(false)
 
 			// Check for skill-creator
@@ -6576,6 +6598,14 @@ func (api *StreamingAPI) handleGetDelegationTierDefaults(w http.ResponseWriter, 
 }
 
 // getActiveSession retrieves an active session by ID
+// truncateForLog truncates a string for logging purposes
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 func (api *StreamingAPI) getActiveSession(sessionID string) (*ActiveSessionInfo, bool) {
 	api.activeSessionsMux.RLock()
 	defer api.activeSessionsMux.RUnlock()

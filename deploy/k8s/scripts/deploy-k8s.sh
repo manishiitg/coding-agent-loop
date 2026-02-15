@@ -333,6 +333,9 @@ if [ -f "$ENV_FILE" ]; then
 
     # Global secrets (JSON values passed as env vars)
     GLOBAL_SECRET_GRAFANA=$(extract_env_value "GLOBAL_SECRET_GRAFANA" "$ENV_FILE")
+    GLOBAL_SECRET_AWS_KEYS=$(extract_env_value "GLOBAL_SECRET_AWS_KEYS" "$ENV_FILE")
+    GLOBAL_SECRET_GITHUB=$(extract_env_value "GLOBAL_SECRET_GITHUB" "$ENV_FILE")
+    GLOBAL_SECRET_CLICKHOUSE=$(extract_env_value "GLOBAL_SECRET_CLICKHOUSE" "$ENV_FILE")
 
     if kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &> /dev/null; then
         echo -e "${YELLOW}Secret ${SECRET_NAME} exists. Updating...${NC}"
@@ -341,26 +344,31 @@ if [ -f "$ENV_FILE" ]; then
         echo -e "${YELLOW}Creating secret ${SECRET_NAME}...${NC}"
     fi
 
-    # Build kubectl create secret command with available keys
-    SECRET_CMD="kubectl create secret generic \"$SECRET_NAME\" -n \"$NAMESPACE\""
+    # Build secret from env file to avoid eval/quoting issues with special characters
+    SECRET_ENV_FILE=$(mktemp)
+    trap "rm -f $SECRET_ENV_FILE" EXIT
 
-    [ -n "$GEMINI_API_KEY" ] && SECRET_CMD="$SECRET_CMD --from-literal=GEMINI_API_KEY=\"$GEMINI_API_KEY\""
+    [ -n "$GEMINI_API_KEY" ] && printf '%s=%s\n' "GEMINI_API_KEY" "$GEMINI_API_KEY" >> "$SECRET_ENV_FILE"
     # Vertex/Gemini: LLM provider expects VERTEX_API_KEY or GOOGLE_API_KEY; use GEMINI_API_KEY for both so keys work
-    [ -n "$GEMINI_API_KEY" ] && SECRET_CMD="$SECRET_CMD --from-literal=VERTEX_API_KEY=\"$GEMINI_API_KEY\""
-    [ -n "$GEMINI_API_KEY" ] && SECRET_CMD="$SECRET_CMD --from-literal=GOOGLE_API_KEY=\"$GEMINI_API_KEY\""
-    [ -n "$VERTEX_PROJECT_ID" ] && SECRET_CMD="$SECRET_CMD --from-literal=VERTEX_PROJECT_ID=\"$VERTEX_PROJECT_ID\""
-    [ -n "$VERTEX_LOCATION_ID" ] && SECRET_CMD="$SECRET_CMD --from-literal=VERTEX_LOCATION_ID=\"$VERTEX_LOCATION_ID\""
-    [ -n "$OPENROUTER_API_KEY" ] && SECRET_CMD="$SECRET_CMD --from-literal=OPENROUTER_API_KEY=\"$OPENROUTER_API_KEY\""
-    [ -n "$DATABASE_URL" ] && SECRET_CMD="$SECRET_CMD --from-literal=DATABASE_URL=\"$DATABASE_URL\""
-    [ -n "$LANGFUSE_PUBLIC_KEY" ] && SECRET_CMD="$SECRET_CMD --from-literal=LANGFUSE_PUBLIC_KEY=\"$LANGFUSE_PUBLIC_KEY\""
-    [ -n "$LANGFUSE_SECRET_KEY" ] && SECRET_CMD="$SECRET_CMD --from-literal=LANGFUSE_SECRET_KEY=\"$LANGFUSE_SECRET_KEY\""
-    [ -n "$LANGFUSE_HOST" ] && SECRET_CMD="$SECRET_CMD --from-literal=LANGFUSE_HOST=\"$LANGFUSE_HOST\""
-    [ -n "$GITHUB_TOKEN" ] && SECRET_CMD="$SECRET_CMD --from-literal=GITHUB_TOKEN=\"$GITHUB_TOKEN\""
-    [ -n "$GITHUB_REPO" ] && SECRET_CMD="$SECRET_CMD --from-literal=GITHUB_REPO=\"$GITHUB_REPO\""
-    [ -n "$AUTH_SECRET" ] && SECRET_CMD="$SECRET_CMD --from-literal=AUTH_SECRET=\"$AUTH_SECRET\""
-    [ -n "$GLOBAL_SECRET_GRAFANA" ] && SECRET_CMD="$SECRET_CMD --from-literal=GLOBAL_SECRET_GRAFANA='$GLOBAL_SECRET_GRAFANA'"
+    [ -n "$GEMINI_API_KEY" ] && printf '%s=%s\n' "VERTEX_API_KEY" "$GEMINI_API_KEY" >> "$SECRET_ENV_FILE"
+    [ -n "$GEMINI_API_KEY" ] && printf '%s=%s\n' "GOOGLE_API_KEY" "$GEMINI_API_KEY" >> "$SECRET_ENV_FILE"
+    [ -n "$VERTEX_PROJECT_ID" ] && printf '%s=%s\n' "VERTEX_PROJECT_ID" "$VERTEX_PROJECT_ID" >> "$SECRET_ENV_FILE"
+    [ -n "$VERTEX_LOCATION_ID" ] && printf '%s=%s\n' "VERTEX_LOCATION_ID" "$VERTEX_LOCATION_ID" >> "$SECRET_ENV_FILE"
+    [ -n "$OPENROUTER_API_KEY" ] && printf '%s=%s\n' "OPENROUTER_API_KEY" "$OPENROUTER_API_KEY" >> "$SECRET_ENV_FILE"
+    [ -n "$DATABASE_URL" ] && printf '%s=%s\n' "DATABASE_URL" "$DATABASE_URL" >> "$SECRET_ENV_FILE"
+    [ -n "$LANGFUSE_PUBLIC_KEY" ] && printf '%s=%s\n' "LANGFUSE_PUBLIC_KEY" "$LANGFUSE_PUBLIC_KEY" >> "$SECRET_ENV_FILE"
+    [ -n "$LANGFUSE_SECRET_KEY" ] && printf '%s=%s\n' "LANGFUSE_SECRET_KEY" "$LANGFUSE_SECRET_KEY" >> "$SECRET_ENV_FILE"
+    [ -n "$LANGFUSE_HOST" ] && printf '%s=%s\n' "LANGFUSE_HOST" "$LANGFUSE_HOST" >> "$SECRET_ENV_FILE"
+    [ -n "$GITHUB_TOKEN" ] && printf '%s=%s\n' "GITHUB_TOKEN" "$GITHUB_TOKEN" >> "$SECRET_ENV_FILE"
+    [ -n "$GITHUB_REPO" ] && printf '%s=%s\n' "GITHUB_REPO" "$GITHUB_REPO" >> "$SECRET_ENV_FILE"
+    [ -n "$AUTH_SECRET" ] && printf '%s=%s\n' "AUTH_SECRET" "$AUTH_SECRET" >> "$SECRET_ENV_FILE"
+    [ -n "$GLOBAL_SECRET_GRAFANA" ] && printf '%s=%s\n' "GLOBAL_SECRET_GRAFANA" "$GLOBAL_SECRET_GRAFANA" >> "$SECRET_ENV_FILE"
+    [ -n "$GLOBAL_SECRET_AWS_KEYS" ] && printf '%s=%s\n' "GLOBAL_SECRET_AWS_KEYS" "$GLOBAL_SECRET_AWS_KEYS" >> "$SECRET_ENV_FILE"
+    [ -n "$GLOBAL_SECRET_GITHUB" ] && printf '%s=%s\n' "GLOBAL_SECRET_GITHUB" "$GLOBAL_SECRET_GITHUB" >> "$SECRET_ENV_FILE"
+    [ -n "$GLOBAL_SECRET_CLICKHOUSE" ] && printf '%s=%s\n' "GLOBAL_SECRET_CLICKHOUSE" "$GLOBAL_SECRET_CLICKHOUSE" >> "$SECRET_ENV_FILE"
 
-    eval $SECRET_CMD
+    kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" --from-env-file="$SECRET_ENV_FILE"
+    rm -f "$SECRET_ENV_FILE"
     echo -e "${GREEN}✓ Secret ${SECRET_NAME} created/updated${NC}"
 else
     if ! kubectl get secret "$SECRET_NAME" -n "$NAMESPACE" &> /dev/null; then

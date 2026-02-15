@@ -94,6 +94,11 @@ export interface ChatTabConfig {
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
+  workflowContext: Array<{
+    presetId: string
+    label: string
+    workspacePath: string
+  }>  // Workflow presets selected via # in chat input
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
@@ -146,6 +151,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     selectedSkills: [],  // No skills selected by default
     selectedSecrets: [],  // No secrets selected by default
     selectedSubAgents: [],  // No sub-agent templates selected by default
+    workflowContext: [],  // No workflow context selected by default
     llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',

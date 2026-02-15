@@ -75,15 +75,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Ensure default user directories exist (for per-user folders)
-	if err := utils.EnsureUserDirectories(docsDir, utils.DefaultUserID); err != nil {
+	if err := utils.EnsureUserDirectories(docsDir, utils.GetDefaultUserID()); err != nil {
 		fmt.Printf("Warning: Failed to create default user directories: %v\n", err)
 	} else {
-		fmt.Printf("Created default user directories under /_users/%s/\n", utils.DefaultUserID)
+		fmt.Printf("Created default user directories under /_users/%s/\n", utils.GetDefaultUserID())
 	}
 
 	// Create root-level symlinks for per-user folders so shell commands can access
 	// Chats/, Plans/, Downloads/ via their logical paths (physical files are under _users/{userID}/)
-	if err := utils.EnsurePerUserSymlinks(docsDir, utils.DefaultUserID); err != nil {
+	if err := utils.EnsurePerUserSymlinks(docsDir, utils.GetDefaultUserID()); err != nil {
 		fmt.Printf("Warning: Failed to create per-user symlinks: %v\n", err)
 	} else {
 		fmt.Printf("Ensured per-user symlinks for default user\n")

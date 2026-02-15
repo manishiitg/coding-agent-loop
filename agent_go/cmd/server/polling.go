@@ -466,11 +466,11 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 				if isActive || isRecentlyCompleted {
 					// Convert to ActiveSessionInfo
 					sessionInfo := &ActiveSessionInfo{
-						SessionID:    dbSession.SessionID,
-						AgentMode:    dbSession.AgentMode,
-						Status:       dbSession.Status,
-						CreatedAt:    dbSession.CreatedAt,
-						Query:        dbSession.Title, // Use title as query summary
+						SessionID: dbSession.SessionID,
+						AgentMode: dbSession.AgentMode,
+						Status:    dbSession.Status,
+						CreatedAt: dbSession.CreatedAt,
+						Query:     dbSession.Title, // Use title as query summary
 					}
 					if dbSession.LastActivity != nil {
 						sessionInfo.LastActivity = *dbSession.LastActivity

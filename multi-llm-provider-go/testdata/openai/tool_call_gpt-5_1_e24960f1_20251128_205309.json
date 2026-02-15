@@ -1,0 +1,87 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-5.1",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:53:09.734928+05:30",
+  "request_hash": "e24960f1011fd167921bb8b6a3ae27cb34d38eb81d2b43b74eecfd5df0d8b769",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Use the read_file tool to read the contents of the file 'go.mod'. Make sure to provide the 'path' parameter with the value 'go.mod'."
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-5.1",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{\"path\":\"go.mod\"}",
+                "name": "read_file"
+              },
+              "id": "call_OJqck4AMVgUcPliNG2DS1kry",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1764343388,
+    "id": "chatcmpl-CgubMbyXo7ylSNUE3rELKNDWKepsl",
+    "model": "gpt-5.1-2025-11-13",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "",
+    "usage": {
+      "completion_tokens": 24,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 162,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 186
+    }
+  },
+  "chunk_count": 1
+}

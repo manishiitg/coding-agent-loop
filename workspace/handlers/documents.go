@@ -239,12 +239,10 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 					return nil
 				}
 				
-				if limit > 0 && count >= limit {
-					return filepath.SkipAll // Stop walking
-				}
+				// Don't limit root folder or count it
 				
 				documents = append(documents, doc)
-				count++
+				// count++ 
 			}
 			return nil
 		}
@@ -273,6 +271,19 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 		relPathFromDocs, err := filepath.Rel(docsDir, path)
 		if err != nil {
 			return nil // Skip files/folders that can't be relativized
+		}
+
+		// Apply pagination
+		if offset > 0 && skipped < offset {
+			skipped++
+			if info.IsDir() {
+				// Don't skip dir children just because the dir itself is skipped in pagination
+				// unless we are way past. But filepath.Walk is depth-first usually.
+				// Actually, if we skip a dir, we might skip its children if we return SkipDir.
+				// We should just return nil to continue walking but not add to result.
+				return nil 
+			}
+			return nil
 		}
 
 		if info.IsDir() {

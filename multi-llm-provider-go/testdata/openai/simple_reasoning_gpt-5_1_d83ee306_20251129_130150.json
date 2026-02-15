@@ -1,0 +1,72 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-5.1",
+  "test_name": "simple_reasoning",
+  "recorded_at": "2025-11-29T13:01:50.605552+05:30",
+  "request_hash": "d83ee306a248c9d574458e5485b23a9996659c6a40d3a73018d70857cbf90b15",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hi"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-5.1",
+    "options": {}
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "Hi there!  \n\nWhat would you like to work on or talk about today?",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": null
+        }
+      }
+    ],
+    "created": 1764401498,
+    "id": "chatcmpl-Ch9icmxGa4ODNMRFdTy2st4PeEz7X",
+    "model": "gpt-5.1-2025-11-13",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "",
+    "usage": {
+      "completion_tokens": 40,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 15,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 7,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 47
+    }
+  },
+  "chunk_count": 1
+}

@@ -1,0 +1,22 @@
+# Environment files with secrets
+.env
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Go workspace
+go.work
+go.work.sum
+
+# Generated files
+generated/
+
+# Cache
+cache/

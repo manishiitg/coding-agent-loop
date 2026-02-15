@@ -1,0 +1,30 @@
+# Cache directory - MCP server connection cache
+cache/
+
+# Generated code - auto-generated tool code
+generated/
+
+# Environment files
+.env
+.env.local
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+

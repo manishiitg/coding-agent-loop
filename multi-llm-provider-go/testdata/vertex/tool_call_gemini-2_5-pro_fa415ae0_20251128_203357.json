@@ -1,0 +1,225 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-pro",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:57.311739+05:30",
+  "request_hash": "fa415ae0132dabc064401e92df84b1d9892256a0d269aa51d8e8d9c6c8f071f6",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Get the weather in New York and also get the current time in UTC. Do both tasks."
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-pro",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "location": "New York"
+                  },
+                  "name": "get_weather"
+                },
+                "thoughtSignature": "CiQBcsjafFzzx58fd0yP86TaS/Zyb9/C/Vxj+4Szjvh8Jj/8w+MKcQFyyNp8NNQwj7DggHysrXT+Ge1tKPyaBYEY3/WpBtMyz1UZ+bNFAQLFcUuE41BdoOsa4aF6v5iGZ4siEtlyIPdv5IFsTeHj1+el3wzVeGadhFqRxfUF/YyQM0hrSEHa4kG9IrmHk11uRTndeWLCPNDZCoIBAXLI2nyNCLTavce57N9eAWv2OvbnESuK2NMQhsrNmD3lM9RZKvPdhgpeOpg/OFmy5Kxl54YhaJzJ5XHTD1vPc0SYeNqhf50dNtYsorA1HF3EaEubS56dioThRXr2TsdfTSkx+V5CxAI7QKS92Jluhkkjm7jgqd9A33K5fJqUJg0m3AqBAQFyyNp8jFJXcnkSewNOQTo292GtRb1f8l6Nk3wrVtolwGyPNJ9pZMPM2aDq4py8bG37ARuap2g5j3XZDy3fldx1aPfyHKuiIAAgvsf9wlNuP5aE1vglXXDi8eEO+9k+sBHrEABvGWl41L+03IrdswCM5z371U2bMGvm/chfD2ycsQqYAQFyyNp8sORui3wxFZuBVXnl11z6g9shZFvsRS2apWp0gGpKl5Z3ZT/4mGft1gtkEoA5ANpSlrYcZtVeLdZUaWHuFNqEiWDPdsztaVNPTi9XvI+hOoTGAoCbn0ZiYUZDUt7Bv96cyvRS13+aJNabibdvpnK276LF2YsppIiN0pL5eaEF8SZqXnPEVV27F6U7MQ0lVgo8oifrCnMBcsjafLcU6zb4QBuFmqD4aRVn6EgO+zJpAZwr0hdU/AyJWBhvPbiAzNtgvObaMxlI9VGrqAXiUzPWU4t8iDPVh2BqOUlHEJaqqM2F9E5naA8SjUvq1WTl58NbQRFolNMOmwpXo5koPmYMI7NZDAwslrjC"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "3LkpabbfB_CI4-EPsbH2sAg",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:57 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2005"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 16,
+        "promptTokenCount": 117,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 117
+          }
+        ],
+        "thoughtsTokenCount": 118,
+        "totalTokenCount": 251
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "timezone": "UTC"
+                  },
+                  "name": "get_current_time"
+                }
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "3LkpabbfB_CI4-EPsbH2sAg",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:57 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2005"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 33,
+        "promptTokenCount": 117,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 117
+          }
+        ],
+        "thoughtsTokenCount": 118,
+        "totalTokenCount": 268
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "3LkpabbfB_CI4-EPsbH2sAg",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:57 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=2005"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 33,
+        "promptTokenCount": 117,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 117
+          }
+        ],
+        "thoughtsTokenCount": 118,
+        "totalTokenCount": 268
+      }
+    }
+  ],
+  "chunk_count": 3
+}

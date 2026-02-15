@@ -252,7 +252,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
-  const useCodeExecutionMode = useMemo(() => tabConfig?.useCodeExecutionMode ?? false, [tabConfig?.useCodeExecutionMode])
   const useToolSearchMode = useMemo(() => tabConfig?.useToolSearchMode ?? false, [tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   const enableBrowserAccess = useMemo(() => tabConfig?.enableBrowserAccess ?? false, [tabConfig?.enableBrowserAccess])

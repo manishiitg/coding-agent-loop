@@ -1175,7 +1175,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
     const delegationData = data?.data || data
     const instruction = delegationData?.instruction || 'No instruction provided'
-    const depth = delegationData?.depth
     const delegationId = delegationData?.delegation_id
     const reasoningLevel = delegationData?.reasoning_level
     const modelId = delegationData?.model_id

@@ -2621,7 +2621,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }]
     }
 
-    let queryWithContext = effectiveFileContext.length > 0
+    const queryWithContext = effectiveFileContext.length > 0
       ? `${query.trim()}\n\n📁 Files in context: ${effectiveFileContext.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
 

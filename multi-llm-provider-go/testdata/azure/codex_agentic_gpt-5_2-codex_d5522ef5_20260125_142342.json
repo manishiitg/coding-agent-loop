@@ -1,0 +1,183 @@
+{
+  "provider": "azure",
+  "model_id": "gpt-5.2-codex",
+  "test_name": "codex_agentic",
+  "recorded_at": "2026-01-25T14:23:42.059772+05:30",
+  "request_hash": "d5522ef5b4de084570d9aecd40fb05e65044e5cad727f2aae83036f2f347a04b",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "I need to find where the 'recorder' logic is implemented in this repo. Please search the repository and then list the files in that directory using the terminal."
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-5.2-codex",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": {
+    "background": false,
+    "content_filters": [
+      {
+        "blocked": false,
+        "content_filter_offsets": {
+          "check_offset": 0,
+          "end_offset": 191,
+          "start_offset": 30
+        },
+        "content_filter_raw": null,
+        "content_filter_results": {
+          "hate": {
+            "filtered": false,
+            "severity": "safe"
+          },
+          "jailbreak": {
+            "detected": false,
+            "filtered": false
+          },
+          "self_harm": {
+            "filtered": false,
+            "severity": "safe"
+          },
+          "sexual": {
+            "filtered": false,
+            "severity": "safe"
+          },
+          "violence": {
+            "filtered": false,
+            "severity": "safe"
+          }
+        },
+        "source_type": "prompt"
+      },
+      {
+        "blocked": false,
+        "content_filter_offsets": {
+          "check_offset": 0,
+          "end_offset": 1151,
+          "start_offset": 0
+        },
+        "content_filter_raw": null,
+        "content_filter_results": {
+          "hate": {
+            "filtered": false,
+            "severity": "safe"
+          },
+          "protected_material_code": {
+            "detected": false,
+            "filtered": false
+          },
+          "protected_material_text": {
+            "detected": false,
+            "filtered": false
+          },
+          "self_harm": {
+            "filtered": false,
+            "severity": "safe"
+          },
+          "sexual": {
+            "filtered": false,
+            "severity": "safe"
+          },
+          "violence": {
+            "filtered": false,
+            "severity": "safe"
+          }
+        },
+        "source_type": "completion"
+      }
+    ],
+    "created_at": 1769331218,
+    "error": null,
+    "id": "resp_0c1c946530ee5aa5006975da12eef08196ae6b5d58fa57d338",
+    "incomplete_details": null,
+    "instructions": null,
+    "max_output_tokens": null,
+    "max_tool_calls": null,
+    "metadata": {},
+    "model": "gpt-5.2-codex",
+    "object": "response",
+    "output": [
+      {
+        "id": "rs_0c1c946530ee5aa5006975da1397588196a5a651e578af6b70",
+        "summary": [],
+        "type": "reasoning"
+      },
+      {
+        "arguments": "{}",
+        "call_id": "call_HNcGHuXSJe4ssT07FUpiapl7",
+        "id": "fc_0c1c946530ee5aa5006975da1537c0819692fe73a07a6df864",
+        "name": "search_repository",
+        "status": "completed",
+        "type": "function_call"
+      }
+    ],
+    "parallel_tool_calls": true,
+    "previous_response_id": null,
+    "prompt_cache_key": null,
+    "prompt_cache_retention": null,
+    "reasoning": {
+      "effort": "medium",
+      "summary": null
+    },
+    "safety_identifier": null,
+    "service_tier": "default",
+    "status": "completed",
+    "store": true,
+    "temperature": 1,
+    "text": {
+      "format": {
+        "type": "text"
+      },
+      "verbosity": "medium"
+    },
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "description": null,
+        "name": "search_repository",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "strict": true,
+        "type": "function"
+      },
+      {
+        "description": null,
+        "name": "execute_terminal_command",
+        "parameters": {
+          "additionalProperties": false,
+          "properties": {},
+          "required": [],
+          "type": "object"
+        },
+        "strict": true,
+        "type": "function"
+      }
+    ],
+    "top_logprobs": 0,
+    "top_p": 0.98,
+    "truncation": "disabled",
+    "usage": {
+      "input_tokens": 74,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 16,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 90
+    },
+    "user": null
+  },
+  "chunk_count": 1
+}

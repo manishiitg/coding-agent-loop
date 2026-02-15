@@ -112,6 +112,7 @@ export interface ChatTab {
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
   eventMode: 'basic' | 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
+  hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
   lastViewedEventCount: number  // @deprecated - use lastViewedEventCounts instead
@@ -348,6 +349,7 @@ interface ChatState extends StoreActions {
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
   setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny' | 'micro') => void
+  setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
   getTabStreamingStatus: (tabId: string) => boolean
@@ -963,6 +965,7 @@ export const useChatStore = create<ChatState>()(
           isCompleted: false,
           hasRunningBgAgents: false,
           eventMode: finalEventMode,
+          hideToolCalls: false,
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
@@ -1283,7 +1286,23 @@ export const useChatStore = create<ChatState>()(
           return updates
         })
       },
-      
+
+      setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              hideToolCalls
+            }
+          }
+        }))
+      },
+
       getTabConfig: (tabId: string) => {
         const state = get()
         const tab = state.chatTabs[tabId]
@@ -1685,6 +1704,7 @@ export const useChatStore = create<ChatState>()(
                 isCompleted: false,
                 hasRunningBgAgents: false,
                 eventMode: tab.eventMode, // Persist user preference
+                hideToolCalls: tab.hideToolCalls ?? false, // Persist user preference
                 config: tab.config, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)

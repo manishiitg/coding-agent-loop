@@ -61,10 +61,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
   }, []);
 
-  // Get active tab for sessionId and eventMode
+  // Get active tab for sessionId, eventMode, and hideToolCalls
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
   const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = eventModeProp || (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+  const hideToolCalls = activeTab?.hideToolCalls || false
   
   // Merge loaded older events with current events
   const displayEvents = useMemo(() => {
@@ -92,6 +93,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;
       return !toolName || !HIDDEN_DELEGATION_TOOLS.includes(toolName);
     });
+
+    // Filter out all tool call events when hideToolCalls toggle is on
+    if (hideToolCalls) {
+      const TOOL_CALL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
+      allEvents = allEvents.filter(event => !TOOL_CALL_EVENTS.includes(event.type || ''));
+    }
 
     // Filter out "Total Token Usage" and "Context Offloading" events in tiny/micro mode
     if (eventMode === 'tiny' || eventMode === 'micro') {
@@ -136,7 +143,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return sortedEvents.slice(-MAX_EVENTS_TO_PROCESS);
     }
     return sortedEvents;
-  }, [events, loadedOlderEvents, eventMode]);
+  }, [events, loadedOlderEvents, eventMode, hideToolCalls]);
   
   // Reset loaded older events when session or event mode changes
   useEffect(() => {

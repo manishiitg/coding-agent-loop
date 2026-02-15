@@ -80,7 +80,7 @@ export default function SecretsManagerModal({ onClose }: SecretsManagerModalProp
     try {
       const { value } = await secretsApi.decrypt(secret.encryptedValue);
       setEditValue(value);
-    } catch (err) {
+    } catch {
       setEditError('Failed to decrypt secret value');
     } finally {
       setEditLoading(false);

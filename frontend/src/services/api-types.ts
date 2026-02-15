@@ -106,6 +106,8 @@ export interface AgentQueryRequest {
   enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
+  // CDP port for connecting to an existing Chrome browser (local mode only)
+  cdp_port?: number
   // Context editing configuration
   enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
@@ -869,6 +871,7 @@ export interface CapabilitiesResponse {
     github_sync_enabled: boolean;
   };
   servers: string[];
+  local_mode?: boolean;
 }
 
 

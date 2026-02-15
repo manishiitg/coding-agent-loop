@@ -18,12 +18,17 @@ func CreateWorkspaceBrowserTools() []llmtypes.Tool {
 }
 
 // CreateWorkspaceBrowserToolExecutors creates the execution functions for workspace browser tools
-func CreateWorkspaceBrowserToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+// An optional cdpPort can be passed to connect to an existing Chrome via CDP instead of launching headless.
+func CreateWorkspaceBrowserToolExecutors(cdpPort ...int) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
 	// Wire up the browser executor from the pkg/browser package
 	browserClient := browser.NewClient(getWorkspaceAPIURL())
-	browserExecutor := browser.NewExecutor(browserClient)
+	var opts []browser.ExecutorOption
+	if len(cdpPort) > 0 && cdpPort[0] > 0 {
+		opts = append(opts, browser.WithCdpPort(cdpPort[0]))
+	}
+	browserExecutor := browser.NewExecutor(browserClient, opts...)
 	executors["agent_browser"] = browserExecutor.HandleAgentBrowser
 
 	return executors

@@ -225,6 +225,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Shell execution route
 		api.POST("/execute", handlers.ExecuteShellCommand)
 
+		// CDP connectivity check (used by frontend to verify Chrome is reachable from container)
+		api.GET("/cdp-check", handlers.CheckCdpConnection)
+
 		// Version management routes (separate from wildcard routes)
 		api.GET("/versions/*filepath", handlers.GetFileVersionHistory)
 		api.POST("/restore/*filepath", handlers.RestoreFileVersion)

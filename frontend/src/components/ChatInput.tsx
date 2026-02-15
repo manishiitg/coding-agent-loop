@@ -25,6 +25,7 @@ import WorkflowBuilderModal from './WorkflowBuilderModal'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
+import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
@@ -267,7 +268,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const useToolSearchMode = useMemo(() => tabConfig?.useToolSearchMode ?? false, [tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   const enableBrowserAccess = useMemo(() => tabConfig?.enableBrowserAccess ?? false, [tabConfig?.enableBrowserAccess])
-  
+  const useCdp = useMemo(() => tabConfig?.useCdp ?? false, [tabConfig?.useCdp])
+  const cdpPort = useMemo(() => tabConfig?.cdpPort ?? 9222, [tabConfig?.cdpPort])
+  const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false)
+  const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
+  const [cdpChecking, setCdpChecking] = useState(false)
+  const [showCdpPopup, setShowCdpPopup] = useState(false)
+
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
     if (activeTabId && activeTab) {
@@ -322,6 +329,43 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig(activeTabId, updates)
     }
   }, [activeTabId, setTabConfig, setWorkspaceMinimized])
+
+  const setUseCdp = useCallback((enabled: boolean) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { useCdp: enabled })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const setCdpPort = useCallback((port: number) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { cdpPort: port })
+    }
+  }, [activeTabId, setTabConfig])
+
+  const checkCdpConnection = useCallback(async (port: number) => {
+    setCdpChecking(true)
+    setCdpConnected(null)
+    try {
+      const result = await agentApi.checkCdpPort(port)
+      setCdpConnected(result.connected)
+    } catch {
+      setCdpConnected(false)
+    } finally {
+      setCdpChecking(false)
+    }
+  }, [])
+
+  // Auto-check CDP connection when CDP is toggled on or port changes
+  useEffect(() => {
+    if (!useCdp || !enableBrowserAccess) {
+      setCdpConnected(null)
+      return
+    }
+    const timer = setTimeout(() => {
+      checkCdpConnection(cdpPort)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [useCdp, cdpPort, enableBrowserAccess, checkCdpConnection])
 
   // Get preset info for chat mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
@@ -1846,19 +1890,188 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     {/* Browser Access Toggle - Icon Button with expand on hover */}
                     <button
                       type="button"
-                      onClick={() => setEnableBrowserAccess(!enableBrowserAccess)}
+                      onClick={() => {
+                        if (!enableBrowserAccess) {
+                          // Enabling browser: show CDP config popup
+                          setEnableBrowserAccess(true)
+                          setShowCdpPopup(true)
+                        } else {
+                          // Clicking again while enabled: re-open popup to change settings
+                          setShowCdpPopup(true)
+                        }
+                      }}
                       disabled={isStreaming || isSummarizing}
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
                         enableBrowserAccess
-                          ? 'bg-green-100 dark:bg-green-900/40 border-green-400 dark:border-green-600 text-green-600 dark:text-green-400'
-                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                          ? useCdp
+                            ? 'bg-green-900/40 border-green-600 text-green-400'
+                            : 'bg-blue-900/40 border-blue-600 text-blue-400'
+                          : 'bg-gray-800 border-gray-600 text-gray-500'
                       } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
                     >
                       <Globe className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
-                        Browser
-                      </span>
+                      {enableBrowserAccess ? (
+                        <span className={`text-[10px] font-semibold px-1 rounded ${
+                          useCdp
+                            ? 'bg-green-800 text-green-200'
+                            : 'bg-blue-800 text-blue-200'
+                        }`}>
+                          {useCdp ? 'CDP' : 'Headless'}
+                        </span>
+                      ) : (
+                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
+                          Browser
+                        </span>
+                      )}
                     </button>
+                  </div>
+                )}
+
+                {/* CDP Configuration Popup */}
+                {showCdpPopup && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowCdpPopup(false)}>
+                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[420px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+                      {/* Header */}
+                      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <Globe className="w-5 h-5 text-green-400" />
+                          <h3 className="text-base font-semibold text-white">Browser Access</h3>
+                        </div>
+                        <button onClick={() => setShowCdpPopup(false)} className="text-gray-400 hover:text-gray-200 transition-colors">
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      {/* Content */}
+                      <div className="px-5 py-4 space-y-4">
+                        {/* Mode selection */}
+                        <div className="space-y-3">
+                          {/* Headless mode option */}
+                          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            !useCdp
+                              ? 'border-blue-500 bg-blue-950/40'
+                              : 'border-gray-700 hover:bg-gray-800'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="browserMode"
+                              checked={!useCdp}
+                              onChange={() => setUseCdp(false)}
+                              className="mt-0.5 w-4 h-4 text-blue-500 accent-blue-500"
+                            />
+                            <div>
+                              <div className="text-sm font-medium text-gray-100">Headless Browser</div>
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                Agent controls a headless Chromium inside Docker. You won&apos;t see the browser window.
+                              </div>
+                            </div>
+                          </label>
+
+                          {/* CDP mode option */}
+                          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            useCdp
+                              ? 'border-green-500 bg-green-950/40'
+                              : 'border-gray-700 hover:bg-gray-800'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="browserMode"
+                              checked={useCdp}
+                              onChange={() => setUseCdp(true)}
+                              className="mt-0.5 w-4 h-4 text-green-500 accent-green-500"
+                            />
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-gray-100">Connect to Local Chrome (CDP)</div>
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                Agent connects to your real Chrome browser so you can watch it navigate in real-time.
+                              </div>
+                            </div>
+                          </label>
+                        </div>
+
+                        {/* CDP configuration - only when CDP is selected */}
+                        {useCdp && (
+                          <div className="space-y-3 p-3 rounded-lg bg-gray-800/60 border border-gray-700">
+                            {/* Port input */}
+                            <div className="flex items-center gap-3">
+                              <label className="text-sm text-gray-400 whitespace-nowrap">CDP Port:</label>
+                              <input
+                                type="number"
+                                value={cdpPort}
+                                onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
+                                className="w-24 px-2.5 py-1.5 text-sm border border-gray-600 rounded-md bg-gray-800 text-white focus:border-green-500 focus:outline-none"
+                                min={1}
+                                max={65535}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => checkCdpConnection(cdpPort)}
+                                disabled={cdpChecking}
+                                className="px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 rounded-md text-gray-200 disabled:opacity-50 transition-colors"
+                              >
+                                {cdpChecking ? 'Checking...' : 'Check Connection'}
+                              </button>
+                            </div>
+
+                            {/* Connection status */}
+                            <div className="flex items-start gap-2">
+                              {cdpChecking ? (
+                                <>
+                                  <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
+                                  <span className="text-sm text-yellow-400">Checking connection to port {cdpPort}...</span>
+                                </>
+                              ) : cdpConnected === true ? (
+                                <>
+                                  <div className="w-3 h-3 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
+                                  <span className="text-sm text-green-400">Connected! Chrome is reachable on port {cdpPort}.</span>
+                                </>
+                              ) : cdpConnected === false ? (
+                                <>
+                                  <div className="w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
+                                  <div className="text-sm">
+                                    <span className="text-red-400">Chrome is not reachable on port {cdpPort}.</span>
+                                    <div className="mt-2 text-xs text-gray-400 space-y-1">
+                                      <p className="font-medium text-gray-300">To enable CDP, launch Chrome with:</p>
+                                      <code className="block bg-gray-950 px-2 py-1.5 rounded text-xs font-mono break-all text-green-400 border border-gray-700">
+                                        {navigator.platform?.includes('Mac')
+                                          ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
+                                          : `google-chrome --remote-debugging-port=${cdpPort}`}
+                                      </code>
+                                      <p className="text-gray-500 mt-1">Close all Chrome windows first, then run the command above.</p>
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <span className="text-xs text-gray-500">Click &quot;Check Connection&quot; to verify Chrome is reachable.</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Footer */}
+                      <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-700">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEnableBrowserAccess(false)
+                            setUseCdp(false)
+                            setShowCdpPopup(false)
+                          }}
+                          className="px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors"
+                        >
+                          Disable Browser
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowCdpPopup(false)}
+                          disabled={useCdp && cdpConnected === false}
+                          className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {useCdp && cdpConnected === false ? 'Connect Chrome First' : 'Done'}
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 

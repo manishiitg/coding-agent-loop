@@ -34,6 +34,8 @@ services:
       # Semantic Search Configuration
       - WORKSPACE_ENABLE_SEMANTIC_SEARCH=${WORKSPACE_ENABLE_SEMANTIC_SEARCH:-false}
       - WORKSPACE_ENABLE_GITHUB_SYNC=${WORKSPACE_ENABLE_GITHUB_SYNC:-true}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./workspace-docs:/app/workspace-docs
       - workspace_data:/app/data

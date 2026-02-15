@@ -10,10 +10,11 @@ type FolderGuardConfig struct {
 
 // ShellExecuteRequest represents the request body for workspace-api /api/execute
 type ShellExecuteRequest struct {
-	Command     string             `json:"command"`
-	Args        []string           `json:"args,omitempty"`
-	Timeout     int                `json:"timeout,omitempty"`
-	FolderGuard *FolderGuardConfig `json:"folder_guard,omitempty"`
+	Command          string             `json:"command"`
+	WorkingDirectory string             `json:"working_directory"`
+	Args             []string           `json:"args,omitempty"`
+	Timeout          int                `json:"timeout,omitempty"`
+	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
 }
 
 // ShellExecuteResponse represents the response data from workspace-api /api/execute

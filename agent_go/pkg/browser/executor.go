@@ -3,21 +3,37 @@ package browser
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
+// ExecutorOption is a functional option for configuring an Executor
+type ExecutorOption func(*Executor)
+
+// WithCdpPort configures the executor to connect to an existing Chrome via CDP on the given port
+func WithCdpPort(port int) ExecutorOption {
+	return func(e *Executor) {
+		e.CdpPort = port
+	}
+}
+
 // Executor handles the execution of browser tool commands
 type Executor struct {
-	Client *Client
+	Client  *Client
+	CdpPort int // When > 0, connect to existing Chrome via CDP instead of launching headless
 }
 
 // NewExecutor creates a new browser executor
-func NewExecutor(client *Client) *Executor {
-	return &Executor{
+func NewExecutor(client *Client, opts ...ExecutorOption) *Executor {
+	e := &Executor{
 		Client: client,
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // HandleAgentBrowser executes the agent-browser CLI command
@@ -30,9 +46,18 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Build command arguments
 	var cmdArgs []string
 
-	// Add stealth options to avoid bot detection
-	cmdArgs = append(cmdArgs, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-	cmdArgs = append(cmdArgs, "--args", "--disable-blink-features=AutomationControlled")
+	// If CDP mode is enabled, connect to existing Chrome instead of launching headless
+	// agent-browser runs inside Docker, so we pass a full URL using host.docker.internal
+	// to reach Chrome on the host machine. Chrome rejects non-localhost Host headers,
+	// so we resolve host.docker.internal to its IP and use http://<ip>:<port>.
+	if e.CdpPort > 0 {
+		cdpURL := resolveCdpURL(e.CdpPort)
+		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
+	} else {
+		// Add stealth options to avoid bot detection (not needed for user's real Chrome)
+		cmdArgs = append(cmdArgs, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		cmdArgs = append(cmdArgs, "--args", "--disable-blink-features=AutomationControlled")
+	}
 
 	// Add session flag (required)
 	session, ok := args["session"].(string)
@@ -79,6 +104,21 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	return output, nil
+}
+
+// resolveCdpURL builds the CDP URL for agent-browser running inside Docker.
+// agent-browser executes inside the workspace Docker container, so "localhost"
+// refers to the container, not the host. We use host.docker.internal to reach
+// the host's Chrome. Chrome rejects non-IP Host headers, so we mark the URL
+// for runtime resolution in client.go (getent resolves hostname→IP inside container).
+// CDP_HOST env var overrides this (e.g. "localhost" when not using Docker).
+func resolveCdpURL(port int) string {
+	if host := os.Getenv("CDP_HOST"); host != "" {
+		return fmt.Sprintf("http://%s:%d", host, port)
+	}
+	// Use host.docker.internal — client.go will resolve this to an IP at runtime
+	// inside the container to avoid Chrome rejecting non-IP Host headers.
+	return fmt.Sprintf("http://host.docker.internal:%d", port)
 }
 
 // getTimeoutForCommand returns an appropriate timeout based on the command type

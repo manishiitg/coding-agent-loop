@@ -117,6 +117,9 @@ fi
 # Explicitly set single-user mode (no authentication required)
 export MULTI_USER_MODE="false"
 
+# Enable local mode (enables CDP browser connection and other local-only features)
+export LOCAL_MODE="true"
+
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
 

@@ -121,7 +121,7 @@ SENSITIVE_PATTERNS=(
 )
 SENSITIVE_FILES=""
 for pattern in "${SENSITIVE_PATTERNS[@]}"; do
-    MATCHES=$(git diff --cached --name-only -- "$pattern" 2>/dev/null || true)
+    MATCHES=$(git diff --cached --diff-filter=ACMR --name-only -- "$pattern" 2>/dev/null || true)
     if [ -n "$MATCHES" ]; then
         SENSITIVE_FILES="$SENSITIVE_FILES$MATCHES"$'\n'
     fi

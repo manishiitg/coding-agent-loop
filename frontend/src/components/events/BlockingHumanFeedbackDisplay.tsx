@@ -1,6 +1,9 @@
 import React, { useState } from 'react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 
+// Module-level cache: survives React remounts, resets on page reload
+const submittedFeedbackCache = new Map<string, string>()
+
 export interface BlockingHumanFeedbackEvent {
   question?: string
   allow_feedback?: boolean
@@ -33,10 +36,11 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   onFeedbackSubmitted,
   isApproving = false
 }) => {
+  const cachedValue = event.data.request_id ? submittedFeedbackCache.get(event.data.request_id) : undefined
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
-  const [hasSubmitted, setHasSubmitted] = useState(false)
-  const [submittedFeedback, setSubmittedFeedback] = useState<string>('')
+  const [hasSubmitted, setHasSubmitted] = useState(!!cachedValue)
+  const [submittedFeedback, setSubmittedFeedback] = useState<string>(cachedValue || '')
 
   // Use backend-provided content directly
   const question = event.data.question || 'Do you want to continue?'
@@ -58,6 +62,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       setIsSubmittingFeedback(true)
       try {
         await onSubmitFeedback(event.data.request_id, feedback.trim())
+        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, feedback.trim())
         setSubmittedFeedback(feedback.trim())
         setHasSubmitted(true)
         setFeedback('')
@@ -78,6 +83,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           await onSubmitFeedback(event.data.request_id, "Approve")
         }
         onApprove(event.data.request_id, { ...event.data, feedback: "Approve" })
+        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, yesLabel || "Approved")
         setSubmittedFeedback(yesLabel || "Approved")
         setHasSubmitted(true)
         triggerScrollCallback()
@@ -97,6 +103,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
           await onSubmitFeedback(event.data.request_id, "Reject")
         }
         onApprove(event.data.request_id, { ...event.data, feedback: "Reject" })
+        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, "Reject")
         setSubmittedFeedback("Reject")
         setHasSubmitted(true)
         triggerScrollCallback()
@@ -114,6 +121,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       try {
         const optionValue = `option${index}`
         await onSubmitFeedback(event.data.request_id, optionValue)
+        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, options[index] || optionValue)
         setSubmittedFeedback(options[index] || optionValue)
         setHasSubmitted(true)
         triggerScrollCallback()

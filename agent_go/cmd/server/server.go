@@ -812,6 +812,8 @@ type QueryRequest struct {
 	SelectedSubAgents []string `json:"selected_subagents,omitempty"` // Array of sub-agent template folder names
 	// Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, '' = disabled
 	DelegationMode string `json:"delegation_mode,omitempty"`
+	// Plan phase override: 'planning' = plan first (default), 'execution' = skip planning and execute directly
+	PlanPhase string `json:"plan_phase,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -2846,14 +2848,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW EXECUTION] Temp override LLM 2 not provided (disabled or not set) - will clear existing override")
 				}
 
-				// Convert TempOverrideLLM2 if present
-				if req.ExecutionOptions.TempOverrideLLM2 != nil {
-					controllerOpts.TempOverrideLLM2 = &todo_creation_human.AgentLLMConfig{
-						Provider: req.ExecutionOptions.TempOverrideLLM2.Provider,
-						ModelID:  req.ExecutionOptions.TempOverrideLLM2.ModelID,
-					}
-				}
-
 				// Convert TempLearningLLM if present
 				if req.ExecutionOptions.TempLearningLLM != nil {
 					controllerOpts.TempLearningLLM = &todo_creation_human.AgentLLMConfig{
@@ -4053,15 +4047,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Add delegation instructions based on mode
 			if req.DelegationMode == "plan" {
-				// Plan mode: plan→approve→execute with async background agents
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetPlanWithBackgroundAgentsInstructions())
+				if req.PlanPhase == "execution" {
+					// Execution-only mode: skip planning, use spawn-style delegation with exec override
+					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
+					log.Printf("[DELEGATION] Added execution-only instructions to system prompt (mode: plan, phase: execution)")
+				} else {
+					// Plan mode: plan→approve→execute with async background agents
+					underlyingAgent.AppendSystemPrompt(virtualtools.GetPlanWithBackgroundAgentsInstructions())
+					log.Printf("[DELEGATION] Added plan+background agent instructions to system prompt (mode: plan)")
+				}
 				// Inject custom tier descriptions into system prompt so the manager knows about them
 				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
 					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
 						underlyingAgent.AppendSystemPrompt(tierSection)
 					}
 				}
-				log.Printf("[DELEGATION] Added plan+background agent instructions to system prompt (mode: plan)")
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
 				// Inject custom tier descriptions into system prompt so the manager knows about them

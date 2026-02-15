@@ -114,6 +114,8 @@ export interface AgentQueryRequest {
   selected_subagents?: string[] // Array of sub-agent template folder names
   // Delegation mode: 'spawn' = simple delegate only, 'plan' = plan-driven + delegate, undefined/absent = disabled
   delegation_mode?: 'spawn' | 'plan'
+  // Plan phase override: 'planning' = plan first (default), 'execution' = skip planning and execute directly
+  plan_phase?: 'planning' | 'execution'
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs
   delegation_tier_config?: DelegationTierConfig
   // Decrypted secrets to pass to backend (injected into agent system prompt, never in query text)

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest, EvaluationPlan } from '../services/api-types'
+import type { AgentConfigs } from '../utils/stepConfigMatching'
 import { ExecutionStrategy } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
@@ -136,6 +137,9 @@ interface WorkflowStore {
   evaluationStepProgress: StepProgress | null
   isLoadingEvaluationPlan: boolean
 
+  // Global step override (from step_override.json - applies to all steps)
+  stepOverride: AgentConfigs | null
+
   // === ACTIONS ===
   // Constants
   loadPhases: () => Promise<void>
@@ -226,6 +230,9 @@ interface WorkflowStore {
   getTabStreamingStatus: (tabId: string) => boolean
   // Check if tab has completion events
   checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => boolean
+
+  // Global step override
+  setStepOverride: (override: AgentConfigs | null) => void
 
   // Workflow Mode Actions
   setWorkflowMode: (mode: 'plan' | 'eval') => void
@@ -489,6 +496,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
       evaluationPlan: null,
       evaluationStepProgress: null,
       isLoadingEvaluationPlan: false,
+
+      // Global step override
+      stepOverride: null,
 
       // === Actions ===
 
@@ -1886,6 +1896,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return events.some(event => 
           event.type && completionEventTypes.includes(event.type)
         )
+      },
+
+      // Global step override
+      setStepOverride: (override: AgentConfigs | null) => {
+        set({ stepOverride: override })
       },
 
       // Workflow Mode Actions

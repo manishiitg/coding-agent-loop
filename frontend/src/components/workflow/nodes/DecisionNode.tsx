@@ -4,6 +4,7 @@ import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, T
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
+import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useAppStore } from '../../../stores'
 import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
 import { agentApi } from '../../../services/api'
@@ -101,6 +102,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     : null
 
   const { availableLLMs } = useLLMStore()
+  const stepOverride = useWorkflowStore(state => state.stepOverride)
 
   // Get step config (agent_configs) - for DecisionStep, check inner decision_step first, then outer step
   // The inner decision_step contains the actual execution configs
@@ -127,37 +129,43 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   // Prefer inner step configs (where the actual execution happens), fall back to outer step
   const stepConfig = innerStep?.agent_configs ? innerStep : outerStep
 
-  // Determine code execution mode: step config > preset default
+  // Determine code execution mode: override > step config > preset default
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
+  const overrideCodeExec = stepOverride?.use_code_execution_mode
   const stepCodeExecSetting = stepConfig?.agent_configs?.use_code_execution_mode
-  const useCodeExecutionMode = stepCodeExecSetting !== undefined 
-    ? stepCodeExecSetting === true
-    : presetUseCodeExecutionMode
+  const useCodeExecutionMode = overrideCodeExec !== undefined
+    ? overrideCodeExec === true
+    : stepCodeExecSetting !== undefined
+      ? stepCodeExecSetting === true
+      : presetUseCodeExecutionMode
 
   // Get preset's default tool search mode
   const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
-  
-  // Determine tool search mode: Priority - step config > preset default (matching backend logic)
-  // Only use step-specific if it's EXPLICITLY set (not undefined)
-  const stepToolSearchSetting = stepConfig?.agent_configs?.use_tool_search_mode
-  const useToolSearchMode = stepToolSearchSetting !== undefined 
-    ? stepToolSearchSetting === true  // Step has explicit setting
-    : presetUseToolSearchMode         // Fall back to preset default
 
-  // Execution LLM: step config > preset execution_llm > preset default
+  // Determine tool search mode: override > step config > preset default
+  const overrideToolSearch = stepOverride?.use_tool_search_mode
+  const stepToolSearchSetting = stepConfig?.agent_configs?.use_tool_search_mode
+  const useToolSearchMode = overrideToolSearch !== undefined
+    ? overrideToolSearch === true
+    : stepToolSearchSetting !== undefined
+      ? stepToolSearchSetting === true
+      : presetUseToolSearchMode
+
+  // Execution LLM: global override > step config > preset execution_llm > preset default
   const executionLLM = useMemo(() => {
     const presetLLMConfig = activePreset?.llmConfig
+    const overrideLLMConfig = stepOverride?.execution_llm
     const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
     const presetExecutionLLM = presetLLMConfig?.execution_llm
-    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
-    
-    const llmConfig = stepLLMConfig || presetExecutionLLM || presetDefaultLLM
+
+    const llmConfig = overrideLLMConfig || stepLLMConfig || presetExecutionLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
-    
+
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
+  }, [stepOverride?.execution_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
   // Conditional LLM (for evaluation): step config > execution LLM > preset default
   const conditionalLLM = useMemo(() => {
@@ -175,67 +183,78 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [stepConfig?.agent_configs?.conditional_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning LLM: step config > preset learning_llm > preset default
+  // Learning disabled: override > step config
+  const learningDisabled = useMemo(() => {
+    if (stepOverride?.disable_learning !== undefined) return stepOverride.disable_learning === true
+    return stepConfig?.agent_configs?.disable_learning === true
+  }, [stepOverride?.disable_learning, stepConfig?.agent_configs?.disable_learning])
+
+  // Learning LLM: override > step config > preset learning_llm > preset default
   const learningLLM = useMemo(() => {
-    if (stepConfig?.agent_configs?.disable_learning === true) {
-      return null
-    }
-    
+    if (learningDisabled) return null
+
     const presetLLMConfig = activePreset?.llmConfig
+    const overrideLLMConfig = stepOverride?.learning_llm
     const stepLLMConfig = stepConfig?.agent_configs?.learning_llm
     const presetLearningLLM = presetLLMConfig?.learning_llm
-    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id 
+    const presetDefaultLLM = presetLLMConfig?.provider && presetLLMConfig?.model_id
       ? { provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id } : null
-    
-    const llmConfig = stepLLMConfig || presetLearningLLM || presetDefaultLLM
+
+    const llmConfig = overrideLLMConfig || stepLLMConfig || presetLearningLLM || presetDefaultLLM
     if (!llmConfig?.provider || !llmConfig?.model_id) return null
-    
+
     const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
-  }, [stepConfig?.agent_configs?.learning_llm, stepConfig?.agent_configs?.disable_learning, activePreset?.llmConfig, availableLLMs])
+  }, [learningDisabled, stepOverride?.learning_llm, stepConfig?.agent_configs?.learning_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level (defaults to 'exact', but 'exact' in code exec mode)
+  // Learning detail level: override > step config (defaults to 'exact', but 'exact' in code exec mode)
   const learningDetailLevel = useMemo(() => {
-    if (stepConfig?.agent_configs?.disable_learning === true) {
-      return null
-    }
-    if (useCodeExecutionMode) {
-      return 'exact'
-    }
-    return stepConfig?.agent_configs?.learning_detail_level || 'exact'
-  }, [stepConfig?.agent_configs?.learning_detail_level, stepConfig?.agent_configs?.disable_learning, useCodeExecutionMode])
+    if (learningDisabled) return null
+    if (useCodeExecutionMode) return 'exact'
+    return stepOverride?.learning_detail_level || stepConfig?.agent_configs?.learning_detail_level || 'exact'
+  }, [learningDisabled, useCodeExecutionMode, stepOverride?.learning_detail_level, stepConfig?.agent_configs?.learning_detail_level])
 
-  // Lock learnings - check step config only (backend uses step.ID for lock check)
+  // Lock learnings: override > step config
   const lockLearnings = useMemo(() => {
-    // Show lock icon based on config flag alone (matching StepNode behavior)
-    return stepConfig?.agent_configs?.lock_learnings === true && stepConfig?.agent_configs?.disable_learning !== true
-  }, [stepConfig?.agent_configs?.lock_learnings, stepConfig?.agent_configs?.disable_learning])
+    const locked = stepOverride?.lock_learnings !== undefined
+      ? stepOverride.lock_learnings === true
+      : stepConfig?.agent_configs?.lock_learnings === true
+    return locked && !learningDisabled
+  }, [stepOverride?.lock_learnings, stepConfig?.agent_configs?.lock_learnings, learningDisabled])
 
-  // Execution max turns (defaults to 100)
+  // Execution max turns: override > step config (defaults to 100)
   const executionMaxTurns = useMemo(() => {
-    return stepConfig?.agent_configs?.execution_max_turns || 100
-  }, [stepConfig?.agent_configs?.execution_max_turns])
+    return stepOverride?.execution_max_turns || stepConfig?.agent_configs?.execution_max_turns || 100
+  }, [stepOverride?.execution_max_turns, stepConfig?.agent_configs?.execution_max_turns])
 
-  // MCP Servers: step config > preset
+  // MCP Servers: override > step config > preset
   const presetServers = useMemo(() => activePreset?.selectedServers || [], [activePreset?.selectedServers])
+  const overrideServers = stepOverride?.selected_servers
   const stepServers = stepConfig?.agent_configs?.selected_servers
   const effectiveServers = useMemo(() => {
+    if (overrideServers !== undefined && overrideServers !== null) {
+      return overrideServers.filter(s => s !== 'NO_SERVERS')
+    }
     if (stepServers !== undefined && stepServers !== null) {
       return stepServers.filter(s => s !== 'NO_SERVERS')
     }
     return presetServers
-  }, [stepServers, presetServers])
+  }, [overrideServers, stepServers, presetServers])
 
-  // Tools: step config > preset
+  // Tools: override > step config > preset
   const presetTools = useMemo(() => activePreset?.selectedTools || [], [activePreset?.selectedTools])
+  const overrideTools = stepOverride?.selected_tools
   const effectiveTools = useMemo(() => {
     if (effectiveServers.length === 0) {
       return []
     }
-    return stepConfig?.agent_configs?.selected_tools?.length 
-      ? stepConfig.agent_configs.selected_tools 
+    if (overrideTools !== undefined && overrideTools !== null && overrideTools.length > 0) {
+      return overrideTools
+    }
+    return stepConfig?.agent_configs?.selected_tools?.length
+      ? stepConfig.agent_configs.selected_tools
       : presetTools
-  }, [effectiveServers.length, stepConfig?.agent_configs?.selected_tools, presetTools])
+  }, [effectiveServers.length, overrideTools, stepConfig?.agent_configs?.selected_tools, presetTools])
 
   // Group tools by server
   const toolsDisplayInfo = useMemo(() => {
@@ -279,7 +298,9 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
 
   const hasWorkspaceTools = workspaceToolsInfo.enabled > 0
   const hasHumanTools = humanToolsInfo.enabled > 0
-  const hasLargeOutput = stepConfig?.agent_configs?.enable_context_offloading !== false
+  const hasLargeOutput = (stepOverride?.enable_context_offloading !== undefined
+    ? stepOverride.enable_context_offloading
+    : stepConfig?.agent_configs?.enable_context_offloading) !== false
 
   // Button states
   const isRunDisabled = isExecuting || !onRunFromStep

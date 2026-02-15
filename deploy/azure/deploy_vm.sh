@@ -2,7 +2,7 @@
 
 # Deployment script for Azure VM
 # Usage: ./deploy_vm.sh <vm-ip-or-hostname> [services]
-# Example: ./deploy_vm.sh 20.240.10.50 all
+# Example: ./deploy_vm.sh 20.91.186.189 all
 
 set -e
 

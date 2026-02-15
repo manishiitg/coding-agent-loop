@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // This prevents duplicate API calls when multiple components use usePlanData
@@ -167,8 +168,15 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [changes, setChanges] = useState<PlanChanges | null>(null)
-  const [stepOverride, setStepOverride] = useState<AgentConfigs | null>(null)
-  
+  const [stepOverride, setStepOverrideLocal] = useState<AgentConfigs | null>(null)
+  const setStepOverrideInStore = useWorkflowStore(state => state.setStepOverride)
+
+  // Sync stepOverride to both local state and workflow store
+  const setStepOverride = useCallback((override: AgentConfigs | null) => {
+    setStepOverrideLocal(override)
+    setStepOverrideInStore(override)
+  }, [setStepOverrideInStore])
+
   // Track workspace path to detect workflow switches
   const currentWorkspaceRef = useRef<string | null>(null)
 

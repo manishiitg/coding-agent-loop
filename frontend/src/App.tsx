@@ -4,7 +4,7 @@ import { ThemeProvider } from "./contexts/ThemeContext.tsx";
 import WorkspaceSidebar from "./components/WorkspaceSidebar";
 import Workspace from "./components/Workspace.tsx";
 import ChatArea, { type ChatAreaRef } from "./components/ChatArea.tsx";
-import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
+import { MarkdownRenderer, MermaidDiagram } from "./components/ui/MarkdownRenderer";
 import { CsvRenderer } from "./components/ui/CsvRenderer";
 import { XlsxRenderer } from "./components/ui/XlsxRenderer";
 import { DocxRenderer } from "./components/ui/DocxRenderer";
@@ -1394,6 +1394,21 @@ function App() {
                           // DOCX files (binary)
                           if (filePath.endsWith('.docx') && binaryFileData) {
                             return <DocxRenderer data={binaryFileData} />
+                          }
+
+                          // Mermaid diagram files (.mmd, .mermaid)
+                          if (filePath.endsWith('.mmd') || filePath.endsWith('.mermaid')) {
+                            return (
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                                  <span className="font-medium">Mermaid Diagram</span>
+                                  <span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 px-2 py-1 rounded font-mono">
+                                    {selectedFile?.path?.split('.').pop()}
+                                  </span>
+                                </div>
+                                <MermaidDiagram content={fileContent} />
+                              </div>
+                            )
                           }
 
                           // Check for JSON files

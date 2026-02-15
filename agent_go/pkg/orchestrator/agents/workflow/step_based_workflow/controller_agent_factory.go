@@ -402,21 +402,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	stepPath string,
 	learningsFolderEmpty bool,
 ) *orchestrator.LLMConfig {
-	// DIRECT SUB-AGENT LLM OVERRIDE: Check for sub_agent_llm from context first (works in both tiered and manual modes)
-	if subAgentLLM, ok := ctx.Value(virtualtools.SubAgentLLMContextKey).(*AgentLLMConfig); ok &&
-		subAgentLLM != nil && subAgentLLM.Provider != "" && subAgentLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🎯 [DIRECT] Execution agent using direct sub_agent_llm override for step %s: %s/%s",
-			stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: subAgentLLM.Provider,
-				ModelID:  subAgentLLM.ModelID,
-			},
-			APIKeys: hcpo.GetAPIKeys(),
-		}
-	}
+	// Check if dynamic tier selection is enabled for this step
+	dynamicTierEnabled := stepConfig != nil && stepConfig.EnableDynamicTierSelection != nil && *stepConfig.EnableDynamicTierSelection
 
-	// TIERED MODE: Bypass all manual selection logic
+	// TIERED MODE (takes precedence when dynamic tier selection is enabled):
+	// When enabled, preferred_tier from the orchestrator's tool call determines the LLM,
+	// so sub_agent_llm direct override is skipped.
 	if hcpo.useTieredMode && hcpo.tierResolver != nil {
 		// Check for preferred tier override from sub-agent tool context
 		if preferredTier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && preferredTier >= 1 && preferredTier <= 3 {
@@ -436,6 +427,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
 		}
 		return llmConfig
+	}
+
+	// DIRECT SUB-AGENT LLM OVERRIDE: Use sub_agent_llm from context if set
+	// Skipped when dynamic tier selection is enabled (tier system takes precedence)
+	if subAgentLLM, ok := ctx.Value(virtualtools.SubAgentLLMContextKey).(*AgentLLMConfig); ok &&
+		subAgentLLM != nil && subAgentLLM.Provider != "" && subAgentLLM.ModelID != "" {
+		if dynamicTierEnabled {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] sub_agent_llm (%s/%s) skipped for step %s because enable_dynamic_tier_selection is true",
+				subAgentLLM.Provider, subAgentLLM.ModelID, stepPath))
+		} else {
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 [DIRECT] Execution agent using direct sub_agent_llm override for step %s: %s/%s",
+				stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
+			return &orchestrator.LLMConfig{
+				Primary: orchestrator.LLMModel{
+					Provider: subAgentLLM.Provider,
+					ModelID:  subAgentLLM.ModelID,
+				},
+				APIKeys: hcpo.GetAPIKeys(),
+			}
+		}
 	}
 
 	orchestratorLLMConfig := hcpo.GetLLMConfig()

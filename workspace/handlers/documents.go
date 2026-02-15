@@ -275,23 +275,6 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 			return nil // Skip files/folders that can't be relativized
 		}
 
-		// Apply pagination
-		if offset > 0 && skipped < offset {
-			skipped++
-			if info.IsDir() {
-				// Don't skip dir children just because the dir itself is skipped in pagination
-				// unless we are way past. But filepath.Walk is depth-first usually.
-				// Actually, if we skip a dir, we might skip its children if we return SkipDir.
-				// We should just return nil to continue walking but not add to result.
-				return nil 
-			}
-			return nil
-		}
-
-		if limit > 0 && count >= limit {
-			return filepath.SkipAll // Stop walking
-		}
-
 		if info.IsDir() {
 			// This is a folder - add it to the list
 			doc := models.Document{
@@ -299,8 +282,13 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 				Type:     "folder", // Mark as folder
 			}
 			documents = append(documents, doc)
-			count++
+			// Don't count folders towards the limit to ensure full tree structure
 		} else {
+			// Check file limit before adding
+			if limit > 0 && count >= limit {
+				return nil // Skip this file, but continue walking to find folders
+			}
+
 			// This is a file - include all files regardless of type
 			// For listing, we don't read file content to improve performance
 			// Content is only read when using read_workspace_file tool

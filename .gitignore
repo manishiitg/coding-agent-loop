@@ -103,7 +103,7 @@ gcp-oauth.keys.json
 
 .claude/
 
-Downloads/*
+**/Downloads/*
 Workflow/*
 agent_go/Workflow/
 

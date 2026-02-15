@@ -373,7 +373,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	protectedFolders := []string{"_users"}
 
 	// Build the list of allowed write folders (default: Chats/ - user's workspace)
-	allowedWriteFolders := []string{"Chats/"}
+	allowedWriteFolders := []string{"Chats/", "Plans/"}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
 	// For shell sandboxing, pass all allowed write folders

@@ -25,7 +25,7 @@ variable "admin_username" {
 variable "vm_size" {
   description = "Size of the VM"
   type        = string
-  default     = "Standard_D4s_v3" # 4 vCPU, 16 GB RAM
+  default     = "Standard_D2s_v3" # 2 vCPU, 8 GB RAM
 }
 
 variable "ssh_public_key" {

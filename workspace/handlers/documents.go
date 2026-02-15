@@ -497,7 +497,8 @@ func ListDocuments(c *gin.Context) {
 	}
 
 	// Use recursive function to get all documents with max depth
-	documents, err := getAllDocumentsRecursively(searchPath, logicalDocsDir, req.MaxDepth, req.Limit, req.Offset)
+	// Force unlimited files (limit=-1) and no offset (offset=0) to ensure full tree structure is returned for the UI
+	documents, err := getAllDocumentsRecursively(searchPath, logicalDocsDir, req.MaxDepth, -1, 0)
 	if err != nil {
 		// Check if error is due to directory not existing
 		if os.IsNotExist(err) {

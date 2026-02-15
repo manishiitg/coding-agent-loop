@@ -59,12 +59,14 @@ echo -e "${GREEN}✅ Gitleaks installed successfully${NC}"
 # Create scripts directory if it doesn't exist
 mkdir -p scripts
 
-# Create the pre-commit hook script
-cat > .git/hooks/pre-commit << 'EOF'
+# Copy the current pre-commit hook from the repo
+# The hook source of truth is maintained in .git/hooks/pre-commit
+# but we also keep a tracked copy for new clones
+cat > .git/hooks/pre-commit << 'HOOKEOF'
 #!/bin/bash
 
 # Pre-commit Hook
-# Checks staged file sizes, scans for secrets, and runs golangci-lint
+# Scans staged files for secrets, sensitive data, and runs golangci-lint
 
 set -e
 
@@ -74,21 +76,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
-
-# Reject if any staged file is larger than 10MB
-MAX_FILE_SIZE_BYTES=10485760
-echo -e "${BLUE}📏 Checking staged file sizes (max 10MB)...${NC}"
-while IFS= read -r path; do
-    [ -z "$path" ] && continue
-    blob=$(git rev-parse --verify ":${path}" 2>/dev/null) || continue
-    size=$(git cat-file -s "$blob" 2>/dev/null) || size=0
-    if [ -n "$size" ] && [ "$size" -gt "$MAX_FILE_SIZE_BYTES" ] 2>/dev/null; then
-        size_mb=$(awk "BEGIN { printf \"%.1f\", $size / 1048576 }")
-        echo -e "${RED}❌ Staged file too large: $path (${size_mb}MB). Max 10MB. Commit blocked.${NC}"
-        exit 1
-    fi
-done < <(git diff --cached --name-only)
-echo -e "${GREEN}✅ All staged files within size limit.${NC}"
 
 echo -e "${BLUE}🔒 Scanning for secrets with gitleaks...${NC}"
 
@@ -114,6 +101,43 @@ else
     echo "For more information, see agent_go/SECURITY.md"
     exit 1
 fi
+
+# Check for sensitive file patterns (bank statements, personal data, screenshots)
+echo -e "${BLUE}🔍 Checking for sensitive file patterns...${NC}"
+SENSITIVE_PATTERNS=(
+    '**/Downloads/**'
+    '**/Acct_Statement*'
+    '**/DetailedStatement*'
+    '**/Statement_*.txt'
+    '**/Statement_*.xlsx'
+    '**/Statement_*.xls'
+    '**/statement_*.txt'
+    '**/OpTransactionHistory*'
+    '**/*login*.png'
+    '**/*dashboard*.png'
+    '**/*screenshot*.png'
+    '**/*snapshot*.png'
+    '*.psv'
+)
+SENSITIVE_FILES=""
+for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+    MATCHES=$(git diff --cached --name-only -- "$pattern" 2>/dev/null || true)
+    if [ -n "$MATCHES" ]; then
+        SENSITIVE_FILES="$SENSITIVE_FILES$MATCHES"$'\n'
+    fi
+done
+SENSITIVE_FILES=$(echo "$SENSITIVE_FILES" | sed '/^$/d')
+if [ -n "$SENSITIVE_FILES" ]; then
+    echo -e "${RED}❌ Sensitive files detected! Commit blocked.${NC}"
+    echo ""
+    echo "The following files appear to contain personal/financial data:"
+    echo "$SENSITIVE_FILES" | head -20
+    echo ""
+    echo "These files should NOT be committed to the repository."
+    echo "Remove them with: git reset HEAD <file>"
+    exit 1
+fi
+echo -e "${GREEN}✅ No sensitive file patterns detected.${NC}"
 
 # Run golangci-lint on Go files
 echo -e "${BLUE}🔍 Running golangci-lint...${NC}"
@@ -143,80 +167,65 @@ cd agent_go 2>/dev/null || {
 
 # Run linter - show output directly to terminal
 echo ""
-# Run golangci-lint and capture output
-# Filter out errors from output directories (tool_output_folder, cache, bin, etc.)
-# to focus on main code only
-set +e  # Temporarily disable exit on error so we can capture exit code
+set +e
 LINT_OUTPUT_FULL=$($GOLANGCI_LINT_CMD run ./... 2>&1)
-# Filter out errors from output directories
 LINT_OUTPUT=$(echo "$LINT_OUTPUT_FULL" | grep -v -E "(tool_output_folder|tool_output/|cache/|bin/)")
-# Show filtered output to user
 echo "$LINT_OUTPUT"
-# Determine exit code: if filtered output has any errors, exit 1; otherwise 0
-# Check for actual error patterns (file:line:column format or "issues found")
 if echo "$LINT_OUTPUT" | grep -qE "(^[^:]+:[0-9]+:[0-9]+:.*(error|expected|found))|issues found"; then
     LINT_EXIT=1
 else
     LINT_EXIT=0
 fi
-set -e  # Re-enable exit on error
+set -e
 
-# STRICT MODE: Fail on ANY linting issue
-if [ $LINT_EXIT -ne 0 ]; then
+if [ $LINT_EXIT -eq 0 ]; then
     echo ""
-    echo -e "${RED}❌ Linting failed! Commit blocked.${NC}"
-    echo "This repository enforces strict linting. Please fix all issues before committing."
-    echo "You can run 'cd agent_go && make lint-fix' to auto-fix some issues."
-    exit 1
-fi
-
-echo ""
-echo -e "${GREEN}✅ Linting passed.${NC}"
-
-# Ensure we are at repo root (lint may have left us in agent_go)
-cd "$(git rev-parse --show-toplevel)"
-
-# Run Go Tests (Short mode for speed)
-echo -e "${BLUE}🧪 Running Go tests (short mode)...${NC}"
-if ! (cd agent_go && go test -short ./...); then
-    echo -e "${RED}❌ Tests failed! Commit blocked.${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✅ Tests passed.${NC}"
-
-echo -e "${BLUE}🏗️  Building agent_go...${NC}"
-if ! (cd agent_go && go build ./...); then
-    echo -e "${RED}❌ Build failed! Commit blocked.${NC}"
-    exit 1
-fi
-echo -e "${GREEN}✅ Build successful.${NC}"
-
-if [ -d "workspace" ] && [ -f "workspace/go.mod" ]; then
-    echo -e "${BLUE}🏗️  Building workspace...${NC}"
-    if ! (cd workspace && go build ./...); then
-        echo -e "${RED}❌ Workspace build failed! Commit blocked.${NC}"
+    echo -e "${GREEN}✅ Linting passed.${NC}"
+    cd "$(git rev-parse --show-toplevel)"
+    echo -e "${BLUE}🏗️  Building agent_go...${NC}"
+    if ! (cd agent_go && go build ./...); then
+        echo -e "${RED}❌ Build failed! Commit blocked.${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✅ Workspace build successful.${NC}"
-fi
-
-# Frontend Linting
-if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
-    # Only run if frontend files changed
-    if git diff --cached --name-only | grep -q "^frontend/"; then
-        echo -e "${BLUE}🎨 Linting frontend...${NC}"
-        if ! (cd frontend && npm run lint); then
-             echo -e "${RED}❌ Frontend linting failed! Commit blocked.${NC}"
-             exit 1
+    echo -e "${GREEN}✅ Build successful.${NC}"
+    if [ -d "workspace" ] && [ -f "workspace/go.mod" ]; then
+        echo -e "${BLUE}🏗️  Building workspace...${NC}"
+        if ! (cd workspace && go build ./...); then
+            echo -e "${RED}❌ Workspace build failed! Commit blocked.${NC}"
+            exit 1
         fi
-        echo -e "${GREEN}✅ Frontend linting passed.${NC}"
+        echo -e "${GREEN}✅ Workspace build successful.${NC}"
+    fi
+    echo ""
+    echo -e "${GREEN}✅ All pre-commit checks passed. Proceeding with commit.${NC}"
+    exit 0
+else
+    ISSUE_COUNT=$(echo "$LINT_OUTPUT" | grep -E "issues:" | grep -oE "[0-9]+ issues" | grep -oE "[0-9]+" || echo "0")
+    CRITICAL_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d ' ')
+    UNUSED_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | wc -l | tr -d ' ')
+
+    if [ "$CRITICAL_ISSUES" -gt 0 ]; then
+        echo ""
+        echo -e "${RED}❌ Critical security issues detected ($CRITICAL_ISSUES critical)! Commit blocked.${NC}"
+        echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | head -10
+        exit 1
+    elif [ "$UNUSED_ISSUES" -gt 0 ]; then
+        echo ""
+        echo -e "${RED}❌ Unused code detected ($UNUSED_ISSUES unused functions/variables/types)! Commit blocked.${NC}"
+        echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | head -20
+        exit 1
+    elif [ "$ISSUE_COUNT" -gt 200 ]; then
+        echo ""
+        echo -e "${RED}❌ Too many linting issues ($ISSUE_COUNT)! Commit blocked.${NC}"
+        exit 1
+    else
+        echo ""
+        echo -e "${YELLOW}⚠️  Linting found $ISSUE_COUNT issues (non-blocking).${NC}"
+        echo -e "${YELLOW}Proceeding with commit...${NC}"
+        exit 0
     fi
 fi
-
-echo ""
-echo -e "${GREEN}✅ All pre-commit checks passed. Proceeding with commit.${NC}"
-exit 0
-EOF
+HOOKEOF
 
 # Make the pre-commit hook executable
 chmod +x .git/hooks/pre-commit

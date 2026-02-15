@@ -2151,6 +2151,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())
+	log.Printf("[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	// Create or get chat session for this query
 	// The agent will modify the session ID to agent-init-{sessionID}-{timestamp}
@@ -3605,6 +3606,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithUserID(currentUserID)
+				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q", currentUserID)
 				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (advanced only)
 
 				// Extract @context file paths for additional write access
@@ -4192,6 +4194,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Inject user ID into the agent context for per-user folder isolation
 		// This allows workspace tools to route per-user folders correctly
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
+		log.Printf("[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q into agentCtx", currentUserID)
 
 		// Store the cancel function for potential cancellation
 		api.agentCancelMux.Lock()
@@ -5417,6 +5420,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
 		subAgentUserID = userID
 	}
+	log.Printf("[USER_ID_DEBUGGING] Sub-agent: subAgentUserID=%q (from parent context UserIDKey)", subAgentUserID)
 
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
@@ -5696,6 +5700,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// Sub-agents get advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 			workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithUserID(subAgentUserID)
+			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q", subAgentUserID)
 			_, _, toolCategories := createCustomTools(false)
 
 			// Check for skill-creator
@@ -6032,6 +6037,7 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	// Pass user ID for per-user OAuth
 	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {
 		bgCtx = context.WithValue(bgCtx, common.UserIDKey, userID)
+		log.Printf("[USER_ID_DEBUGGING] Background agent: copied UserIDKey=%q to bgCtx", userID)
 	}
 
 	bgAgent := &BackgroundAgent{

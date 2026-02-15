@@ -1,8 +1,11 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"path"
+	"sort"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/skills"
@@ -216,4 +219,283 @@ You can ONLY write/create/modify files in the "subagents/custom/" folder.
 Use this access to create and update custom sub-agent templates.
 `
 	return instructions
+}
+
+// buildWorkflowContextPrompt builds rich context about selected workflows for injection into chat system prompt.
+// Modeled after the plan improvement agent's comprehensive context (see plan_opt_improvement_agent.go).
+// Includes full plan.json, step config, variables, execution history with step-level detail,
+// file location guide with step naming conventions, and learnings.
+func buildWorkflowContextPrompt(paths []string, workspaceAPIURL string) string {
+	if len(paths) == 0 || workspaceAPIURL == "" {
+		return ""
+	}
+
+	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
+	var sections []string
+
+	sections = append(sections, "\n## Workflow Context\n\nThe following workflow(s) have been selected for this conversation. Use the information below to answer questions about workflow structure, execution history, and debugging.\n")
+
+	for _, wsPath := range paths {
+		section := buildSingleWorkflowContext(client, wsPath)
+		if section != "" {
+			sections = append(sections, section)
+		}
+	}
+
+	if len(sections) <= 1 {
+		return "" // No workflow context was actually built
+	}
+
+	return strings.Join(sections, "\n")
+}
+
+// buildSingleWorkflowContext builds comprehensive context for a single workflow path
+func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string) string {
+	var parts []string
+	workflowName := path.Base(wsPath)
+
+	parts = append(parts, fmt.Sprintf("### Workflow: %s\n", workflowName))
+	parts = append(parts, fmt.Sprintf("**Workspace Path:** `%s/`\n", wsPath))
+
+	// 1. Full plan.json content (not a summary — the agent needs the real data)
+	planContent := readFileContent(client, path.Join(wsPath, "planning", "plan.json"))
+	if planContent != "" {
+		parts = append(parts, "**Current Plan (plan.json):**")
+		parts = append(parts, "```json")
+		parts = append(parts, planContent)
+		parts = append(parts, "```")
+		parts = append(parts, "")
+	}
+
+	// 2. Step config (per-step LLM, tool, and mode settings)
+	stepConfig := readFileContent(client, path.Join(wsPath, "planning", "step_config.json"))
+	if stepConfig != "" {
+		parts = append(parts, "**Step Config (step_config.json):**")
+		parts = append(parts, "```json")
+		parts = append(parts, stepConfig)
+		parts = append(parts, "```")
+		parts = append(parts, "")
+	}
+
+	// 3. Variables
+	varsSummary := buildVariablesSummary(client, wsPath)
+	if varsSummary != "" {
+		parts = append(parts, "**Variables:**")
+		parts = append(parts, varsSummary)
+		parts = append(parts, "")
+	}
+
+	// 4. Execution history with step-level detail
+	execSummary := buildExecutionSummary(client, wsPath)
+	if execSummary != "" {
+		parts = append(parts, "**Execution History:**")
+		parts = append(parts, execSummary)
+		parts = append(parts, "")
+	}
+
+	// 5. Learnings overview
+	learningsSummary := buildLearningsSummary(client, wsPath)
+	if learningsSummary != "" {
+		parts = append(parts, "**Learnings:**")
+		parts = append(parts, learningsSummary)
+		parts = append(parts, "")
+	}
+
+	// 6. File locations guide (matching plan improvement agent's detail level)
+	parts = append(parts, fmt.Sprintf(`**File Locations:**
+- Plan file: `+"`%s/planning/plan.json`"+`
+- Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tool, and mode settings
+- Variables: `+"`%s/variables/variables.json`"+`
+- Learnings: `+"`%s/learnings/`"+` and `+"`%s/learnings/{step_id}/`"+`
+- Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
+- Runs: `+"`%s/runs/`"+`
+- Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+
+	// 7. Step folder naming conventions and log file guide
+	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**
+- Regular steps: `+"`step-{X}/`"+` (X = 1-based step number)
+- Conditional branches: `+"`step-{X}-if-true-{idx}/`"+`, `+"`step-{X}-if-false-{idx}/`"+`
+- Decision steps: `+"`step-{X}-decision/`"+`
+- Sub-agents (orchestration/todo_task): `+"`step-{X}-sub-agent-{idx}/`"+`
+- Generic agents (todo_task only): `+"`step-{X}-generic-agent-{idx}/`"+`
+
+**Key Log Files Per Step:**
+- All steps: `+"`logs/step-X/validation-{N}.json`"+` (validation attempts), `+"`logs/step-X/execution/execution-attempt-{A}-iteration-{I}.json`"+` (execution result)
+- Full LLM conversation: `+"`logs/step-X/execution/execution-attempt-{A}-iteration-{I}-conversation.json`"+`
+- Conditional: `+"`logs/step-X/conditional-evaluation.json`"+` — condition_result, condition_reason, branch_executed
+- Decision: `+"`logs/step-X/decision-evaluation.json`"+` — decision_result, decision_reasoning, routing targets
+- Orchestration/TodoTask: `+"`logs/step-X/orchestration-execution.json`"+` (JSONL, one line per iteration)
+- TodoTask progress: `+"`execution/step-X/tasks.md`"+` — markdown task list with checkbox progress
+- Steps done: `+"`execution/steps_done.json`"+` — which steps completed, branch decisions, retry counts
+
+**How to Investigate:**
+- Read plan: `+"`read_file`"+` on `+"`{path}/planning/plan.json`"+`
+- Check step output: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/execution/step-{N}_*.json`"+`
+- Check step logs: `+"`list_files`"+` on `+"`{path}/runs/{iteration}/logs/step-{N}/`"+`
+- Check progress: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/execution/steps_done.json`"+`
+- Check learnings: `+"`list_files`"+` on `+"`{path}/learnings/`"+`
+- All paths are relative to the workspace root (working_directory: ".")
+`)
+
+	return strings.Join(parts, "\n")
+}
+
+// readFileContent reads a file and returns its content, or empty string on error
+func readFileContent(client *skills.WorkspaceAPIClient, filePath string) string {
+	content, err := client.ReadFile(filePath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(content)
+}
+
+// variableEntry represents a variable in variables.json
+type variableEntry struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+	Group string `json:"group"`
+}
+
+// variablesManifest represents the full variables.json structure
+type variablesManifest struct {
+	Variables []variableEntry `json:"variables"`
+	Groups    []struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	} `json:"groups"`
+}
+
+// buildVariablesSummary reads variables.json and summarizes
+func buildVariablesSummary(client *skills.WorkspaceAPIClient, wsPath string) string {
+	varsPath := path.Join(wsPath, "variables", "variables.json")
+	content, err := client.ReadFile(varsPath)
+	if err != nil {
+		return "" // Variables are optional
+	}
+
+	var manifest variablesManifest
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return ""
+	}
+
+	var lines []string
+	for _, v := range manifest.Variables {
+		preview := v.Value
+		if len(preview) > 80 {
+			preview = preview[:80] + "..."
+		}
+		groupStr := ""
+		if v.Group != "" {
+			groupStr = fmt.Sprintf(" (group: %s)", v.Group)
+		}
+		lines = append(lines, fmt.Sprintf("- {{%s}}: %s%s", v.Name, preview, groupStr))
+	}
+
+	if len(manifest.Groups) > 0 {
+		var groupDescs []string
+		for _, g := range manifest.Groups {
+			status := "disabled"
+			if g.Enabled {
+				status = "enabled"
+			}
+			groupDescs = append(groupDescs, fmt.Sprintf("%s (%s)", g.Name, status))
+		}
+		lines = append(lines, fmt.Sprintf("Groups: %s", strings.Join(groupDescs, ", ")))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// buildExecutionSummary lists iteration folders with step-level progress detail
+func buildExecutionSummary(client *skills.WorkspaceAPIClient, wsPath string) string {
+	runsPath := path.Join(wsPath, "runs")
+	entries, err := client.ListFiles(runsPath)
+	if err != nil {
+		return "" // No runs yet
+	}
+
+	// Filter to iteration folders
+	var iterations []string
+	for _, entry := range entries {
+		if entry.Type == "folder" {
+			iterations = append(iterations, entry.Filepath)
+		}
+	}
+
+	if len(iterations) == 0 {
+		return ""
+	}
+
+	// Sort iterations to show latest last
+	sort.Strings(iterations)
+
+	var lines []string
+	for _, iterPath := range iterations {
+		iterName := path.Base(iterPath)
+		progress := getIterationProgress(client, iterPath)
+		lines = append(lines, fmt.Sprintf("- %s: %s", iterName, progress))
+	}
+
+	// For the latest iteration, show detailed steps_done.json content
+	latestIter := iterations[len(iterations)-1]
+	stepsDoneContent := readFileContent(client, path.Join(latestIter, "execution", "steps_done.json"))
+	if stepsDoneContent != "" {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("Latest run (%s) steps_done.json:", path.Base(latestIter)))
+		lines = append(lines, "```json")
+		lines = append(lines, stepsDoneContent)
+		lines = append(lines, "```")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// getIterationProgress reads steps_done.json to determine progress
+func getIterationProgress(client *skills.WorkspaceAPIClient, iterPath string) string {
+	// Try execution/steps_done.json first (standard location)
+	doneFile := path.Join(iterPath, "execution", "steps_done.json")
+	content, err := client.ReadFile(doneFile)
+	if err != nil {
+		// Try root-level steps_done.json as fallback
+		doneFile = path.Join(iterPath, "steps_done.json")
+		content, err = client.ReadFile(doneFile)
+		if err != nil {
+			return "no progress data"
+		}
+	}
+
+	// steps_done.json is typically an array of completed step objects
+	var stepsDone []json.RawMessage
+	if err := json.Unmarshal([]byte(content), &stepsDone); err != nil {
+		return "unable to parse progress"
+	}
+
+	return fmt.Sprintf("%d steps completed", len(stepsDone))
+}
+
+// buildLearningsSummary lists which steps have learnings
+func buildLearningsSummary(client *skills.WorkspaceAPIClient, wsPath string) string {
+	learningsPath := path.Join(wsPath, "learnings")
+	entries, err := client.ListFiles(learningsPath)
+	if err != nil {
+		return "" // No learnings yet
+	}
+
+	if len(entries) == 0 {
+		return "No learnings recorded yet."
+	}
+
+	var lines []string
+	for _, entry := range entries {
+		name := path.Base(entry.Filepath)
+		if entry.Type == "folder" {
+			lines = append(lines, fmt.Sprintf("- `learnings/%s/` (step-specific learnings)", name))
+		} else {
+			lines = append(lines, fmt.Sprintf("- `learnings/%s` (shared learning)", name))
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }

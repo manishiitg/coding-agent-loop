@@ -27,3 +27,15 @@ func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context,
 	)
 	return workspace.NewAdvancedExecutor(client)
 }
+
+// CreateWorkspaceAdvancedToolExecutorsWithUserID creates workspace advanced tool executors
+// with an explicit user ID set on the client, ensuring per-user folder isolation
+// even if the context doesn't carry the user ID.
+func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	client := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithUserID(userID),
+	)
+	return workspace.NewAdvancedExecutor(client)
+}

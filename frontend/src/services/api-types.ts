@@ -120,6 +120,8 @@ export interface AgentQueryRequest {
   decrypted_secrets?: Array<{ name: string; value: string }>
   // Selected global secret names to include (if omitted, all global secrets are included)
   selected_global_secrets?: string[]
+  // Workspace paths of workflows to inject context for (via # selector in chat)
+  workflow_context_paths?: string[]
 }
 
 // Delegation tier configuration for multi-LLM support

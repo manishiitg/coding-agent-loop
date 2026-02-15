@@ -25,12 +25,12 @@ func setupTestDocsDir(t *testing.T) (string, func()) {
 
 	// Create _users/default/ per-user folders with content
 	for _, folder := range utils.PerUserFolders {
-		dir := filepath.Join(docsDir, utils.UsersDirectory, utils.DefaultUserID, folder)
+		dir := filepath.Join(docsDir, utils.UsersDirectory, utils.GetDefaultUserID(), folder)
 		os.MkdirAll(dir, 0755)
 	}
 	// Add files to default user's Chats
 	os.WriteFile(
-		filepath.Join(docsDir, utils.UsersDirectory, utils.DefaultUserID, "Chats", "session1.json"),
+		filepath.Join(docsDir, utils.UsersDirectory, utils.GetDefaultUserID(), "Chats", "session1.json"),
 		[]byte(`{"id":"s1"}`), 0644,
 	)
 
@@ -50,7 +50,7 @@ func setupTestDocsDir(t *testing.T) (string, func()) {
 
 	// Create per-user symlinks for default user
 	for _, folder := range utils.PerUserFolders {
-		target := filepath.Join(utils.UsersDirectory, utils.DefaultUserID, folder)
+		target := filepath.Join(utils.UsersDirectory, utils.GetDefaultUserID(), folder)
 		os.Symlink(target, filepath.Join(docsDir, folder))
 	}
 
@@ -122,7 +122,7 @@ func TestRootListingFiltersUsersDirectory(t *testing.T) {
 	defer cleanup()
 	router := setupRouter(docsDir)
 
-	resp := listDocs(t, router, "", utils.DefaultUserID)
+	resp := listDocs(t, router, "", utils.GetDefaultUserID())
 	paths := collectFilePaths(resp.Data)
 
 	// _users/ should NOT appear in root listing
@@ -148,7 +148,7 @@ func TestRootListingWithDotFolder(t *testing.T) {
 	defer cleanup()
 	router := setupRouter(docsDir)
 
-	resp := listDocs(t, router, ".", utils.DefaultUserID)
+	resp := listDocs(t, router, ".", utils.GetDefaultUserID())
 	paths := collectFilePaths(resp.Data)
 
 	// folder=. should behave the same as empty folder (root listing)
@@ -165,7 +165,7 @@ func TestPerUserFolderIsolation(t *testing.T) {
 	router := setupRouter(docsDir)
 
 	t.Run("DefaultUserSeesOwnChats", func(t *testing.T) {
-		resp := listDocs(t, router, "Chats", utils.DefaultUserID)
+		resp := listDocs(t, router, "Chats", utils.GetDefaultUserID())
 		paths := collectFilePaths(resp.Data)
 		t.Logf("Default user Chats/ paths: %v", paths)
 
@@ -202,7 +202,7 @@ func TestSharedFoldersSameForAllUsers(t *testing.T) {
 	defer cleanup()
 	router := setupRouter(docsDir)
 
-	resp1 := listDocs(t, router, "skills", utils.DefaultUserID)
+	resp1 := listDocs(t, router, "skills", utils.GetDefaultUserID())
 	resp2 := listDocs(t, router, "skills", "user2")
 
 	paths1 := collectFilePaths(resp1.Data)

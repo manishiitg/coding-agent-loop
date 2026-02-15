@@ -19,9 +19,9 @@ data:
   # Vertex/Gemini - two models; first is default
   VERTEX_PRIMARY_MODEL: "gemini-3-flash-preview"
   VERTEX_AVAILABLE_MODELS: "gemini-3-flash-preview,gemini-3-pro-preview"
-  # LLM lock: only Vertex; user can choose Flash or Pro from the two below
-  SUPPORTED_LLM_PROVIDERS: "vertex"
-  LLM_CONFIG_LOCKED: "true"
+  # LLM lock: per-provider; vertex locked (admin key), openrouter unlocked (user provides key)
+  SUPPORTED_LLM_PROVIDERS: "vertex,openrouter"
+  LLM_CONFIG_LOCKED: "vertex"
   # Default published LLMs (first = default). User selection is honored when locked if in this list.
   DEFAULT_PUBLISHED_LLMS: '[{"id":"default-gemini-flash","name":"Gemini 3 Flash Preview","provider":"vertex","model_id":"gemini-3-flash-preview"},{"id":"default-gemini-pro","name":"Gemini 3 Pro Preview","provider":"vertex","model_id":"gemini-3-pro-preview"}]'
   # MCP lock: users cannot add/edit/remove MCP servers; only use pre-configured servers from mcp_config.json
@@ -40,7 +40,7 @@ data:
   # Set to "false" (default) for single-user mode (no login required)
   MULTI_USER_MODE: "true"
   # Default user ID for single-user mode (ignored when MULTI_USER_MODE=true)
-  DEFAULT_USER_ID: "default-user"
+  DEFAULT_USER_ID: "default"
   # Hardcoded users (format: user1:password1,user2:password2)
   # When set, registration is disabled and only these users can login
   # AUTH_USERS: "admin:changeme,user1:secret123"

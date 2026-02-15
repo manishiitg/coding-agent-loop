@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // IsValidFilePath validates that the file path is safe and within the docs directory
@@ -72,8 +73,24 @@ var SharedFolders = []string{"skills", "Workflow"}
 // UsersDirectory is the directory under which per-user folders are stored
 const UsersDirectory = "_users"
 
-// DefaultUserID is used for single-user mode or when no user ID is provided
-const DefaultUserID = "default"
+// defaultUserID is the resolved default user ID (lazy-initialized from env)
+var (
+	defaultUserID     string
+	defaultUserIDOnce sync.Once
+)
+
+// GetDefaultUserID returns the default user ID, reading from DEFAULT_USER_ID
+// env var if set, otherwise falling back to "default".
+func GetDefaultUserID() string {
+	defaultUserIDOnce.Do(func() {
+		if id := os.Getenv("DEFAULT_USER_ID"); id != "" {
+			defaultUserID = id
+		} else {
+			defaultUserID = "default"
+		}
+	})
+	return defaultUserID
+}
 
 // validUserIDRegex matches allowed user ID characters (alphanumeric, hyphens, underscores)
 var validUserIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -93,7 +110,7 @@ func IsValidUserID(userID string) bool {
 // SanitizeUserID returns a sanitized user ID or the default user ID if invalid
 func SanitizeUserID(userID string) string {
 	if userID == "" || !IsValidUserID(userID) {
-		return DefaultUserID
+		return GetDefaultUserID()
 	}
 	return userID
 }
@@ -302,7 +319,7 @@ func MigratePerUserFolders(docsDir string) (int, error) {
 		}
 
 		// Create destination path under /_users/default/
-		destFolderPath := filepath.Join(docsDir, UsersDirectory, DefaultUserID, folder)
+		destFolderPath := filepath.Join(docsDir, UsersDirectory, GetDefaultUserID(), folder)
 
 		// Create parent directory
 		if err := os.MkdirAll(filepath.Dir(destFolderPath), 0755); err != nil {
@@ -334,12 +351,12 @@ func MigratePerUserFolders(docsDir string) (int, error) {
 			}
 		}
 
-		fmt.Printf("Migrated per-user folder '%s' to /_users/%s/%s\n", folder, DefaultUserID, folder)
+		fmt.Printf("Migrated per-user folder '%s' to /_users/%s/%s\n", folder, GetDefaultUserID(), folder)
 		migratedCount++
 	}
 
 	// Ensure the default user directories exist (creates empty folders for non-migrated ones)
-	if err := EnsureUserDirectories(docsDir, DefaultUserID); err != nil {
+	if err := EnsureUserDirectories(docsDir, GetDefaultUserID()); err != nil {
 		return migratedCount, fmt.Errorf("failed to ensure user directories: %w", err)
 	}
 

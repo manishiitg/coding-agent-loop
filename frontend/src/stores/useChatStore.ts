@@ -93,6 +93,8 @@ export interface ChatTabConfig {
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
+  useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
+  cdpPort?: number  // CDP port (default 9222)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
   workflowContext: Array<{
     presetId: string

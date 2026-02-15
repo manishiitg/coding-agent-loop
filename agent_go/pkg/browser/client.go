@@ -48,10 +48,19 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 	}
 	fullCommand := "agent-browser " + strings.Join(quotedArgs, " ")
 
+	// If the command references host.docker.internal, wrap with IP resolution.
+	// Chrome rejects HTTP requests with non-IP/non-localhost Host headers, so we
+	// resolve host.docker.internal to its IP at runtime inside the Docker container.
+	if strings.Contains(fullCommand, "host.docker.internal") {
+		fullCommand = `HOST_IP=$(getent hosts host.docker.internal 2>/dev/null | awk '{print $1}' || echo 'localhost') && ` +
+			strings.ReplaceAll(fullCommand, "host.docker.internal", "${HOST_IP}")
+	}
+
 	// Prepare request body
 	reqBody := ShellExecuteRequest{
-		Command: fullCommand,
-		Timeout: int(timeout.Seconds()),
+		Command:          fullCommand,
+		WorkingDirectory: ".",
+		Timeout:          int(timeout.Seconds()),
 	}
 
 	if opts != nil && opts.FolderGuard != nil {

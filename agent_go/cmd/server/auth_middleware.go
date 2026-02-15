@@ -46,6 +46,12 @@ func IsMultiUserMode() bool {
 	return os.Getenv("MULTI_USER_MODE") == "true"
 }
 
+// IsLocalMode returns true if LOCAL_MODE environment variable is set to "true".
+// When local mode is enabled, features like CDP browser connection are available.
+func IsLocalMode() bool {
+	return os.Getenv("LOCAL_MODE") == "true"
+}
+
 // IsHardcodedUserMode returns true if AUTH_USERS environment variable is set
 // When hardcoded users are configured, registration is disabled
 func IsHardcodedUserMode() bool {

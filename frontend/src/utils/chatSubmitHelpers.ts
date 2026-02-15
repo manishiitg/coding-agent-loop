@@ -155,6 +155,11 @@ export function buildQueryRequestPayload(params: {
     enable_browser_access: isChatLikeMode
       ? (currentTab?.config?.enableBrowserAccess ?? false)
       : undefined,
+    cdp_port: isChatLikeMode
+      && (currentTab?.config?.enableBrowserAccess ?? false)
+      && (currentTab?.config?.useCdp ?? false)
+      ? (currentTab?.config?.cdpPort || 9222)
+      : undefined,
     delegation_mode: isMultiAgentMode
       ? 'plan' as const
       : (isChatMode && useAppStore.getState().delegationMode !== 'off'

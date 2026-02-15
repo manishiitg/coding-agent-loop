@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	_ "net/http/pprof" // Register pprof handlers
@@ -806,6 +807,8 @@ type QueryRequest struct {
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
 	// Browser automation access configuration
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
+	// CDP port for connecting to an existing Chrome browser (local mode only)
+	CdpPort *int `json:"cdp_port,omitempty"` // When set and > 0, connect to Chrome via CDP on this port instead of launching headless
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
 	// Selected sub-agent templates to make available for delegation
@@ -826,6 +829,14 @@ type QueryRequest struct {
 
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
+}
+
+// getCdpPort returns the CDP port from a QueryRequest, or 0 if not set
+func getCdpPort(req QueryRequest) int {
+	if req.CdpPort != nil {
+		return *req.CdpPort
+	}
+	return 0
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1165,6 +1176,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	                apiRouter.HandleFunc("/chat/stream", api.handleQuery).Methods("POST", "OPTIONS")
 	                apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
+	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
@@ -1694,7 +1706,43 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 			"semantic_search_enabled": workspace.IsSemanticSearchEnabled(),
 			"github_sync_enabled":     workspace.IsGitSyncEnabled(),
 		},
-		"servers": []string{},
+		"servers":    []string{},
+		"local_mode": IsLocalMode(),
+	})
+}
+
+// handleCdpCheck checks if a CDP port is reachable on localhost
+func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	portStr := r.URL.Query().Get("port")
+	if portStr == "" {
+		portStr = "9222"
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": false,
+			"error":     "invalid port number",
+		})
+		return
+	}
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+	if err != nil {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": false,
+		})
+		return
+	}
+	conn.Close()
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"connected": true,
 	})
 }
 
@@ -2559,7 +2607,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// Add browser tools to the available tools pool
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(req))
 
 					allTools = append(allTools, browserTools...)
 					for name, executor := range browserExecutors {
@@ -3710,7 +3758,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Register browser tool if browser access is enabled
 				if enableBrowserAccess {
 					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(req))
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
@@ -4204,7 +4252,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelFuncs[sessionID] = agentCancel
 		api.agentCancelMux.Unlock()
 
-		// Merge global secrets with user-supplied secrets, then inject into chat query
+		// Merge global secrets with user-supplied secrets, then inject into system prompt (not user message)
 		chatQuery := req.Query
 		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allChatSecrets) > 0 {
@@ -4212,8 +4260,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			for _, s := range allChatSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			chatQuery = chatQuery + "\n\n🔐 Secrets:\n" + strings.Join(secretParts, "\n")
-			log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into chat query", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. Use them as needed:\n\n" + strings.Join(secretParts, "\n")
+			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+				underlyingAgent.AppendSystemPrompt(secretPrompt)
+				log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into system prompt", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
+			}
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
@@ -5798,7 +5849,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// Register browser tools if enabled
 			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors()
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(parentReq))
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 				browserExtraFolders := []string{}

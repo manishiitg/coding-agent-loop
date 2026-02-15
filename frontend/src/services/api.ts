@@ -372,6 +372,12 @@ export const agentApi = {
     return response.data
   },
 
+  // CDP Port Check — goes through workspace API (Docker container) since
+  // that's where agent-browser actually runs and needs to reach Chrome
+  checkCdpPort: async (port: number): Promise<{ connected: boolean }> => {
+    const response = await workspaceApi.get(`/api/cdp-check?port=${port}`)
+    return response.data
+  },
 
   // LLM Guidance Management
   // Set LLM guidance for a session

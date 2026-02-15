@@ -14,6 +14,7 @@ interface CapabilitiesState {
   // Helpers
   isSemanticSearchEnabled: () => boolean
   isGitSyncEnabled: () => boolean
+  isLocalMode: () => boolean
 }
 
 export const useCapabilitiesStore = create<CapabilitiesState>()(
@@ -43,6 +44,10 @@ export const useCapabilitiesStore = create<CapabilitiesState>()(
 
       isGitSyncEnabled: () => {
         return get().capabilities?.workspace?.github_sync_enabled ?? false
+      },
+
+      isLocalMode: () => {
+        return get().capabilities?.local_mode ?? false
       }
     }),
     { name: 'capabilities-store' }

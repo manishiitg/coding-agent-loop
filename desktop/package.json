@@ -1,0 +1,46 @@
+{
+  "name": "mcp-agent-builder-desktop",
+  "version": "0.1.0",
+  "description": "Standalone Mac app for mcp-agent-builder-go",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "npx electron .",
+    "build": "electron-builder --mac --dir",
+    "dist": "electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.mcp-agent-builder.desktop",
+    "productName": "MCP Agent Builder",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
+    },
+    "extraResources": [
+      {
+        "from": "resources/agent-server",
+        "to": "agent-server"
+      },
+      {
+        "from": "resources/workspace-server",
+        "to": "workspace-server"
+      },
+      {
+        "from": "../agent_go/configs",
+        "to": "configs"
+      },
+      {
+        "from": "../agent_go/static",
+        "to": "static"
+      }
+    ],
+    "files": ["main.js", "preload.js"]
+  },
+  "dependencies": {
+    "detect-port": "^1.5.1"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

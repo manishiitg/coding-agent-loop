@@ -1,0 +1,5 @@
+node_modules/
+dist/
+resources/agent-server
+resources/workspace-server
+*.log

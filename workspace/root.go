@@ -97,14 +97,12 @@ Use this for:
 
 func initResync() {
 	// Add flags
-	resyncCmd.Flags().String("docs-dir", "/app/workspace-docs", "Directory containing documents")
 	resyncCmd.Flags().String("qdrant-url", "http://localhost:6333", "Qdrant server URL")
 	resyncCmd.Flags().String("openai-model", "text-embedding-3-small", "OpenAI embedding model")
 	resyncCmd.Flags().Bool("dry-run", false, "Show what would be done without actually doing it")
 	resyncCmd.Flags().Bool("force", false, "Force re-sync even if services are not available")
 
 	// Bind flags to viper
-	viper.BindPFlag("docs-dir", resyncCmd.Flags().Lookup("docs-dir"))
 	viper.BindPFlag("qdrant-url", resyncCmd.Flags().Lookup("qdrant-url"))
 	viper.BindPFlag("openai-model", resyncCmd.Flags().Lookup("openai-model"))
 	viper.BindPFlag("dry-run", resyncCmd.Flags().Lookup("dry-run"))

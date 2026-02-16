@@ -165,6 +165,9 @@ export function buildQueryRequestPayload(params: {
       : (isChatMode && useAppStore.getState().delegationMode !== 'off'
         ? useAppStore.getState().delegationMode as 'spawn'
         : undefined),
+    plan_phase: isMultiAgentMode && currentTab?.config?.planPhaseOverride
+      ? currentTab.config.planPhaseOverride
+      : undefined,
     delegation_tier_config: isMultiAgentMode
       ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)
       : undefined,

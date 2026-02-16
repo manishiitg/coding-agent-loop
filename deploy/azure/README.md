@@ -42,20 +42,39 @@ terraform apply -var="ssh_public_key=$(cat ~/.ssh/mcp_azure_key.pub)"
 
 Use the unified deployment script to build images, push to ACR, configure the VM, and start services.
 
+### Required Environment Variables
+
+Before deploying, you must set `ACR_PASSWORD` so the VM can pull images from ACR:
+
+```bash
+# Get ACR password (choose one method):
+# Method 1: From Azure CLI
+export ACR_PASSWORD=$(az acr credential show -n mcpagentacr --query "passwords[0].value" -o tsv)
+
+# Method 2: Set manually if you have it saved
+export ACR_PASSWORD="your-acr-password"
+```
+
+### Run the Deploy Script
+
 ```bash
 cd deploy/azure
 
 # Syntax: ./deploy_vm.sh <VM_IP_OR_HOSTNAME> [service]
 # Deploy everything:
 ./deploy_vm.sh <VM_IP_ADDRESS> all
+
+# Deploy only specific services (faster):
+./deploy_vm.sh <VM_IP_ADDRESS> agent
+./deploy_vm.sh <VM_IP_ADDRESS> frontend
 ```
 
 The script will:
-1.  **Build** Docker images for Agent, Workspace, and Frontend.
+1.  **Build** Docker images for Agent, Workspace, and Frontend (locally via Docker, cross-compiled for `linux/amd64`).
 2.  **Push** them to your Azure Container Registry (ACR).
 3.  **SSH** into the VM.
 4.  **Copy** `docker-compose.vm.yml` and `Caddyfile`.
-5.  **Pull** images and **Start** containers.
+5.  **Pull** images (using `ACR_PASSWORD` for authentication) and **Start** containers.
 
 ## SSH Key Management
 

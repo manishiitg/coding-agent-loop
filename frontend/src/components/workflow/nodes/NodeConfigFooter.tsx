@@ -1,5 +1,6 @@
 import { memo, useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
+import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 interface ToolsDisplayInfo {
   server: string
@@ -235,15 +236,15 @@ export const NodeConfigFooter = memo(({
             </div>
           )}
           {description && (
-            <div className="text-[10px] text-gray-600 dark:text-gray-400 whitespace-pre-line">
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
               <span className="font-semibold text-gray-700 dark:text-gray-300">Description: </span>
-              {description}
+              <MarkdownRenderer content={description} className="text-[10px] text-gray-600 dark:text-gray-400 inline" />
             </div>
           )}
           {successCriteria && (
-            <div className="text-[10px] text-gray-600 dark:text-gray-400 whitespace-pre-line">
+            <div className="text-[10px] text-gray-600 dark:text-gray-400">
               <span className="font-semibold text-green-700 dark:text-green-400">Success Criteria: </span>
-              {successCriteria}
+              <MarkdownRenderer content={successCriteria} className="text-[10px] text-gray-600 dark:text-gray-400 inline" />
             </div>
           )}
         </div>

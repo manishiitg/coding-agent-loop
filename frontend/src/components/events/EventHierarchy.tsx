@@ -4,6 +4,7 @@ import { EventDispatcher, type DelegationStats, type EventNode } from './EventDi
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
+import { NEVER_DISPLAY_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import './EventHierarchy.css';
 
@@ -78,6 +79,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       seenIds.add(event.id);
       return true;
     });
+
+    // Filter out events that should never be displayed (e.g. step_progress_updated drives canvas UI only)
+    allEvents = allEvents.filter(event => !NEVER_DISPLAY_EVENTS.has(event.type || ''));
 
     // Filter out streaming events in all modes - these are internal events for UI streaming
     const HIDDEN_STREAMING_EVENTS = ['streaming_start', 'streaming_chunk', 'streaming_end'];

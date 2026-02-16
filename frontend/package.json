@@ -38,6 +38,7 @@
     "lodash.debounce": "^4.0.8",
     "lucide-react": "^0.525.0",
     "mammoth": "^1.11.0",
+    "mermaid": "^11.12.2",
     "monaco-editor": "^0.45.0",
     "papaparse": "^5.5.3",
     "react": "^19.1.1",

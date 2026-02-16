@@ -1,5 +1,8 @@
 import React, { useState } from 'react'
 
+// Module-level cache: survives React remounts, resets on page reload
+const submittedQuestionsCache = new Map<string, { answers: Record<string, string>; general_feedback: string }>()
+
 export interface BlockingHumanQuestionsQuestion {
   id: string
   question: string
@@ -27,6 +30,7 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
   onFeedbackSubmitted
 }) => {
   const questions = event.data.questions || []
+  const cachedData = event.data.request_id ? submittedQuestionsCache.get(event.data.request_id) : undefined
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
     for (const q of questions) {
@@ -37,8 +41,8 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
   const [generalFeedback, setGeneralFeedback] = useState('')
   const [showGeneralFeedback, setShowGeneralFeedback] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [hasSubmitted, setHasSubmitted] = useState(false)
-  const [submittedData, setSubmittedData] = useState<{ answers: Record<string, string>; general_feedback: string } | null>(null)
+  const [hasSubmitted, setHasSubmitted] = useState(!!cachedData)
+  const [submittedData, setSubmittedData] = useState<{ answers: Record<string, string>; general_feedback: string } | null>(cachedData || null)
 
   const handleAnswerChange = (questionId: string, value: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: value }))
@@ -55,6 +59,7 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
       }
       const jsonString = JSON.stringify(responseData)
       await onSubmitFeedback(event.data.request_id, jsonString)
+      if (event.data.request_id) submittedQuestionsCache.set(event.data.request_id, responseData)
       setSubmittedData(responseData)
       setHasSubmitted(true)
       if (onFeedbackSubmitted) {

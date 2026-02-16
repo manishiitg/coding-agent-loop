@@ -2425,8 +2425,8 @@ func deleteStepOverrideFromWorkspace(ctx context.Context, workspacePath string) 
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	// Delete file via workspace API
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	// Delete file via workspace API (confirm=true required by workspace API)
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)

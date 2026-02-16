@@ -103,6 +103,7 @@ export interface ChatTabConfig {
   }>  // Workflow presets selected via # in chat input
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
+  planPhaseOverride?: 'planning' | 'execution' | null  // User-selected plan phase override for multi-agent mode
 }
 
 // Generalized ChatTab interface (works for both chat and workflow modes)

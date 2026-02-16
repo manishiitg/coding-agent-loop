@@ -1342,30 +1342,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 	initialPlanExists, _, _ := hcpo.checkExistingPlan(ctx, checkPlanPath)
 
 	if !initialPlanExists {
+		// Step 1: Always ask the user what they want to build
+		requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
+		_, feedback, err := hcpo.RequestHumanFeedback(
+			ctx,
+			requestID,
+			"What would you like to build?",
+			"",
+			hcpo.getSessionID(),
+			hcpo.getWorkflowID(),
+		)
+		if err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
+		} else if feedback != "" {
+			objective = feedback
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
+		}
+
+		// Step 2: Ask clarifying questions about requirements/preferences before planning
 		if objective != "" {
-			// Objective already provided (e.g. from workflow builder) - skip human feedback
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Objective already provided, skipping objective inquiry: %s", objective))
-		} else {
-			// No objective provided - ask the user what they want to build
-			requestID := fmt.Sprintf("plan_objective_inquiry_%d", time.Now().UnixNano())
-			approved, feedback, err := hcpo.RequestHumanFeedback(
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Asking clarifying questions before planning for: %s", objective))
+			clarifyID := fmt.Sprintf("plan_clarify_%d", time.Now().UnixNano())
+			_, clarifyFeedback, clarifyErr := hcpo.RequestHumanFeedback(
 				ctx,
-				requestID,
-				"What would you like to build?",
-				"", // No additional context
+				clarifyID,
+				fmt.Sprintf("Before I create a plan for: \"%s\"\n\nPlease share any additional details:\n- Expected outcome or deliverables?\n- Preferences on approach or tools?\n- Constraints, priorities, or scope boundaries?\n\n(Type your details, or just hit Approve to proceed as-is)", objective),
+				"",
 				hcpo.getSessionID(),
 				hcpo.getWorkflowID(),
 			)
-
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request objective from user: %v", err))
-			} else if feedback != "" {
-				// User provided feedback, use it as the objective
-				objective = feedback
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Received objective from user: %s", objective))
-			} else if approved && feedback == "" {
-				// User approved but empty feedback? Keep existing objective if any
-				hcpo.GetLogger().Info("ℹ️ User sent empty response, keeping existing objective")
+			if clarifyErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to request clarifying questions: %v — proceeding with objective as-is", clarifyErr))
+			} else if clarifyFeedback != "" {
+				objective = objective + "\n\nAdditional context from user:\n" + clarifyFeedback
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Received clarifying feedback, enriched objective"))
 			}
 		}
 	} else {

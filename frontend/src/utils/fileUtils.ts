@@ -108,7 +108,8 @@ export const isTextBasedFile = (filename: string): boolean => {
     'sh', 'bash', 'zsh', 'fish', 'sql', 'log', 'conf', 'config', 'ini', 'toml',
     'env', 'gitignore', 'dockerfile', 'makefile', 'cmake', 'gradle', 'maven',
     'pom', 'sbt', 'scala', 'kt', 'swift', 'rs', 'dart', 'r', 'm', 'pl', 'lua',
-    'vim', 'emacs', 'tex', 'latex', 'rst', 'adoc', 'asciidoc', 'org', 'wiki', 'svg'
+    'vim', 'emacs', 'tex', 'latex', 'rst', 'adoc', 'asciidoc', 'org', 'wiki', 'svg',
+    'mmd', 'mermaid'
   ]
   return textExtensions.includes(ext)
 }

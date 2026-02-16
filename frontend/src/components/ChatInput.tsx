@@ -124,7 +124,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   // Memoize tabConfig to prevent unnecessary re-renders
   const tabConfig = useMemo(() => activeTab?.config, [activeTab?.config])
-  
+
+  // User can manually override the plan phase (planning vs execution) — stored in tab config
+  const planPhaseOverride = tabConfig?.planPhaseOverride ?? null
+  const setPlanPhaseOverride = useCallback((phase: 'planning' | 'execution' | null) => {
+    const tabId = useChatStore.getState().activeTabId
+    if (tabId) {
+      useChatStore.getState().setTabConfig(tabId, { planPhaseOverride: phase })
+    }
+  }, [])
+
   // CRITICAL: Always use tab's status - never fall back to global to prevent mixing
   // If no active tab, this is an error condition (tabs should always exist)
   const isStreaming = activeTab?.isStreaming ?? false
@@ -147,7 +156,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // - plan_approval event → execution (plan presented for approval)
   // - create_delegation_plan tool call → planning (new plan being created)
   // Whichever is most recent wins. Default: planning.
-  const planPhase = useMemo(() => {
+  const autoDetectedPlanPhase = useMemo(() => {
     if (!isMultiAgentMode) return null
     for (let i = tabEvents.length - 1; i >= 0; i--) {
       const event = tabEvents[i]
@@ -162,8 +171,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
       }
     }
-    return 'planning'
+    return null // No events yet — let user choose
   }, [isMultiAgentMode, tabEvents])
+
+  // Effective phase: user override wins, then auto-detected, then default to null (show toggle)
+  const planPhase = isMultiAgentMode ? (planPhaseOverride ?? autoDetectedPlanPhase) : null
 
   // Helper: check if an event is from a sub-agent (delegation)
   const isSubAgentEvent = useCallback((event: PollingEvent): boolean => {
@@ -2109,24 +2121,41 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       )}
 
-                      {/* Multi-agent phase indicator — clickable in execution phase to go back to planning */}
-                      {isMultiAgentMode && planPhase && (
-                        planPhase === 'execution' ? (
+                      {/* Multi-agent phase toggle: Plan / Exec */}
+                      {isMultiAgentMode && (
+                        <div className="flex items-center rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden text-xs font-medium">
                           <button
                             type="button"
-                            onClick={() => onSubmit('I want to start a new task. Plan it out before executing.')}
-                            className="flex items-center gap-1 px-2 py-1 rounded-md border border-green-300 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs font-medium hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors cursor-pointer"
-                            title="Click to go back to planning mode"
+                            onClick={() => setPlanPhaseOverride('planning')}
+                            className={`flex items-center gap-1 px-2 py-1 transition-colors ${
+                              planPhase === 'planning'
+                                ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
+                                : planPhase === null
+                                  ? 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                                  : 'bg-white dark:bg-gray-900 text-gray-400 dark:text-gray-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                            }`}
+                            title="Plan first, then execute"
+                          >
+                            <FileSearch className="w-3 h-3" />
+                            <span>Plan</span>
+                          </button>
+                          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600" />
+                          <button
+                            type="button"
+                            onClick={() => setPlanPhaseOverride('execution')}
+                            className={`flex items-center gap-1 px-2 py-1 transition-colors ${
+                              planPhase === 'execution'
+                                ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300'
+                                : planPhase === null
+                                  ? 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-green-50 dark:hover:bg-green-900/20'
+                                  : 'bg-white dark:bg-gray-900 text-gray-400 dark:text-gray-500 hover:bg-green-50 dark:hover:bg-green-900/20'
+                            }`}
+                            title="Execute directly without planning"
                           >
                             <Play className="w-3 h-3" />
-                            <span>Executing</span>
+                            <span>Exec</span>
                           </button>
-                        ) : (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-md border border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 text-xs font-medium">
-                            <FileSearch className="w-3 h-3" />
-                            <span>Planning</span>
-                          </div>
-                        )
+                        </div>
                       )}
 
                       {isStreaming && !(activeTab?.hasRunningBgAgents) ? (

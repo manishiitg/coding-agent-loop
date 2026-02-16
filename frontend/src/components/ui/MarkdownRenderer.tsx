@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -8,6 +8,7 @@ import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAppStore } from '../../stores/useAppStore'
 import { workspaceApi } from '../../services/api'
 import { agentApi } from '../../services/api'
+import mermaid from 'mermaid'
 
 interface MarkdownRendererProps {
   content: string
@@ -54,6 +55,82 @@ const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
         ))}
       </div>
     </div>
+  )
+}
+
+// Mermaid initialization
+let mermaidInitialized = false
+const initMermaid = () => {
+  if (!mermaidInitialized) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: document.documentElement.classList.contains('dark') ||
+             document.documentElement.classList.contains('dark-plus') ? 'dark' : 'default',
+      securityLevel: 'loose',
+    })
+    mermaidInitialized = true
+  }
+}
+
+let mermaidCounter = 0
+
+export const MermaidDiagram: React.FC<{ content: string }> = ({ content }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [svg, setSvg] = useState<string>('')
+  const [error, setError] = useState<string>('')
+  const idRef = useRef(`mermaid-${Date.now()}-${mermaidCounter++}`)
+
+  const renderDiagram = useCallback(async () => {
+    try {
+      initMermaid()
+      // Re-init theme on each render to pick up dark mode changes
+      const isDark = document.documentElement.classList.contains('dark') ||
+                     document.documentElement.classList.contains('dark-plus')
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: isDark ? 'dark' : 'default',
+        securityLevel: 'loose',
+      })
+      const { svg: renderedSvg } = await mermaid.render(idRef.current, content)
+      setSvg(renderedSvg)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to render mermaid diagram')
+      setSvg('')
+    }
+  }, [content])
+
+  useEffect(() => {
+    renderDiagram()
+  }, [renderDiagram])
+
+  if (error) {
+    return (
+      <div className="my-4 p-4 border border-red-300 dark:border-red-700 rounded-lg bg-red-50 dark:bg-red-900/20">
+        <div className="text-xs text-red-600 dark:text-red-400 mb-2 font-medium">Mermaid diagram error</div>
+        <pre className="text-xs text-red-500 dark:text-red-400 whitespace-pre-wrap">{error}</pre>
+        <details className="mt-2">
+          <summary className="text-xs text-gray-500 cursor-pointer">Show source</summary>
+          <pre className="mt-1 text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{content}</pre>
+        </details>
+      </div>
+    )
+  }
+
+  if (!svg) {
+    return (
+      <div className="my-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-center text-sm text-gray-500">
+        Rendering diagram...
+      </div>
+    )
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="my-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-x-auto"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   )
 }
 
@@ -341,7 +418,11 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             if (!isInline && match && match[1] === 'tool-definition') {
               return <ToolDefinition content={String(children).replace(/\n$/, '')} />
             }
-            
+
+            if (!isInline && match && match[1] === 'mermaid') {
+              return <MermaidDiagram content={String(children).replace(/\n$/, '')} />
+            }
+
             // For inline code, use simple styling
             if (isInline || !match) {
               return (

@@ -190,10 +190,10 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
               {tempOverrideLLM && (
                 <button
                   onClick={() => clearTempOverrideLLM()}
-                  className="px-2 py-1 text-xs text-destructive hover:text-destructive/80"
-                  title="Clear Temp LLM 1"
+                  className="flex items-center justify-center w-7 h-7 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  title="Remove Temp LLM 1 override"
                 >
-                  Clear
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
@@ -241,10 +241,10 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
               {tempOverrideLLM2 && (
                 <button
                   onClick={() => clearTempOverrideLLM2()}
-                  className="px-2 py-1 text-xs text-destructive hover:text-destructive/80"
-                  title="Clear Temp LLM 2"
+                  className="flex items-center justify-center w-7 h-7 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  title="Remove Temp LLM 2 override"
                 >
-                  Clear
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
@@ -292,10 +292,10 @@ export default function LLMOverrideModal({ isOpen, onClose }: LLMOverrideModalPr
               {tempLearningLLM && (
                 <button
                   onClick={() => clearTempLearningLLM()}
-                  className="px-2 py-1 text-xs text-destructive hover:text-destructive/80"
-                  title="Clear Temp Learning LLM"
+                  className="flex items-center justify-center w-7 h-7 rounded-md border border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  title="Remove Temp Learning LLM override"
                 >
-                  Clear
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>

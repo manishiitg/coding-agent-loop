@@ -241,6 +241,7 @@ ipcMain.on('set-dock-badge', (event, text) => {
 
 // IPC Handler for opening external URLs
 ipcMain.on('open-external', (event, url) => {
+  console.log('[main] Received open-external request for:', url);
   shell.openExternal(url);
 });
 
@@ -571,6 +572,7 @@ function createWindow(initialUrl) {
   
   // Handle new window requests (e.g. target="_blank")
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    console.log('[main] setWindowOpenHandler intercepted:', url);
     // Open in default system browser
     shell.openExternal(url);
     return { action: 'deny' };

@@ -2,16 +2,18 @@
   "name": "mcp-agent-builder-desktop",
   "version": "0.1.0",
   "description": "Standalone Mac app for mcp-agent-builder-go",
+  "repository": "github:manishiitg/mcp-agent-builder-go",
   "main": "main.js",
   "private": true,
   "scripts": {
     "start": "npx electron .",
     "build": "electron-builder --mac --dir",
-    "dist": "electron-builder --mac"
+    "dist": "electron-builder --mac --publish always"
   },
   "build": {
     "appId": "com.mcp-agent-builder.desktop",
     "productName": "MCP Agent Builder",
+    "publish": ["github"],
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": ["dmg", "zip"]

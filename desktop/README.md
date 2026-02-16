@@ -1,31 +1,56 @@
-# MCP Agent Builder — Desktop (Phase 1)
+# MCP Agent Builder — Desktop
 
-Electron shell for the standalone Mac app. Phase 1 implements the server lifecycle: port check → spawn workspace + agent → health check → window → cleanup on quit.
+Electron shell for the standalone Mac app. It bundles the `agent-server` and `workspace-server` binaries, managing their lifecycle automatically.
 
 ## Prerequisites
 
 - Node 18+
-- Built **agent-server** and **workspace-server** binaries in `desktop/resources/` (see `resources/README.md`)
+- Go 1.22+ (to build backend binaries)
+- macOS (Apple Silicon or Intel)
 
-## Run locally (unpackaged)
+## Development Setup
+
+The `dev-setup.sh` script builds the Go binaries and installs Node dependencies:
 
 ```bash
 cd desktop
-npm install
+./dev-setup.sh
+```
+
+## Run Locally (Unpackaged)
+
+```bash
+cd desktop
 npm start
 ```
 
-This starts Electron; the main process will check ports 45678 and 45679, spawn both servers from `resources/`, wait for health, then open a window at `http://127.0.0.1:45678`. Closing the window or quitting the app kills both processes.
+This starts Electron; the main process will check ports **45678** and **45679**, spawn both servers from `resources/`, wait for health, then open a window at `http://127.0.0.1:45678`.
 
-## Ports
+## Build & Package (Distribution)
 
-- **45678** — Agent server (API + static frontend when served from agent)
-- **45679** — Workspace server
+To create a distributable `.dmg` and `.zip`:
 
-If either port is in use, the app shows an error dialog and exits.
+```bash
+cd desktop
+npm run dist
+```
 
-## Scripts
+Artifacts will be output to `desktop/dist/`.
+**Note:** The local build is unsigned. On first launch, you may need to Right-Click the app -> Open to bypass Gatekeeper.
 
-- `npm start` — Run Electron (development)
-- `npm run build` — Build unpacked Mac app (requires binaries in `resources/`)
-- `npm run dist` — Build DMG/ZIP (requires binaries; signing/notarization not configured in Phase 1)
+## Runtime Details
+
+### Ports
+- **45678**: Agent server (API + static frontend)
+- **45679**: Workspace server
+
+### Data & Logs
+The app stores data in the system's Application Support directory:
+`~/Library/Application Support/MCP Agent Builder/`
+
+- **Logs:** `logs/agent.log`, `logs/workspace.log`
+- **Database:** `chat_history.db`
+- **Configuration:** `configs/mcp_servers.json`
+- **Workspace Data:** `data/` and `workspace-docs/`
+
+If ports are in use or servers fail to start, the app shows an error dialog and exits. Check the log files in the directory above for details.

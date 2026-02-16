@@ -73,42 +73,76 @@ Scope: **Mac only** (Apple Silicon primary; Intel/universal optional). Distribut
 | 3.2 | Serve frontend from agent server | Done. Frontend files moved to `agent_go/static/`. |
 | 3.3 | (Future) Dynamic port | Deferred as fixed obscure ports are working well. |
 
-### Phase 4: Local Packaging & Verification (No Signing) — 🚧 IN PROGRESS
+### Phase 4: Local Packaging & Verification (No Signing) — ✅ COMPLETED
 
 | Step | Task | Notes |
 |------|------|--------|
 | 4.1 | electron-builder config | Target `mac` (dmg/zip). Include both Go binaries in `extraResources`. Point app at agent’s static dir. |
 | 4.2 | Local Build Script | Created `desktop/dev-setup.sh` to build binaries and setup environment. |
-| 4.3 | Verify Standalone App | 🚧 Pending final verification. Issues with hardcoded paths (`/app/...`) fixed by passing writable user paths via flags. |
-| 4.4 | Verify Port Conflict Handling | Pending verification. |
+| 4.3 | Verify Standalone App | ✅ Verified. Fixed hardcoded paths in workspace and agent servers. |
+| 4.4 | Verify Port Conflict Handling | Verified logic in `desktop/main.js`. |
 
-### Phase 4.5: Hardening & Polishing — 🆕 ADDED
-
-| Step | Task | Notes |
-|------|------|--------|
-| 4.5.1 | Fix hardcoded paths | ensure agent/workspace accept flags for all paths (DB, logs, docs) instead of assuming `/app/`. Done for workspace/root.go. |
-| 4.5.2 | Verify read-only filesystem compatibility | Ensure no writes attempt to occur in binary location (use `userData`). |
-| 4.5.3 | Bundle static assets | Ensure `agent_go/static` and `agent_go/configs` are correctly bundled in the app. |
-
-### Phase 5: Production Release (Mac)
+### Phase 4.5: Hardening & Polishing — ✅ COMPLETED
 
 | Step | Task | Notes |
 |------|------|--------|
-| 5.1 | Code Signing | Update electron-builder config with Apple Developer ID (Developer ID Application). |
-| 5.2 | Notarization | Configure notarization (xcrun notarytool) with Apple ID credentials. Required for distribution. |
-| 5.3 | CI/CD Pipeline | Automate the build/sign/notarize flow (e.g. GitHub Actions) to produce the final `.dmg`. |
-| 5.4 | Distribution | Upload the signed/notarized artifact to GitHub Releases. |
+| 4.5.1 | Fix hardcoded paths | ensure agent/workspace accept flags for all paths (DB, logs, docs, data, mcp-config). Done for workspace/root.go (data-dir) and agent. |
+| 4.5.2 | Verify read-only filesystem compatibility | ✅ Done. Agent/Workspace now write to `userData` (db, logs, data). Default config is copied to `userData`. |
+| 4.5.3 | Bundle static assets | ✅ Done via `extraResources` in `package.json`. |
 
-### Phase 6: Documentation and UX
+### Phase 5: Production Release (Mac) — ✅ COMPLETED (Local Packaging)
 
 | Step | Task | Notes |
 |------|------|--------|
-| 6.1 | README / install instructions | How to download, open the .dmg, drag to Applications, first launch (Gatekeeper), and that no Docker or terminal is needed. |
+| 5.1 | Code Signing | **Skipped** for local build. Requires Apple Developer ID identity. `npm run dist` produces a functional but unsigned .dmg. |
+| 5.2 | Notarization | **Skipped** (requires signing). Users will need to right-click -> Open to bypass Gatekeeper on first launch. |
+| 5.3 | CI/CD Pipeline | Deferred. Manual build process validated: `cd desktop && ./dev-setup.sh && npm run dist`. |
+| 5.4 | Distribution | Artifacts created in `desktop/dist/`: `.dmg` (~140MB) and `.zip`. |
+
+### Phase 6: Documentation and UX — ✅ COMPLETED (Initial)
+
+| Step | Task | Notes |
+|------|------|--------|
+| 6.1 | README / install instructions | **Done.** Updated `desktop/README.md` with build and run instructions. |
 | 6.2 | In-app messaging | Polished error dialogs for startup failures (e.g. port conflicts). |
-| 6.3 | CDP Connectivity Helper | Add a UI status/button to help users connect to their local Chrome via `--remote-debugging-port=9222`. Ensure the app can detect if Chrome is ready for automation. |
-| 6.4 | Logs and debugging | Optionally write agent/workspace stdout/stderr to a log file under `userData` so support can ask for logs. |
+| 6.3 | CDP Connectivity Helper | Add a UI status/button to help users connect to their local Chrome via `--remote-debugging-port=9222`. |
+| 6.4 | Logs and debugging | **Done.** Updated `main.js` to pipe stdout/stderr from agent/workspace processes to `userData/logs/agent.log` and `userData/logs/workspace.log`. |
+
+### Phase 7: Production Hardening (Future)
+
+These steps are recommended for a commercial or wide public release to ensure robustness and security.
+
+| Step | Task | Details |
+|------|------|--------|
+| 7.1 | Dynamic Port Allocation | **Critical for reliability.** Instead of hardcoded 45678/45679, let the OS assign random free ports (port 0). Have Go processes report these ports back to Electron (via stdout or temp file), and inject them into the React frontend at runtime. |
+| 7.2 | IPC Authentication | **Critical for security.** Generate a random session token in Electron on startup. Pass it to Go processes as an env var. Require this token in an `Authorization` header for all API requests to prevent unauthorized access from other local software/scripts. |
+| 7.3 | Zombie Process Prevention | **Reliability.** Implement a "parent heartbeat" or PID monitoring in the Go servers. If the Electron parent process dies unexpectedly (crash/force quit), the Go servers should automatically shut down to prevent orphaned background processes. |
+| 7.4 | Auto-Update | Integrate `electron-updater` to pull new releases from GitHub. |
 
 ---
+
+## Project Status Summary (Feb 16, 2026)
+
+The standalone Electron application has been successfully prototyped and packaged.
+
+### Artifacts Generated
+- **DMG:** `desktop/dist/MCP Agent Builder-0.1.0-arm64.dmg` (~142MB)
+- **ZIP:** `desktop/dist/MCP Agent Builder-0.1.0-arm64-mac.zip` (~138MB)
+
+### Key Achievements
+- **Zero-Dependency Startup:** Spawns `agent-server` and `workspace-server` sidecar binaries automatically on launch.
+- **Filesystem Persistence:** Configured Go servers to use `app.getPath('userData')` for databases, logs, and search indices, ensuring compatibility with read-only application bundles.
+- **Port Management:** Uses stable ports 45678/45679 with pre-flight conflict detection.
+- **Integrated Frontend:** Frontend is served directly via the `agent-server` internal static file server, reducing process overhead.
+- **Log Redirection:** Child process logs are correctly captured and redirected to the system's Application Support directory for troubleshooting.
+
+### Next Steps (Post-Prototype)
+- **Code Signing:** To distribute outside of local environments, the build process needs an Apple Developer ID.
+- **Universal Build:** Configure `electron-builder` to produce universal binaries (arm64 + x64) for broader Mac compatibility.
+- **In-App CDP Status:** Implement Phase 6.3 to help users with browser automation setup.
+
+---
+
 
 ## Directory / artifact layout (conceptual)
 

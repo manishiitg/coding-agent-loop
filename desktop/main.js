@@ -1,7 +1,8 @@
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
+const https = require('https');
 const detect = require('detect-port');
 const fs = require('fs');
 
@@ -51,15 +52,37 @@ function spawnWorkspace(userDataPath) {
     return Promise.reject(new Error(`Workspace server binary not found at ${bin}. Place workspace-server in desktop/resources/ for development.`));
   }
   const docsDir = path.join(userDataPath, 'workspace-docs');
-  const child = spawn(bin, ['server', '--port', String(WORKSPACE_PORT), '--docs-dir', docsDir], {
-    env: { ...process.env, DOCS_DIR: docsDir },
+  const dataDir = path.join(userDataPath, 'data');
+  const logsDir = path.join(userDataPath, 'logs');
+
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+
+  const logFile = path.join(logsDir, 'workspace.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  const child = spawn(bin, ['server', '--port', String(WORKSPACE_PORT), '--docs-dir', docsDir, '--data-dir', dataDir], {
+    env: { ...process.env, DOCS_DIR: docsDir, DATA_DIR: dataDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   workspaceProcess = child;
   child.on('error', (err) => {
-    console.error('[workspace] spawn error:', err);
+    const msg = `[workspace] spawn error: ${err}\n`;
+    console.error(msg);
+    logStream.write(msg);
   });
-  child.stderr?.on('data', (d) => process.stderr.write(d));
+  child.stdout?.on('data', (d) => {
+    process.stdout.write(`[workspace] ${d}`);
+    logStream.write(d);
+  });
+  child.stderr?.on('data', (d) => {
+    process.stderr.write(`[workspace] ${d}`);
+    logStream.write(d);
+  });
   return Promise.resolve();
 }
 
@@ -78,13 +101,37 @@ function spawnAgent(userDataPath) {
 
   const dbPath = path.join(userDataPath, 'chat_history.db');
   const logFile = path.join(logsDir, 'agent.log');
+  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+
+  // MCP Config handling
+  const configDir = path.join(userDataPath, 'configs');
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+  const mcpConfigPath = path.join(configDir, 'mcp_servers.json');
+
+  // Copy default config if it doesn't exist in userData
+  if (!fs.existsSync(mcpConfigPath)) {
+    const defaultConfigPath = path.join(cwd, 'configs', 'mcp_servers_clean.json');
+    if (fs.existsSync(defaultConfigPath)) {
+      try {
+        fs.copyFileSync(defaultConfigPath, mcpConfigPath);
+        console.log(`[agent] Copied default config to ${mcpConfigPath}`);
+      } catch (err) {
+        console.error(`[agent] Failed to copy default config: ${err}`);
+      }
+    } else {
+      console.warn(`[agent] Default MCP config not found at ${defaultConfigPath}`);
+    }
+  }
 
   const args = [
     'server', 
     '--port', String(AGENT_PORT),
     '--db-path', dbPath,
     '--log-file', logFile,
-    '--log-level', 'debug'
+    '--log-level', 'debug',
+    '--mcp-config', mcpConfigPath
   ];
 
   const child = spawn(bin, args, {
@@ -101,13 +148,23 @@ function spawnAgent(userDataPath) {
   agentProcess = child;
   
   // Log startup info
-  console.log(`[agent] Spawning agent-server with db-path=${dbPath}, log-file=${logFile}`);
+  const startupMsg = `[agent] Spawning agent-server with db-path=${dbPath}, log-file=${logFile}\n`;
+  console.log(startupMsg.trim());
+  logStream.write(startupMsg);
 
   child.on('error', (err) => {
-    console.error('[agent] spawn error:', err);
+    const msg = `[agent] spawn error: ${err}\n`;
+    console.error(msg);
+    logStream.write(msg);
   });
-  child.stdout?.on('data', (d) => process.stdout.write(`[agent] ${d}`));
-  child.stderr?.on('data', (d) => process.stderr.write(`[agent] ${d}`));
+  child.stdout?.on('data', (d) => {
+    process.stdout.write(`[agent] ${d}`);
+    logStream.write(d);
+  });
+  child.stderr?.on('data', (d) => {
+    process.stderr.write(`[agent] ${d}`);
+    logStream.write(d);
+  });
   return Promise.resolve();
 }
 
@@ -142,6 +199,51 @@ function waitForHealth(agentUrl, workspaceUrl) {
     });
   }
   return new Promise((r) => setTimeout(r, HEALTH_INITIAL_DELAY_MS)).then(poll);
+}
+
+function checkForUpdates() {
+  const options = {
+    hostname: 'api.github.com',
+    path: '/repos/manishiitg/mcp-agent-builder-go/releases/latest',
+    method: 'GET',
+    headers: { 'User-Agent': 'MCP-Agent-Builder' }
+  };
+
+  const req = https.request(options, (res) => {
+    let data = '';
+    res.on('data', (chunk) => data += chunk);
+    res.on('end', () => {
+      if (res.statusCode === 200) {
+        try {
+          const release = JSON.parse(data);
+          const latestVersion = release.tag_name.replace(/^v/, '');
+          const currentVersion = app.getVersion();
+
+          // Simple semantic version comparison
+          // Assumes standard semver (e.g., 0.1.0)
+          // If complex versions are needed, use 'semver' package
+          if (latestVersion !== currentVersion && latestVersion > currentVersion) {
+            const choice = dialog.showMessageBoxSync({
+              type: 'info',
+              title: 'Update Available',
+              message: `Version ${latestVersion} is available.`,
+              detail: `You are currently on version ${currentVersion}. Would you like to download the update?`,
+              buttons: ['Download', 'Skip']
+            });
+
+            if (choice === 0) {
+              shell.openExternal(release.html_url);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to parse update info:', e);
+        }
+      }
+    });
+  });
+  
+  req.on('error', (e) => console.error('Update check failed:', e));
+  req.end();
 }
 
 function killChildren() {
@@ -203,6 +305,7 @@ app.whenReady().then(() => {
     })
     .then(() => {
       createWindow();
+      checkForUpdates();
     })
     .catch((err) => {
       showErrorAndExit(err.message || String(err));

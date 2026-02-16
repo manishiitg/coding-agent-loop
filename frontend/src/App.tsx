@@ -672,7 +672,7 @@ function App() {
             }
 
             // Load events using shared utility
-            await hydrateTabEvents(sessionId, 'tiny')
+            await hydrateTabEvents(sessionId, 'micro')
 
             // Set completion state and view-only for restored completed sessions
             if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
@@ -742,7 +742,7 @@ function App() {
           truncateTabTitle(sessionTitle || 'Chat'),
           { mode: tabMode, isViewOnly: isViewOnly ?? false },
           sessionId,
-          'tiny'
+          'micro'
         )
         console.log(`[RESTORE_DEBUG] Step 3: Created tab ${newTabId} with mode=${tabMode} for session ${sessionId}`)
 
@@ -757,7 +757,7 @@ function App() {
 
         // 5. Load events using shared utility
         try {
-          await hydrateTabEvents(sessionId, 'tiny')
+          await hydrateTabEvents(sessionId, 'micro')
           console.log(`[RESTORE_DEBUG] Step 5: Events loaded for session ${sessionId}`)
         } catch (err) {
           console.error(`[RESTORE_DEBUG] Step 5 FAILED: getSessionEvents error for ${sessionId}:`, err)
@@ -1302,9 +1302,6 @@ function App() {
                                   </span>
                                 </div>
                                 <MermaidDiagram content={fileContent} />
-                              </div>
-                            )
-                          }
                               </div>
                             )
                           }

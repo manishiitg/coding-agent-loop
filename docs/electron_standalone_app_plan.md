@@ -96,8 +96,28 @@ Scope: **Mac only** (Apple Silicon primary; Intel/universal optional). Distribut
 |------|------|--------|
 | 5.1 | Code Signing | **Skipped** for local build. Requires Apple Developer ID identity. `npm run dist` produces a functional but unsigned .dmg. |
 | 5.2 | Notarization | **Skipped** (requires signing). Users will need to right-click -> Open to bypass Gatekeeper on first launch. |
-| 5.3 | CI/CD Pipeline | Deferred. Manual build process validated: `cd desktop && ./dev-setup.sh && npm run dist`. |
+| 5.3 | CI/CD Pipeline | **In Progress.** GitHub Action `.github/workflows/desktop-release.yml` created. Currently debugging build failures related to dependency synchronization. |
 | 5.4 | Distribution | Artifacts created in `desktop/dist/`: `.dmg` (~140MB) and `.zip`. |
+
+---
+
+## Current Blockers & Active Tasks (Feb 16, 2026)
+
+### 1. Library Synchronization (Critical) — ✅ COMPLETED
+The `agent_go` backend uses features (like `mcpagent.ToolExecutionLLMConfigKey`) that exist in the local `mcpagent/` directory but have not yet been released to the standalone `github.com/manishiitg/mcpagent` repository. This causes GitHub Actions to fail during compilation.
+*   **Status:** Resolved. `mcpagent` tagged and released as `v1.2.9`. `agent_go/go.mod` updated to use this version.
+*   **Action Required:** None.
+
+### 2. Monorepo Path Resolution — ✅ COMPLETED
+The GitHub runner fails to resolve `mcpagent` and `multi-llm-provider-go` because they are treated as external modules but the code is actually present in the monorepo.
+*   **Status:** Resolved. `agent_go/go.mod` updated to point to released versions on GitHub, removing local `replace` directives for these libraries.
+
+### 3. Frontend Syntax Errors — ✅ COMPLETED
+Merge conflict resolution errors in `frontend/src/App.tsx` (specifically `Unexpected token` around line 1308) were blocking the frontend build.
+*   **Status:** Resolved. Syntax error in `App.tsx` fixed and frontend build verified.
+
+---
+
 
 ### Phase 6: Documentation and UX — ✅ COMPLETED (Initial)
 

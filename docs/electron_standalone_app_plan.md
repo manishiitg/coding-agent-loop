@@ -90,14 +90,14 @@ Scope: **Mac only** (Apple Silicon primary; Intel/universal optional). Distribut
 | 4.5.2 | Verify read-only filesystem compatibility | ✅ Done. Agent/Workspace now write to `userData` (db, logs, data). Default config is copied to `userData`. |
 | 4.5.3 | Bundle static assets | ✅ Done via `extraResources` in `package.json`. |
 
-### Phase 5: Production Release (Mac) — ✅ COMPLETED (Local Packaging)
+### Phase 5: Production Release (Mac) — ✅ COMPLETED
 
 | Step | Task | Notes |
 |------|------|--------|
 | 5.1 | Code Signing | **Skipped** for local build. Requires Apple Developer ID identity. `npm run dist` produces a functional but unsigned .dmg. |
 | 5.2 | Notarization | **Skipped** (requires signing). Users will need to right-click -> Open to bypass Gatekeeper on first launch. |
-| 5.3 | CI/CD Pipeline | **In Progress.** GitHub Action `.github/workflows/desktop-release.yml` created. Currently debugging build failures related to dependency synchronization. |
-| 5.4 | Distribution | Artifacts created in `desktop/dist/`: `.dmg` (~140MB) and `.zip`. |
+| 5.3 | CI/CD Pipeline | **✅ Done.** GitHub Action `.github/workflows/desktop-release.yml` created and verified. Automatically builds DMG/ZIP on tag push. |
+| 5.4 | Distribution | Artifacts created automatically in GitHub Releases. Version synced from git tag. |
 
 ---
 
@@ -115,6 +115,10 @@ The GitHub runner fails to resolve `mcpagent` and `multi-llm-provider-go` becaus
 ### 3. Frontend Syntax Errors — ✅ COMPLETED
 Merge conflict resolution errors in `frontend/src/App.tsx` (specifically `Unexpected token` around line 1308) were blocking the frontend build.
 *   **Status:** Resolved. Syntax error in `App.tsx` fixed and frontend build verified.
+
+### 4. Automated Release Workflow — ✅ COMPLETED
+The CI/CD pipeline needed to support automated versioning and release creation.
+*   **Status:** Resolved. `.github/workflows/desktop-release.yml` updated to sync `package.json` version with git tag and create releases automatically. Verified with `v1.20.0`.
 
 ---
 

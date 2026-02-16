@@ -1307,8 +1307,20 @@ func runServer(cmd *cobra.Command, args []string) {
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 
 	// Create HTTP server
+	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("Failed to listen on %s: %v", addr, err)
+	}
+
+	actualPort := listener.Addr().(*net.TCPAddr).Port
+	fmt.Printf("✅ Server started on %s:%d (dynamic port)\n", config.Host, actualPort)
+	fmt.Printf("DynamicPort: %d\n", actualPort)
+	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, actualPort)
+	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, actualPort)
+
 	srv := &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", config.Host, config.Port),
+		Addr:         addr,
 		WriteTimeout: time.Second * 30,  // Increased for streaming
 		ReadTimeout:  time.Second * 30,  // Increased for streaming
 		IdleTimeout:  time.Second * 300, // 5 min idle timeout to prevent early closes during long queries
@@ -1317,14 +1329,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
-
-	fmt.Printf("✅ Server started on %s:%d\n", config.Host, config.Port)
-	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, config.Port)
-	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, config.Port)
 
 	// Initialize tool cache on server startup
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")

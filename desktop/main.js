@@ -7,8 +7,10 @@ const detect = require('detect-port');
 const fs = require('fs');
 const { Client } = require('pg');
 
-const AGENT_PORT = 45678;
-const WORKSPACE_PORT = 45679;
+// Dynamic ports (assigned at runtime)
+let dynamicAgentPort = 0;
+let dynamicWorkspacePort = 0;
+
 const HEALTH_TIMEOUT_MS = 90000;
 const HEALTH_POLL_MS = 500;
 const HEALTH_INITIAL_DELAY_MS = 3000;
@@ -71,6 +73,11 @@ ipcMain.on('save-settings', (event, settings) => {
   });
 });
 
+// IPC Handler for dynamic workspace port
+ipcMain.on('get-workspace-port', (event) => {
+  event.returnValue = process.env.DEV_URL ? 8081 : dynamicWorkspacePort;
+});
+
 function openSettingsWindow() {
   if (settingsWindow) {
     settingsWindow.focus();
@@ -104,8 +111,8 @@ function restartServers() {
     spawnWorkspace(userDataPath)
       .then(() => spawnAgent(userDataPath))
       .then(() => {
-        const agentHealthUrl = `http://127.0.0.1:${AGENT_PORT}/api/health`;
-        const workspaceHealthUrl = `http://127.0.0.1:${WORKSPACE_PORT}/health`;
+        const agentHealthUrl = `http://127.0.0.1:${dynamicAgentPort}/api/health`;
+        const workspaceHealthUrl = `http://127.0.0.1:${dynamicWorkspacePort}/health`;
         return waitForHealth(agentHealthUrl, workspaceHealthUrl);
       })
       .then(() => {
@@ -244,169 +251,193 @@ function getBinaryPath(name) {
   return path.join(base, name);
 }
 
-function isPortInUse(port) {
-  return detect(port).then((available) => available !== port);
-}
-
-function checkPortsAvailable() {
-  return Promise.all([
-    isPortInUse(AGENT_PORT),
-    isPortInUse(WORKSPACE_PORT),
-  ]).then(([agentInUse, workspaceInUse]) => {
-    if (agentInUse || workspaceInUse) {
-      const which = [];
-      if (agentInUse) which.push(`${AGENT_PORT}`);
-      if (workspaceInUse) which.push(`${WORKSPACE_PORT}`);
-      return Promise.reject(new Error(`Port(s) ${which.join(' and ')} are already in use. Please close the application using them and try again.`));
-    }
-  });
-}
+// isPortInUse function is no longer needed with dynamic ports
+// but we keep it if we ever need to check specific ports
 
 function spawnWorkspace(userDataPath) {
-  const bin = getBinaryPath('workspace-server');
-  if (!fs.existsSync(bin)) {
-    return Promise.reject(new Error(`Workspace server binary not found at ${bin}. Place workspace-server in desktop/resources/ for development.`));
-  }
-  const docsDir = path.join(userDataPath, 'workspace-docs');
-  const dataDir = path.join(userDataPath, 'data');
-  const logsDir = path.join(userDataPath, 'logs');
+  return new Promise((resolve, reject) => {
+    const bin = getBinaryPath('workspace-server');
+    if (!fs.existsSync(bin)) {
+      return reject(new Error(`Workspace server binary not found at ${bin}. Place workspace-server in desktop/resources/ for development.`));
+    }
+    const docsDir = path.join(userDataPath, 'workspace-docs');
+    const dataDir = path.join(userDataPath, 'data');
+    const logsDir = path.join(userDataPath, 'logs');
 
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-  if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-  }
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
 
-  const logFile = path.join(logsDir, 'workspace.log');
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+    const logFile = path.join(logsDir, 'workspace.log');
+    const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
-  // Load Settings
-  const settings = loadSettings();
-  const env = { 
-    ...process.env, 
-    DOCS_DIR: docsDir, 
-    DATA_DIR: dataDir 
-  };
+    // Load Settings
+    const settings = loadSettings();
+    const env = { 
+      ...process.env, 
+      DOCS_DIR: docsDir, 
+      DATA_DIR: dataDir 
+    };
 
-  if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
-  if (settings.ghRepo) env.GITHUB_REPO = settings.ghRepo;
+    if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
+    if (settings.ghRepo) env.GITHUB_REPO = settings.ghRepo;
 
-  const child = spawn(bin, ['server', '--port', String(WORKSPACE_PORT), '--docs-dir', docsDir, '--data-dir', dataDir], {
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // Use port 0 for dynamic allocation
+    const child = spawn(bin, ['server', '--port', '0', '--docs-dir', docsDir, '--data-dir', dataDir], {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    workspaceProcess = child;
+
+    let portFound = false;
+
+    child.on('error', (err) => {
+      const msg = `[workspace] spawn error: ${err}\n`;
+      console.error(msg);
+      logStream.write(msg);
+      if (!portFound) reject(err);
+    });
+    
+    child.stdout.on('data', (d) => {
+      const output = d.toString();
+      process.stdout.write(`[workspace] ${output}`);
+      logStream.write(output);
+      
+      // Parse dynamic port
+      if (!portFound) {
+        const match = output.match(/DynamicPort: (\d+)/);
+        if (match) {
+          dynamicWorkspacePort = parseInt(match[1], 10);
+          console.log(`[main] Workspace server started on dynamic port: ${dynamicWorkspacePort}`);
+          portFound = true;
+          resolve();
+        }
+      }
+    });
+    
+    child.stderr.on('data', (d) => {
+      process.stderr.write(`[workspace] ${d}`);
+      logStream.write(d);
+    });
   });
-  workspaceProcess = child;
-  child.on('error', (err) => {
-    const msg = `[workspace] spawn error: ${err}\n`;
-    console.error(msg);
-    logStream.write(msg);
-  });
-  child.stdout?.on('data', (d) => {
-    process.stdout.write(`[workspace] ${d}`);
-    logStream.write(d);
-  });
-  child.stderr?.on('data', (d) => {
-    process.stderr.write(`[workspace] ${d}`);
-    logStream.write(d);
-  });
-  return Promise.resolve();
 }
 
 function spawnAgent(userDataPath) {
-  const bin = getBinaryPath('agent-server');
-  if (!fs.existsSync(bin)) {
-    return Promise.reject(new Error(`Agent server binary not found at ${bin}. Place agent-server in desktop/resources/ for development.`));
-  }
-  const cwd = app.isPackaged ? getResourcesDir() : path.join(__dirname, '..', 'agent_go');
-  
-  // Ensure logs directory exists
-  const logsDir = path.join(userDataPath, 'logs');
-  if (!fs.existsSync(logsDir)) {
-    fs.mkdirSync(logsDir, { recursive: true });
-  }
+  return new Promise((resolve, reject) => {
+    const bin = getBinaryPath('agent-server');
+    if (!fs.existsSync(bin)) {
+      return reject(new Error(`Agent server binary not found at ${bin}. Place agent-server in desktop/resources/ for development.`));
+    }
+    const cwd = app.isPackaged ? getResourcesDir() : path.join(__dirname, '..', 'agent_go');
+    
+    // Ensure logs directory exists
+    const logsDir = path.join(userDataPath, 'logs');
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
 
-  const dbPath = path.join(userDataPath, 'chat_history.db');
-  const logFile = path.join(logsDir, 'agent.log');
-  const logStream = fs.createWriteStream(logFile, { flags: 'a' });
+    const dbPath = path.join(userDataPath, 'chat_history.db');
+    const logFile = path.join(logsDir, 'agent.log');
+    const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
-  // MCP Config handling
-  const configDir = path.join(userDataPath, 'configs');
-  if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true });
-  }
-  const mcpConfigPath = path.join(configDir, 'mcp_servers.json');
+    // MCP Config handling
+    const configDir = path.join(userDataPath, 'configs');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    const mcpConfigPath = path.join(configDir, 'mcp_servers.json');
 
-  // Copy default config if it doesn't exist in userData
-  if (!fs.existsSync(mcpConfigPath)) {
-    const defaultConfigPath = path.join(cwd, 'configs', 'mcp_servers_clean.json');
-    if (fs.existsSync(defaultConfigPath)) {
-      try {
-        fs.copyFileSync(defaultConfigPath, mcpConfigPath);
-        console.log(`[agent] Copied default config to ${mcpConfigPath}`);
-      } catch (err) {
-        console.error(`[agent] Failed to copy default config: ${err}`);
+    // Copy default config if it doesn't exist in userData
+    if (!fs.existsSync(mcpConfigPath)) {
+      const defaultConfigPath = path.join(cwd, 'configs', 'mcp_servers_clean.json');
+      if (fs.existsSync(defaultConfigPath)) {
+        try {
+          fs.copyFileSync(defaultConfigPath, mcpConfigPath);
+          console.log(`[agent] Copied default config to ${mcpConfigPath}`);
+        } catch (err) {
+          console.error(`[agent] Failed to copy default config: ${err}`);
+        }
+      } else {
+        console.warn(`[agent] Default MCP config not found at ${defaultConfigPath}`);
       }
-    } else {
-      console.warn(`[agent] Default MCP config not found at ${defaultConfigPath}`);
     }
-  }
 
-  const args = [
-    'server', 
-    '--port', String(AGENT_PORT),
-    '--db-path', dbPath,
-    '--log-file', logFile,
-    '--log-level', 'debug',
-    '--mcp-config', mcpConfigPath
-  ];
+    // Use port 0 for dynamic allocation
+    const args = [
+      'server', 
+      '--port', '0',
+      '--db-path', dbPath,
+      '--log-file', logFile,
+      '--log-level', 'debug',
+      '--mcp-config', mcpConfigPath
+    ];
 
-  // Load Settings
-  const settings = loadSettings();
-  const env = {
-    ...process.env,
-    WORKSPACE_API_URL: `http://127.0.0.1:${WORKSPACE_PORT}`,
-    DB_PATH: dbPath,
-    LOG_FILE: logFile
-  };
+    // Load Settings
+    const settings = loadSettings();
+    const env = {
+      ...process.env,
+      WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`, // Inject dynamic workspace port
+      DB_PATH: dbPath,
+      LOG_FILE: logFile
+    };
 
-  if (settings.dbType === 'postgres' && settings.dbUrl) {
-    env.DATABASE_URL = settings.dbUrl;
-    env.DB_TYPE = 'postgres';
-    // Remove db-path arg if using postgres to avoid confusion (though agent priority logic handles it)
-    const dbPathIndex = args.indexOf('--db-path');
-    if (dbPathIndex !== -1) {
-      args.splice(dbPathIndex, 2);
+    if (settings.dbType === 'postgres' && settings.dbUrl) {
+      env.DATABASE_URL = settings.dbUrl;
+      env.DB_TYPE = 'postgres';
+      // Remove db-path arg if using postgres to avoid confusion (though agent priority logic handles it)
+      const dbPathIndex = args.indexOf('--db-path');
+      if (dbPathIndex !== -1) {
+        args.splice(dbPathIndex, 2);
+      }
+      args.push('--db-type', 'postgres');
     }
-    args.push('--db-type', 'postgres');
-  }
 
-  const child = spawn(bin, args, {
-    cwd,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  agentProcess = child;
-  
-  // Log startup info
-  const startupMsg = `[agent] Spawning agent-server with db-path=${dbPath}, log-file=${logFile}\n`;
-  console.log(startupMsg.trim());
-  logStream.write(startupMsg);
+    const child = spawn(bin, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    agentProcess = child;
+    
+    // Log startup info
+    const startupMsg = `[agent] Spawning agent-server with db-path=${dbPath}, log-file=${logFile}\n`;
+    console.log(startupMsg.trim());
+    logStream.write(startupMsg);
 
-  child.on('error', (err) => {
-    const msg = `[agent] spawn error: ${err}\n`;
-    console.error(msg);
-    logStream.write(msg);
+    let portFound = false;
+
+    child.on('error', (err) => {
+      const msg = `[agent] spawn error: ${err}\n`;
+      console.error(msg);
+      logStream.write(msg);
+      if (!portFound) reject(err);
+    });
+    
+    child.stdout.on('data', (d) => {
+      const output = d.toString();
+      process.stdout.write(`[agent] ${output}`);
+      logStream.write(output);
+      
+      // Parse dynamic port
+      if (!portFound) {
+        const match = output.match(/DynamicPort: (\d+)/);
+        if (match) {
+          dynamicAgentPort = parseInt(match[1], 10);
+          console.log(`[main] Agent server started on dynamic port: ${dynamicAgentPort}`);
+          portFound = true;
+          resolve();
+        }
+      }
+    });
+    
+    child.stderr.on('data', (d) => {
+      process.stderr.write(`[agent] ${d}`);
+      logStream.write(d);
+    });
   });
-  child.stdout?.on('data', (d) => {
-    process.stdout.write(`[agent] ${d}`);
-    logStream.write(d);
-  });
-  child.stderr?.on('data', (d) => {
-    process.stderr.write(`[agent] ${d}`);
-    logStream.write(d);
-  });
-  return Promise.resolve();
 }
 
 function fetchHealth(url) {
@@ -428,10 +459,10 @@ function waitForHealth(agentUrl, workspaceUrl) {
     if (Date.now() > deadline) {
       return Promise.all([fetchHealth(agentUrl), fetchHealth(workspaceUrl)]).then(([agentOk, workspaceOk]) => {
         const parts = [];
-        if (!agentOk) parts.push('agent (port ' + AGENT_PORT + ')');
-        if (!workspaceOk) parts.push('workspace (port ' + WORKSPACE_PORT + ')');
+        if (!agentOk) parts.push('agent (port ' + dynamicAgentPort + ')');
+        if (!workspaceOk) parts.push('workspace (port ' + dynamicWorkspacePort + ')');
         const which = parts.length ? parts.join(' and ') : 'one or both';
-        return Promise.reject(new Error('Servers did not become ready in time. Not ready: ' + which + '. Ensure agent-server and workspace-server are in desktop/resources/ and that ports ' + AGENT_PORT + '/' + WORKSPACE_PORT + ' are free.'));
+        return Promise.reject(new Error('Servers did not become ready in time. Not ready: ' + which + '. Ensure agent-server and workspace-server are in desktop/resources/.'));
       });
     }
     return Promise.all([fetchHealth(agentUrl), fetchHealth(workspaceUrl)]).then(([agentOk, workspaceOk]) => {
@@ -524,14 +555,22 @@ function createWindow(initialUrl) {
       contextIsolation: true,
     },
   });
-  mainWindow.loadURL(initialUrl || `http://127.0.0.1:${AGENT_PORT}`);
+  
+  const devUrl = process.env.DEV_URL;
+  if (devUrl) {
+    // Open DevTools automatically in dev mode
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+
+  mainWindow.loadURL(initialUrl || `http://127.0.0.1:${dynamicAgentPort}`);
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createMenu();
+  
   // If DEV_URL is set (e.g. http://localhost:5173), skip spawning servers and just load that URL
   const devUrl = process.env.DEV_URL;
   if (devUrl) {
@@ -539,28 +578,35 @@ app.whenReady().then(() => {
     createWindow(devUrl);
     return;
   }
-
+  
   const userDataPath = app.getPath('userData');
 
-  checkPortsAvailable()
-    .then(() => {
-      return spawnWorkspace(userDataPath);
-    })
-    .then(() => {
-      return spawnAgent(userDataPath);
-    })
-    .then(() => {
-      const agentHealthUrl = `http://127.0.0.1:${AGENT_PORT}/api/health`;
-      const workspaceHealthUrl = `http://127.0.0.1:${WORKSPACE_PORT}/health`;
-      return waitForHealth(agentHealthUrl, workspaceHealthUrl);
-    })
-    .then(() => {
-      createWindow();
-      checkForUpdates();
-    })
-    .catch((err) => {
-      showErrorAndExit(err.message || String(err));
-    });
+  // 1. (Check ports removed - not needed for dynamic ports)
+
+  // 2. Spawn servers (in sequence: Workspace first, then Agent)
+  try {
+    console.log('[main] Spawning local servers...');
+    await spawnWorkspace(userDataPath);
+    await spawnAgent(userDataPath);
+  } catch (err) {
+    showErrorAndExit(err.message || String(err));
+    return;
+  }
+
+  // 3. Wait for health
+  try {
+    console.log('[main] Waiting for backend health...');
+    const agentHealthUrl = `http://127.0.0.1:${dynamicAgentPort}/api/health`;
+    const workspaceHealthUrl = `http://127.0.0.1:${dynamicWorkspacePort}/health`;
+    await waitForHealth(agentHealthUrl, workspaceHealthUrl);
+  } catch (err) {
+    showErrorAndExit(err.message || String(err));
+    return;
+  }
+
+  // 4. Create Window
+  createWindow();
+  checkForUpdates();
 });
 
 app.on('window-all-closed', () => {

@@ -13,6 +13,7 @@ import ConfirmationDialog from './ui/ConfirmationDialog'
 import ImportProgressDialog from './ui/ImportProgressDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
@@ -168,6 +169,9 @@ export default function Workspace({
     setActiveFolder,
     setBinaryFileData
   } = useWorkspaceStore()
+
+  const isSemanticSearchEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.semantic_search_enabled ?? false)
+  const isGitSyncEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.github_sync_enabled ?? false)
 
   // Note: moveDialog from store is shadowed by local state below
   // We should rename the local one to avoid confusion or remove the one from store if unused
@@ -1796,6 +1800,7 @@ export default function Workspace({
                         <CheckSquare className="w-4 h-4" />
                         Select Files
                       </button>
+                      {isSemanticSearchEnabled && (
                       <button
                         onClick={() => {
                           setShowSearchSyncDetails(true)
@@ -1808,6 +1813,7 @@ export default function Workspace({
                         </svg>
                         Search Sync Details
                       </button>
+                      )}
                     </div>
                   </div>
                   )}
@@ -1815,18 +1821,18 @@ export default function Workspace({
               )}
 
               {/* Git Sync Status - Hidden in selection mode */}
-              {!isSelectionMode && (
+              {!isSelectionMode && isGitSyncEnabled && (
                 <div className="relative">
                   <GitSyncStatus onSync={() => fetchFiles(activeFolder)} isVisible={!minimized} />
                 </div>
               )}
 
               {/* Search Sync Status - Hidden button, controlled via dropdown - Hidden in selection mode */}
-              {!isSelectionMode && (
+              {!isSelectionMode && isSemanticSearchEnabled && (
                 <div className="relative">
-                  <SemanticSearchSync 
+                  <SemanticSearchSync
                     onResync={() => fetchFiles(activeFolder)}
-                    isVisible={!minimized} 
+                    isVisible={!minimized}
                     hideButton={true}
                     showDetailsExternal={showSearchSyncDetails}
                     onDetailsClose={() => setShowSearchSyncDetails(false)}

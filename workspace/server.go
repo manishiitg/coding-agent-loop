@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -271,13 +272,26 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Start server
-	fmt.Printf("Starting Planner API server on port %s\n", port)
+	// Use net.Listen to support dynamic port allocation (port 0)
+	listener, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		fmt.Printf("Failed to listen on port %s: %v\n", port, err)
+		os.Exit(1)
+	}
+	
+	// Get the actual port (in case 0 was used)
+	actualPort := listener.Addr().(*net.TCPAddr).Port
+	fmt.Printf("Starting Planner API server on port %d\n", actualPort)
+	
+	// Print a specific marker for Electron to parse
+	fmt.Printf("DynamicPort: %d\n", actualPort)
+	
 	absDocsDir, _ := filepath.Abs(docsDir)
 	fmt.Printf("Docs directory: %s\n", absDocsDir)
-	fmt.Printf("Health check: http://localhost:%s/health\n", port)
-	fmt.Printf("API docs: http://localhost:%s/api/documents\n", port)
+	fmt.Printf("Health check: http://localhost:%d/health\n", actualPort)
+	fmt.Printf("API docs: http://localhost:%d/api/documents\n", actualPort)
 
-	if err := r.Run(":" + port); err != nil {
+	if err := r.RunListener(listener); err != nil {
 		fmt.Printf("Failed to start server: %v\n", err)
 		os.Exit(1)
 	}

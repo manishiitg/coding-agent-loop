@@ -103,22 +103,9 @@ Scope: **Mac only** (Apple Silicon primary; Intel/universal optional). Distribut
 
 ## Current Blockers & Active Tasks (Feb 16, 2026)
 
-### 1. Library Synchronization (Critical) — ✅ COMPLETED
-The `agent_go` backend uses features (like `mcpagent.ToolExecutionLLMConfigKey`) that exist in the local `mcpagent/` directory but have not yet been released to the standalone `github.com/manishiitg/mcpagent` repository. This causes GitHub Actions to fail during compilation.
-*   **Status:** Resolved. `mcpagent` tagged and released as `v1.2.9`. `agent_go/go.mod` updated to use this version.
-*   **Action Required:** None.
-
-### 2. Monorepo Path Resolution — ✅ COMPLETED
-The GitHub runner fails to resolve `mcpagent` and `multi-llm-provider-go` because they are treated as external modules but the code is actually present in the monorepo.
-*   **Status:** Resolved. `agent_go/go.mod` updated to point to released versions on GitHub, removing local `replace` directives for these libraries.
-
-### 3. Frontend Syntax Errors — ✅ COMPLETED
-Merge conflict resolution errors in `frontend/src/App.tsx` (specifically `Unexpected token` around line 1308) were blocking the frontend build.
-*   **Status:** Resolved. Syntax error in `App.tsx` fixed and frontend build verified.
-
-### 4. Automated Release Workflow — ✅ COMPLETED
-The CI/CD pipeline needed to support automated versioning and release creation.
-*   **Status:** Resolved. `.github/workflows/desktop-release.yml` updated to sync `package.json` version with git tag and create releases automatically. Verified with `v1.20.0`.
+### 1. v1.21.0 Release — ✅ COMPLETED
+*   **Status:** Released.
+*   **Notes:** Dynamic ports implemented. Frontend sync features refined. Binaries built and packaged.
 
 ---
 
@@ -132,13 +119,13 @@ The CI/CD pipeline needed to support automated versioning and release creation.
 | 6.3 | CDP Connectivity Helper | Add a UI status/button to help users connect to their local Chrome via `--remote-debugging-port=9222`. |
 | 6.4 | Logs and debugging | **Done.** Updated `main.js` to pipe stdout/stderr from agent/workspace processes to `userData/logs/agent.log` and `userData/logs/workspace.log`. |
 
-### Phase 7: Production Hardening (Future)
+### Phase 7: Production Hardening (In Progress)
 
 These steps are recommended for a commercial or wide public release to ensure robustness and security.
 
 | Step | Task | Details |
 |------|------|--------|
-| 7.1 | Dynamic Port Allocation | **Critical for reliability.** Instead of hardcoded 45678/45679, let the OS assign random free ports (port 0). Have Go processes report these ports back to Electron (via stdout or temp file), and inject them into the React frontend at runtime. |
+| 7.1 | Dynamic Port Allocation | **✅ Done.** Implemented in v1.21.0. Servers bind to port 0 (dynamic), Electron parses the assigned port from stdout, and injects it into the frontend via IPC. No more port conflicts or hardcoded ports. |
 | 7.2 | IPC Authentication | **Critical for security.** Generate a random session token in Electron on startup. Pass it to Go processes as an env var. Require this token in an `Authorization` header for all API requests to prevent unauthorized access from other local software/scripts. |
 | 7.3 | Zombie Process Prevention | **Reliability.** Implement a "parent heartbeat" or PID monitoring in the Go servers. If the Electron parent process dies unexpectedly (crash/force quit), the Go servers should automatically shut down to prevent orphaned background processes. |
 | 7.4 | Auto-Update | Integrate `electron-updater` to pull new releases from GitHub. |
@@ -147,23 +134,23 @@ These steps are recommended for a commercial or wide public release to ensure ro
 
 ## Project Status Summary (Feb 16, 2026)
 
-The standalone Electron application has been successfully prototyped and packaged.
+The standalone Electron application has been successfully packaged and released as **v1.21.0**.
 
 ### Artifacts Generated
-- **DMG:** `desktop/dist/Multi Agent Builder-0.1.0-arm64.dmg` (~142MB)
-- **ZIP:** `desktop/dist/Multi Agent Builder-0.1.0-arm64-mac.zip` (~138MB)
+- **DMG:** `Multi Agent Builder-1.21.0-arm64.dmg`
+- **ZIP:** `Multi Agent Builder-1.21.0-arm64-mac.zip`
 
 ### Key Achievements
+- **Dynamic Port Allocation:** Servers now bind to random free ports provided by the OS, eliminating port conflicts with other running instances or services.
 - **Zero-Dependency Startup:** Spawns `agent-server` and `workspace-server` sidecar binaries automatically on launch.
-- **Filesystem Persistence:** Configured Go servers to use `app.getPath('userData')` for databases, logs, and search indices, ensuring compatibility with read-only application bundles.
-- **Port Management:** Uses stable ports 45678/45679 with pre-flight conflict detection.
-- **Integrated Frontend:** Frontend is served directly via the `agent-server` internal static file server, reducing process overhead.
-- **Log Redirection:** Child process logs are correctly captured and redirected to the system's Application Support directory for troubleshooting.
+- **Filesystem Persistence:** Configured Go servers to use `app.getPath('userData')` for databases, logs, and search indices.
+- **Integrated Frontend:** Frontend is served directly via the `agent-server`.
+- **Reliable Dev Mode:** `npm start` (with `DEV_URL`) correctly connects to external backends on standard ports (8000/8081) while packaged app uses internal dynamic ports.
 
-### Next Steps (Post-Prototype)
+### Next Steps (Post-v1.21.0)
 - **Code Signing:** To distribute outside of local environments, the build process needs an Apple Developer ID.
 - **Universal Build:** Configure `electron-builder` to produce universal binaries (arm64 + x64) for broader Mac compatibility.
-- **In-App CDP Status:** Implement Phase 6.3 to help users with browser automation setup.
+- **Security Hardening:** Implement Phase 7.2 (IPC Authentication) to secure the local API.
 
 ---
 

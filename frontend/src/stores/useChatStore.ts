@@ -22,7 +22,6 @@ export type PerModeEventCounts = Record<EventMode, number>
 // Helper to compute per-mode event counts
 const computePerModeCounts = (events: PollingEvent[]): PerModeEventCounts => {
   return {
-    basic: events.filter(e => e.type && shouldShowEventByMode(e.type, 'basic')).length,
     advanced: events.length, // Advanced shows all events
     tiny: events.filter(e => e.type && shouldShowEventByMode(e.type, 'tiny')).length,
     micro: events.filter(e => e.type && shouldShowEventByMode(e.type, 'micro')).length,
@@ -114,7 +113,7 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
-  eventMode: 'basic' | 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
+  eventMode: 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
@@ -341,7 +340,7 @@ interface ChatState extends StoreActions {
   clearToasts: () => void
   
   // Tab management actions
-  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro') => Promise<string>  // Returns tabId
+  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'tiny' | 'micro') => Promise<string>  // Returns tabId
   switchTab: (tabId: string) => void
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
@@ -352,7 +351,7 @@ interface ChatState extends StoreActions {
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
-  setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny' | 'micro') => void
+  setTabEventMode: (tabId: string, eventMode: 'advanced' | 'tiny' | 'micro') => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
@@ -607,12 +606,26 @@ export const useChatStore = create<ChatState>()(
             logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${events.length} -> ${MAX_EVENTS}`)
             finalEvents = cleanupOldEvents(events)
           }
-          
+
+          // Also update lastViewedEventCounts for the tab owning this session
+          // so restored/hydrated events don't show as "new" in the badge
+          const updatedTabs = { ...state.chatTabs }
+          for (const [tabId, tab] of Object.entries(updatedTabs)) {
+            if (tab.sessionId === sessionId) {
+              updatedTabs[tabId] = {
+                ...tab,
+                lastViewedEventCount: finalEvents.length,
+                lastViewedEventCounts: computePerModeCounts(finalEvents)
+              }
+            }
+          }
+
           return {
             tabEvents: {
               ...state.tabEvents,
               [sessionId]: finalEvents
-            }
+            },
+            chatTabs: updatedTabs
           }
         })
       },
@@ -925,7 +938,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       // Tab management actions
-      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro') => {
+      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'tiny' | 'micro') => {
         // Generate unique tab ID
         const timestamp = Date.now()
         const mode = metadata?.mode || 'chat'
@@ -974,7 +987,7 @@ export const useChatStore = create<ChatState>()(
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
-          lastViewedEventCounts: { basic: 0, advanced: 0, tiny: 0, micro: 0 }, // Initialize all modes to 0
+          lastViewedEventCounts: { advanced: 0, tiny: 0, micro: 0 }, // Initialize all modes to 0
           metadata
         }
         
@@ -1246,7 +1259,7 @@ export const useChatStore = create<ChatState>()(
       
       // updateTabObserverId removed - observers no longer used
       
-      setTabEventMode: (tabId: string, eventMode: 'basic' | 'advanced' | 'tiny' | 'micro') => {
+      setTabEventMode: (tabId: string, eventMode: 'advanced' | 'tiny' | 'micro') => {
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return
@@ -1738,7 +1751,7 @@ export const useChatStore = create<ChatState>()(
                 // - enableContextSummarization
                 createdAt: tab.createdAt, // Persist for ordering
                 lastViewedEventCount: 0, // @deprecated - Reset on reload
-                lastViewedEventCounts: { basic: 0, advanced: 0, tiny: 0, micro: 0 }, // Reset on reload
+                lastViewedEventCounts: { advanced: 0, tiny: 0, micro: 0 }, // Reset on reload
                 metadata: tab.metadata // Persist mode and phase info
               }
             ])

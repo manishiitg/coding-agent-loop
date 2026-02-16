@@ -1,6 +1,6 @@
 # Kubernetes Deployment
 
-Deploy MCP Agent Builder to Kubernetes with Gemini and OpenRouter providers.
+Deploy Multi Agent Builder to Kubernetes with Gemini and OpenRouter providers.
 
 ## Services
 

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Settings - Multi Agent Builder</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #1e1e1e;
+      color: #e0e0e0;
+      padding: 20px;
+      margin: 0;
+    }
+    h2 { margin-top: 0; font-size: 18px; color: #fff; }
+    .section { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #333; }
+    .section:last-child { border-bottom: none; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; color: #bbb; }
+    input, select {
+      width: 100%;
+      padding: 8px;
+      background-color: #2d2d2d;
+      border: 1px solid #444;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 13px;
+      box-sizing: border-box;
+      margin-bottom: 12px;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #007acc;
+    }
+    .radio-group { margin-bottom: 12px; }
+    .radio-label { display: inline-flex; align-items: center; margin-right: 16px; cursor: pointer; }
+    .radio-label input { width: auto; margin: 0 6px 0 0; }
+    
+    .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+    button {
+      padding: 6px 16px;
+      border-radius: 4px;
+      border: none;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn-primary { background-color: #007acc; color: white; }
+    .btn-primary:hover { background-color: #0062a3; }
+    .btn-secondary { background-color: #3e3e3e; color: #ccc; }
+    .btn-secondary:hover { background-color: #4e4e4e; }
+    
+    .hidden { display: none; }
+    .note { font-size: 11px; color: #888; margin-top: -8px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <h2>Application Settings</h2>
+  
+  <div class="section">
+    <label>Database Storage</label>
+    <div class="radio-group">
+      <label class="radio-label">
+        <input type="radio" name="dbType" value="sqlite" checked onchange="toggleDbFields()"> SQLite (Local File)
+      </label>
+      <label class="radio-label">
+        <input type="radio" name="dbType" value="postgres" onchange="toggleDbFields()"> PostgreSQL
+      </label>
+    </div>
+    
+    <div id="pg-config" class="hidden">
+      <label>Connection String (DATABASE_URL)</label>
+      <div style="display: flex; gap: 8px;">
+        <input type="text" id="dbUrl" placeholder="postgres://user:pass@host:5432/dbname" style="margin-bottom: 0;" />
+        <button type="button" class="btn-secondary" onclick="testDbConnection()" style="white-space: nowrap;">Test</button>
+      </div>
+      <div id="connection-status" class="note" style="margin-top: 4px; min-height: 14px;">Optional. Use for centralized storage or better performance.</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <label>GitHub Backup (Workspace)</label>
+    <label>GitHub Token (PAT)</label>
+    <input type="password" id="ghToken" placeholder="ghp_..." />
+    
+    <label>Repository (username/repo)</label>
+    <input type="text" id="ghRepo" placeholder="username/repo" />
+    <div class="note">
+      <strong>Why connect GitHub?</strong><br>
+      • <strong>Backup:</strong> Automatically syncs your workspace documents (plans, notes) to a private repository.<br>
+      • <strong>Version Control:</strong> Track changes and revert to previous versions of your files.<br>
+      • <strong>Collaboration:</strong> Share your workspace across machines by syncing to the same repo.
+    </div>
+  </div>
+
+  <div class="buttons">
+    <button class="btn-secondary" onclick="window.close()">Cancel</button>
+    <button class="btn-primary" onclick="saveSettings()">Save & Restart Servers</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    function toggleDbFields() {
+      const type = document.querySelector('input[name="dbType"]:checked').value;
+      document.getElementById('pg-config').classList.toggle('hidden', type !== 'postgres');
+    }
+
+    // Load initial settings
+    ipcRenderer.invoke('get-settings').then(settings => {
+      if (settings.dbType) {
+        document.querySelector(`input[name="dbType"][value="${settings.dbType}"]`).checked = true;
+      }
+      document.getElementById('dbUrl').value = settings.dbUrl || '';
+      document.getElementById('ghToken').value = settings.ghToken || '';
+      document.getElementById('ghRepo').value = settings.ghRepo || '';
+      toggleDbFields();
+    });
+
+    function saveSettings() {
+      const dbType = document.querySelector('input[name="dbType"]:checked').value;
+      const dbUrl = document.getElementById('dbUrl').value;
+      
+      if (dbType === 'postgres') {
+        if (!dbUrl) {
+          alert('Please enter a database connection string.');
+          return;
+        }
+        if (!dbUrl.startsWith('postgres://') && !dbUrl.startsWith('postgresql://')) {
+          alert('Connection string must start with postgres:// or postgresql://');
+          return;
+        }
+      }
+
+      const settings = {
+        dbType,
+        dbUrl,
+        ghToken: document.getElementById('ghToken').value,
+        ghRepo: document.getElementById('ghRepo').value
+      };
+      
+      ipcRenderer.send('save-settings', settings);
+    }
+
+    async function testDbConnection() {
+      const dbUrl = document.getElementById('dbUrl').value;
+      const statusEl = document.getElementById('connection-status');
+      
+      if (!dbUrl) {
+        statusEl.textContent = 'Please enter a connection string.';
+        statusEl.style.color = '#ff6b6b';
+        return;
+      }
+
+      statusEl.textContent = 'Testing connection...';
+      statusEl.style.color = '#bbb';
+
+      const result = await ipcRenderer.invoke('test-db-connection', dbUrl);
+      
+      if (result.success) {
+        statusEl.textContent = '✅ Connection successful!';
+        statusEl.style.color = '#4ade80';
+      } else {
+        statusEl.textContent = '❌ Connection failed: ' + result.error;
+        statusEl.style.color = '#ff6b6b';
+      }
+    }
+  </script>
+</body>
+</html>

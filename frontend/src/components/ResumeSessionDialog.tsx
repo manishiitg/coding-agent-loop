@@ -105,7 +105,7 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
         truncateTabTitle(session.title || 'Chat'),
         { mode: tabMode, isViewOnly },
         session.session_id,
-        'tiny'
+        'micro'
       )
 
       // Fetch full session for config restoration
@@ -139,7 +139,16 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
     onClose()
   }
 
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+
   const filteredSessions = sessions.filter(s => {
+    // Filter out workflow sessions
+    if ((s.agent_mode || '').toLowerCase() === 'workflow') return false
+    // Mode-based filtering: show only matching sessions
+    const isMultiAgent = s.config?.delegation_mode === 'plan'
+    if (selectedModeCategory === 'multi-agent' && !isMultiAgent) return false
+    if (selectedModeCategory === 'chat' && isMultiAgent) return false
+    // Search filter
     if (!searchQuery.trim()) return true
     const q = searchQuery.toLowerCase()
     return (s.title || '').toLowerCase().includes(q) ||

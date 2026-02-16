@@ -4,7 +4,7 @@ import { EventDispatcher, type DelegationStats, type EventNode } from './EventDi
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
-import { NEVER_DISPLAY_EVENTS } from './eventModeUtils';
+import { NEVER_DISPLAY_EVENTS, shouldShowEventByMode } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import './EventHierarchy.css';
 
@@ -17,7 +17,7 @@ interface EventHierarchyProps {
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
   flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
-  eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro'  // Override event mode (e.g. for shared sessions with no active tab)
+  eventMode?: 'advanced' | 'tiny' | 'micro'  // Override event mode (e.g. for shared sessions with no active tab)
 }
 
 interface FlattenedItem {
@@ -65,7 +65,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // Get active tab for sessionId, eventMode, and hideToolCalls
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
-  const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = eventModeProp || (activeTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+  const eventMode: 'advanced' | 'tiny' | 'micro' = eventModeProp || (activeTab?.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
   const hideToolCalls = activeTab?.hideToolCalls || false
   
   // Merge loaded older events with current events

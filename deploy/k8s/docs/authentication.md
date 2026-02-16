@@ -1,6 +1,6 @@
 # Multi-Provider Authentication
 
-This document describes how to configure authentication for the MCP Agent Builder application deployed on Kubernetes.
+This document describes how to configure authentication for the Multi Agent Builder application deployed on Kubernetes.
 
 ## Overview
 

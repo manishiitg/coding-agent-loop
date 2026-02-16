@@ -9,11 +9,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       return savedTheme
     }
     
-    // Check system preference
-    if (window.matchMedia('(prefers-color-scheme: light)').matches) {
-      return 'light'
-    }
-
     return 'dark'
   })
 

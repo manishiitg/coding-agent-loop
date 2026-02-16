@@ -21,9 +21,9 @@ export const useExpandable = (defaultCollapsedInMicro = true) => {
   const toggle = useCallback((e?: React.MouseEvent) => {
     if (e && (e.altKey || e.metaKey)) {
       // Global toggle via modifier key
-      // If currently collapsed (and we want to expand), switch to 'basic' (expanded)
+      // If currently collapsed (and we want to expand), switch to 'tiny' (expanded)
       // If currently expanded (and we want to collapse), switch to 'micro' (collapsed)
-      const newMode = !isExpanded ? 'basic' : 'micro'
+      const newMode = !isExpanded ? 'tiny' : 'micro'
       setMode(newMode)
     } else {
       // Local toggle

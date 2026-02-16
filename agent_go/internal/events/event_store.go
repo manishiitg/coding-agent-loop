@@ -29,8 +29,8 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 	"cache_operation_start":     true,
 }
 
-// ADVANCED_MODE_EVENTS contains event types that are hidden in basic mode
-// These events are only shown in advanced mode
+// ADVANCED_MODE_EVENTS contains event types that are only shown in advanced mode
+// In tiny/micro mode, these are hidden along with TINY_MODE_ADDITIONAL_EVENTS
 // Note: step_progress_updated is NOT in this list because it's required for React Flow canvas
 // node highlighting - it must always be sent to frontend for workflow mode to function correctly.
 var ADVANCED_MODE_EVENTS = map[string]bool{
@@ -40,10 +40,11 @@ var ADVANCED_MODE_EVENTS = map[string]bool{
 	"conversation_turn":         true,
 }
 
-// TINY_MODE_ADDITIONAL_EVENTS contains additional event types hidden in tiny mode (beyond basic mode)
-// Tiny mode hides everything basic mode hides PLUS user messages, system prompts, and agent lifecycle events
+// TINY_MODE_ADDITIONAL_EVENTS contains additional event types hidden in tiny/micro mode
+// Tiny mode hides ADVANCED_MODE_EVENTS + these additional lifecycle events
+// Note: user_message is NOT filtered — essential for conversation display on session restore
+// system_prompt is stored in DB but hidden in tiny/micro mode
 var TINY_MODE_ADDITIONAL_EVENTS = map[string]bool{
-	"user_message":             true,
 	"system_prompt":            true,
 	"agent_start":              true,
 	"agent_end":                true,
@@ -75,12 +76,11 @@ func ShouldShowEventByMode(eventType string, eventMode string) bool {
 		return true // Show all events in advanced mode
 	}
 	if eventMode == "tiny" || eventMode == "micro" {
-		// In tiny/micro mode, hide everything basic mode hides PLUS user_message and system_prompt
-		// So hide if it's in ADVANCED_MODE_EVENTS OR in TINY_MODE_ADDITIONAL_EVENTS
+		// In tiny/micro mode, hide ADVANCED_MODE_EVENTS + TINY_MODE_ADDITIONAL_EVENTS
 		return !ADVANCED_MODE_EVENTS[eventType] && !TINY_MODE_ADDITIONAL_EVENTS[eventType]
 	}
-	// In basic mode, show all events EXCEPT the ones in ADVANCED_MODE_EVENTS
-	return !ADVANCED_MODE_EVENTS[eventType]
+	// Fallback: treat unknown modes as tiny
+	return !ADVANCED_MODE_EVENTS[eventType] && !TINY_MODE_ADDITIONAL_EVENTS[eventType]
 }
 
 // Event represents a generic event that can be stored and retrieved
@@ -209,7 +209,7 @@ type GetEventsOptions struct {
 	SinceIndex int    // For forward polling: get events after this index
 	Limit      int    // For pagination: maximum number of events to return (0 = no limit)
 	Offset     int    // For pagination: skip this many events (used for backward pagination)
-	EventMode  string // "basic" or "advanced" - filters events by mode
+	EventMode  string // "advanced", "tiny", or "micro" - filters events by mode
 }
 
 // GetEventsResult contains the result of GetEvents call

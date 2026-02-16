@@ -1619,7 +1619,7 @@ export const EventList: React.FC<{
   isApproving?: boolean
   compact?: boolean
   flatHierarchy?: boolean
-  eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro'
+  eventMode?: 'advanced' | 'tiny' | 'micro'
 }> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact = false, flatHierarchy = false, eventMode }) => {
   if (events.length === 0) {
     return <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>No events to display</div>

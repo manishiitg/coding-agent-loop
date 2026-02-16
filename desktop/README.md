@@ -1,4 +1,4 @@
-# MCP Agent Builder — Desktop
+# Multi Agent Builder — Desktop
 
 Electron shell for the standalone Mac app. It bundles the `agent-server` and `workspace-server` binaries, managing their lifecycle automatically.
 
@@ -26,6 +26,22 @@ npm start
 
 This starts Electron; the main process will check ports **45678** and **45679**, spawn both servers from `resources/`, wait for health, then open a window at `http://127.0.0.1:45678`.
 
+## Development with Docker
+
+If you are already running the frontend and workspace services via Docker Compose, you can run the Electron shell as a wrapper without spawning internal servers:
+
+1.  **Start your Docker services:**
+    ```bash
+    docker-compose up
+    ```
+2.  **Start Electron in "Dev Mode"** by pointing it to your local frontend:
+    ```bash
+    cd desktop
+    DEV_URL=http://localhost:5173 npm start
+    ```
+
+In this mode, Electron skips port conflict checks and server lifecycle management, directly loading your development URL.
+
 ## Build & Package (Distribution)
 
 To create a distributable `.dmg` and `.zip`:
@@ -46,7 +62,7 @@ Artifacts will be output to `desktop/dist/`.
 
 ### Data & Logs
 The app stores data in the system's Application Support directory:
-`~/Library/Application Support/MCP Agent Builder/`
+`~/Library/Application Support/Multi Agent Builder/`
 
 - **Logs:** `logs/agent.log`, `logs/workspace.log`
 - **Database:** `chat_history.db`

@@ -5,7 +5,7 @@ export const NEVER_DISPLAY_EVENTS = new Set([
   'step_progress_updated',
 ]);
 
-// Advanced mode events - events that are hidden in basic mode
+// Advanced-only events - events that are only shown in advanced mode
 export const ADVANCED_MODE_EVENTS = new Set([
   'llm_generation_start',
   'llm_generation_with_retry',
@@ -16,10 +16,9 @@ export const ADVANCED_MODE_EVENTS = new Set([
   'comprehensive_cache_event',
 ]);
 
-// Tiny mode additional events - events hidden in tiny mode beyond what basic mode hides
-// Tiny mode hides everything basic mode hides PLUS user messages, system prompts, and agent lifecycle events
+// Tiny mode additional events - events hidden in tiny/micro mode beyond what advanced mode hides
+// Note: user_message is NOT filtered — essential for conversation display on restore
 export const TINY_MODE_ADDITIONAL_EVENTS = new Set([
-  'user_message',
   'system_prompt',
   'agent_start',
   'agent_end',
@@ -36,11 +35,10 @@ export const shouldShowEventByMode = (eventType: string, mode: EventMode): boole
     return true // Show all events in advanced mode
   }
   if (mode === 'tiny' || mode === 'micro') {
-    // In tiny/micro mode, hide everything basic mode hides PLUS user_message and system_prompt
-    // So hide if it's in ADVANCED_MODE_EVENTS OR in TINY_MODE_ADDITIONAL_EVENTS
+    // In tiny/micro mode, hide ADVANCED_MODE_EVENTS + TINY_MODE_ADDITIONAL_EVENTS
     return !ADVANCED_MODE_EVENTS.has(eventType) && !TINY_MODE_ADDITIONAL_EVENTS.has(eventType)
   }
-  // In basic mode, show all events EXCEPT the ones in ADVANCED_MODE_EVENTS
-  return !ADVANCED_MODE_EVENTS.has(eventType)
+  // Fallback: treat unknown modes as tiny
+  return !ADVANCED_MODE_EVENTS.has(eventType) && !TINY_MODE_ADDITIONAL_EVENTS.has(eventType)
 }
 

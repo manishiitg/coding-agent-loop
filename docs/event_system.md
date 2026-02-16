@@ -1,6 +1,6 @@
 # Event System Architecture
 
-This document provides a comprehensive overview of the event system in the MCP Agent Builder, covering type safety, event grouping, and workspace file operation events.
+This document provides a comprehensive overview of the event system in the Multi Agent Builder, covering type safety, event grouping, and workspace file operation events.
 
 ---
 

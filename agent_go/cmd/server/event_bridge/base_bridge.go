@@ -59,8 +59,7 @@ var DB_SKIP_EVENTS = map[string]bool{
 	"conversation_thinking": true,
 	"conversation_error":    true,
 
-	// System internals
-	"system_prompt":                  true,
+	// Note: user_message and system_prompt are NOT skipped — essential for conversation restore
 	"agent_processing":               true,
 	"large_tool_output_detected":     true,
 	"large_tool_output_file_written": true,

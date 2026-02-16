@@ -1,26 +1,24 @@
 import React from 'react';
 import { useChatStore } from '../../stores/useChatStore';
-import { Filter, Settings, Minus, Minimize2 } from 'lucide-react';
+import { Settings, Minus, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const EventModeToggle: React.FC = () => {
   // Get active tab's event mode directly from store
   const activeTab = useChatStore(state => state.getActiveTab());
-  const mode = activeTab?.eventMode || 'basic';
+  const mode = activeTab?.eventMode || 'micro';
   const setTabEventMode = useChatStore(state => state.setTabEventMode);
 
   const cycleMode = () => {
-    // Cycle through: basic → advanced → tiny → micro → basic
+    // Cycle through: micro → tiny → advanced → micro
     if (activeTab) {
-      let newMode: 'basic' | 'advanced' | 'tiny' | 'micro';
-      if (mode === 'basic') {
-        newMode = 'advanced';
-      } else if (mode === 'advanced') {
+      let newMode: 'advanced' | 'tiny' | 'micro';
+      if (mode === 'micro') {
         newMode = 'tiny';
       } else if (mode === 'tiny') {
-        newMode = 'micro';
+        newMode = 'advanced';
       } else {
-        newMode = 'basic';
+        newMode = 'micro';
       }
       setTabEventMode(activeTab.tabId, newMode);
     }
@@ -35,8 +33,6 @@ export const EventModeToggle: React.FC = () => {
 
   const getModeDisplay = () => {
     switch (mode) {
-      case 'basic':
-        return { icon: Filter, label: 'Basic' };
       case 'advanced':
         return { icon: Settings, label: 'Advanced' };
       case 'tiny':
@@ -44,7 +40,7 @@ export const EventModeToggle: React.FC = () => {
       case 'micro':
         return { icon: Minimize2, label: 'Micro' };
       default:
-        return { icon: Filter, label: 'Basic' };
+        return { icon: Minimize2, label: 'Micro' };
     }
   };
 

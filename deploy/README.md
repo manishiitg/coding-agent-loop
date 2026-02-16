@@ -1,6 +1,6 @@
 # Deploy
 
-Deployment configs and scripts for MCP Agent Builder.
+Deployment configs and scripts for Multi Agent Builder.
 
 | Target | Path | Description |
 |--------|------|-------------|

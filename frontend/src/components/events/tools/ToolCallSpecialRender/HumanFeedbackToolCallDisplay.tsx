@@ -1,6 +1,7 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../../generated/event-types'
 import { MarkdownRenderer } from '../../../ui/MarkdownRenderer'
+import { playNotificationSound } from '../../../../utils/sound'
 
 interface HumanFeedbackToolCallDisplayProps {
   event: ToolCallStartEvent
@@ -64,8 +65,11 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
 
   // Show browser notification when component mounts (feedback request)
   React.useEffect(() => {
-    if ('Notification' in window && Notification.permission === 'granted') {
+    const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
+    if (enabled && 'Notification' in window && Notification.permission === 'granted') {
       try {
+        playNotificationSound()
+        
         const notification = new Notification('Human Feedback Required', {
           body: toolParams.message_for_user,
           icon: '/favicon.ico',

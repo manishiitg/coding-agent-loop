@@ -25,7 +25,7 @@ jobs:
       - name: Build Agent Server (arm64)
         run: |
           cd agent_go
-          GOOS=darwin GOARCH=arm64 go build -o ../desktop/resources/agent-server ./cmd/server
+          GOOS=darwin GOARCH=arm64 go build -o ../desktop/resources/agent-server .
 
       - name: Build Workspace Server (arm64)
         run: |

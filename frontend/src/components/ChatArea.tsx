@@ -345,10 +345,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Filter out workspace_file_operation events from display in basic/tiny mode
   // (These events are still sent to frontend for workspace store processing, but hidden from chat UI)
   const displayEvents = useMemo(() => {
-    const eventMode = activeTab?.eventMode || 'basic'
-    // In basic/tiny/micro mode, hide workspace_file_operation events from display
+    const eventMode = activeTab?.eventMode || 'micro'
+    // In tiny/micro mode, hide workspace_file_operation events from display
     // (they're still processed by useWorkspaceStore for file highlighting)
-    if (eventMode === 'basic' || eventMode === 'tiny' || eventMode === 'micro') {
+    if (eventMode === 'tiny' || eventMode === 'micro') {
       return tabEvents.filter(event => {
         if (event.type === 'workspace_file_operation') return false
         
@@ -890,12 +890,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       
       // Check if session is in backend's active sessions list (source of truth)
       // Backend determines activity based on event activity (10 min timeout)
-      // If session is in backend's active list, poll it regardless of local isStreaming state
-      // This ensures we catch events that come after stop is pressed
       // CRITICAL: Also allow polling if tab is streaming (user just submitted a query)
-      // This handles the case where a restored session is being replied to
       const isStreaming = currentTab.isStreaming
-      const isInActiveSessions = activeSessionIds.size === 0 || activeSessionIds.has(currentTab.sessionId)
+      const isInActiveSessions = activeSessionIds.has(currentTab.sessionId)
       
       // Allow polling if:
       // 1. Session is in backend's active sessions list, OR
@@ -1014,8 +1011,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Track which session is currently being polled (for derived isStreaming)
 
       try {
-        // Get event mode from current tab (defaults to 'basic')
-        const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (currentTab?.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+        // Get event mode from current tab (defaults to 'micro')
+        const eventMode: 'advanced' | 'tiny' | 'micro' = (currentTab?.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
         
         const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { eventMode })
 
@@ -1499,8 +1496,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           } else {
             // No orphans left — create a new tab (only for truly new running sessions)
             const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-            const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
-              agentMode === 'orchestrator' ? 'advanced' : 'tiny'
+            const defaultEventMode: 'advanced' | 'micro' =
+              agentMode === 'orchestrator' ? 'advanced' : 'micro'
 
             try {
               console.log(`[AutoRestore] Creating tab for running session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
@@ -1535,7 +1532,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             }
 
             // Load events using shared utility
-            const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (targetTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+            const eventMode: 'advanced' | 'tiny' | 'micro' = (targetTab.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
             await hydrateTabEvents(sessionId, eventMode)
             console.log(`[AutoRestore] Loaded events for session ${sessionId}`)
 
@@ -1573,7 +1570,56 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       restoreActiveSessions()
     }
   }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
-  
+
+  // Hydrate persisted tabs that have a sessionId but no events (e.g. after page refresh for completed sessions)
+  // The auto-restore above only handles active/running sessions; completed sessions restored from history
+  // are persisted in localStorage but their events are not — they need to be reloaded from the DB.
+  useEffect(() => {
+    const chatStore = useChatStore.getState()
+    const tabs = Object.values(chatStore.chatTabs)
+
+    for (const tab of tabs) {
+      if (!tab.sessionId) continue
+      // Only hydrate chat and multi-agent tabs — workflow tabs handle their own restore
+      if (tab.metadata?.mode === 'workflow') continue
+      const events = chatStore.getTabEvents(tab.sessionId)
+      if (events.length > 0) continue
+
+      // This tab has a session but no events — hydrate it
+      const sessionId = tab.sessionId
+      const tabId = tab.tabId
+      console.log(`[HydratePersistedTab] Tab ${tabId} has session ${sessionId} but 0 events, hydrating`)
+
+      ;(async () => {
+        try {
+          // Config is already persisted in localStorage — only load events
+          const eventMode = (tab.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
+          await hydrateTabEvents(sessionId, eventMode)
+
+          // Restore completion/view-only state from backend status (may 404 for old sessions)
+          try {
+            const chatSession = await agentApi.getChatSession(sessionId)
+            if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
+              chatStore.setTabCompleted(tabId, true)
+              chatStore.setTabStreaming(tabId, false)
+            }
+            if (chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error') {
+              chatStore.setTabMetadata(tabId, { isViewOnly: true })
+            }
+          } catch {
+            // Session not found in DB — use persisted metadata as-is
+          }
+
+          console.log(`[HydratePersistedTab] Hydrated tab ${tabId} for session ${sessionId}`)
+        } catch (err) {
+          console.error(`[HydratePersistedTab] Failed to hydrate tab ${tabId}:`, err)
+        }
+      })()
+    }
+  // Run once on mount — persisted tabs are available immediately from localStorage
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Only poll tabs that have their session ID in the backend's active sessions list
   // Backend determines activity based on event activity (10 min timeout)
   // CRITICAL: Also include tabs that are streaming (user just submitted a query)
@@ -1617,15 +1663,13 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         return true
       }
 
-      // Must be in backend's active sessions list (or we haven't checked yet - allow polling)
+      // Must be in backend's active sessions list
       // If backend says it's active, poll it even if local isStreaming is false
       // This ensures we catch events that come after stop is pressed
-      if (activeIds.size > 0 && !activeIds.has(tab.sessionId)) {
+      if (!activeIds.has(tab.sessionId)) {
         return false
       }
-      
-      // If backend status is unknown (empty), allow polling (backend check might be in progress)
-      // Backend will mark it inactive if no events for 10 minutes
+
       return true
     })
     
@@ -1794,11 +1838,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
             // Determine default event mode based on agent mode
             // orchestrator -> advanced (more complex, needs detailed view)
-            // simple -> tiny (minimal view for restored sessions)
-            // workflow -> tiny (minimal view for restored sessions)
+            // simple -> micro (minimal view for restored sessions)
             const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-            const defaultEventMode: 'basic' | 'advanced' | 'tiny' =
-              agentMode === 'orchestrator' ? 'advanced' : 'tiny'
+            const defaultEventMode: 'advanced' | 'micro' =
+              agentMode === 'orchestrator' ? 'advanced' : 'micro'
 
             try {
               const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, originalSessionId, defaultEventMode)
@@ -1871,7 +1914,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             
             try {
               // Get event mode from the tab we just created/switched to
-              const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+              const eventMode: 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
               const response = await agentApi.getSessionEvents(originalSessionId, 0, { eventMode })
               
               // Convert and set historical events
@@ -1956,12 +1999,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               
               // Determine default event mode based on agent mode
               // orchestrator -> advanced (more complex, needs detailed view)
-              // simple -> tiny (minimal view for restored sessions)
-              // workflow -> tiny (minimal view for restored sessions)
+              // simple -> micro (minimal view for restored sessions)
               const agentMode = chatSession.agent_mode?.toLowerCase() || ''
-              const defaultEventMode: 'basic' | 'advanced' | 'tiny' = 
-                agentMode === 'orchestrator' ? 'advanced' : 'tiny'
-              
+              const defaultEventMode: 'advanced' | 'micro' =
+                agentMode === 'orchestrator' ? 'advanced' : 'micro'
+
               try {
                 const newTabId = await createChatTab(sessionTitle, { mode: 'chat', isViewOnly }, originalSessionId, defaultEventMode)
                 tabWithSession = chatStore.getTab(newTabId)
@@ -2003,10 +2045,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // Switch to it (events should already be loaded)
               switchTab(tabWithSession.tabId)
               
-              // Check/Update event mode if needed (e.g. if created as tiny but needs advanced)
+              // Check/Update event mode if needed (e.g. if created as micro but needs advanced)
               const agentMode = chatSession.agent_mode?.toLowerCase() || ''
-              const targetEventMode: 'basic' | 'advanced' | 'tiny' = 
-                agentMode === 'orchestrator' ? 'advanced' : 'tiny'
+              const targetEventMode: 'advanced' | 'micro' =
+                agentMode === 'orchestrator' ? 'advanced' : 'micro'
               
               if (tabWithSession.eventMode !== targetEventMode) {
                  const chatStore = useChatStore.getState()
@@ -2044,12 +2086,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             setIsLoadingHistory(true)
             try {
             // Get event mode from the tab we just created/switched to
-            const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
+            const eventMode: 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
               console.log(`[History] Loading events from database for completed session ${originalSessionId} with eventMode: ${eventMode}`)
               
               // Use database endpoint (not polling endpoint) for completed sessions
               // Backend now returns the same structure as polling API (events.Event[])
-              const dbResponse = await agentApi.getChatSessionEvents(originalSessionId, 1000, 0)
+              const dbResponse = await agentApi.getChatSessionEvents(originalSessionId, 1000, 0, eventMode)
               
               console.log(`[History] Database API response for session ${originalSessionId}:`, {
                 eventCount: dbResponse.events?.length || 0,
@@ -2658,7 +2700,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       </div>
 
       {/* Input Area - Completely isolated from event updates, hidden in workflow mode */}
-      {/* Enable input for historical sessions so users can continue conversations */}
       {!hideInput && (
         <ChatInput
           onSubmit={submitQueryWithQuery}

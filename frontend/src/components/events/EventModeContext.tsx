@@ -4,9 +4,9 @@ import { EventModeContext, type EventMode } from './EventContext';
 import { useChatStore } from '../../stores/useChatStore';
 
 export const EventModeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Get active tab's event mode, fallback to 'basic' if no tab
+  // Get active tab's event mode, fallback to 'micro' if no tab
   const activeTab = useChatStore(state => state.getActiveTab())
-  const tabEventMode = activeTab?.eventMode || 'basic'
+  const tabEventMode = activeTab?.eventMode || 'micro'
   const [mode, setMode] = useState<EventMode>(tabEventMode)
   
   // Update mode when active tab changes
@@ -25,17 +25,15 @@ export const EventModeProvider: React.FC<{ children: ReactNode }> = ({ children 
 
   React.useEffect(() => {
     // Expose global function for event mode cycling
-    // Cycle through: basic → advanced → tiny → micro → basic
+    // Cycle through: micro → tiny → advanced → micro
     (window as Window & { cycleEventMode?: () => void }).cycleEventMode = () => {
       let newMode: EventMode;
-      if (mode === 'basic') {
-        newMode = 'advanced';
-      } else if (mode === 'advanced') {
+      if (mode === 'micro') {
         newMode = 'tiny';
       } else if (mode === 'tiny') {
-        newMode = 'micro';
+        newMode = 'advanced';
       } else {
-        newMode = 'basic';
+        newMode = 'micro';
       }
       setTabMode(newMode)
     };

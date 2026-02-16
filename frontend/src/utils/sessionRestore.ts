@@ -10,6 +10,7 @@ import { agentApi } from '../services/api'
  * and resume dialog flows.
  */
 export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<ChatTabConfig> {
+  console.log('[ConfigRestore] Input config from backend:', JSON.stringify(config, null, 2))
   const configUpdate: Partial<ChatTabConfig> = {}
 
   // Restore selected servers (prefer enabled_servers over selected_servers)
@@ -82,23 +83,42 @@ export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<Ch
     configUpdate.delegationTierConfig = config.delegation_tier_config
   }
 
+  console.log('[ConfigRestore] Output configUpdate:', JSON.stringify(configUpdate, null, 2))
   return configUpdate
 }
 
 /**
  * Load events from the backend and hydrate a tab's event state.
  * Centralizes the event loading logic used across restore flows.
+ *
+ * Uses the in-memory polling API first (for active sessions).
+ * Falls back to the database API (for completed/historical sessions).
  */
 export async function hydrateTabEvents(
   sessionId: string,
-  eventMode: 'micro' | 'tiny' | 'basic' | 'advanced'
+  eventMode: 'micro' | 'tiny' | 'advanced'
 ): Promise<void> {
-  const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
   const chatStore = useChatStore.getState()
-  chatStore.setTabEvents(sessionId, response.events)
-  const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
-  chatStore.setTabLastEventIndex(sessionId, lastIndex)
-  if (response.has_more !== undefined) {
-    chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+
+  // Try the in-memory polling API first (works for active sessions)
+  const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
+
+  if (response.events.length > 0) {
+    chatStore.setTabEvents(sessionId, response.events)
+    const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
+    chatStore.setTabLastEventIndex(sessionId, lastIndex)
+    if (response.has_more !== undefined) {
+      chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+    }
+    return
+  }
+
+  // Polling API returned 0 events — session is likely completed/historical.
+  // Fall back to the database API with event mode filtering.
+  const dbResponse = await agentApi.getChatSessionEvents(sessionId, 1000, 0, eventMode)
+  if (dbResponse.events.length > 0) {
+    chatStore.setTabEvents(sessionId, dbResponse.events)
+    chatStore.setTabLastEventIndex(sessionId, dbResponse.events.length - 1)
+    chatStore.setTabHasMoreOlderEvents(sessionId, dbResponse.total > dbResponse.events.length)
   }
 }

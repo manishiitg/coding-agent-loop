@@ -13,10 +13,11 @@ import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { Layers, LogOut, User } from 'lucide-react'
+import { Layers, LogOut, User, Bell, BellOff, Play } from 'lucide-react'
 import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
+import { playNotificationSound } from '../utils/sound'
 
 interface WorkspaceSidebarProps {
   // Chat session selection
@@ -42,6 +43,78 @@ export default function WorkspaceSidebar({
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
+  const [isElectron, setIsElectron] = useState(false)
+  const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    return localStorage.getItem('mcp_notifications_enabled') !== 'false' // Default true
+  })
+
+  useEffect(() => {
+    // Check if running in Electron via preload API
+    setIsElectron(!!(window as any).electronAPI)
+    
+    // Initial permission check
+    if ('Notification' in window) {
+      setOsPermission(Notification.permission)
+    }
+
+    // Re-check permission when window regains focus (user might have changed it in settings)
+    const handleFocus = () => {
+      if ('Notification' in window) {
+        setOsPermission(Notification.permission)
+      }
+    }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [])
+
+  const testNotification = () => {
+    playNotificationSound()
+
+    // Set Dock badge for test
+    if ((window as any).electronAPI) {
+      (window as any).electronAPI.setDockBadge('1')
+      // Clear after 5 seconds for test
+      setTimeout(() => {
+        (window as any).electronAPI.setDockBadge('')
+      }, 5000)
+    }
+    
+    if (!('Notification' in window)) return
+    
+    if (Notification.permission === 'granted') {
+      new Notification('Test Notification', {
+        body: 'This is a test notification from Multi Agent Builder',
+        icon: '/favicon.ico'
+      })
+    } else if (Notification.permission === 'default') {
+      Notification.requestPermission().then(permission => {
+        setOsPermission(permission)
+        if (permission === 'granted') {
+          new Notification('Test Notification', {
+            body: 'This is a test notification from Multi Agent Builder',
+            icon: '/favicon.ico'
+          })
+        }
+      })
+    }
+  }
+
+  const handleNotificationClick = () => {
+    if (osPermission === 'denied') {
+      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > Multi Agent Builder.')
+      return
+    }
+
+    const nextValue = !notificationsEnabled
+    setNotificationsEnabled(nextValue)
+    localStorage.setItem('mcp_notifications_enabled', String(nextValue))
+
+    if (nextValue) {
+      // Just enabled: trigger test
+      testNotification()
+    }
+  }
 
   // Auto-open delegation tier modal when triggered from multi-agent mode entry
   useEffect(() => {
@@ -196,37 +269,72 @@ export default function WorkspaceSidebar({
       )}
 
       {/* User Info & Logout - Bottom Section (Expanded) */}
-      {!minimized && isMultiUserMode && user && (
+      {!minimized && (
         <div className="border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-          <div className="p-3 flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                <User className="w-4 h-4 text-primary" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                  {user.username || user.email || 'User'}
-                </p>
-                {user.email && user.username !== user.email && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    {user.email}
+          <div className="p-3 flex items-center justify-between gap-2">
+            {isMultiUserMode && user && (
+              <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <User className="w-4 h-4 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                    {user.username || user.email || 'User'}
                   </p>
-                )}
+                  {user.email && user.username !== user.email && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      {user.email}
+                    </p>
+                  )}
+                </div>
               </div>
+            )}
+            
+            <div className="flex items-center gap-1">
+              {isElectron && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleNotificationClick}
+                      className={`p-2 transition-colors ${
+                        osPermission === 'denied' 
+                          ? 'text-red-500 hover:text-red-600' 
+                          : notificationsEnabled 
+                            ? 'text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300' 
+                            : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'
+                      }`}
+                    >
+                      {osPermission === 'denied' || !notificationsEnabled ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>
+                      {osPermission === 'denied' 
+                        ? 'Notifications blocked by system. Click to learn more.' 
+                        : notificationsEnabled 
+                          ? 'Disable Notifications' 
+                          : 'Enable Notifications & Sound'}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+              
+              {isMultiUserMode && user && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={logout}
+                      className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Sign out</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={logout}
-                  className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Sign out</p>
-              </TooltipContent>
-            </Tooltip>
           </div>
         </div>
       )}
@@ -314,36 +422,69 @@ export default function WorkspaceSidebar({
           <div className="flex-1" />
 
           {/* User Info & Logout - Bottom (Minimized) */}
-          {isMultiUserMode && user && (
-            <div className="border-t border-gray-200 dark:border-slate-700 pt-3 flex flex-col items-center gap-2">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center cursor-default">
-                    <User className="w-4 h-4 text-primary" />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>{user.username || user.email || 'User'}</p>
-                </TooltipContent>
-              </Tooltip>
+          <div className="border-t border-gray-200 dark:border-slate-700 pt-3 flex flex-col items-center gap-2">
+            {isElectron && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     onClick={(e) => {
                       e.stopPropagation()
-                      logout()
+                      handleNotificationClick()
                     }}
-                    className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                    className={`p-2 transition-colors ${
+                      osPermission === 'denied' 
+                        ? 'text-red-500 hover:text-red-600' 
+                        : notificationsEnabled 
+                          ? 'text-indigo-500 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300' 
+                          : 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300'
+                    }`}
                   >
-                    <LogOut className="w-4 h-4" />
+                    {osPermission === 'denied' || !notificationsEnabled ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right">
-                  <p>Sign out</p>
+                  <p>
+                    {osPermission === 'denied' 
+                      ? 'Notifications blocked by system' 
+                      : notificationsEnabled 
+                        ? 'Disable Notifications' 
+                        : 'Enable Notifications & Sound'}
+                  </p>
                 </TooltipContent>
               </Tooltip>
-            </div>
-          )}
+            )}
+
+            {isMultiUserMode && user && (
+              <>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center cursor-default">
+                      <User className="w-4 h-4 text-primary" />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{user.username || user.email || 'User'}</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        logout()
+                      }}
+                      className="p-2 text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>Sign out</p>
+                  </TooltipContent>
+                </Tooltip>
+              </>
+            )}
+          </div>
         </div>
       )}
 

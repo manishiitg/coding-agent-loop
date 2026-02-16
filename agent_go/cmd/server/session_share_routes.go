@@ -430,7 +430,7 @@ func (api *StreamingAPI) getFilteredEventsForShare(ctx context.Context, chatSess
 	// Build excluded event types based on mode
 	var excludedTypes []string
 	if eventMode != "advanced" {
-		// NEVER_SHOW_EVENTS + ADVANCED_MODE_EVENTS (hidden in basic/tiny/micro)
+		// NEVER_SHOW_EVENTS + ADVANCED_MODE_EVENTS (hidden in tiny/micro)
 		excludedTypes = append(excludedTypes,
 			"tool_execution", "tool_output", "tool_response", "tool_call_progress",
 			"cache_event", "comprehensive_cache_event", "cache_hit", "cache_miss",

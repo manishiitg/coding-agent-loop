@@ -83,6 +83,11 @@ export type {
 
 // Resolve API base URL: use build-time env if set; otherwise fallback based on mode
 export function getApiBaseUrl(): string {
+  // Use Electron API if available
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.getApiBaseUrl) {
+    return (window as any).electronAPI.getApiBaseUrl()
+  }
+
   const env = import.meta.env.VITE_API_BASE_URL
   if (env) return env
   // Only fallback to localhost:8000 in DEV mode
@@ -92,6 +97,11 @@ export function getApiBaseUrl(): string {
 }
 
 function getWorkspaceApiBaseUrl(): string {
+  // Use Electron API if available
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.getWorkspaceApiBaseUrl) {
+    return (window as any).electronAPI.getWorkspaceApiBaseUrl()
+  }
+
   const env = import.meta.env.VITE_WORKSPACE_API_URL
   if (env) return env
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return `${window.location.origin}/workspace`
@@ -267,14 +277,14 @@ export const agentApi = {
 
   // Get events for a session
   // Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
-  // eventMode: 'basic' | 'advanced' | 'tiny' - filters events by mode (defaults to 'basic')
+  // eventMode: 'advanced' | 'tiny' | 'micro' - filters events by mode (defaults to 'micro')
   getSessionEvents: async (
     sessionId: string, 
     sinceIndex?: number,
     options?: {
       limit?: number
       offset?: number
-      eventMode?: 'basic' | 'advanced' | 'tiny' | 'micro'
+      eventMode?: 'advanced' | 'tiny' | 'micro'
     }
   ): Promise<GetEventsResponse> => {
     const params: Record<string, string | number> = {}
@@ -728,10 +738,12 @@ export const agentApi = {
   },
 
   // Get events from database for a chat session (for completed sessions)
-  getChatSessionEvents: async (sessionId: string, limit: number = 1000, offset: number = 0): Promise<GetSessionEventsResponse> => {
-    const response = await api.get(`/api/chat-history/sessions/${sessionId}/events`, {
-      params: { limit, offset }
-    })
+  getChatSessionEvents: async (sessionId: string, limit: number = 1000, offset: number = 0, eventMode?: string): Promise<GetSessionEventsResponse> => {
+    const params: Record<string, string | number> = { limit, offset }
+    if (eventMode) {
+      params.event_mode = eventMode
+    }
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}/events`, { params })
     return response.data
   },
 

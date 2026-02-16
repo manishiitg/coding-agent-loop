@@ -1,4 +1,4 @@
-# Electron Standalone Desktop App (Mac) — Plan
+# Multi Agent Builder — Plan
 
 A plan for packaging mcp-agent-builder-go as a downloadable Mac app that runs the agent and workspace servers automatically—no browser or manual server startup required.
 
@@ -6,7 +6,7 @@ A plan for packaging mcp-agent-builder-go as a downloadable Mac app that runs th
 
 ## Overview
 
-Today the app runs in a browser: users start the Go agent server (and optionally the workspace server), then open the frontend. This plan describes a **standalone Electron app** that:
+Today the app runs in a browser: users start the Go agent server (and optionally the workspace server), then open the frontend. This plan describes a **standalone Electron app** for Multi Agent Builder that:
 
 - Bundles the **agent server** and **workspace server** as binaries inside the app.
 - **Starts both servers automatically** when the user launches the app.
@@ -150,8 +150,8 @@ These steps are recommended for a commercial or wide public release to ensure ro
 The standalone Electron application has been successfully prototyped and packaged.
 
 ### Artifacts Generated
-- **DMG:** `desktop/dist/MCP Agent Builder-0.1.0-arm64.dmg` (~142MB)
-- **ZIP:** `desktop/dist/MCP Agent Builder-0.1.0-arm64-mac.zip` (~138MB)
+- **DMG:** `desktop/dist/Multi Agent Builder-0.1.0-arm64.dmg` (~142MB)
+- **ZIP:** `desktop/dist/Multi Agent Builder-0.1.0-arm64-mac.zip` (~138MB)
 
 ### Key Achievements
 - **Zero-Dependency Startup:** Spawns `agent-server` and `workspace-server` sidecar binaries automatically on launch.

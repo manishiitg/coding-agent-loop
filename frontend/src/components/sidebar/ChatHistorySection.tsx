@@ -79,8 +79,14 @@ export default function ChatHistorySection({
       const modeCategory = selectedModeCategory || 'chat'
       const allSessions = await getChatHistory(modeCategory, forceRefresh)
 
-      // No filtering — show all non-workflow sessions
-      const filteredSessions = allSessions.filter(s => (s.agent_mode || '').toLowerCase() !== 'workflow')
+      // Filter by current mode: chat shows only chat, multi-agent shows only multi-agent
+      const filteredSessions = allSessions.filter(s => {
+        if ((s.agent_mode || '').toLowerCase() === 'workflow') return false
+        const isMultiAgent = s.config?.delegation_mode === 'plan'
+        if (selectedModeCategory === 'multi-agent') return isMultiAgent
+        // In chat mode, show only non-multi-agent sessions
+        return !isMultiAgent
+      })
       setSessions(filteredSessions)
 
       // Fetch preset details for sessions that have preset_query_id
@@ -473,7 +479,12 @@ export default function ChatHistorySection({
                   try {
                     const modeCategory = selectedModeCategory || 'chat'
                     const allSessions = await loadMoreChatHistory(modeCategory)
-                    const filteredSessions = allSessions.filter(session => (session.agent_mode || '').toLowerCase() !== 'workflow')
+                    const filteredSessions = allSessions.filter(session => {
+                      if ((session.agent_mode || '').toLowerCase() === 'workflow') return false
+                      const isMultiAgent = session.config?.delegation_mode === 'plan'
+                      if (selectedModeCategory === 'multi-agent') return isMultiAgent
+                      return !isMultiAgent
+                    })
                     setSessions(filteredSessions)
                     
                     // Fetch preset details for newly loaded sessions

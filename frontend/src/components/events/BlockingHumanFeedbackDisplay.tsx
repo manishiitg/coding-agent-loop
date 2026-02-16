@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import { playNotificationSound } from '../../utils/sound'
 
 // Module-level cache: survives React remounts, resets on page reload
 const submittedFeedbackCache = new Map<string, string>()
@@ -41,6 +42,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(!!cachedValue)
   const [submittedFeedback, setSubmittedFeedback] = useState<string>(cachedValue || '')
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
 
   // Use backend-provided content directly
   const question = event.data.question || 'Do you want to continue?'
@@ -50,6 +52,78 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const hasMultipleOptions = options.length > 0
   const yesLabel = event.data.yes_label || 'Approve'
   const noLabel = event.data.no_label || ''
+
+  // Request notification permission on component mount
+  React.useEffect(() => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission)
+
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().then((permission) => {
+          setNotificationPermission(permission)
+        }).catch((error) => {
+          console.error('[BLOCKING_FEEDBACK] Permission request failed:', error)
+        })
+      }
+    }
+
+    // Set Dock badge if running in Electron
+    if (!hasSubmitted && (window as any).electronAPI) {
+      (window as any).electronAPI.setDockBadge('1')
+    }
+
+    return () => {
+      // Clear dock badge on unmount
+      if ((window as any).electronAPI) {
+        (window as any).electronAPI.setDockBadge('')
+      }
+    }
+  }, [])
+
+  // Clear dock badge when submitted
+  React.useEffect(() => {
+    if (hasSubmitted && (window as any).electronAPI) {
+      (window as any).electronAPI.setDockBadge('')
+    }
+  }, [hasSubmitted])
+
+  // Show browser notification when component mounts (if not already submitted)
+  React.useEffect(() => {
+    const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
+    if (enabled && !hasSubmitted && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        playNotificationSound()
+        
+        const notification = new Notification('Action Required', {
+          body: question,
+          icon: '/favicon.ico',
+          tag: `blocking-feedback-${event.data.request_id || Date.now()}`,
+          requireInteraction: true,
+          silent: false
+        })
+
+        notification.onclick = () => {
+          window.focus()
+          notification.close()
+        }
+
+        notification.onerror = (error) => {
+          console.error('[BLOCKING_FEEDBACK] Notification error:', error)
+        }
+
+        // Auto-close notification after 30 seconds
+        setTimeout(() => {
+          notification.close()
+        }, 30000)
+
+        return () => {
+          notification.close()
+        }
+      } catch (error) {
+        console.error('[BLOCKING_FEEDBACK] Failed to create notification:', error)
+      }
+    }
+  }, [question, event.data.request_id, hasSubmitted])
 
   const triggerScrollCallback = () => {
     if (onFeedbackSubmitted) {

@@ -16,7 +16,7 @@ This document describes the multi-provider authentication system and per-user wo
 
 ## Overview
 
-The MCP Agent Builder supports two modes of operation:
+The Multi Agent Builder supports two modes of operation:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|

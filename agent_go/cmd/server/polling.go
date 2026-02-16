@@ -50,7 +50,7 @@ type GetEventsResponse struct {
 
 // handleGetEvents handles event polling for a session (new session-based API)
 // Supports both forward polling (since parameter) and backward pagination (limit/offset)
-// Also supports event mode filtering (event_mode parameter: "basic" or "advanced")
+// Also supports event mode filtering (event_mode parameter: "advanced", "tiny", or "micro")
 func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -69,10 +69,10 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	offsetStr := r.URL.Query().Get("offset")
 	eventMode := r.URL.Query().Get("event_mode")
 	if eventMode == "" {
-		eventMode = "basic" // Default to basic mode
+		eventMode = "micro" // Default to micro mode
 	}
-	if eventMode != "basic" && eventMode != "advanced" && eventMode != "tiny" && eventMode != "micro" {
-		http.Error(w, "event_mode must be 'basic', 'advanced', 'tiny', or 'micro'", http.StatusBadRequest)
+	if eventMode != "advanced" && eventMode != "tiny" && eventMode != "micro" {
+		http.Error(w, "event_mode must be 'advanced', 'tiny', or 'micro'", http.StatusBadRequest)
 		return
 	}
 

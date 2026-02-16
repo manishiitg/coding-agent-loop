@@ -399,7 +399,7 @@ func RegisterClient(registrationEndpoint, redirectURI string) (*ClientRegistrati
 		TokenEndpointAuthMethod: "none", // Public client (PKCE)
 		GrantTypes:              []string{"authorization_code", "refresh_token"},
 		ResponseTypes:           []string{"code"},
-		ClientName:              "MCP Agent Builder",
+		ClientName:              "Multi Agent Builder",
 		ClientURI:               "https://github.com/your-org/mcp-agent-builder-go",
 	}
 

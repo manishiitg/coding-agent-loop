@@ -703,5 +703,5 @@ See LICENSE file for details.
 
 ## Contributing
 
-This module is part of the MCP Agent Builder project. For contributions, please follow the main project's contribution guidelines.
+This module is part of the Multi Agent Builder project. For contributions, please follow the main project's contribution guidelines.
 

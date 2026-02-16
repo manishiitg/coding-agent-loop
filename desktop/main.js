@@ -1,10 +1,11 @@
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, ipcMain } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
 const detect = require('detect-port');
 const fs = require('fs');
+const { Client } = require('pg');
 
 const AGENT_PORT = 45678;
 const WORKSPACE_PORT = 45679;
@@ -12,9 +13,224 @@ const HEALTH_TIMEOUT_MS = 90000;
 const HEALTH_POLL_MS = 500;
 const HEALTH_INITIAL_DELAY_MS = 3000;
 
+// Enforce dark mode for system UI (title bar, context menus)
+nativeTheme.themeSource = 'dark';
+
 let workspaceProcess = null;
 let agentProcess = null;
 let mainWindow = null;
+let settingsWindow = null;
+
+// Settings Management
+function loadSettings() {
+  const configPath = path.join(app.getPath('userData'), 'config.json');
+  try {
+    if (fs.existsSync(configPath)) {
+      return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+  }
+  return { dbType: 'sqlite', dbUrl: '', ghToken: '', ghRepo: '' };
+}
+
+function saveSettings(settings) {
+  const configPath = path.join(app.getPath('userData'), 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify(settings, null, 2));
+}
+
+// IPC Handlers for Settings
+ipcMain.handle('get-settings', () => loadSettings());
+ipcMain.handle('test-db-connection', async (event, connectionString) => {
+  const client = new Client({
+    connectionString,
+    connectionTimeoutMillis: 5000, // 5s timeout
+  });
+  try {
+    await client.connect();
+    await client.query('SELECT 1');
+    await client.end();
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.on('save-settings', (event, settings) => {
+  saveSettings(settings);
+  if (settingsWindow) settingsWindow.close();
+  
+  // Restart servers to apply changes
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Restart Required',
+    message: 'Settings saved. The application servers will now restart to apply changes.',
+    buttons: ['OK']
+  }).then(() => {
+    restartServers();
+  });
+});
+
+function openSettingsWindow() {
+  if (settingsWindow) {
+    settingsWindow.focus();
+    return;
+  }
+
+  settingsWindow = new BrowserWindow({
+    width: 500,
+    height: 600,
+    title: 'Settings',
+    backgroundColor: '#1e1e1e',
+    parent: mainWindow,
+    modal: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false // Simplifies simple settings UI
+    }
+  });
+
+  settingsWindow.loadFile(path.join(__dirname, 'settings.html'));
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
+  });
+}
+
+function restartServers() {
+  killChildren();
+  // Small delay to ensure ports freed
+  setTimeout(() => {
+    const userDataPath = app.getPath('userData');
+    spawnWorkspace(userDataPath)
+      .then(() => spawnAgent(userDataPath))
+      .then(() => {
+        const agentHealthUrl = `http://127.0.0.1:${AGENT_PORT}/api/health`;
+        const workspaceHealthUrl = `http://127.0.0.1:${WORKSPACE_PORT}/health`;
+        return waitForHealth(agentHealthUrl, workspaceHealthUrl);
+      })
+      .then(() => {
+        mainWindow.reload(); // Reload frontend to reconnect
+      })
+      .catch(err => {
+        showErrorAndExit('Failed to restart servers: ' + err);
+      });
+  }, 2000); // Increased delay to 2s
+}
+
+// Setup Native Application Menu
+function createMenu() {
+  const isMac = process.platform === 'darwin';
+
+  const template = [
+    // { role: 'appMenu' }
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: 'Settings...', click: openSettingsWindow },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    // { role: 'fileMenu' }
+    {
+      label: 'File',
+      submenu: [
+        { label: 'Settings...', click: openSettingsWindow },
+        { type: 'separator' },
+        { role: isMac ? 'close' : 'quit' }
+      ]
+    },
+    // { role: 'editMenu' }
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        ...(isMac ? [
+          { role: 'pasteAndMatchStyle' },
+          { role: 'delete' },
+          { role: 'selectAll' },
+          { type: 'separator' },
+          {
+            label: 'Speech',
+            submenu: [
+              { role: 'startSpeaking' },
+              { role: 'stopSpeaking' }
+            ]
+          }
+        ] : [
+          { role: 'delete' },
+          { type: 'separator' },
+          { role: 'selectAll' }
+        ])
+      ]
+    },
+    // { role: 'viewMenu' }
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    // { role: 'windowMenu' }
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac ? [
+          { type: 'separator' },
+          { role: 'front' },
+          { type: 'separator' },
+          { role: 'window' }
+        ] : [
+          { role: 'close' }
+        ])
+      ]
+    },
+    {
+      role: 'help',
+      submenu: [
+        {
+          label: 'Learn More',
+          click: async () => {
+            await shell.openExternal('https://github.com/manishiitg/mcp-agent-builder-go')
+          }
+        }
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
+// IPC Handler for Dock Badge
+ipcMain.on('set-dock-badge', (event, text) => {
+  if (process.platform === 'darwin') {
+    app.dock.setBadge(text);
+  }
+});
 
 function getResourcesDir() {
   if (app.isPackaged) {
@@ -65,8 +281,19 @@ function spawnWorkspace(userDataPath) {
   const logFile = path.join(logsDir, 'workspace.log');
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
+  // Load Settings
+  const settings = loadSettings();
+  const env = { 
+    ...process.env, 
+    DOCS_DIR: docsDir, 
+    DATA_DIR: dataDir 
+  };
+
+  if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
+  if (settings.ghRepo) env.GITHUB_REPO = settings.ghRepo;
+
   const child = spawn(bin, ['server', '--port', String(WORKSPACE_PORT), '--docs-dir', docsDir, '--data-dir', dataDir], {
-    env: { ...process.env, DOCS_DIR: docsDir, DATA_DIR: dataDir },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   workspaceProcess = child;
@@ -134,15 +361,29 @@ function spawnAgent(userDataPath) {
     '--mcp-config', mcpConfigPath
   ];
 
+  // Load Settings
+  const settings = loadSettings();
+  const env = {
+    ...process.env,
+    WORKSPACE_API_URL: `http://127.0.0.1:${WORKSPACE_PORT}`,
+    DB_PATH: dbPath,
+    LOG_FILE: logFile
+  };
+
+  if (settings.dbType === 'postgres' && settings.dbUrl) {
+    env.DATABASE_URL = settings.dbUrl;
+    env.DB_TYPE = 'postgres';
+    // Remove db-path arg if using postgres to avoid confusion (though agent priority logic handles it)
+    const dbPathIndex = args.indexOf('--db-path');
+    if (dbPathIndex !== -1) {
+      args.splice(dbPathIndex, 2);
+    }
+    args.push('--db-type', 'postgres');
+  }
+
   const child = spawn(bin, args, {
     cwd,
-    env: {
-      ...process.env,
-      WORKSPACE_API_URL: `http://127.0.0.1:${WORKSPACE_PORT}`,
-      // Ensure specific env vars are set if needed
-      DB_PATH: dbPath,
-      LOG_FILE: logFile
-    },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   agentProcess = child;
@@ -264,7 +505,7 @@ function killChildren() {
 function showErrorAndExit(message) {
   dialog.showMessageBoxSync({
     type: 'error',
-    title: 'MCP Agent Builder',
+    title: 'Multi Agent Builder',
     message: 'Startup failed',
     detail: message,
   });
@@ -272,23 +513,33 @@ function showErrorAndExit(message) {
   app.exit(1);
 }
 
-function createWindow() {
+function createWindow(initialUrl) {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    backgroundColor: '#1e1e1e', // Dark background to match theme and prevent white flash
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
     },
   });
-  mainWindow.loadURL(`http://127.0.0.1:${AGENT_PORT}`);
+  mainWindow.loadURL(initialUrl || `http://127.0.0.1:${AGENT_PORT}`);
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
 
 app.whenReady().then(() => {
+  createMenu();
+  // If DEV_URL is set (e.g. http://localhost:5173), skip spawning servers and just load that URL
+  const devUrl = process.env.DEV_URL;
+  if (devUrl) {
+    console.log(`[main] DEV_URL detected: ${devUrl}. Skipping local server spawn.`);
+    createWindow(devUrl);
+    return;
+  }
+
   const userDataPath = app.getPath('userData');
 
   checkPortsAvailable()

@@ -239,6 +239,11 @@ ipcMain.on('set-dock-badge', (event, text) => {
   }
 });
 
+// IPC Handler for opening external URLs
+ipcMain.on('open-external', (event, url) => {
+  shell.openExternal(url);
+});
+
 function getResourcesDir() {
   if (app.isPackaged) {
     return process.resourcesPath;
@@ -563,6 +568,14 @@ function createWindow(initialUrl) {
   }
 
   mainWindow.loadURL(initialUrl || `http://127.0.0.1:${dynamicAgentPort}`);
+  
+  // Handle new window requests (e.g. target="_blank")
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    // Open in default system browser
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });

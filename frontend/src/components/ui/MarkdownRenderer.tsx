@@ -520,7 +520,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 href={href} 
                 target="_blank" 
                 rel="noopener noreferrer"
-                onClick={() => console.log('[MarkdownWorkspace] Clicked default link:', href)}
+                onClick={(e) => {
+                  console.log('[MarkdownWorkspace] Clicked default link:', href)
+                  // Check for Electron API
+                  if ((window as any).electronAPI?.openExternal) {
+                    e.preventDefault()
+                    ;(window as any).electronAPI.openExternal(href)
+                  }
+                }}
                 className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere"
               >
                 {children}

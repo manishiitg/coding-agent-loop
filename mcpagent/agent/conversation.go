@@ -44,6 +44,10 @@ const (
 	ToolExecutionTurnKey = "tool_execution_turn"
 	// ToolExecutionServerKey is the context key for the server name providing the tool
 	ToolExecutionServerKey = "tool_execution_server"
+	// ToolExecutionLLMConfigKey is the context key for the agent's primary LLM configuration.
+	// Tools like read_image use this to create a dedicated LLM client for analysis.
+	// Value type: mcpagent.LLMModel (Provider, ModelID, APIKey, Region).
+	ToolExecutionLLMConfigKey = "tool_execution_llm_config"
 )
 
 // getLogger returns the agent's logger (guaranteed to be non-nil)
@@ -956,7 +960,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			}
 
 			// 2. Append tool calls as a separate AI message (without text)
-			// Include read_image in tool call message so LLM knows it called the tool
 			toolCallParts := make([]llmtypes.ContentPart, 0, len(choice.ToolCalls))
 			for _, tc := range choice.ToolCalls {
 				if tc.FunctionCall != nil {
@@ -989,220 +992,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 					v2Logger.Warn("Tool call has nil FunctionCall", loggerv2.Int("tool_call_index", i+1))
 				}
 
-				// Special handling for read_image tool - check FIRST before any other processing
-				// This ensures we don't emit tool call events or add tool responses for read_image
-				if tc.FunctionCall != nil && tc.FunctionCall.Name == "read_image" {
-
-					// Execute read_image tool and handle specially
-					// Don't add tool call message or tool response message
-					// Instead, add user message with image + query directly
-
 					// Determine server name for tool call events
-					serverName := a.toolToServer[tc.FunctionCall.Name]
-					if isVirtualTool(tc.FunctionCall.Name) {
-						serverName = "virtual-tools"
-					}
-
-					// Emit tool call start event (for observability only, not for conversation)
-					toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
-						Arguments: tc.FunctionCall.Arguments,
-					}, serverName, traceID, traceID)
-					toolStartEvent.ToolCallID = tc.ID
-					a.EmitTypedEvent(ctx, toolStartEvent)
-
-					// Parse arguments
-					args, err := mcpclient.ParseToolArguments(tc.FunctionCall.Arguments)
-					if err != nil {
-						v2Logger.Error(fmt.Sprintf("🖼️ [DEBUG] Failed to parse read_image arguments: %v", err), err)
-						// Emit error event
-						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse arguments: %v", err), serverName, 0)
-						toolErrorEvent.ToolCallID = tc.ID
-						a.EmitTypedEvent(ctx, toolErrorEvent)
-						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
-						messages = append(messages, llmtypes.MessageContent{
-							Role: llmtypes.ChatMessageTypeTool,
-							Parts: []llmtypes.ContentPart{
-								llmtypes.ToolCallResponse{
-									ToolCallID: tc.ID,
-									Name:       tc.FunctionCall.Name,
-									Content:    fmt.Sprintf("Error: Failed to parse arguments: %v", err),
-								},
-							},
-						})
-						continue
-					}
-
-					// Create timeout context for tool execution
-					toolTimeout := getToolExecutionTimeout(a)
-					toolCtx, cancel := context.WithTimeout(ctx, toolTimeout)
-					defer cancel()
-
-					startTime := time.Now()
-
-					// Execute the tool (read_image is a custom tool, not a virtual tool)
-					var resultText string
-					var toolErr error
-					if a.customTools != nil {
-						if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
-							resultText, toolErr = customTool.Execution(toolCtx, args)
-						} else {
-							toolErr = fmt.Errorf("read_image tool not found in custom tools")
-						}
-					} else {
-						toolErr = fmt.Errorf("custom tools not initialized")
-					}
-					duration := time.Since(startTime)
-
-					if toolErr != nil {
-						v2Logger.Error("read_image tool execution failed", toolErr)
-						// Emit tool call error event (for observability only)
-						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
-						toolErrorEvent.ToolCallID = tc.ID
-						a.EmitTypedEvent(ctx, toolErrorEvent)
-						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
-						messages = append(messages, llmtypes.MessageContent{
-							Role: llmtypes.ChatMessageTypeTool,
-							Parts: []llmtypes.ContentPart{
-								llmtypes.ToolCallResponse{
-									ToolCallID: tc.ID,
-									Name:       tc.FunctionCall.Name,
-									Content:    fmt.Sprintf("Error: Tool execution failed: %v", toolErr),
-								},
-							},
-						})
-						continue
-					}
-
-					// Parse the result JSON
-					var imageResult map[string]interface{}
-					if err := json.Unmarshal([]byte(resultText), &imageResult); err != nil {
-						previewLen := 500
-						if len(resultText) < previewLen {
-							previewLen = len(resultText)
-						}
-						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Failed to parse read_image result as JSON: %v, raw result: %s", err, resultText[:previewLen]))
-						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
-						messages = append(messages, llmtypes.MessageContent{
-							Role: llmtypes.ChatMessageTypeTool,
-							Parts: []llmtypes.ContentPart{
-								llmtypes.ToolCallResponse{
-									ToolCallID: tc.ID,
-									Name:       tc.FunctionCall.Name,
-									Content:    fmt.Sprintf("Error: Failed to parse result as JSON: %v", err),
-								},
-							},
-						})
-						continue
-					}
-
-					// Check if it's an image_query type
-					if imageResult["_type"] != "image_query" {
-						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] read_image result is not image_query type, got: %v", imageResult["_type"]))
-						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
-						messages = append(messages, llmtypes.MessageContent{
-							Role: llmtypes.ChatMessageTypeTool,
-							Parts: []llmtypes.ContentPart{
-								llmtypes.ToolCallResponse{
-									ToolCallID: tc.ID,
-									Name:       tc.FunctionCall.Name,
-									Content:    fmt.Sprintf("Error: Result is not image_query type, got: %v", imageResult["_type"]),
-								},
-							},
-						})
-						continue
-					}
-
-					// Extract image data
-					query, _ := imageResult["query"].(string)
-					mimeType, _ := imageResult["mime_type"].(string)
-					base64Data, _ := imageResult["data"].(string)
-
-					if query == "" || mimeType == "" || base64Data == "" {
-						v2Logger.Warn(fmt.Sprintf("🖼️ [DEBUG] Missing required fields in read_image result - query: %t, mimeType: %t, base64Data: %t", query != "", mimeType != "", base64Data != ""))
-						// Add error tool result message (required by Anthropic API - every tool_use must have tool_result)
-						messages = append(messages, llmtypes.MessageContent{
-							Role: llmtypes.ChatMessageTypeTool,
-							Parts: []llmtypes.ContentPart{
-								llmtypes.ToolCallResponse{
-									ToolCallID: tc.ID,
-									Name:       tc.FunctionCall.Name,
-									Content:    "Error: Missing required fields in read_image result (query, mime_type, or data)",
-								},
-							},
-						})
-						continue
-					}
-
-					// Create user message with image + query
-					// Do NOT add tool call message or tool response message
-					// Note: Vertex provider (both Gemini and Vertex Anthropic) requires image first, then text
-					// This applies to both:
-					//   - Gemini models (gemini-*) using GoogleGenAIAdapter
-					//   - Anthropic models (claude-*) using VertexAnthropicAdapter
-					// Other providers can use text first, then image
-					var parts []llmtypes.ContentPart
-					if a.provider == llm.ProviderVertex {
-						// Vertex provider (Gemini and Vertex Anthropic): image first, then text (required by API)
-						parts = []llmtypes.ContentPart{
-							llmtypes.ImageContent{
-								SourceType: "base64",
-								MediaType:  mimeType,
-								Data:       base64Data,
-							},
-							llmtypes.TextContent{Text: query},
-						}
-					} else {
-						// Other providers: text first, then image
-						parts = []llmtypes.ContentPart{
-							llmtypes.TextContent{Text: query},
-							llmtypes.ImageContent{
-								SourceType: "base64",
-								MediaType:  mimeType,
-								Data:       base64Data,
-							},
-						}
-					}
-
-					userMessage := llmtypes.MessageContent{
-						Role:  llmtypes.ChatMessageTypeHuman,
-						Parts: parts,
-					}
-
-					// Add artificial tool response message FIRST (must be immediately after tool_use for Vertex AI)
-					// This prevents the LLM from calling read_image again in a loop
-					artificialResponse := llmtypes.MessageContent{
-						Role: llmtypes.ChatMessageTypeTool,
-						Parts: []llmtypes.ContentPart{
-							llmtypes.ToolCallResponse{
-								ToolCallID: tc.ID,
-								Name:       tc.FunctionCall.Name,
-								Content:    "Image loaded and processed. The image content has been added to the conversation.",
-							},
-						},
-					}
-					messages = append(messages, artificialResponse)
-
-					// Add user message with image AFTER tool response (Vertex AI requires tool_result immediately after tool_use)
-					messages = append(messages, userMessage)
-
-					// Emit tool call end event (for observability only)
-					// Get current token usage information for the tool call end event
-					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
-					a.tokenTrackingMutex.RLock()
-					modelContextWindow := a.modelContextWindow
-					contextWindowUsage := a.currentContextWindowUsage
-					a.tokenTrackingMutex.RUnlock()
-
-					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, "Image loaded and added to conversation", serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
-					toolEndEvent.ToolCallID = tc.ID
-					a.EmitTypedEvent(ctx, toolEndEvent)
-
-					// Continue to next iteration (tool call and response messages are already added)
-					// This will cause the loop to continue processing other tool calls, then continue to next turn
-					continue
-				}
-
-				// Determine server name for tool call events
 				serverName := a.toolToServer[tc.FunctionCall.Name]
 				if isVirtualTool(tc.FunctionCall.Name) {
 					// 🔧 FIX: For discover_code_files, extract the actual server_name from arguments
@@ -1496,6 +1286,7 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 				toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
 				toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
 				toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, serverName)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.GetLLMModelConfig())
 
 				var result *mcp.CallToolResult
 				var toolErr error
@@ -1838,7 +1629,6 @@ func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageCo
 			}
 
 			// After processing all tool calls, continue to next turn
-			// The messages slice now includes any user messages added by read_image
 			continue
 		} else {
 			// No tool calls - add the assistant response to conversation history

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpcache"
 	"github.com/manishiitg/mcpagent/mcpclient"
@@ -39,7 +38,6 @@ type toolExecutionPlan struct {
 
 	isCustomTool bool
 	isVirtual    bool
-	isReadImage  bool
 
 	toolTimeout  time.Duration
 	hasNoTimeout bool
@@ -53,7 +51,7 @@ type toolExecutionPlan struct {
 // toolExecutionResult holds the output of a single tool execution goroutine.
 // Written by exactly one goroutine into its indexed slot.
 type toolExecutionResult struct {
-	// messages to append (tool response, and for read_image: artificial response + user message)
+	// messages to append (tool response)
 	messages []llmtypes.MessageContent
 
 	// Raw result from tool execution (for event emission and loop detection)
@@ -94,7 +92,7 @@ func executeToolCallsParallel(
 		plans[i] = plan
 
 		// Emit tool call start event (sequential to keep hierarchy sane)
-		if !plan.skipExecution || plan.isReadImage {
+		if !plan.skipExecution {
 			toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
 				Arguments: tc.FunctionCall.Arguments,
 			}, plan.serverName, traceID, traceID)
@@ -241,9 +239,6 @@ func prepareToolExecution(
 		return plan
 	}
 
-	// Check for read_image
-	plan.isReadImage = tc.FunctionCall.Name == "read_image"
-
 	// Determine server name
 	plan.serverName = a.toolToServer[tc.FunctionCall.Name]
 	plan.isVirtual = isVirtualTool(tc.FunctionCall.Name)
@@ -261,12 +256,6 @@ func prepareToolExecution(
 				plan.serverName = "virtual-tools"
 			}
 		} else {
-			plan.serverName = "virtual-tools"
-		}
-	}
-
-	if plan.isReadImage {
-		if isVirtualTool(tc.FunctionCall.Name) {
 			plan.serverName = "virtual-tools"
 		}
 	}
@@ -340,7 +329,7 @@ func prepareToolExecution(
 	}
 
 	// Check for client requirement for non-custom, non-virtual tools
-	if !plan.isCustomTool && !plan.isVirtual && !plan.isReadImage && plan.client == nil {
+	if !plan.isCustomTool && !plan.isVirtual && plan.client == nil {
 		if len(a.Clients) == 0 {
 			serverName := ""
 			if a.toolToServer != nil {
@@ -482,12 +471,7 @@ func executeToolCall(
 	toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
 	toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
 	toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, plan.serverName)
-
-	// ─── Handle read_image specially ────────────────────────────────────
-
-	if plan.isReadImage {
-		return executeReadImageTool(toolCtx, a, plan, turn, startTime)
-	}
+	toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.GetLLMModelConfig())
 
 	// ─── Execute the tool ──────────────────────────────────────────────
 
@@ -640,140 +624,4 @@ func executeToolCall(
 	return result
 }
 
-// executeReadImageTool handles the special read_image tool execution within the parallel framework.
-// Returns a toolExecutionResult with the appropriate messages (artificial tool response + user image message).
-func executeReadImageTool(
-	toolCtx context.Context,
-	a *Agent,
-	plan toolExecutionPlan,
-	turn int,
-	startTime time.Time,
-) toolExecutionResult {
-
-	v2Logger := a.Logger
-	tc := plan.toolCall
-	result := toolExecutionResult{}
-
-	// Execute the custom tool
-	var resultText string
-	var toolErr error
-	if a.customTools != nil {
-		if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
-			resultText, toolErr = customTool.Execution(toolCtx, plan.args)
-		} else {
-			toolErr = fmt.Errorf("read_image tool not found in custom tools")
-		}
-	} else {
-		toolErr = fmt.Errorf("custom tools not initialized")
-	}
-	result.duration = time.Since(startTime)
-
-	if toolErr != nil {
-		v2Logger.Error("read_image tool execution failed", toolErr)
-		result.toolErr = toolErr
-		result.messages = []llmtypes.MessageContent{{
-			Role: llmtypes.ChatMessageTypeTool,
-			Parts: []llmtypes.ContentPart{
-				llmtypes.ToolCallResponse{
-					ToolCallID: tc.ID,
-					Name:       tc.FunctionCall.Name,
-					Content:    fmt.Sprintf("Error: Tool execution failed: %v", toolErr),
-				},
-			},
-		}}
-		return result
-	}
-
-	// Parse the result JSON
-	var imageResult map[string]interface{}
-	if err := json.Unmarshal([]byte(resultText), &imageResult); err != nil {
-		result.messages = []llmtypes.MessageContent{{
-			Role: llmtypes.ChatMessageTypeTool,
-			Parts: []llmtypes.ContentPart{
-				llmtypes.ToolCallResponse{
-					ToolCallID: tc.ID,
-					Name:       tc.FunctionCall.Name,
-					Content:    fmt.Sprintf("Error: Failed to parse result as JSON: %v", err),
-				},
-			},
-		}}
-		return result
-	}
-
-	// Check type
-	if imageResult["_type"] != "image_query" {
-		result.messages = []llmtypes.MessageContent{{
-			Role: llmtypes.ChatMessageTypeTool,
-			Parts: []llmtypes.ContentPart{
-				llmtypes.ToolCallResponse{
-					ToolCallID: tc.ID,
-					Name:       tc.FunctionCall.Name,
-					Content:    fmt.Sprintf("Error: Result is not image_query type, got: %v", imageResult["_type"]),
-				},
-			},
-		}}
-		return result
-	}
-
-	// Extract image data
-	query, _ := imageResult["query"].(string)
-	mimeType, _ := imageResult["mime_type"].(string)
-	base64Data, _ := imageResult["data"].(string)
-
-	if query == "" || mimeType == "" || base64Data == "" {
-		result.messages = []llmtypes.MessageContent{{
-			Role: llmtypes.ChatMessageTypeTool,
-			Parts: []llmtypes.ContentPart{
-				llmtypes.ToolCallResponse{
-					ToolCallID: tc.ID,
-					Name:       tc.FunctionCall.Name,
-					Content:    "Error: Missing required fields in read_image result (query, mime_type, or data)",
-				},
-			},
-		}}
-		return result
-	}
-
-	// Build image parts based on provider
-	var parts []llmtypes.ContentPart
-	if a.provider == llm.ProviderVertex {
-		parts = []llmtypes.ContentPart{
-			llmtypes.ImageContent{
-				SourceType: "base64",
-				MediaType:  mimeType,
-				Data:       base64Data,
-			},
-			llmtypes.TextContent{Text: query},
-		}
-	} else {
-		parts = []llmtypes.ContentPart{
-			llmtypes.TextContent{Text: query},
-			llmtypes.ImageContent{
-				SourceType: "base64",
-				MediaType:  mimeType,
-				Data:       base64Data,
-			},
-		}
-	}
-
-	// Build artificial response + user image message
-	artificialResponse := llmtypes.MessageContent{
-		Role: llmtypes.ChatMessageTypeTool,
-		Parts: []llmtypes.ContentPart{
-			llmtypes.ToolCallResponse{
-				ToolCallID: tc.ID,
-				Name:       tc.FunctionCall.Name,
-				Content:    "Image loaded and processed. The image content has been added to the conversation.",
-			},
-		},
-	}
-	userMessage := llmtypes.MessageContent{
-		Role:  llmtypes.ChatMessageTypeHuman,
-		Parts: parts,
-	}
-
-	result.resultText = "Image loaded and added to conversation"
-	result.messages = []llmtypes.MessageContent{artificialResponse, userMessage}
-	return result
-}
 

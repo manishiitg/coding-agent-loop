@@ -961,6 +961,32 @@ func (a *Agent) SetProvider(provider llm.Provider) {
 	a.provider = provider
 }
 
+// GetLLMModelConfig returns the agent's primary LLM configuration as an LLMModel.
+// If LLMConfig.Primary is set (via WithLLMConfig), it's returned directly.
+// Otherwise, constructs one from the legacy provider/ModelID/APIKeys fields.
+func (a *Agent) GetLLMModelConfig() LLMModel {
+	if a.LLMConfig.Primary.Provider != "" {
+		return a.LLMConfig.Primary
+	}
+	config := LLMModel{
+		Provider: string(a.provider),
+		ModelID:  a.ModelID,
+	}
+	if a.APIKeys != nil {
+		switch a.provider {
+		case llm.ProviderAnthropic:
+			config.APIKey = a.APIKeys.Anthropic
+		case llm.ProviderOpenAI:
+			config.APIKey = a.APIKeys.OpenAI
+		case llm.ProviderOpenRouter:
+			config.APIKey = a.APIKeys.OpenRouter
+		case llm.ProviderVertex:
+			config.APIKey = a.APIKeys.Vertex
+		}
+	}
+	return config
+}
+
 // SetToolOutputHandler sets the tool output handler
 func (a *Agent) SetToolOutputHandler(handler *ToolOutputHandler) {
 	a.toolOutputHandler = handler

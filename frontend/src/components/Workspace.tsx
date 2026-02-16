@@ -606,10 +606,10 @@ export default function Workspace({
     }
   }, [activeFolder, fetchFiles, minimized])
 
-  // Check if a file is a viewable binary format (xlsx, docx) that we can render
+  // Check if a file is a viewable binary format (xlsx, docx, pdf) that we can render
   const isViewableBinaryFile = (fileName: string): boolean => {
     const ext = fileName.split('.').pop()?.toLowerCase() || ''
-    return ['xls', 'xlsx', 'docx'].includes(ext)
+    return ['xls', 'xlsx', 'docx', 'pdf'].includes(ext)
   }
 
   // Handle file click - fetch content and show in chat area

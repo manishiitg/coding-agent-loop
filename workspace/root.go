@@ -43,6 +43,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.planner.yaml)")
 	rootCmd.PersistentFlags().String("port", "8080", "HTTP server port")
 	rootCmd.PersistentFlags().String("docs-dir", "./workspace-docs", "Documents directory")
+	rootCmd.PersistentFlags().String("data-dir", "./data", "Data directory for application state")
 	rootCmd.PersistentFlags().String("github-token", "", "GitHub personal access token")
 	rootCmd.PersistentFlags().String("github-repo", "", "GitHub repository (username/repo-name)")
 	rootCmd.PersistentFlags().Bool("enable-semantic-search", true, "Enable semantic search functionality")
@@ -50,6 +51,7 @@ func init() {
 	// Bind flags to viper
 	viper.BindPFlag("port", rootCmd.PersistentFlags().Lookup("port"))
 	viper.BindPFlag("docs-dir", rootCmd.PersistentFlags().Lookup("docs-dir"))
+	viper.BindPFlag("data-dir", rootCmd.PersistentFlags().Lookup("data-dir"))
 	viper.BindPFlag("github-token", rootCmd.PersistentFlags().Lookup("github-token"))
 	viper.BindPFlag("github-repo", rootCmd.PersistentFlags().Lookup("github-repo"))
 	viper.BindPFlag("enable-semantic-search", rootCmd.PersistentFlags().Lookup("enable-semantic-search"))
@@ -65,6 +67,7 @@ func init() {
 	viper.BindEnv("github-token", "GITHUB_TOKEN")
 	viper.BindEnv("github-repo", "GITHUB_REPO")
 	viper.BindEnv("docs-dir", "DOCS_DIR")
+	viper.BindEnv("data-dir", "DATA_DIR")
 	viper.BindEnv("enable-semantic-search", "WORKSPACE_ENABLE_SEMANTIC_SEARCH")
 	viper.BindEnv("enable-github-sync", "WORKSPACE_ENABLE_GITHUB_SYNC")
 
@@ -186,7 +189,7 @@ func runResync(cmd *cobra.Command, args []string) {
 	}
 
 	// Initialize file processor with the same data directory as the main server
-	dataDir := "/app/data"
+	dataDir := viper.GetString("data-dir")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		fmt.Printf("❌ Failed to create data directory: %v\n", err)
 		os.Exit(1)

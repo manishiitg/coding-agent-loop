@@ -372,10 +372,10 @@ export const agentApi = {
     return response.data
   },
 
-  // CDP Port Check — goes through workspace API (Docker container) since
-  // that's where agent-browser actually runs and needs to reach Chrome
+  // CDP Port Check — checks from the main server (host) if Chrome's
+  // remote debugging port is reachable on localhost
   checkCdpPort: async (port: number): Promise<{ connected: boolean }> => {
-    const response = await workspaceApi.get(`/api/cdp-check?port=${port}`)
+    const response = await api.get(`/api/cdp-check?port=${port}`)
     return response.data
   },
 

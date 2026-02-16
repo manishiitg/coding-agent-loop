@@ -145,9 +145,10 @@ func (deo *DelegationEventObserver) HandleEvent(ctx context.Context, event *even
 	deo.store.AddEvent(deo.sessionID, storeEvent)
 
 	// Also persist tagged event to database (for shared sessions / session restore)
-	if deo.DBStore != nil {
+	// Apply micro-mode filter to avoid storing high-volume events
+	if deo.DBStore != nil && ShouldShowEventByMode(string(taggedEvent.Type), "micro") {
 		if err := deo.DBStore(ctx, deo.sessionID, &taggedEvent); err != nil {
-			fmt.Printf("[DELEGATION] Failed to persist sub-agent event to DB: %v\n", err)
+			deo.logger.Warn(fmt.Sprintf("[DELEGATION] Failed to persist sub-agent event to DB: %v", err))
 		}
 	}
 

@@ -18,10 +18,11 @@ import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import { ChatHeader } from './ChatHeader'
-import type { ChatTab, ChatTabConfig } from '../stores/useChatStore'
+import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset } from '../types/preset'
 import { WORKSPACE_TOOLS } from '../utils/customToolNames'
 import { truncateTabTitle } from '../utils/textUtils'
+import { buildTabConfigFromSession, hydrateTabEvents } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
@@ -1524,117 +1525,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             // Get full chat session details including config
             const chatSession = await agentApi.getChatSession(sessionId)
 
-            // Restore config from stored session
+            // Restore config from stored session using shared utility
             if (chatSession.config) {
-              const config = chatSession.config
-              console.log(`[AutoRestore] Session config from API:`, JSON.stringify(config, null, 2))
-              const configUpdate: Partial<ChatTabConfig> = {}
-
-              // Restore selected servers (prefer enabled_servers over selected_servers)
-              if (config.enabled_servers && config.enabled_servers.length > 0) {
-                configUpdate.selectedServers = config.enabled_servers
-              } else if (config.selected_servers && config.selected_servers.length > 0) {
-                configUpdate.selectedServers = config.selected_servers
-              }
-
-              // Restore code execution mode
-              if (config.use_code_execution_mode !== undefined) {
-                configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-              }
-
-              // Restore context summarization
-              if (config.enable_context_summarization !== undefined) {
-                configUpdate.enableContextSummarization = config.enable_context_summarization
-              }
-
-              // Restore LLM config
-              if (config.llm_config) {
-                let provider = config.llm_config.provider as string
-                // Fix for invalid provider (e.g. "." or empty) - fallback to global default
-                if (!provider || provider === '.' || provider.trim() === '') {
-                  console.warn(`[AutoRestore] Invalid provider "${provider}" found in session config, falling back to default`)
-                  provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                }
-
-                let modelId = config.llm_config.model_id || ''
-                // Fix for invalid/missing model_id - fallback to global default
-                if (!modelId || modelId.trim() === '') {
-                  console.warn(`[AutoRestore] Invalid model_id "${modelId}" found in session config, falling back to default`)
-                  modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                }
-
-                const llmConfig: ExtendedLLMConfiguration = {
-                  provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                  model_id: modelId,
-                  fallback_models: config.llm_config.fallback_models || [],
-                }
-                if (config.llm_config.cross_provider_fallback) {
-                  llmConfig.cross_provider_fallback = {
-                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                    models: config.llm_config.cross_provider_fallback.models || [],
-                  }
-                }
-                configUpdate.llmConfig = llmConfig
-              }
-
-              // Restore workspace file context
-              if (config.file_context && Array.isArray(config.file_context)) {
-                configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
-                  name: item.name || item.path || '',
-                  path: item.path || '',
-                  type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                }))
-              }
-
-              // Restore workspace access setting
-              if (config.enable_workspace_access !== undefined) {
-                configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-              }
-
-              // Restore selected skills
-              if (config.selected_skills && Array.isArray(config.selected_skills)) {
-                configUpdate.selectedSkills = config.selected_skills
-              }
-
-              // Restore selected sub-agent templates
-              if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
-                configUpdate.selectedSubAgents = config.selected_subagents
-              }
-
-              // Restore delegation tier config (for multi-agent sessions)
-              if (config.delegation_tier_config) {
-                configUpdate.delegationTierConfig = config.delegation_tier_config
-              }
-
-              // Update tab config
+              const configUpdate = buildTabConfigFromSession(chatSession.config)
               if (Object.keys(configUpdate).length > 0) {
                 chatStore.setTabConfig(targetTabId, configUpdate)
-                console.log(`[AutoRestore] Restored config for active session ${sessionId}:`, JSON.stringify(configUpdate, null, 2))
-              } else {
-                console.log(`[AutoRestore] No config to restore for session ${sessionId}`)
+                console.log(`[AutoRestore] Restored config for active session ${sessionId}`)
               }
-            } else {
-              console.log(`[AutoRestore] No config in chatSession for session ${sessionId}`)
             }
 
-            // Load events for this session
+            // Load events using shared utility
             const eventMode: 'basic' | 'advanced' | 'tiny' | 'micro' = (targetTab.eventMode || 'basic') as 'basic' | 'advanced' | 'tiny' | 'micro'
-            // Use -1 to get ALL in-memory events for active sessions being restored
-            // This ensures delegation_start and orchestrator events are included for full hierarchy reconstruction
-            const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
-            const pollingEvents: PollingEvent[] = response.events
-
-            // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
-            // When restoring historical events, we want to replace any existing events to maintain order
-            setTabEvents(sessionId, pollingEvents)
-            // CRITICAL: Use last_processed_index from backend (not events.length - 1)
-            // Backend tracks the actual event index which may be higher due to filtering/cleanup
-            const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
-            setTabLastEventIndex(sessionId, lastIndex)
-            if (response.has_more !== undefined) {
-              useChatStore.getState().setTabHasMoreOlderEvents(sessionId, response.has_more)
-            }
-            console.log(`[AutoRestore] Loaded ${pollingEvents.length} events for session ${sessionId}, last_processed_index=${lastIndex}`)
+            await hydrateTabEvents(sessionId, eventMode)
+            console.log(`[AutoRestore] Loaded events for session ${sessionId}`)
 
             // Set streaming/completed status based on actual session status
             if (activeSession.status === 'completed') {
@@ -1907,90 +1810,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 return
               }
               
-              // Restore config from stored session
+              // Restore config using shared utility
               if (chatSession?.config) {
-                const config = chatSession.config
-                const configUpdate: Partial<ChatTabConfig> = {}
-                
-                // Restore selected servers (prefer enabled_servers over selected_servers)
-                if (config.enabled_servers && config.enabled_servers.length > 0) {
-                  configUpdate.selectedServers = config.enabled_servers
-                } else if (config.selected_servers && config.selected_servers.length > 0) {
-                  configUpdate.selectedServers = config.selected_servers
-                }
-                
-                // Restore code execution mode
-                if (config.use_code_execution_mode !== undefined) {
-                  configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-                }
-                
-                // Restore context summarization
-                if (config.enable_context_summarization !== undefined) {
-                  configUpdate.enableContextSummarization = config.enable_context_summarization
-                }
-                
-                                  // Restore LLM config
-                                  if (config.llm_config) {
-                                    let provider = config.llm_config.provider as string
-                                    // Fix for invalid provider (e.g. "." or empty) - fallback to global default
-                                    if (!provider || provider === '.' || provider.trim() === '') {
-                                      console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
-                                      provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                                    }
-                
-                                    let modelId = config.llm_config.model_id || ''
-                                    // Fix for invalid/missing model_id - fallback to global default
-                                    if (!modelId || modelId.trim() === '') {
-                                      console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
-                                      modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                                    }
-                
-                                    const llmConfig: ExtendedLLMConfiguration = {
-                                      provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                                      model_id: modelId,
-                                      fallback_models: config.llm_config.fallback_models || [],
-                                    }
-                                    if (config.llm_config.cross_provider_fallback) {
-                                      llmConfig.cross_provider_fallback = {
-                                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                                        models: config.llm_config.cross_provider_fallback.models || [],
-                                      }
-                                    }
-                                    configUpdate.llmConfig = llmConfig
-                                  }                
-                // Restore workspace file context
-                if (config.file_context && Array.isArray(config.file_context)) {
-                  configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
-                    name: item.name || item.path || '',
-                    path: item.path || '',
-                    type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                  }))
-                }
-                
-                // Restore workspace access setting
-                if (config.enable_workspace_access !== undefined) {
-                  configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-                }
-
-                // Restore selected skills
-                if (config.selected_skills && Array.isArray(config.selected_skills)) {
-                  configUpdate.selectedSkills = config.selected_skills
-                }
-
-                // Restore selected sub-agent templates
-                if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
-                  configUpdate.selectedSubAgents = config.selected_subagents
-                }
-
-                // Restore delegation tier config (for multi-agent sessions)
-                if (config.delegation_tier_config) {
-                  configUpdate.delegationTierConfig = config.delegation_tier_config
-                }
-
-                // Update tab config
+                const configUpdate = buildTabConfigFromSession(chatSession.config)
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(newTabId, configUpdate)
-                  console.log(`[History] Restored config for active session ${originalSessionId}:`, configUpdate)
+                  console.log(`[History] Restored config for active session ${originalSessionId}`)
                 }
               }
 
@@ -2011,89 +1836,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           } else {
             // Tab exists, restore config if not already restored
             if (chatSession?.config) {
-              const config = chatSession.config
-              const configUpdate: Partial<ChatTabConfig> = {}
-              
-              // Restore selected servers (prefer enabled_servers over selected_servers)
-              if (config.enabled_servers && config.enabled_servers.length > 0) {
-                configUpdate.selectedServers = config.enabled_servers
-              } else if (config.selected_servers && config.selected_servers.length > 0) {
-                configUpdate.selectedServers = config.selected_servers
-              }
-              
-              // Restore code execution mode
-              if (config.use_code_execution_mode !== undefined) {
-                configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-              }
-              
-              // Restore context summarization
-              if (config.enable_context_summarization !== undefined) {
-                configUpdate.enableContextSummarization = config.enable_context_summarization
-              }
-              
-              // Restore LLM config
-              if (config.llm_config) {
-                let provider = config.llm_config.provider as string
-                // Fix for invalid provider (e.g. "." or empty) - fallback to global default
-                if (!provider || provider === '.' || provider.trim() === '') {
-                  console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
-                  provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                }
-
-                let modelId = config.llm_config.model_id || ''
-                // Fix for invalid/missing model_id - fallback to global default
-                if (!modelId || modelId.trim() === '') {
-                  console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
-                  modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                }
-
-                const llmConfig: ExtendedLLMConfiguration = {
-                  provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                  model_id: modelId,
-                  fallback_models: config.llm_config.fallback_models || [],
-                }
-                if (config.llm_config.cross_provider_fallback) {
-                  llmConfig.cross_provider_fallback = {
-                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                    models: config.llm_config.cross_provider_fallback.models || [],
-                  }
-                }
-                configUpdate.llmConfig = llmConfig
-              }
-              
-              // Restore workspace file context
-              if (config.file_context && Array.isArray(config.file_context)) {
-                configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
-                  name: item.name || item.path || '',
-                  path: item.path || '',
-                  type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                }))
-              }
-              
-              // Restore workspace access setting
-              if (config.enable_workspace_access !== undefined) {
-                configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-              }
-
-              // Restore selected skills
-              if (config.selected_skills && Array.isArray(config.selected_skills)) {
-                configUpdate.selectedSkills = config.selected_skills
-              }
-
-              // Restore selected sub-agent templates
-              if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
-                configUpdate.selectedSubAgents = config.selected_subagents
-              }
-
-              // Restore delegation tier config (for multi-agent sessions)
-              if (config.delegation_tier_config) {
-                configUpdate.delegationTierConfig = config.delegation_tier_config
-              }
-
-              // Update tab config
+              const configUpdate = buildTabConfigFromSession(chatSession.config)
               if (Object.keys(configUpdate).length > 0) {
                 chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
-                console.log(`[History] Restored config for existing active session tab ${tabWithSession.tabId}:`, configUpdate)
+                console.log(`[History] Restored config for existing active session tab ${tabWithSession.tabId}`)
               }
             }
 
@@ -2205,6 +1951,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
               // Create a tab for this historical session (truncate to 3 words for display)
               const sessionTitle = truncateTabTitle(chatSessionTitle || chatSession.title || 'Historical Chat')
               
+              // View-only for completed/stopped/error (cannot continue conversation)
+              const isViewOnly = chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error'
+              
               // Determine default event mode based on agent mode
               // orchestrator -> advanced (more complex, needs detailed view)
               // simple -> tiny (minimal view for restored sessions)
@@ -2214,7 +1963,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                 agentMode === 'orchestrator' ? 'advanced' : 'tiny'
               
               try {
-                const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, originalSessionId, defaultEventMode)
+                const newTabId = await createChatTab(sessionTitle, { mode: 'chat', isViewOnly }, originalSessionId, defaultEventMode)
                 tabWithSession = chatStore.getTab(newTabId)
                 if (!tabWithSession) {
                   console.error(`[History] Tab ${newTabId} was created but not found in store`)
@@ -2223,100 +1972,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
                   return
                 }
                 
-                // Restore config from stored session
+                // Restore config using shared utility
                 if (chatSession.config) {
-                  const config = chatSession.config
-                  const configUpdate: Partial<ChatTabConfig> = {}
-                  
-                  // Restore selected servers (prefer enabled_servers over selected_servers)
-                  if (config.enabled_servers && config.enabled_servers.length > 0) {
-                    configUpdate.selectedServers = config.enabled_servers
-                  } else if (config.selected_servers && config.selected_servers.length > 0) {
-                    configUpdate.selectedServers = config.selected_servers
-                  }
-                  
-                  // Restore code execution mode
-                  if (config.use_code_execution_mode !== undefined) {
-                    configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-                  }
-                  
-                  // Restore context summarization
-                  if (config.enable_context_summarization !== undefined) {
-                    configUpdate.enableContextSummarization = config.enable_context_summarization
-                  }
-                  
-                  // Restore LLM config
-                  if (config.llm_config) {
-                    let provider = config.llm_config.provider as string
-                    // Fix for invalid provider (e.g. "." or empty) - fallback to global default
-                    if (!provider || provider === '.' || provider.trim() === '') {
-                      console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
-                      provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                    }
-
-                    let modelId = config.llm_config.model_id || ''
-                    // Fix for invalid/missing model_id - fallback to global default
-                    if (!modelId || modelId.trim() === '') {
-                      console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
-                      modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                    }
-
-                    const llmConfig: ExtendedLLMConfiguration = {
-                      provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                      model_id: modelId,
-                      fallback_models: config.llm_config.fallback_models || [],
-                    }
-                    if (config.llm_config.cross_provider_fallback) {
-                      llmConfig.cross_provider_fallback = {
-                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                        models: config.llm_config.cross_provider_fallback.models || [],
-                      }
-                    }
-                    configUpdate.llmConfig = llmConfig
-                  }
-                  
-                  // Restore workspace file context
-                  if (config.file_context && Array.isArray(config.file_context)) {
-                    configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
-                      name: item.name || item.path || '',
-                      path: item.path || '',
-                      type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                    }))
-                  }
-                  
-                  // Restore workspace access setting
-                  if (config.enable_workspace_access !== undefined) {
-                    configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-                  }
-
-                  // Restore selected skills
-                  if (config.selected_skills && Array.isArray(config.selected_skills)) {
-                    configUpdate.selectedSkills = config.selected_skills
-                  }
-
-                  // Restore selected sub-agent templates
-                  if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
-                    configUpdate.selectedSubAgents = config.selected_subagents
-                  }
-
-                  // Restore delegation tier config (for multi-agent sessions)
-                  if (config.delegation_tier_config) {
-                    configUpdate.delegationTierConfig = config.delegation_tier_config
-                  }
-
-                  // Update tab config
+                  const configUpdate = buildTabConfigFromSession(chatSession.config)
                   if (Object.keys(configUpdate).length > 0) {
                     chatStore.setTabConfig(newTabId, configUpdate)
-                    console.log(`[History] Restored config for session ${originalSessionId}:`, configUpdate)
+                    console.log(`[History] Restored config for session ${originalSessionId}`)
                   }
                 }
 
-                // Restore agent mode (stored separately in agent_mode field)
-                if (chatSession.agent_mode) {
-                  // Agent mode is already used when creating the tab, but we can log it
-                  console.log(`[History] Session ${originalSessionId} agent_mode: ${chatSession.agent_mode}`)
-                }
-                
                 // Switch to the new tab to display events
                 switchTab(newTabId)
                 console.log(`[History] Created tab ${newTabId} for historical session ${originalSessionId}`)
@@ -2329,88 +1993,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             } else {
               // Tab exists, restore config if available
               if (chatSession.config) {
-                const config = chatSession.config
-                const configUpdate: Partial<ChatTabConfig> = {}
-                
-                // Restore selected servers (prefer enabled_servers over selected_servers)
-                if (config.enabled_servers && config.enabled_servers.length > 0) {
-                  configUpdate.selectedServers = config.enabled_servers
-                } else if (config.selected_servers && config.selected_servers.length > 0) {
-                  configUpdate.selectedServers = config.selected_servers
-                }
-                
-                // Restore code execution mode
-                if (config.use_code_execution_mode !== undefined) {
-                  configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-                }
-                
-                // Restore context summarization
-                if (config.enable_context_summarization !== undefined) {
-                  configUpdate.enableContextSummarization = config.enable_context_summarization
-                }
-                
-                                  // Restore LLM config
-                                  if (config.llm_config) {
-                                    let provider = config.llm_config.provider as string
-                                    // Fix for invalid provider (e.g. "." or empty) - fallback to global default
-                                    if (!provider || provider === '.' || provider.trim() === '') {
-                                      console.warn(`[History] Invalid provider "${provider}" found in session config, falling back to default`)
-                                      provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                                    }
-                
-                                    let modelId = config.llm_config.model_id || ''
-                                    // Fix for invalid/missing model_id - fallback to global default
-                                    if (!modelId || modelId.trim() === '') {
-                                      console.warn(`[History] Invalid model_id "${modelId}" found in session config, falling back to default`)
-                                      modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                                    }
-                
-                                    const llmConfig: ExtendedLLMConfiguration = {
-                                      provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                                      model_id: modelId,
-                                      fallback_models: config.llm_config.fallback_models || [],
-                                    }
-                                    if (config.llm_config.cross_provider_fallback) {
-                                      llmConfig.cross_provider_fallback = {
-                                        provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                                        models: config.llm_config.cross_provider_fallback.models || [],
-                                      }
-                                    }
-                                    configUpdate.llmConfig = llmConfig
-                                  }                
-                // Restore workspace file context
-                if (config.file_context && Array.isArray(config.file_context)) {
-                  configUpdate.fileContext = config.file_context.map((item: { name?: string; path?: string; type?: string }) => ({
-                    name: item.name || item.path || '',
-                    path: item.path || '',
-                    type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                  }))
-                }
-                
-                // Restore workspace access setting
-                if (config.enable_workspace_access !== undefined) {
-                  configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-                }
-
-                // Restore selected skills
-                if (config.selected_skills && Array.isArray(config.selected_skills)) {
-                  configUpdate.selectedSkills = config.selected_skills
-                }
-
-                // Restore selected sub-agent templates
-                if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
-                  configUpdate.selectedSubAgents = config.selected_subagents
-                }
-
-                // Restore delegation tier config (for multi-agent sessions)
-                if (config.delegation_tier_config) {
-                  configUpdate.delegationTierConfig = config.delegation_tier_config
-                }
-
-                // Update tab config
+                const configUpdate = buildTabConfigFromSession(chatSession.config)
                 if (Object.keys(configUpdate).length > 0) {
                   chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
-                  console.log(`[History] Restored config for existing tab ${tabWithSession.tabId}:`, configUpdate)
+                  console.log(`[History] Restored config for existing tab ${tabWithSession.tabId}`)
                 }
               }
 

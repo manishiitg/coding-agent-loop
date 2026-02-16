@@ -135,6 +135,30 @@ interface WorkspaceState {
   resetWorkspaceState: () => void
 }
 
+// --- Defensive: deduplicate workspace events to prevent loop when polling returns same events ---
+// When the backend re-sends the same workspace_file_operation events in poll responses,
+// we skip processing duplicates within this window to avoid repeated highlight/scroll cycles.
+const WORKSPACE_EVENT_DEDUP_MS = 2000
+const recentlyProcessedWorkspaceEvents = new Map<string, number>()
+
+function shouldSkipDuplicateWorkspaceEvent(eventId: string | undefined, filepath: string, operation: string): boolean {
+  const key = eventId || `${filepath}:${operation}`
+  const now = Date.now()
+  const lastProcessed = recentlyProcessedWorkspaceEvents.get(key)
+  if (lastProcessed && now - lastProcessed < WORKSPACE_EVENT_DEDUP_MS) {
+    return true // Skip duplicate
+  }
+  recentlyProcessedWorkspaceEvents.set(key, now)
+  // Prune old entries to prevent unbounded growth
+  if (recentlyProcessedWorkspaceEvents.size > 100) {
+    const cutoff = now - WORKSPACE_EVENT_DEDUP_MS * 2
+    for (const [k, ts] of recentlyProcessedWorkspaceEvents) {
+      if (ts < cutoff) recentlyProcessedWorkspaceEvents.delete(k)
+    }
+  }
+  return false
+}
+
 // Helper function to build file index for O(1) lookups
 const buildFileIndex = (files: PlannerFile[]): Map<string, PlannerFile> => {
   const index = new Map<string, PlannerFile>()
@@ -695,6 +719,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       highlightFile: async (filepath: string) => {
         const state = get()
         
+        // Defensive: skip if already highlighting this file (prevents scroll/rerender loop from duplicate events)
+        if (state.highlightedFile === filepath) {
+          // Just extend the highlight timeout
+          if (state.highlightTimeout) clearTimeout(state.highlightTimeout)
+          const timeout = setTimeout(() => {
+            get().clearHighlight()
+          }, 5000)
+          set({ highlightTimeout: timeout })
+          return
+        }
+        
         // Clear existing timeout
         if (state.highlightTimeout) {
           clearTimeout(state.highlightTimeout)
@@ -765,9 +800,13 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             }
             
             const { operation, filepath } = eventData
+            // Defensive: skip duplicate events (prevents loop when polling re-sends same events)
+            const eventId = (event as { id?: string }).id
+            if (shouldSkipDuplicateWorkspaceEvent(eventId, filepath || '', operation || '')) {
+              return true // Handled (skipped as duplicate)
+            }
             // Check should_highlight flag (defaults to true for backward compatibility)
             const shouldHighlight = eventData.should_highlight !== false
-            console.log('[WORKSPACE_DEBUG] processWorkspaceEvent:', operation, filepath, '| shouldHighlight:', shouldHighlight)
             
             if (!operation) {
               return true
@@ -985,12 +1024,15 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
       
       // Reset all state
-      resetWorkspaceState: () => set({
-        ...initialState,
-        fileIndex: new Map<string, PlannerFile>(),
-        expandedFolders: new Set<string>(),
-        highlightTimeout: null
-      })
+      resetWorkspaceState: () => {
+        recentlyProcessedWorkspaceEvents.clear()
+        set({
+          ...initialState,
+          fileIndex: new Map<string, PlannerFile>(),
+          expandedFolders: new Set<string>(),
+          highlightTimeout: null
+        })
+      }
     }),
     {
       name: 'workspace-store'

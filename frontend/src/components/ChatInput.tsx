@@ -129,6 +129,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // If no active tab, this is an error condition (tabs should always exist)
   const isStreaming = activeTab?.isStreaming ?? false
   const tabSessionId = activeTab?.sessionId ?? null
+  const isViewOnly = activeTab?.metadata?.isViewOnly ?? false
   
   // Note: activeTab may be undefined during initial render before tabs are created
   // This is expected and will resolve once the tab store initializes
@@ -1563,14 +1564,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Removed editing preset query functionality - not needed for chat mode
 
-  // Check if query is valid
+  // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
-  const submitButtonDisabled = !hasValidQuery || !tabSessionId
+  const submitButtonDisabled = !hasValidQuery || !tabSessionId || isViewOnly
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
+    if (isViewOnly) return "View only — cannot continue this conversation"
     return "Ask anything... (@ files, / commands, # workflows)"
-  }, [])
+  }, [isViewOnly])
 
   return (
     <TooltipProvider>
@@ -1689,7 +1691,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               onKeyDown={handleKeyDown}
               placeholder={placeholder}
               className="!min-h-[40px] max-h-[100px] resize-none text-xs overflow-y-auto leading-[1.3] !py-1 !px-3 placeholder:text-xs"
-              disabled={isSummarizing || !tabSessionId}
+              disabled={isSummarizing || !tabSessionId || isViewOnly}
               data-testid="chat-input-textarea"
             />
             <div className="flex justify-between items-center">
@@ -2160,11 +2162,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </TooltipTrigger>
                           <TooltipContent>
                             <p>
-                              {!inputText?.trim()
-                                ? 'Type a message to send'
-                                : !tabSessionId
-                                  ? 'Session not ready yet'
-                                  : 'Send message'
+                              {isViewOnly
+                                ? 'View only — cannot continue this conversation'
+                                : !inputText?.trim()
+                                  ? 'Type a message to send'
+                                  : !tabSessionId
+                                    ? 'Session not ready yet'
+                                    : 'Send message'
                               }
                             </p>
                           </TooltipContent>

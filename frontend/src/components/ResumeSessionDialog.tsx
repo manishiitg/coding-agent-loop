@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { History, Loader2, Search } from 'lucide-react'
 import { useChatStore } from '../stores'
-import { useAppStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import type { ChatHistorySummary } from '../services/api-types'
 import { truncateTabTitle } from '../utils/textUtils'
+import { agentApi } from '../services/api'
+import { buildTabConfigFromSession, hydrateTabEvents } from '../utils/sessionRestore'
 
 interface ResumeSessionDialogProps {
   onClose: () => void
@@ -75,7 +76,6 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
 
   const handleSelectSession = async (session: ChatHistorySummary) => {
     const chatStore = useChatStore.getState()
-    const appStore = useAppStore.getState()
 
     const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === session.session_id)
 
@@ -84,6 +84,15 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
     const tabMode = isMultiAgent ? 'multi-agent' as const : 'chat' as const
 
     if (existingTab) {
+      // If existing tab has no events, hydrate it
+      const existingEvents = chatStore.getTabEvents(session.session_id)
+      if (existingEvents.length === 0) {
+        try {
+          await hydrateTabEvents(session.session_id, 'micro')
+        } catch (err) {
+          console.error('[ResumeSessionDialog] Failed to hydrate existing tab:', err)
+        }
+      }
       chatStore.switchTab(existingTab.tabId)
     } else {
       // Switch to multi-agent mode if restoring a multi-agent session
@@ -91,23 +100,40 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
         useModeStore.getState().setModeCategory('multi-agent')
       }
 
+      const isViewOnly = session.status === 'completed' || session.status === 'stopped' || session.status === 'error'
       const newTabId = await chatStore.createChatTab(
         truncateTabTitle(session.title || 'Chat'),
-        { mode: tabMode },
+        { mode: tabMode, isViewOnly },
         session.session_id,
         'tiny'
       )
 
-      // Restore delegation tier config to the new tab if present
-      if (isMultiAgent && session.config?.delegation_tier_config) {
-        chatStore.setTabConfig(newTabId, {
-          delegationTierConfig: session.config.delegation_tier_config
-        })
+      // Fetch full session for config restoration
+      try {
+        const chatSession = await agentApi.getChatSession(session.session_id)
+        if (chatSession.config) {
+          const configUpdate = buildTabConfigFromSession(chatSession.config)
+          if (Object.keys(configUpdate).length > 0) {
+            chatStore.setTabConfig(newTabId, configUpdate)
+          }
+        }
+
+        // Load events
+        await hydrateTabEvents(session.session_id, 'micro')
+
+        // Set completion state
+        if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
+          chatStore.setTabCompleted(newTabId, true)
+          chatStore.setTabStreaming(newTabId, false)
+        }
+        if (chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error') {
+          chatStore.setTabMetadata(newTabId, { isViewOnly: true })
+        }
+      } catch (err) {
+        console.error('[ResumeSessionDialog] Failed to restore session:', err)
       }
 
       chatStore.switchTab(newTabId)
-      appStore.setChatSessionId(session.session_id)
-      appStore.setChatSessionTitle(session.title || '')
     }
 
     onClose()

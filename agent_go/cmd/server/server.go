@@ -11,8 +11,8 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	_ "net/http/pprof" // Register pprof handlers
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -612,7 +612,6 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 	return wrappedExecutors
 }
 
-
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -644,7 +643,7 @@ type ServerConfig struct {
 	ModelID       string   `json:"model_id"`
 	Temperature   float64  `json:"temperature"`
 	MaxTurns      int      `json:"max_turns"`
-	MCPConfigPath string `json:"mcp_config_path"`
+	MCPConfigPath string   `json:"mcp_config_path"`
 }
 
 // ActiveSessionInfo represents an active session for page refresh recovery
@@ -742,10 +741,6 @@ type StreamingAPI struct {
 	sessionAgents    map[string]*agent.LLMAgentWrapper
 	sessionAgentsMux sync.RWMutex
 
-	// Per-session turn lock — serializes agent turns (real or synthetic) per session
-	sessionTurnLock   map[string]*sync.Mutex
-	sessionTurnLockMu sync.RWMutex
-
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
 	completionLoopStartedMu sync.Mutex
@@ -772,10 +767,10 @@ type StreamingAPI struct {
 
 // QueryRequest represents an agent query request
 type QueryRequest struct {
-        Query          string                  `json:"query"`
-        Message        string                  `json:"message,omitempty"` // Alias for Query (used by frontend)
-        Servers        []string                `json:"servers,omitempty"`
-                EnabledServers []string                `json:"enabled_servers,omitempty"`
+	Query          string                  `json:"query"`
+	Message        string                  `json:"message,omitempty"` // Alias for Query (used by frontend)
+	Servers        []string                `json:"servers,omitempty"`
+	EnabledServers []string                `json:"enabled_servers,omitempty"`
 	SelectedTools  []string                `json:"selected_tools,omitempty"` // Array of "server:tool" strings
 	Provider       string                  `json:"provider,omitempty"`
 	ModelID        string                  `json:"model_id,omitempty"`
@@ -934,16 +929,16 @@ func runServer(cmd *cobra.Command, args []string) {
 	if agentModel == "" {
 		agentModel = os.Getenv("BEDROCK_PRIMARY_MODEL") // Use .env configuration
 	}
-	        fmt.Printf("\U0001F916 Agent:   %s | Model: %s\n", agentProvider, agentModel)
-	
-	        // Apply environment overrides to config (ensure Terraform env vars take precedence)
-	        if val := os.Getenv("AGENT_PROVIDER"); val != "" {
-	                config.Provider = val
-	        }
-	        // Also apply model override if set (and not just falling back to defaults)
-	        if agentModel != "" && (os.Getenv("AGENT_MODEL") != "" || os.Getenv("BEDROCK_PRIMARY_MODEL") != "") {
-	                config.ModelID = agentModel
-	        }
+	fmt.Printf("\U0001F916 Agent:   %s | Model: %s\n", agentProvider, agentModel)
+
+	// Apply environment overrides to config (ensure Terraform env vars take precedence)
+	if val := os.Getenv("AGENT_PROVIDER"); val != "" {
+		config.Provider = val
+	}
+	// Also apply model override if set (and not just falling back to defaults)
+	if agentModel != "" && (os.Getenv("AGENT_MODEL") != "" || os.Getenv("BEDROCK_PRIMARY_MODEL") != "") {
+		config.ModelID = agentModel
+	}
 	// Show cross-provider fallback configuration
 	bedrockOpenAIFallback := os.Getenv("BEDROCK_OPENAI_FALLBACK_MODELS")
 	if bedrockOpenAIFallback != "" {
@@ -1134,7 +1129,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		pendingCompletions:    make(map[string][]string),
 		lastQueryRequests:     make(map[string]QueryRequest),
 		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
-		sessionTurnLock:       make(map[string]*sync.Mutex),
 		completionLoopStarted: make(map[string]bool),
 	}
 
@@ -1171,10 +1165,10 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Public shared session access (no auth required)
 	apiRouter.HandleFunc("/shared/{share_token}", api.handleGetSharedSession).Methods("GET")
-	        apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
-	        apiRouter.HandleFunc("/chat", api.handleQuery).Methods("POST", "OPTIONS")
-	                apiRouter.HandleFunc("/chat/stream", api.handleQuery).Methods("POST", "OPTIONS")
-	                apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
+	apiRouter.HandleFunc("/query", api.handleQuery).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/chat", api.handleQuery).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/chat/stream", api.handleQuery).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
@@ -1485,11 +1479,11 @@ func (api *StreamingAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 		tracingProvider = "noop"
 	}
 
-	        json.NewEncoder(w).Encode(map[string]interface{}{
-	                "status":  "healthy",
-	                "time":    time.Now(),
-	                "version": llmtypes.VERSION,
-	                "config": map[string]interface{}{			"provider":         api.config.Provider,
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "healthy",
+		"time":    time.Now(),
+		"version": llmtypes.VERSION,
+		"config": map[string]interface{}{"provider": api.config.Provider,
 			"model":            api.config.ModelID,
 			"temperature":      api.config.Temperature,
 			"max_turns":        api.config.MaxTurns,
@@ -2012,9 +2006,9 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 		"provider": provider,
 		"model_id": modelID,
 	}
-	
+
 	isLocked := locked || isProviderLocked(provider)
-	
+
 	if !isLocked {
 		if key := os.Getenv("OPENROUTER_API_KEY"); provider == "openrouter" && key != "" {
 			entry["api_key"] = key
@@ -2110,7 +2104,8 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 
 // Query endpoint - handles POST requests to start agent streaming
 func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
-        if r.Method == "OPTIONS" {		w.WriteHeader(http.StatusOK)
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -2124,13 +2119,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	        // Handle alias: Map Message to Query if Query is empty
-	        if req.Query == "" && req.Message != "" {
-	                req.Query = req.Message
-	        }
-	
-	        // Validate required fields
-	        if req.Query == "" {		errorMsg := "Query is required"
+	// Handle alias: Map Message to Query if Query is empty
+	if req.Query == "" && req.Message != "" {
+		req.Query = req.Message
+	}
+
+	// Validate required fields
+	if req.Query == "" {
+		errorMsg := "Query is required"
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
 	}
@@ -3322,7 +3318,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					llmKeys.OpenAI = req.LLMConfig.APIKeys.OpenAI
 					llmKeys.Anthropic = req.LLMConfig.APIKeys.Anthropic
 					llmKeys.Vertex = req.LLMConfig.APIKeys.Vertex
-					
+
 					if req.LLMConfig.APIKeys.Bedrock != nil {
 						llmKeys.Bedrock = &llm.BedrockConfig{
 							Region: req.LLMConfig.APIKeys.Bedrock.Region,
@@ -4840,6 +4836,12 @@ func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 			}
 		}
 
+		// Cap limit to prevent slow queries and large responses (max 500 events per request)
+		const maxLimit = 500
+		if limit <= 0 || limit > maxLimit {
+			limit = maxLimit
+		}
+
 		dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, limit, offset)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -4861,74 +4863,15 @@ func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 				continue
 			}
 
-			// Debug: Log first event structure to verify JSON serialization
-			if i == 0 && convertedEvent.Data != nil {
-				// Marshal to JSON to see actual structure
-				if jsonBytes, err := json.Marshal(convertedEvent); err == nil {
-					jsonStr := string(jsonBytes)
-					maxLen := 500
-					if len(jsonStr) > maxLen {
-						jsonStr = jsonStr[:maxLen] + "..."
-					}
-					log.Printf("[CHAT_HISTORY DEBUG] First event JSON structure: %s", jsonStr)
-				}
-
-				// Check if GenericEventData is being used correctly
-				if genericData, ok := convertedEvent.Data.Data.(*unifiedevents.GenericEventData); ok {
-					if dataBytes, err := json.Marshal(genericData); err == nil {
-						dataStr := string(dataBytes)
-						maxLen := 300
-						if len(dataStr) > maxLen {
-							dataStr = dataStr[:maxLen] + "..."
-						}
-						log.Printf("[CHAT_HISTORY DEBUG] GenericEventData structure: %s", dataStr)
-					}
-					keys := make([]string, 0, len(genericData.Data))
-					for k := range genericData.Data {
-						keys = append(keys, k)
-					}
-					log.Printf("[CHAT_HISTORY DEBUG] GenericEventData.Data keys: %v", keys)
-				}
-			}
-
-			// Debug: Log user_message events specifically
-			if convertedEvent.Type == "user_message" && convertedEvent.Data != nil {
-				if genericData, ok := convertedEvent.Data.Data.(*unifiedevents.GenericEventData); ok {
-					if content, hasContent := genericData.Data["content"]; hasContent {
-						contentStr := fmt.Sprintf("%v", content)
-						if len(contentStr) > 100 {
-							contentStr = contentStr[:100] + "..."
-						}
-						log.Printf("[CHAT_HISTORY DEBUG] user_message event: hasContent=true, content=%s", contentStr)
-					} else {
-						keys := make([]string, 0, len(genericData.Data))
-						for k := range genericData.Data {
-							keys = append(keys, k)
-						}
-						log.Printf("[CHAT_HISTORY DEBUG] user_message event: hasContent=false, dataKeys=%v", keys)
-					}
-				}
-			}
-
 			convertedEvents = append(convertedEvents, *convertedEvent)
 		}
 
-		log.Printf("[CHAT_HISTORY] Converted %d events: total=%d, converted=%d, parse_errors=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors)
+		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, parse_errors=%d", len(dbEvents), len(convertedEvents), parseErrors)
 
-		// Get total count
-		totalCount, err := db.GetEventsBySession(r.Context(), sessionID, 0, 0)
-		total := len(dbEvents)
-		if err == nil && len(totalCount) > 0 {
-			if limit == 0 || len(dbEvents) == limit {
-				allEvents, err := db.GetEventsBySession(r.Context(), sessionID, 1000000, 0)
-				if err == nil {
-					total = len(allEvents)
-				}
-			} else {
-				if len(dbEvents) < limit {
-					total = offset + len(dbEvents)
-				}
-			}
+		// Get total count using COUNT(*) - O(1) with index, avoids fetching all events
+		total := offset + len(dbEvents)
+		if count, err := db.CountEventsBySession(r.Context(), sessionID); err == nil {
+			total = count
 		}
 
 		response := map[string]interface{}{
@@ -5165,7 +5108,7 @@ func (e *planEventEmitter) EmitFileEvent(filepath string) {
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil {
+	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
 			log.Printf("[DELEGATION PLAN] Failed to persist event to DB: %v", err)
 		}
@@ -5211,7 +5154,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil {
+	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
 			log.Printf("[PLAN APPROVAL] Failed to persist event to DB: %v", err)
 		}
@@ -5243,7 +5186,7 @@ func (e *sessionEventEmitter) EmitPlanApproval(question, contextText, yesLabel s
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil {
+	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
 			log.Printf("[PLAN APPROVAL] Failed to persist plan_approval to DB: %v", err)
 		}
@@ -5266,7 +5209,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, quest
 			Timestamp: now,
 		},
 		RequestID: requestID,
-		Questions:  eventQuestions,
+		Questions: eventQuestions,
 		SessionID: e.sessionID,
 	}
 	event := events.Event{
@@ -5283,7 +5226,7 @@ func (e *sessionEventEmitter) EmitBlockingHumanQuestions(requestID string, quest
 		},
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
-	if e.chatDB != nil {
+	if e.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := e.chatDB.StoreEvent(context.Background(), e.sessionID, event.Data); err != nil {
 			log.Printf("[HUMAN QUESTIONS] Failed to persist event to DB: %v", err)
 		}
@@ -5417,7 +5360,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Convert API keys from parent request to LLM format (respecting locked providers)
 	var apiKeys *llm.ProviderAPIKeys = &llm.ProviderAPIKeys{}
-	
+
 	// 1. Start with keys from parent request
 	if parentReq.LLMConfig != nil && parentReq.LLMConfig.APIKeys != nil {
 		apiKeys.OpenRouter = parentReq.LLMConfig.APIKeys.OpenRouter
@@ -5461,12 +5404,24 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		apiKeys = envKeys
 	} else {
 		// Partial locking: override keys for locked providers
-		if isProviderLocked("openrouter") { apiKeys.OpenRouter = envKeys.OpenRouter }
-		if isProviderLocked("openai") { apiKeys.OpenAI = envKeys.OpenAI }
-		if isProviderLocked("anthropic") { apiKeys.Anthropic = envKeys.Anthropic }
-		if isProviderLocked("vertex") { apiKeys.Vertex = envKeys.Vertex }
-		if isProviderLocked("bedrock") { apiKeys.Bedrock = envKeys.Bedrock }
-		if isProviderLocked("azure") { apiKeys.Azure = envKeys.Azure }
+		if isProviderLocked("openrouter") {
+			apiKeys.OpenRouter = envKeys.OpenRouter
+		}
+		if isProviderLocked("openai") {
+			apiKeys.OpenAI = envKeys.OpenAI
+		}
+		if isProviderLocked("anthropic") {
+			apiKeys.Anthropic = envKeys.Anthropic
+		}
+		if isProviderLocked("vertex") {
+			apiKeys.Vertex = envKeys.Vertex
+		}
+		if isProviderLocked("bedrock") {
+			apiKeys.Bedrock = envKeys.Bedrock
+		}
+		if isProviderLocked("azure") {
+			apiKeys.Azure = envKeys.Azure
+		}
 	}
 
 	// Get user ID from context for per-user OAuth token isolation
@@ -5478,11 +5433,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
-		Name:                 fmt.Sprintf("%s-sub-%d-%d", sessionID, currentDepth, time.Now().UnixNano()),
-		ServerName:           serverName,
-		ConfigPath:           api.mcpConfigPath,
-		Provider:             provider,
-		ModelID:              modelID,
+		Name:       fmt.Sprintf("%s-sub-%d-%d", sessionID, currentDepth, time.Now().UnixNano()),
+		ServerName: serverName,
+		ConfigPath: api.mcpConfigPath,
+		Provider:   provider,
+		ModelID:    modelID,
 		Temperature: func() float64 {
 			if parentReq.Temperature > 0 {
 				return parentReq.Temperature
@@ -5524,9 +5479,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			return preDiscovered
 		}(),
-		APIKeys: apiKeys,
-		SessionID:            sessionID, // Reuse parent session's MCP connections via registry
-		UserID:               subAgentUserID, // Per-user OAuth token isolation
+		APIKeys:   apiKeys,
+		SessionID: sessionID,      // Reuse parent session's MCP connections via registry
+		UserID:    subAgentUserID, // Per-user OAuth token isolation
 		// Context offloading: inherit from environment
 		LargeOutputThreshold: func() int {
 			if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
@@ -5807,7 +5762,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				extraFolders = append(extraFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 			}
-
 
 			// Register workspace tools
 			for _, tool := range workspaceTools {
@@ -6249,7 +6203,7 @@ func (api *StreamingAPI) emitBackgroundAgentEvent(sessionID, agentID, eventType 
 	}
 	api.eventStore.AddEvent(sessionID, event)
 	// Also persist to database so shared/restored sessions include background agent events
-	if api.chatDB != nil {
+	if api.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
 			log.Printf("[BG_AGENT] Failed to persist %s event to DB: %v", eventType, err)
 		}
@@ -6270,15 +6224,6 @@ func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	api.sessionBusyMu.Unlock()
 }
 
-// getSessionTurnLock returns the per-session turn lock (creates one if needed)
-func (api *StreamingAPI) getSessionTurnLock(sessionID string) *sync.Mutex {
-	api.sessionTurnLockMu.Lock()
-	defer api.sessionTurnLockMu.Unlock()
-	if api.sessionTurnLock[sessionID] == nil {
-		api.sessionTurnLock[sessionID] = &sync.Mutex{}
-	}
-	return api.sessionTurnLock[sessionID]
-}
 
 // queuePendingCompletion adds a completed agent ID to the pending queue
 func (api *StreamingAPI) queuePendingCompletion(sessionID, agentID string) {
@@ -6536,7 +6481,7 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 	}
 	api.eventStore.AddEvent(sessionID, event)
 	// Also persist to database so shared sessions and restored sessions include delegation events
-	if api.chatDB != nil {
+	if api.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
 			log.Printf("[DELEGATION] Failed to persist delegation_start to DB: %v", err)
 		}
@@ -6589,7 +6534,7 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 	}
 	api.eventStore.AddEvent(sessionID, event)
 	// Also persist to database so shared sessions and restored sessions include delegation events
-	if api.chatDB != nil {
+	if api.chatDB != nil && eventbridge.ShouldStoreEvent(string(event.Data.Type)) {
 		if err := api.chatDB.StoreEvent(context.Background(), sessionID, event.Data); err != nil {
 			log.Printf("[DELEGATION] Failed to persist delegation_end to DB: %v", err)
 		}

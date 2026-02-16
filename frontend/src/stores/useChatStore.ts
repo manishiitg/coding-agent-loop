@@ -125,6 +125,7 @@ export interface ChatTab {
     phaseName?: string  // For workflow mode: phase name
     mode?: 'chat' | 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
+    isViewOnly?: boolean  // True when restored from history - view only, cannot continue
   }
 }
 
@@ -354,6 +355,7 @@ interface ChatState extends StoreActions {
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
+  setTabMetadata: (tabId: string, metadataUpdate: Partial<NonNullable<ChatTab['metadata']>>) => void
   getTabStreamingStatus: (tabId: string) => boolean
   checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => boolean
   
@@ -1324,6 +1326,25 @@ export const useChatStore = create<ChatState>()(
               config: {
                 ...tab.config,
                 ...configUpdate
+              }
+            }
+          }
+        }))
+      },
+      
+      setTabMetadata: (tabId: string, metadataUpdate: Partial<NonNullable<ChatTab['metadata']>>) => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+        
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...tab,
+              metadata: {
+                ...tab.metadata,
+                ...metadataUpdate
               }
             }
           }

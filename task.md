@@ -15,3 +15,9 @@
 26. when i start new plan, why does it not ask me user input by default 
 
 28. see how we can use agent browser, to connnect our local browser directly if we can create a better ux for it.
+
+29.. can we have token_usage.json similar to workflow for plans/
+
+30.. also add a slack hook to talk to multi chat agnet 
+
+31. read image tool response not visible

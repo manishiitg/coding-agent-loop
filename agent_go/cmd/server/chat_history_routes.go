@@ -212,6 +212,12 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			return
 		}
 
+		// Cap limit to prevent slow queries (max 500 per request)
+		const maxLimit = 500
+		if limit <= 0 || limit > maxLimit {
+			limit = maxLimit
+		}
+
 		dbEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, limit, offset)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -259,18 +265,6 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 				continue
 			}
 
-			// Log first event structure for debugging
-			if i == 0 {
-				log.Printf("[CHAT_HISTORY DEBUG] First event structure: type=%s, hasData=%v, dataKeys=%v",
-					helper.Type, len(dataMap) > 0, func() []string {
-						keys := make([]string, 0, len(dataMap))
-						for k := range dataMap {
-							keys = append(keys, k)
-						}
-						return keys
-					}())
-			}
-
 			// Create AgentEvent with GenericEventData wrapper
 			agentEvent := pkgevents.AgentEvent{
 				Type:           helper.Type,
@@ -298,28 +292,12 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			})
 		}
 
-		log.Printf("[CHAT_HISTORY] Converted %d events: total=%d, converted=%d, parse_errors=%d", len(dbEvents), len(dbEvents), len(convertedEvents), parseErrors)
+		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, parse_errors=%d", len(dbEvents), len(convertedEvents), parseErrors)
 
-		// Get total count of events for this session
-		totalCount, err := db.GetEventsBySession(c.Request.Context(), sessionID, 0, 0)
-		total := len(dbEvents)
-		if err == nil && len(totalCount) > 0 {
-			// If we got events, count them (this is a workaround since GetEventsBySession doesn't return total)
-			// For now, if limit is 0, we can use it to get all events and count them
-			// But this is inefficient - we should add a CountEventsBySession method
-			if limit == 0 || len(dbEvents) == limit {
-				// Try to get a count by fetching with a very high limit
-				allEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, 1000000, 0)
-				if err == nil {
-					total = len(allEvents)
-				}
-			} else {
-				// Estimate: if we got fewer events than limit, that's the total
-				// Otherwise, we don't know the exact total
-				if len(dbEvents) < limit {
-					total = offset + len(dbEvents)
-				}
-			}
+		// Get total count using COUNT(*) - O(1) with index
+		total := offset + len(dbEvents)
+		if count, err := db.CountEventsBySession(c.Request.Context(), sessionID); err == nil {
+			total = count
 		}
 
 		c.JSON(http.StatusOK, gin.H{

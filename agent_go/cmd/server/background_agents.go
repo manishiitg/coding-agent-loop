@@ -177,11 +177,27 @@ func (a *BackgroundAgent) GetStatus() BackgroundAgentStatus {
 	return a.Status
 }
 
+// BackgroundAgentSnapshot is a value-type copy of BackgroundAgent without the mutex.
+// Used to safely return agent state without copying sync.RWMutex.
+type BackgroundAgentSnapshot struct {
+	ID             string                `json:"id"`
+	Name           string                `json:"name"`
+	SessionID      string                `json:"session_id"`
+	Instruction    string                `json:"instruction"`
+	Status         BackgroundAgentStatus `json:"status"`
+	Result         string                `json:"result,omitempty"`
+	Error          string                `json:"error,omitempty"`
+	CreatedAt      time.Time             `json:"created_at"`
+	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
+	ReasoningLevel string                `json:"reasoning_level,omitempty"`
+	ModelID        string                `json:"model_id,omitempty"`
+}
+
 // GetSnapshot returns a snapshot of the agent state (thread-safe)
-func (a *BackgroundAgent) GetSnapshot() BackgroundAgent {
+func (a *BackgroundAgent) GetSnapshot() BackgroundAgentSnapshot {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	snap := BackgroundAgent{
+	snap := BackgroundAgentSnapshot{
 		ID:             a.ID,
 		Name:           a.Name,
 		SessionID:      a.SessionID,

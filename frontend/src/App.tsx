@@ -8,6 +8,7 @@ import { MarkdownRenderer } from "./components/ui/MarkdownRenderer";
 import { CsvRenderer } from "./components/ui/CsvRenderer";
 import { XlsxRenderer } from "./components/ui/XlsxRenderer";
 import { DocxRenderer } from "./components/ui/DocxRenderer";
+import { PdfRenderer } from "./components/ui/PdfRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
@@ -23,9 +24,8 @@ import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
 import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
 import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
-import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore, useLLMStore } from "./stores";
-import type { ChatTabConfig } from "./stores/useChatStore";
-import type { ExtendedLLMConfiguration } from "./services/api-types";
+import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
+import { buildTabConfigFromSession, hydrateTabEvents } from "./utils/sessionRestore";
 import { useModeStore } from "./stores/useModeStore";
 import { useAuthStore } from "./stores/useAuthStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
@@ -651,9 +651,9 @@ function App() {
       // If the existing tab has no events, hydrate it now (tab was created empty)
       if (existingEvents.length === 0) {
         console.log(`[RESTORE_DEBUG] Existing tab has 0 events, hydrating session ${sessionId}`)
+        chatStore.setIsLoadingHistory(true)
         ;(async () => {
           try {
-            // Fetch session details for config
             const chatSession = await agentApi.getChatSession(sessionId)
             const config = chatSession?.config
 
@@ -663,64 +663,29 @@ function App() {
               useModeStore.getState().setModeCategory('multi-agent')
             }
 
-            // Restore config if available
+            // Restore config using shared utility
             if (config) {
-              const configUpdate: Partial<ChatTabConfig> = {}
-              if (config.enabled_servers?.length) configUpdate.selectedServers = config.enabled_servers
-              else if (config.selected_servers?.length) configUpdate.selectedServers = config.selected_servers
-              if (config.use_code_execution_mode !== undefined) configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-              if (config.enable_context_summarization !== undefined) configUpdate.enableContextSummarization = config.enable_context_summarization
-              if (config.llm_config) {
-                let provider = config.llm_config.provider as string
-                if (!provider || provider === '.' || provider.trim() === '') provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-                let modelId = config.llm_config.model_id || ''
-                if (!modelId || modelId.trim() === '') modelId = useLLMStore.getState().primaryConfig.model_id || ''
-                const llmConfig: ExtendedLLMConfiguration = {
-                  provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                  model_id: modelId,
-                  fallback_models: config.llm_config.fallback_models || [],
-                }
-                if (config.llm_config.cross_provider_fallback) {
-                  llmConfig.cross_provider_fallback = {
-                    provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                    models: config.llm_config.cross_provider_fallback.models || [],
-                  }
-                }
-                configUpdate.llmConfig = llmConfig
-              }
-              if (config.file_context && Array.isArray(config.file_context)) {
-                configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
-                  name: item.name || item.path || '', path: item.path || '',
-                  type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-                }))
-              }
-              if (config.enable_workspace_access !== undefined) configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-              if (config.selected_skills && Array.isArray(config.selected_skills)) configUpdate.selectedSkills = config.selected_skills
-              if (config.selected_subagents && Array.isArray(config.selected_subagents)) configUpdate.selectedSubAgents = config.selected_subagents
-              if (config.delegation_tier_config) configUpdate.delegationTierConfig = config.delegation_tier_config
+              const configUpdate = buildTabConfigFromSession(config)
               if (Object.keys(configUpdate).length > 0) {
                 chatStore.setTabConfig(existingTab.tabId, configUpdate)
-                console.log(`[RESTORE_DEBUG] Hydrated config for existing tab: ${Object.keys(configUpdate).join(', ')}`)
               }
             }
 
-            // Load events
-            const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode: 'tiny' })
-            console.log(`[RESTORE_DEBUG] Hydrated ${response.events?.length} events for existing tab ${existingTab.tabId}`)
-            useChatStore.getState().setTabEvents(sessionId, response.events)
-            const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
-            useChatStore.getState().setTabLastEventIndex(sessionId, lastIndex)
-            if (response.has_more !== undefined) {
-              useChatStore.getState().setTabHasMoreOlderEvents(sessionId, response.has_more)
-            }
+            // Load events using shared utility
+            await hydrateTabEvents(sessionId, 'tiny')
 
-            // Set completion state
+            // Set completion state and view-only for restored completed sessions
             if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
               chatStore.setTabCompleted(existingTab.tabId, true)
               chatStore.setTabStreaming(existingTab.tabId, false)
             }
+            if (chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error') {
+              chatStore.setTabMetadata(existingTab.tabId, { isViewOnly: true })
+            }
           } catch (err) {
             console.error(`[RESTORE_DEBUG] Failed to hydrate existing tab for session ${sessionId}:`, err)
+          } finally {
+            chatStore.setIsLoadingHistory(false)
           }
         })()
       }
@@ -738,6 +703,8 @@ function App() {
 
     // No existing tab, create one immediately to ensure UI selection
     const createAndSwitchTab = async () => {
+      // Show loading indicator while restoring
+      chatStore.setIsLoadingHistory(true)
       try {
         // Double-check tab doesn't exist (race condition protection)
         const currentTabs = Object.values(useChatStore.getState().chatTabs)
@@ -769,109 +736,29 @@ function App() {
           useModeStore.getState().setModeCategory('multi-agent')
         }
 
-        // 3. Create tab with correct mode
+        // 3. Create tab with correct mode (view-only for completed/stopped/error sessions)
+        const isViewOnly = chatSession?.status === 'completed' || chatSession?.status === 'stopped' || chatSession?.status === 'error'
         const newTabId = await chatStore.createChatTab(
           truncateTabTitle(sessionTitle || 'Chat'),
-          { mode: tabMode },
+          { mode: tabMode, isViewOnly: isViewOnly ?? false },
           sessionId,
           'tiny'
         )
         console.log(`[RESTORE_DEBUG] Step 3: Created tab ${newTabId} with mode=${tabMode} for session ${sessionId}`)
 
-        // 4. Restore config from stored session (same pattern as ChatArea auto-restore)
+        // 4. Restore config from stored session using shared utility
         if (config) {
-          const configUpdate: Partial<ChatTabConfig> = {}
-
-          // Restore selected servers
-          if (config.enabled_servers && config.enabled_servers.length > 0) {
-            configUpdate.selectedServers = config.enabled_servers
-          } else if (config.selected_servers && config.selected_servers.length > 0) {
-            configUpdate.selectedServers = config.selected_servers
-          }
-
-          if (config.use_code_execution_mode !== undefined) {
-            configUpdate.useCodeExecutionMode = config.use_code_execution_mode
-          }
-
-          if (config.enable_context_summarization !== undefined) {
-            configUpdate.enableContextSummarization = config.enable_context_summarization
-          }
-
-          // Restore LLM config
-          if (config.llm_config) {
-            let provider = config.llm_config.provider as string
-            if (!provider || provider === '.' || provider.trim() === '') {
-              provider = useLLMStore.getState().primaryConfig.provider || 'openai'
-            }
-            let modelId = config.llm_config.model_id || ''
-            if (!modelId || modelId.trim() === '') {
-              modelId = useLLMStore.getState().primaryConfig.model_id || ''
-            }
-            const llmConfig: ExtendedLLMConfiguration = {
-              provider: provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-              model_id: modelId,
-              fallback_models: config.llm_config.fallback_models || [],
-            }
-            if (config.llm_config.cross_provider_fallback) {
-              llmConfig.cross_provider_fallback = {
-                provider: config.llm_config.cross_provider_fallback.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                models: config.llm_config.cross_provider_fallback.models || [],
-              }
-            }
-            configUpdate.llmConfig = llmConfig
-          }
-
-          // Restore workspace file context
-          if (config.file_context && Array.isArray(config.file_context)) {
-            configUpdate.fileContext = config.file_context.map((item: { name?: string; path: string; type?: 'file' | 'folder' }) => ({
-              name: item.name || item.path || '',
-              path: item.path || '',
-              type: (item.type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-            }))
-          }
-
-          if (config.enable_workspace_access !== undefined) {
-            configUpdate.enableWorkspaceAccess = config.enable_workspace_access
-          }
-
-          if (config.selected_skills && Array.isArray(config.selected_skills)) {
-            configUpdate.selectedSkills = config.selected_skills
-          }
-
-          if (config.selected_subagents && Array.isArray(config.selected_subagents)) {
-            configUpdate.selectedSubAgents = config.selected_subagents
-          }
-
-          // Restore delegation tier config (for multi-agent sessions)
-          if (config.delegation_tier_config) {
-            configUpdate.delegationTierConfig = config.delegation_tier_config
-          }
-
+          const configUpdate = buildTabConfigFromSession(config)
           if (Object.keys(configUpdate).length > 0) {
             chatStore.setTabConfig(newTabId, configUpdate)
             console.log(`[RESTORE_DEBUG] Step 4: Restored config keys: ${Object.keys(configUpdate).join(', ')}`)
-          } else {
-            console.log(`[RESTORE_DEBUG] Step 4: No config keys to restore`)
           }
-        } else {
-          console.log(`[RESTORE_DEBUG] Step 4: No config in session response`)
         }
 
-        // 5. Load events
-        console.log(`[RESTORE_DEBUG] Step 5: Fetching events for session ${sessionId} (since=-1, eventMode=tiny)`)
+        // 5. Load events using shared utility
         try {
-          const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode: 'tiny' })
-          console.log(`[RESTORE_DEBUG] Step 5 result: events=${response.events?.length}, last_processed_index=${response.last_processed_index}, has_more=${response.has_more}, session_status=${(response as unknown as Record<string, unknown>).session_status}`)
-          if (response.events && response.events.length > 0) {
-            console.log(`[RESTORE_DEBUG] Step 5 first event type: ${response.events[0]?.type}, last event type: ${response.events[response.events.length - 1]?.type}`)
-          }
-          useChatStore.getState().setTabEvents(sessionId, response.events)
-          const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
-          useChatStore.getState().setTabLastEventIndex(sessionId, lastIndex)
-          if (response.has_more !== undefined) {
-            useChatStore.getState().setTabHasMoreOlderEvents(sessionId, response.has_more)
-          }
-          console.log(`[RESTORE_DEBUG] Step 5: Set ${response.events.length} events in store, lastIndex=${lastIndex}`)
+          await hydrateTabEvents(sessionId, 'tiny')
+          console.log(`[RESTORE_DEBUG] Step 5: Events loaded for session ${sessionId}`)
         } catch (err) {
           console.error(`[RESTORE_DEBUG] Step 5 FAILED: getSessionEvents error for ${sessionId}:`, err)
         }
@@ -892,20 +779,17 @@ function App() {
         }
 
         chatStore.switchTab(newTabId)
-        console.log(`[RESTORE_DEBUG] Step 7: Switched to tab ${newTabId}, setting session state`)
-
-        // Set the session ID to trigger any additional hydration in ChatArea
-        setChatSessionId(sessionId);
+        console.log(`[RESTORE_DEBUG] Step 7: Switched to tab ${newTabId}`)
         setSidebarMinimized(true);
-        setChatSessionTitle(sessionTitle || '');
       } finally {
-        // Always remove from the set when done
+        // Always remove from the set when done and clear loading
+        chatStore.setIsLoadingHistory(false)
         sessionsBeingSelectedRef.current.delete(sessionId)
       }
     }
 
     createAndSwitchTab()
-  }, [setChatSessionId, setChatSessionTitle, setShowFileContent, setSidebarMinimized]);
+  }, [setShowFileContent, setSidebarMinimized]);
 
   // Handle restoring a workflow from running list
   const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {
@@ -1176,10 +1060,11 @@ function App() {
                   {!isEditMode ? (
                     <>
                       <div className="flex items-center gap-0.5">
-                        {/* Hide edit/revisions for binary files (xls, xlsx, docx) */}
+                        {/* Hide edit/revisions for binary files (xls, xlsx, docx, pdf) */}
                         {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
                          !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
-                         !selectedFile?.path?.toLowerCase().endsWith('.docx') && (
+                         !selectedFile?.path?.toLowerCase().endsWith('.docx') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.pdf') && (
                           <>
                             <button
                               onClick={handleEdit}
@@ -1218,7 +1103,8 @@ function App() {
                         </button>
                         {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
                          !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
-                         !selectedFile?.path?.toLowerCase().endsWith('.docx') && (
+                         !selectedFile?.path?.toLowerCase().endsWith('.docx') &&
+                         !selectedFile?.path?.toLowerCase().endsWith('.pdf') && (
                           <button
                             onClick={() => setShowRevisionsModal(true)}
                             className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
@@ -1377,7 +1263,7 @@ function App() {
                         />
                       </div>
                     ) : (
-                      <div className="p-6">
+                      <div className={selectedFile?.path?.toLowerCase().endsWith('.pdf') ? "" : "p-6"}>
                         {(() => {
                           const filePath = selectedFile?.path?.toLowerCase() || ''
 
@@ -1394,6 +1280,15 @@ function App() {
                           // DOCX files (binary)
                           if (filePath.endsWith('.docx') && binaryFileData) {
                             return <DocxRenderer data={binaryFileData} />
+                          }
+
+                          // PDF files (binary)
+                          if (filePath.endsWith('.pdf') && binaryFileData) {
+                            return (
+                              <div className="h-[calc(100vh-120px)] w-full">
+                                <PdfRenderer data={binaryFileData} />
+                              </div>
+                            )
                           }
 
                           // Check for JSON files

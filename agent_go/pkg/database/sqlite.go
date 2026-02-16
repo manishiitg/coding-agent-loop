@@ -79,40 +79,7 @@ func validateUpdateField(field string) bool {
 	return allowedUpdateFields[fieldName]
 }
 
-// hasValidLLMConfig checks if a session config has valid LLM configuration
-// Returns false for old sessions without LLM config (null config or missing/empty provider)
-func hasValidLLMConfig(config json.RawMessage) bool {
-	if config == nil || len(config) == 0 {
-		return false
-	}
 
-	var configMap map[string]interface{}
-	if err := json.Unmarshal(config, &configMap); err != nil {
-		return false
-	}
-
-	llmConfig, ok := configMap["llm_config"]
-	if !ok || llmConfig == nil {
-		return false
-	}
-
-	llmConfigMap, ok := llmConfig.(map[string]interface{})
-	if !ok {
-		return false
-	}
-
-	provider, ok := llmConfigMap["provider"]
-	if !ok || provider == nil {
-		return false
-	}
-
-	providerStr, ok := provider.(string)
-	if !ok || providerStr == "" || providerStr == "." {
-		return false
-	}
-
-	return true
-}
 
 // NewSQLiteDB creates a new SQLite database connection
 func NewSQLiteDB(dbPath string) (*SQLiteDB, error) {
@@ -877,6 +844,26 @@ func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, lim
 	}
 
 	return events, nil
+}
+
+// CountEventsBySession returns the total number of events for a session (O(1) with index)
+func (s *SQLiteDB) CountEventsBySession(ctx context.Context, sessionID string) (int, error) {
+	var internalID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM chat_sessions WHERE session_id = ?`, sessionID,
+	).Scan(&internalID)
+	if err != nil {
+		internalID = sessionID
+	}
+
+	var count int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM events WHERE chat_session_id = ?`, internalID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count events: %w", err)
+	}
+	return count, nil
 }
 
 // Ping tests the database connection

@@ -151,6 +151,12 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
 
       // Build request payload
+      // CDP port: read from active tab config (set via ChatInput CDP toggle)
+      const tabConfig = activeTab?.config
+      const cdpPort = (tabConfig?.enableBrowserAccess && tabConfig?.useCdp && tabConfig?.cdpPort)
+        ? tabConfig.cdpPort
+        : undefined
+
       const requestPayload = {
         query: `Execute workflow for preset: ${presetQueryId}`,
         agent_mode: 'workflow' as const,
@@ -161,7 +167,8 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         model_id: llmConfig.model_id,
         llm_config: llmConfig,
         preset_query_id: presetQueryId,
-        use_code_execution_mode: activePreset?.useCodeExecutionMode
+        use_code_execution_mode: activePreset?.useCodeExecutionMode,
+        cdp_port: cdpPort
       }
 
       // Start the query - agentApi.startQuery will use sessionId
@@ -213,6 +220,12 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       const activePreset = getActivePreset('workflow')
       const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
 
+      // CDP port: read from active tab config (set via ChatInput CDP toggle)
+      const stepTabConfig = useChatStore.getState().getActiveTab()?.config
+      const stepCdpPort = (stepTabConfig?.enableBrowserAccess && stepTabConfig?.useCdp && stepTabConfig?.cdpPort)
+        ? stepTabConfig.cdpPort
+        : undefined
+
       // Build request payload with step_id
       const requestPayload = {
         query: `Execute step ${stepId} for preset: ${presetQueryId}`,
@@ -225,7 +238,8 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         llm_config: llmConfig,
         preset_query_id: presetQueryId,
         step_id: stepId,
-        use_code_execution_mode: activePreset?.useCodeExecutionMode
+        use_code_execution_mode: activePreset?.useCodeExecutionMode,
+        cdp_port: stepCdpPort
       }
 
       // Start the query

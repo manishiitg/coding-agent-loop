@@ -18,10 +18,9 @@ func DiscoverSubAgents(workspaceAPIURL string) ([]SubAgent, error) {
 	var subagents []SubAgent
 
 	processFolder := func(entry DocumentEntry, prefix string) {
-		folderName := entry.Filepath
+		var folderName string
 		if prefix != "" {
-			relPath := strings.TrimPrefix(entry.Filepath, SubAgentsBasePath+"/")
-			folderName = relPath
+			folderName = strings.TrimPrefix(entry.Filepath, SubAgentsBasePath+"/")
 		} else {
 			folderName = path.Base(entry.Filepath)
 		}

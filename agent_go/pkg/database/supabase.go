@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,12 +14,6 @@ import (
 
 	_ "github.com/lib/pq"
 )
-
-// isLLMConfigLocked checks if LLM configuration is locked via environment variable
-// When locked, the backend uses env vars for LLM config instead of stored session config
-func isLLMConfigLocked() bool {
-	return os.Getenv("LLM_CONFIG_LOCKED") == "true" || os.Getenv("LLM_CONFIG_LOCKED") == "1"
-}
 
 // SupabaseDB implements the Database interface using PostgreSQL (Supabase)
 type SupabaseDB struct {
@@ -726,6 +719,26 @@ func (s *SupabaseDB) GetEventsBySession(ctx context.Context, sessionID string, l
 	}
 
 	return events, nil
+}
+
+// CountEventsBySession returns the total number of events for a session (O(1) with index)
+func (s *SupabaseDB) CountEventsBySession(ctx context.Context, sessionID string) (int, error) {
+	var internalID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM chat_sessions WHERE session_id = $1`, sessionID,
+	).Scan(&internalID)
+	if err != nil {
+		internalID = sessionID
+	}
+
+	var count int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM events WHERE chat_session_id = $1`, internalID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count events: %w", err)
+	}
+	return count, nil
 }
 
 // Ping tests the database connection

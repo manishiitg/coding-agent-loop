@@ -26,6 +26,7 @@ type Database interface {
 	StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error
 	GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*GetEventsResponse, error)
 	GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error)
+	CountEventsBySession(ctx context.Context, sessionID string) (int, error)
 
 	// Preset query management
 	// userID parameter is used for isolation in multi-user mode

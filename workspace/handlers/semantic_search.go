@@ -40,7 +40,10 @@ func InitializeSemanticServices() {
 	chunker = services.NewChunker()
 
 	// Initialize file processor with SQLite job queue
-	dataDir := "/app/data" // Docker container data directory
+	dataDir := viper.GetString("data-dir")
+	if dataDir == "" {
+		dataDir = "./data"
+	}
 	var err error
 	fileProcessor, err = services.NewFileProcessor(qdrantClient, embeddingService, chunker, dataDir)
 	if err != nil {

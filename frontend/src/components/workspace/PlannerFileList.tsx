@@ -85,7 +85,7 @@ export default function PlannerFileList({
     const isExpanded = expandedFolders.has(file.filepath)
     const isLoadingChildren = loadingChildren.has(file.filepath)
     const fileExt = file.filepath.split('.').pop()?.toLowerCase() || ''
-    const isViewableBinary = ['xls', 'xlsx', 'docx'].includes(fileExt)
+    const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf'].includes(fileExt)
     const isViewable = file.type === 'folder' || file.is_image || isTextBasedFile(file.filepath) || isViewableBinary
     const isClickable = file.type === 'folder' || isViewable
     const fileName = file.filepath.split('/').pop() || file.filepath

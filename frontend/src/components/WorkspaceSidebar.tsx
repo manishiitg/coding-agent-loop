@@ -13,7 +13,7 @@ import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { Layers, LogOut, User, Bell, BellOff, Play } from 'lucide-react'
+import { Layers, LogOut, User, Bell, BellOff, Play, Download } from 'lucide-react'
 import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -264,6 +264,29 @@ export default function WorkspaceSidebar({
                 }
               }}
             />
+
+            {/* Download App Promo - Only in Browser */}
+            {!isElectron && (
+              <div className="mt-auto pt-2">
+                <div className="bg-gradient-to-r from-blue-500/10 to-indigo-500/10 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg p-3 border border-blue-100 dark:border-blue-900/30">
+                  <h4 className="text-xs font-semibold text-gray-900 dark:text-gray-100 mb-1 flex items-center gap-1.5">
+                    <Download className="w-3 h-3 text-blue-500" />
+                    Get Mac App
+                  </h4>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
+                    Run locally without Docker. Fast, native, and easy.
+                  </p>
+                  <a 
+                    href="https://github.com/manishiitg/mcp-agent-builder-go/releases/latest" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="block w-full text-center px-2 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors shadow-sm"
+                  >
+                    Download DMG
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -420,6 +443,25 @@ export default function WorkspaceSidebar({
 
           {/* Spacer to push user section to bottom */}
           <div className="flex-1" />
+
+          {/* Download App Icon - Only in Browser */}
+          {!isElectron && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href="https://github.com/manishiitg/mcp-agent-builder-go/releases/latest"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors"
+                >
+                  <Download className="w-5 h-5" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Download Mac App</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
 
           {/* User Info & Logout - Bottom (Minimized) */}
           <div className="border-t border-gray-200 dark:border-slate-700 pt-3 flex flex-col items-center gap-2">

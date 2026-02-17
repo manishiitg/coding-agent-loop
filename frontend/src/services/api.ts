@@ -42,6 +42,8 @@ import type {
   TokenUsageFile,
   WorkspaceStateResponse,
   CapabilitiesResponse,
+  UserCostsResponse,
+  SessionCostDetail,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -277,14 +279,14 @@ export const agentApi = {
 
   // Get events for a session
   // Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
-  // eventMode: 'advanced' | 'tiny' | 'micro' - filters events by mode (defaults to 'micro')
+  // eventMode: 'advanced' | 'micro' - filters events by mode (defaults to 'micro')
   getSessionEvents: async (
     sessionId: string, 
     sinceIndex?: number,
     options?: {
       limit?: number
       offset?: number
-      eventMode?: 'advanced' | 'tiny' | 'micro'
+      eventMode?: 'advanced' | 'micro'
     }
   ): Promise<GetEventsResponse> => {
     const params: Record<string, string | number> = {}
@@ -382,11 +384,19 @@ export const agentApi = {
     return response.data
   },
 
-  // CDP Port Check — checks from the main server (host) if Chrome's
-  // remote debugging port is reachable on localhost
+  // CDP Port Check — checks from the workspace container (where agent-browser runs)
+  // if Chrome's remote debugging port is reachable via host.docker.internal.
+  // Falls back to agent server check (host localhost) if workspace is unavailable.
   checkCdpPort: async (port: number): Promise<{ connected: boolean }> => {
-    const response = await api.get(`/api/cdp-check?port=${port}`)
-    return response.data
+    try {
+      // Primary: check from workspace container (matches actual agent-browser runtime)
+      const response = await workspaceApi.get(`/api/cdp-check?port=${port}`, { timeout: 5000 })
+      return response.data
+    } catch {
+      // Fallback: check from agent server (host machine)
+      const response = await api.get(`/api/cdp-check?port=${port}`, { timeout: 5000 })
+      return response.data
+    }
   },
 
   // LLM Guidance Management
@@ -759,6 +769,21 @@ export const agentApi = {
 
   deleteChatSession: async (sessionId: string): Promise<void> => {
     await api.delete(`/api/chat-history/sessions/${sessionId}`)
+  },
+
+  // Chat Cost Analysis API
+  getAllSessionCosts: async (agentMode?: string, signal?: AbortSignal): Promise<UserCostsResponse> => {
+    const params: Record<string, string> = {}
+    if (agentMode) {
+      params.agent_mode = agentMode
+    }
+    const response = await api.get('/api/chat-history/costs', { params, signal })
+    return response.data
+  },
+
+  getSessionCosts: async (sessionId: string, signal?: AbortSignal): Promise<SessionCostDetail> => {
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}/costs`, { signal })
+    return response.data
   },
 
   // Preset Query API

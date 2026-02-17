@@ -32,7 +32,7 @@ The workspace is organized into the following folders:
 - **skills/** (read-only) - Contains reusable skill definitions that extend agent capabilities. Each skill has a SKILL.md with instructions and optional supporting files.
 - **Workflow/** (read-only) - Stores workflow definitions that automate multi-step processes. Workflows chain together skills and tools into repeatable sequences.
 - **Downloads/** (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).
-- **Plans/** (read-only) - Delegation plans and sub-agent outputs. Used by the multi-agent system to coordinate tasks across agents.
+- **Plans/** (read-only) - Delegation plans and sub-agent outputs. Used by the multi-agent system to coordinate tasks across agents. Contains Plans/memories/ for persistent agent memory across sessions.
 - **subagents/** (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.
 - **_users/** (blocked) - Internal directory, access not allowed.
 

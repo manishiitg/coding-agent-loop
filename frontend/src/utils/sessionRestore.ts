@@ -2,15 +2,159 @@ import type { ChatTabConfig } from '../stores/useChatStore'
 import type { ChatSessionConfig, ExtendedLLMConfiguration } from '../services/api-types'
 import { useLLMStore } from '../stores/useLLMStore'
 import { useChatStore } from '../stores/useChatStore'
+import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
+import { truncateTabTitle } from './textUtils'
+
+const TAG = '[SessionRestore]'
+
+/**
+ * Per-session async lock to prevent duplicate restores.
+ * If restoreSession is called concurrently for the same session,
+ * subsequent calls return the existing Promise.
+ */
+const restoreInProgress = new Map<string, Promise<string>>()
+
+/**
+ * Apply session status (completed/streaming/restored) to a tab.
+ */
+function applySessionStatus(tabId: string, status: string): void {
+  const chatStore = useChatStore.getState()
+  const isDone = status === 'completed' || status === 'stopped'
+  const isError = status === 'error'
+  chatStore.setTabCompleted(tabId, isDone)
+  chatStore.setTabStreaming(tabId, !isDone && !isError)
+  if (isDone || isError) {
+    chatStore.setTabMetadata(tabId, { isRestored: true })
+  }
+}
+
+/**
+ * Unified session restoration function.
+ * Handles all restore flows: auto-restore, page-refresh hydration, sidebar click, resume dialog.
+ *
+ * Returns the tabId for the restored session.
+ */
+export async function restoreSession(
+  sessionId: string,
+  options?: {
+    title?: string
+    source?: string
+    skipConfigRestore?: boolean
+  }
+): Promise<string> {
+  // Async lock: if already restoring this session, return the existing promise
+  const existing = restoreInProgress.get(sessionId)
+  if (existing) {
+    console.log(`${TAG} Dedup hit for ${sessionId} (source=${options?.source}), returning existing promise`)
+    return existing
+  }
+
+  const promise = doRestoreSession(sessionId, options)
+  restoreInProgress.set(sessionId, promise)
+
+  try {
+    return await promise
+  } finally {
+    restoreInProgress.delete(sessionId)
+  }
+}
+
+async function doRestoreSession(
+  sessionId: string,
+  options?: {
+    title?: string
+    source?: string
+    skipConfigRestore?: boolean
+  }
+): Promise<string> {
+  const src = options?.source || 'unknown'
+  console.log(`${TAG} Start session=${sessionId} source=${src} title=${options?.title ?? '(none)'}`)
+  const chatStore = useChatStore.getState()
+
+  // Step 1: Check for existing tab with events already loaded
+  const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
+  if (existingTab) {
+    const existingEvents = chatStore.getTabEvents(sessionId)
+    if (existingEvents.length > 0) {
+      console.log(`${TAG} [${src}] Tab ${existingTab.tabId} already has ${existingEvents.length} events, returning early`)
+      return existingTab.tabId
+    }
+    console.log(`${TAG} [${src}] Tab ${existingTab.tabId} exists but has 0 events, will hydrate`)
+  }
+
+  // Step 2: Fetch session details
+  let chatSession: Awaited<ReturnType<typeof agentApi.getChatSession>> | null = null
+  try {
+    chatSession = await agentApi.getChatSession(sessionId)
+    console.log(`${TAG} [${src}] Fetched session: status=${chatSession.status}, hasConfig=${!!chatSession.config}, delegation_mode=${chatSession.config?.delegation_mode ?? 'none'}`)
+  } catch (err) {
+    console.error(`${TAG} [${src}] Failed to fetch session ${sessionId}:`, err)
+  }
+
+  // Step 3: Detect mode
+  const config = chatSession?.config
+  const isMultiAgent = config?.delegation_mode === 'plan'
+  const tabMode = isMultiAgent ? 'multi-agent' as const : 'chat' as const
+  if (isMultiAgent) {
+    console.log(`${TAG} [${src}] Switching to multi-agent mode`)
+    useModeStore.getState().setModeCategory('multi-agent')
+  }
+
+  // Step 4: Create or reuse tab
+  let tabId: string
+  if (existingTab) {
+    tabId = existingTab.tabId
+    console.log(`${TAG} [${src}] Reusing existing tab ${tabId}`)
+  } else {
+    const title = truncateTabTitle(options?.title || chatSession?.title || 'Chat')
+    const isRestored = chatSession?.status === 'completed' || chatSession?.status === 'stopped' || chatSession?.status === 'error'
+    tabId = await chatStore.createChatTab(
+      title,
+      { mode: tabMode, isRestored: isRestored ?? false },
+      sessionId,
+      'micro'
+    )
+    console.log(`${TAG} [${src}] Created tab ${tabId} mode=${tabMode} isRestored=${isRestored}`)
+  }
+
+  // Step 5: Apply status IMMEDIATELY after tab creation to prevent polling from
+  // overriding with stale 'running' status while we load events asynchronously.
+  if (chatSession) {
+    applySessionStatus(tabId, chatSession.status)
+    console.log(`${TAG} [${src}] Applied status=${chatSession.status} to tab ${tabId}`)
+  }
+
+  // Step 6: Restore config (skip if config already persisted in localStorage)
+  if (!options?.skipConfigRestore && config) {
+    const configUpdate = buildTabConfigFromSession(config)
+    const keys = Object.keys(configUpdate)
+    if (keys.length > 0) {
+      chatStore.setTabConfig(tabId, configUpdate)
+      console.log(`${TAG} [${src}] Restored config keys: ${keys.join(', ')}`)
+    }
+  } else if (options?.skipConfigRestore) {
+    console.log(`${TAG} [${src}] Skipped config restore (already persisted)`)
+  }
+
+  // Step 7: Load events
+  try {
+    await hydrateTabEvents(sessionId, 'micro')
+    const eventCount = chatStore.getTabEvents(sessionId).length
+    console.log(`${TAG} [${src}] Hydrated ${eventCount} events`)
+  } catch (err) {
+    console.error(`${TAG} [${src}] Failed to load events for ${sessionId}:`, err)
+  }
+
+  console.log(`${TAG} [${src}] Done session=${sessionId} tab=${tabId}`)
+  return tabId
+}
 
 /**
  * Build a partial ChatTabConfig from a stored session config.
- * Centralizes the config restoration logic used across auto-restore, sidebar restore,
- * and resume dialog flows.
+ * Centralizes the config restoration logic used across all restore flows.
  */
 export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<ChatTabConfig> {
-  console.log('[ConfigRestore] Input config from backend:', JSON.stringify(config, null, 2))
   const configUpdate: Partial<ChatTabConfig> = {}
 
   // Restore selected servers (prefer enabled_servers over selected_servers)
@@ -83,7 +227,6 @@ export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<Ch
     configUpdate.delegationTierConfig = config.delegation_tier_config
   }
 
-  console.log('[ConfigRestore] Output configUpdate:', JSON.stringify(configUpdate, null, 2))
   return configUpdate
 }
 
@@ -96,7 +239,7 @@ export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<Ch
  */
 export async function hydrateTabEvents(
   sessionId: string,
-  eventMode: 'micro' | 'tiny' | 'advanced'
+  eventMode: 'micro' | 'advanced'
 ): Promise<void> {
   const chatStore = useChatStore.getState()
 

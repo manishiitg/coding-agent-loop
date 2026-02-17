@@ -386,9 +386,9 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             // Get last processed event index (use 0 if not set)
             const lastIndex = Math.max(0, bg.lastProcessedEventIndex || 0)
 
-            // Poll for new events using 'tiny' mode (minimal events)
+            // Poll for new events using 'micro' mode (minimal events)
             const response = await agentApi.getSessionEvents(bg.sessionId, lastIndex, {
-              eventMode: 'tiny'
+              eventMode: 'micro'
             })
 
             // Check session status from response

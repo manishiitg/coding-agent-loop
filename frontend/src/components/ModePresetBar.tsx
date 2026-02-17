@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { MessageCircle, Workflow, Users, Settings, Trash2, Copy } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
+import ChatCostsPopup from './ChatCostsPopup'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -76,6 +77,7 @@ export const ModePresetBar: React.FC = () => {
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
+  const [showCostsPopup, setShowCostsPopup] = useState(false)
 
   // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
   const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
@@ -515,9 +517,17 @@ export const ModePresetBar: React.FC = () => {
             </div>
           </div>
 
-          {/* Right: Event Controls */}
+          {/* Right: Cost Analysis */}
           <div className="flex items-center gap-3">
-
+            {(selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && (
+              <button
+                onClick={() => setShowCostsPopup(true)}
+                className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                title="Cost analysis"
+              >
+                <DollarSign className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -532,6 +542,13 @@ export const ModePresetBar: React.FC = () => {
         hideAgentModeSelection={!!editingPreset}
         fixedAgentMode={editingPreset?.agentMode || (selectedModeCategory ? (getAgentModeFromCategory(selectedModeCategory) as 'simple' | 'workflow') : undefined)}
         agentMode={agentMode}
+      />
+
+      {/* Cost Analysis Popup */}
+      <ChatCostsPopup
+        isOpen={showCostsPopup}
+        onClose={() => setShowCostsPopup(false)}
+        isMultiAgent={selectedModeCategory === 'multi-agent'}
       />
     </>
   )

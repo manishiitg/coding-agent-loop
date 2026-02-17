@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useCallback, useState } from 'react'
+import { Copy, Check } from 'lucide-react'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 interface UnifiedCompletionEvent {
@@ -79,6 +80,16 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     )
   }
 
+  // Copy handler
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(() => {
+    if (!event.final_result) return
+    navigator.clipboard.writeText(event.final_result).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }, [event.final_result])
+
   // Success case: render final_result as assistant chat bubble
   if (event.final_result) {
     // Detect JSON
@@ -94,14 +105,23 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     return (
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 shadow-sm">
-            {isJSON ? (
-              <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
-                {JSON.stringify(parsedJSON, null, 2)}
-              </pre>
-            ) : (
-              <ConversationMarkdownRenderer content={event.final_result} />
-            )}
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
+            <div className="relative group">
+              <button
+                onClick={handleCopy}
+                className="absolute top-0 right-0 p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Copy markdown"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+              {isJSON ? (
+                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
+                  {JSON.stringify(parsedJSON, null, 2)}
+                </pre>
+              ) : (
+                <ConversationMarkdownRenderer content={event.final_result} />
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 mt-1 px-1 text-[10px] text-gray-400 dark:text-gray-500">
             {event.duration && <span>{formatDuration(event.duration)}</span>}

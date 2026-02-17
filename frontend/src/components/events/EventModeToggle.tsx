@@ -1,6 +1,6 @@
 import React from 'react';
 import { useChatStore } from '../../stores/useChatStore';
-import { Settings, Minus, Minimize2 } from 'lucide-react';
+import { Settings, ListFilter } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const EventModeToggle: React.FC = () => {
@@ -10,16 +10,9 @@ export const EventModeToggle: React.FC = () => {
   const setTabEventMode = useChatStore(state => state.setTabEventMode);
 
   const cycleMode = () => {
-    // Cycle through: micro → tiny → advanced → micro
+    // Toggle: micro ↔ advanced
     if (activeTab) {
-      let newMode: 'advanced' | 'tiny' | 'micro';
-      if (mode === 'micro') {
-        newMode = 'tiny';
-      } else if (mode === 'tiny') {
-        newMode = 'advanced';
-      } else {
-        newMode = 'micro';
-      }
+      const newMode: 'advanced' | 'micro' = mode === 'micro' ? 'advanced' : 'micro';
       setTabEventMode(activeTab.tabId, newMode);
     }
   };
@@ -35,12 +28,10 @@ export const EventModeToggle: React.FC = () => {
     switch (mode) {
       case 'advanced':
         return { icon: Settings, label: 'Advanced' };
-      case 'tiny':
-        return { icon: Minus, label: 'Tiny' };
       case 'micro':
-        return { icon: Minimize2, label: 'Micro' };
+        return { icon: ListFilter, label: 'Micro' };
       default:
-        return { icon: Minimize2, label: 'Micro' };
+        return { icon: ListFilter, label: 'Micro' };
     }
   };
 
@@ -57,12 +48,12 @@ export const EventModeToggle: React.FC = () => {
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
         "cursor-pointer",
-        "flex items-center justify-center h-6 w-6 p-0 border-gray-300 dark:border-gray-600"
+        "flex items-center justify-center h-4 w-4 p-0 border-gray-300 dark:border-gray-600"
       )}
       title={`Event Mode: ${label} (click to toggle)`}
       data-testid="event-mode-toggle"
     >
-      <Icon className="w-3.5 h-3.5" />
+      <Icon className="w-2.5 h-2.5" />
     </div>
   );
 }; 

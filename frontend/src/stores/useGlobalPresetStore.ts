@@ -939,9 +939,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             preset = presetOrId as CustomPreset | PredefinedPreset
           }
           
-          // Clear chatSessionId to allow fresh session initialization
-          useAppStore.getState().setChatSessionId('')
-
           // Note: Session IDs are now managed per-tab, not globally
           // When a preset is applied, tabs will be created with new session IDs as needed
 

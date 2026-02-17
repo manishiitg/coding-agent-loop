@@ -32,13 +32,13 @@ export const ToolCallToggle: React.FC = () => {
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
         "border border-input bg-background shadow-sm hover:bg-accent hover:text-accent-foreground",
         "cursor-pointer",
-        "flex items-center justify-center h-6 w-6 p-0 border-gray-300 dark:border-gray-600",
+        "flex items-center justify-center h-5 w-5 p-0 border-gray-300 dark:border-gray-600",
         hideToolCalls && "opacity-40"
       )}
       title={hideToolCalls ? 'Tool calls hidden (click to show)' : 'Tool calls visible (click to hide)'}
       data-testid="tool-call-toggle"
     >
-      <Wrench className="w-3.5 h-3.5" />
+      <Wrench className="w-3 h-3" />
     </div>
   );
 };

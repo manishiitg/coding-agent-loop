@@ -16,9 +16,9 @@ export const ADVANCED_MODE_EVENTS = new Set([
   'comprehensive_cache_event',
 ]);
 
-// Tiny mode additional events - events hidden in tiny/micro mode beyond what advanced mode hides
+// Micro mode additional events - events hidden in micro mode beyond what advanced mode hides
 // Note: user_message is NOT filtered — essential for conversation display on restore
-export const TINY_MODE_ADDITIONAL_EVENTS = new Set([
+export const MICRO_MODE_ADDITIONAL_EVENTS = new Set([
   'system_prompt',
   'agent_start',
   'agent_end',
@@ -34,11 +34,7 @@ export const shouldShowEventByMode = (eventType: string, mode: EventMode): boole
   if (mode === 'advanced') {
     return true // Show all events in advanced mode
   }
-  if (mode === 'tiny' || mode === 'micro') {
-    // In tiny/micro mode, hide ADVANCED_MODE_EVENTS + TINY_MODE_ADDITIONAL_EVENTS
-    return !ADVANCED_MODE_EVENTS.has(eventType) && !TINY_MODE_ADDITIONAL_EVENTS.has(eventType)
-  }
-  // Fallback: treat unknown modes as tiny
-  return !ADVANCED_MODE_EVENTS.has(eventType) && !TINY_MODE_ADDITIONAL_EVENTS.has(eventType)
+  // In micro mode, hide ADVANCED_MODE_EVENTS + MICRO_MODE_ADDITIONAL_EVENTS
+  return !ADVANCED_MODE_EVENTS.has(eventType) && !MICRO_MODE_ADDITIONAL_EVENTS.has(eventType)
 }
 

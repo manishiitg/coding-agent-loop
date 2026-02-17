@@ -10,8 +10,6 @@ interface AppState {
   
   // Chat session state
   currentQuery: string
-  chatSessionId: string
-  chatSessionTitle: string
   selectedPresetId: string | null
   
   // UI state
@@ -35,8 +33,6 @@ interface AppState {
   
   // Chat actions
   setCurrentQuery: (query: string) => void
-  setChatSessionId: (id: string) => void
-  setChatSessionTitle: (title: string) => void
   setSelectedPresetId: (id: string | null) => void
   
   // UI actions
@@ -58,8 +54,6 @@ export const useAppStore = create<AppState>()(
           agentMode: 'simple',
           requiresNewChat: false,
           currentQuery: '',
-          chatSessionId: '',
-          chatSessionTitle: '',
           selectedPresetId: null,
           sidebarMinimized: false,
           workspaceMinimized: false,
@@ -117,14 +111,6 @@ export const useAppStore = create<AppState>()(
         // Chat actions
         setCurrentQuery: (query) => {
           set({ currentQuery: query })
-        },
-
-        setChatSessionId: (id) => {
-          set({ chatSessionId: id })
-        },
-
-        setChatSessionTitle: (title) => {
-          set({ chatSessionTitle: title })
         },
 
         setSelectedPresetId: (id) => {

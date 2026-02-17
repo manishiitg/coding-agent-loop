@@ -17,7 +17,7 @@ interface EventHierarchyProps {
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
   flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
-  eventMode?: 'advanced' | 'tiny' | 'micro'  // Override event mode (e.g. for shared sessions with no active tab)
+  eventMode?: 'advanced' | 'micro'  // Override event mode (e.g. for shared sessions with no active tab)
 }
 
 interface FlattenedItem {
@@ -65,7 +65,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // Get active tab for sessionId, eventMode, and hideToolCalls
   const activeTab = useChatStore(state => state.getActiveTab())
   const sessionId = activeTab?.sessionId
-  const eventMode: 'advanced' | 'tiny' | 'micro' = eventModeProp || (activeTab?.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
+  const eventMode: 'advanced' | 'micro' = eventModeProp || (activeTab?.eventMode || 'micro') as 'advanced' | 'micro'
   const hideToolCalls = activeTab?.hideToolCalls || false
   
   // Merge loaded older events with current events
@@ -90,7 +90,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // Filter out tool_call events for delegation tools - we show delegation_start/delegation_end
     // and blocking_human_feedback instead of raw tool_call events
     const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
-    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution', 'human_feedback', 'human_questions', 'query_agent', 'terminate_agent', 'list_agents'];
+    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution', 'query_agent', 'terminate_agent', 'list_agents'];
     allEvents = allEvents.filter(event => {
       if (!DELEGATE_TOOL_EVENTS.includes(event.type || '')) return true;
       const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
@@ -104,8 +104,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       allEvents = allEvents.filter(event => !TOOL_CALL_EVENTS.includes(event.type || ''));
     }
 
-    // Filter out "Total Token Usage" and "Context Offloading" events in tiny/micro mode
-    if (eventMode === 'tiny' || eventMode === 'micro') {
+    // Filter out "Total Token Usage" and "Context Offloading" events in micro mode
+    if (eventMode === 'micro') {
       allEvents = allEvents.filter(event => {
         if (event.type === 'token_usage') {
           // Check if it's a total token usage event
@@ -118,7 +118,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           }
         }
 
-        // Hide Context Offloading events in tiny mode
+        // Hide Context Offloading events in micro mode
         if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
           return false
         }
@@ -234,13 +234,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         const dStats = delegationStats.get(delegationId)
         if (dStats) {
           stats.set(bgAgentId, dStats)
-        } else {
-          console.log('[BG_AGENT_STATS] delegation_start has bgAgentId but no delegationStats entry yet', { bgAgentId, delegationId, delegationStatsKeys: [...delegationStats.keys()] })
         }
       }
-    }
-    if (stats.size > 0) {
-      console.log('[BG_AGENT_STATS] mapped', stats.size, 'background agents to delegation stats')
     }
     return stats
   }, [displayEvents, delegationStats])

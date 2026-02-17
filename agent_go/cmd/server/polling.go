@@ -32,6 +32,26 @@ func (f *flatEventData) MarshalJSON() ([]byte, error) {
 	return json.Marshal(f.eventData)
 }
 
+// getSessionStatusString returns the session status for a given session ID.
+// It checks active sessions first, then falls back to the database.
+// Returns the status string and whether the caller should deny access (user mismatch).
+func (api *StreamingAPI) getSessionStatusString(r *http.Request, sessionID string) (status string, denyAccess bool) {
+	currentUserID := GetUserIDFromContext(r.Context())
+	activeSession, existsInActive := api.getActiveSession(sessionID)
+	if existsInActive {
+		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
+			return "", true
+		}
+		return activeSession.Status, false
+	}
+	// Check database for completed/error sessions
+	chatSession, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
+	if err == nil && chatSession != nil {
+		return chatSession.Status, false
+	}
+	return "", false
+}
+
 // --- POLLING API TYPES ---
 // Observer APIs removed - events are now stored by sessionID
 

@@ -562,6 +562,26 @@ function createWindow(initialUrl) {
     },
   });
   
+  console.log('[main] Initializing window handlers...');
+
+  // Handle new window requests (e.g. target="_blank" or window.open)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    console.log('[main] setWindowOpenHandler intercepted request for:', url);
+    
+    // Check if it's an external URL (not our local server)
+    if (url.startsWith('http://127.0.0.1') || url.startsWith('http://localhost')) {
+      console.log('[main] Allowing internal window/popup for:', url);
+      return { action: 'allow' };
+    }
+
+    console.log('[main] Opening external URL in system browser:', url);
+    shell.openExternal(url).catch(err => {
+      console.error('[main] Failed to open external URL:', err);
+    });
+    
+    return { action: 'deny' };
+  });
+
   const devUrl = process.env.DEV_URL;
   if (devUrl) {
     // Open DevTools automatically in dev mode
@@ -570,14 +590,6 @@ function createWindow(initialUrl) {
 
   mainWindow.loadURL(initialUrl || `http://127.0.0.1:${dynamicAgentPort}`);
   
-  // Handle new window requests (e.g. target="_blank")
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    console.log('[main] setWindowOpenHandler intercepted:', url);
-    // Open in default system browser
-    shell.openExternal(url);
-    return { action: 'deny' };
-  });
-
   mainWindow.on('closed', () => {
     mainWindow = null;
   });

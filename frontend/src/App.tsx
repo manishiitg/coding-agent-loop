@@ -25,7 +25,7 @@ import { ChatTabs } from "./components/ChatTabs";
 import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
 import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
-import { buildTabConfigFromSession, hydrateTabEvents } from "./utils/sessionRestore";
+import { restoreSession } from "./utils/sessionRestore";
 import { useModeStore } from "./stores/useModeStore";
 import { useAuthStore } from "./stores/useAuthStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
@@ -40,7 +40,7 @@ declare global {
   }
 }
 
-import { truncateTabTitle, copyToClipboard } from './utils/textUtils'
+import { copyToClipboard } from './utils/textUtils'
 
 const queryClient = new QueryClient();
 
@@ -136,8 +136,6 @@ function App() {
   
   // App Store subscriptions for workspace and chat
   const {
-    setChatSessionId,
-    setChatSessionTitle,
     setSelectedPresetId,
     sidebarMinimized,
     workspaceMinimized,
@@ -177,8 +175,6 @@ function App() {
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
   const hasCreatedDefaultTabRef = useRef<string | null>(null)
 
-  // Ref to prevent duplicate tab creation during rapid clicks on same session
-  const sessionsBeingSelectedRef = useRef<Set<string>>(new Set())
   
   const { clearActivePreset, applyPreset, getActivePreset } = useGlobalPresetStore()
 
@@ -582,11 +578,6 @@ function App() {
       chatAreaRef.current.resetChatState();
     }
     
-    // Clear App-level state
-    // Note: File context is now mode-specific (tab for chat, preset for workflow), no need to clear
-    setChatSessionId(''); // Clear chat session ID to exit historical mode
-    setChatSessionTitle('');
-    
     // Preserve active preset for workflow mode, clear for other modes
     if (selectedModeCategory === 'workflow') {
       // For workflow mode, preserve the active preset
@@ -630,166 +621,25 @@ function App() {
         }, 100)
       }
     }
-  }, [setChatSessionId, setChatSessionTitle, setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
+  }, [setSelectedPresetId, clearActivePreset, selectedModeCategory, applyPreset]);
 
   // Handle chat session selection
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleChatSessionSelect = useCallback((sessionId: string, sessionTitle?: string, _sessionType?: 'active' | 'completed', _activeSessionInfo?: ActiveSessionInfo) => {
-    console.log(`[RESTORE_DEBUG] handleChatSessionSelect called: sessionId=${sessionId}, title=${sessionTitle}, type=${_sessionType}`)
-    // Check if a tab with this session ID already exists
+  const handleChatSessionSelect = useCallback(async (sessionId: string, sessionTitle?: string, _sessionType?: 'active' | 'completed', _activeSessionInfo?: ActiveSessionInfo) => {
     const chatStore = useChatStore.getState()
-    const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
-
-    if (existingTab) {
-      // Tab already exists, switch to it
-      const existingEvents = chatStore.getTabEvents(sessionId)
-      console.log(`[RESTORE_DEBUG] Tab ${existingTab.tabId} already exists for session ${sessionId}, events=${existingEvents.length}, switching to it`)
-      chatStore.switchTab(existingTab.tabId)
+    chatStore.setIsLoadingHistory(true)
+    try {
+      const tabId = await restoreSession(sessionId, {
+        title: sessionTitle,
+        source: 'sidebar',
+      })
+      useChatStore.getState().switchTab(tabId)
       setSidebarMinimized(true)
       setShowFileContent(false)
-
-      // If the existing tab has no events, hydrate it now (tab was created empty)
-      if (existingEvents.length === 0) {
-        console.log(`[RESTORE_DEBUG] Existing tab has 0 events, hydrating session ${sessionId}`)
-        chatStore.setIsLoadingHistory(true)
-        ;(async () => {
-          try {
-            const chatSession = await agentApi.getChatSession(sessionId)
-            const config = chatSession?.config
-
-            // Detect + fix multi-agent mode if needed
-            const isMultiAgent = config?.delegation_mode === 'plan'
-            if (isMultiAgent && existingTab.metadata?.mode !== 'multi-agent') {
-              useModeStore.getState().setModeCategory('multi-agent')
-            }
-
-            // Restore config using shared utility
-            if (config) {
-              const configUpdate = buildTabConfigFromSession(config)
-              if (Object.keys(configUpdate).length > 0) {
-                chatStore.setTabConfig(existingTab.tabId, configUpdate)
-              }
-            }
-
-            // Load events using shared utility
-            await hydrateTabEvents(sessionId, 'micro')
-
-            // Set completion state and view-only for restored completed sessions
-            if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
-              chatStore.setTabCompleted(existingTab.tabId, true)
-              chatStore.setTabStreaming(existingTab.tabId, false)
-            }
-            if (chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error') {
-              chatStore.setTabMetadata(existingTab.tabId, { isViewOnly: true })
-            }
-          } catch (err) {
-            console.error(`[RESTORE_DEBUG] Failed to hydrate existing tab for session ${sessionId}:`, err)
-          } finally {
-            chatStore.setIsLoadingHistory(false)
-          }
-        })()
-      }
-      return
+    } finally {
+      chatStore.setIsLoadingHistory(false)
     }
-
-    // CRITICAL: Check if this session is already being selected (rapid click prevention)
-    if (sessionsBeingSelectedRef.current.has(sessionId)) {
-      console.log(`[App] Session ${sessionId} is already being selected, ignoring duplicate click`)
-      return
-    }
-
-    // Mark as being selected to prevent duplicate tab creation
-    sessionsBeingSelectedRef.current.add(sessionId)
-
-    // No existing tab, create one immediately to ensure UI selection
-    const createAndSwitchTab = async () => {
-      // Show loading indicator while restoring
-      chatStore.setIsLoadingHistory(true)
-      try {
-        // Double-check tab doesn't exist (race condition protection)
-        const currentTabs = Object.values(useChatStore.getState().chatTabs)
-        const existingTabNow = currentTabs.find(tab => tab.sessionId === sessionId)
-        if (existingTabNow) {
-          console.log(`[RESTORE_DEBUG] Tab already created by another process for session ${sessionId}, switching`)
-          chatStore.switchTab(existingTabNow.tabId)
-          setSidebarMinimized(true)
-          setShowFileContent(false)
-          return
-        }
-
-        // 1. Fetch session details for config + mode detection
-        console.log(`[RESTORE_DEBUG] Step 1: Fetching session details for ${sessionId}`)
-        let chatSession: Awaited<ReturnType<typeof agentApi.getChatSession>> | null = null
-        try {
-          chatSession = await agentApi.getChatSession(sessionId)
-          console.log(`[RESTORE_DEBUG] Step 1 result: status=${chatSession?.status}, hasConfig=${!!chatSession?.config}, delegation_mode=${chatSession?.config?.delegation_mode}`)
-        } catch (err) {
-          console.warn(`[RESTORE_DEBUG] Step 1 FAILED: getChatSession error for ${sessionId}:`, err)
-        }
-        const config = chatSession?.config
-
-        // 2. Detect multi-agent mode
-        const isMultiAgent = config?.delegation_mode === 'plan'
-        const tabMode = isMultiAgent ? 'multi-agent' as const : 'chat' as const
-        console.log(`[RESTORE_DEBUG] Step 2: isMultiAgent=${isMultiAgent}, tabMode=${tabMode}`)
-        if (isMultiAgent) {
-          useModeStore.getState().setModeCategory('multi-agent')
-        }
-
-        // 3. Create tab with correct mode (view-only for completed/stopped/error sessions)
-        const isViewOnly = chatSession?.status === 'completed' || chatSession?.status === 'stopped' || chatSession?.status === 'error'
-        const newTabId = await chatStore.createChatTab(
-          truncateTabTitle(sessionTitle || 'Chat'),
-          { mode: tabMode, isViewOnly: isViewOnly ?? false },
-          sessionId,
-          'micro'
-        )
-        console.log(`[RESTORE_DEBUG] Step 3: Created tab ${newTabId} with mode=${tabMode} for session ${sessionId}`)
-
-        // 4. Restore config from stored session using shared utility
-        if (config) {
-          const configUpdate = buildTabConfigFromSession(config)
-          if (Object.keys(configUpdate).length > 0) {
-            chatStore.setTabConfig(newTabId, configUpdate)
-            console.log(`[RESTORE_DEBUG] Step 4: Restored config keys: ${Object.keys(configUpdate).join(', ')}`)
-          }
-        }
-
-        // 5. Load events using shared utility
-        try {
-          await hydrateTabEvents(sessionId, 'micro')
-          console.log(`[RESTORE_DEBUG] Step 5: Events loaded for session ${sessionId}`)
-        } catch (err) {
-          console.error(`[RESTORE_DEBUG] Step 5 FAILED: getSessionEvents error for ${sessionId}:`, err)
-        }
-
-        // 6. Set completion state
-        if (chatSession) {
-          const isCompleted = chatSession.status === 'completed' || chatSession.status === 'stopped'
-          console.log(`[RESTORE_DEBUG] Step 6: session status=${chatSession.status}, setting completed=${isCompleted}, streaming=${!isCompleted}`)
-          if (isCompleted) {
-            chatStore.setTabCompleted(newTabId, true)
-            chatStore.setTabStreaming(newTabId, false)
-          } else {
-            chatStore.setTabStreaming(newTabId, true)
-            chatStore.setTabCompleted(newTabId, false)
-          }
-        } else {
-          console.log(`[RESTORE_DEBUG] Step 6: No chatSession, skipping status`)
-        }
-
-        chatStore.switchTab(newTabId)
-        console.log(`[RESTORE_DEBUG] Step 7: Switched to tab ${newTabId}`)
-        setSidebarMinimized(true);
-      } finally {
-        // Always remove from the set when done and clear loading
-        chatStore.setIsLoadingHistory(false)
-        sessionsBeingSelectedRef.current.delete(sessionId)
-      }
-    }
-
-    createAndSwitchTab()
-  }, [setShowFileContent, setSidebarMinimized]);
+  }, [setSidebarMinimized, setShowFileContent]);
 
   // Handle restoring a workflow from running list
   const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {

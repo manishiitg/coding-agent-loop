@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -29,6 +30,10 @@ func ChatHistoryRoutes(router *gin.Engine, db database.Database) {
 		// Events
 		api.GET("/sessions/:session_id/events", getSessionEvents(db))
 		api.GET("/events", searchEvents(db))
+
+		// Costs
+		api.GET("/costs", getAllSessionCosts(db))
+		api.GET("/sessions/:session_id/costs", getSessionCosts(db))
 
 		// Preset queries management
 		api.POST("/presets", createPresetQuery(db))
@@ -543,4 +548,482 @@ func healthCheck(db database.Database) gin.HandlerFunc {
 			"service": "chat-history",
 		})
 	}
+}
+
+// ============================================================================
+// Cost Analysis Types
+// ============================================================================
+
+// ChatModelUsage represents token usage and cost for a specific model
+type ChatModelUsage struct {
+	Provider            string  `json:"provider"`
+	InputTokens         int     `json:"input_tokens"`
+	OutputTokens        int     `json:"output_tokens"`
+	ReasoningTokens     int     `json:"reasoning_tokens"`
+	CacheTokens         int     `json:"cache_tokens"`
+	CacheReadTokens     int     `json:"cache_read_tokens"`
+	CacheWriteTokens    int     `json:"cache_write_tokens"`
+	LLMCallCount        int     `json:"llm_call_count"`
+	InputCost           float64 `json:"input_cost_usd"`
+	OutputCost          float64 `json:"output_cost_usd"`
+	ReasoningCost       float64 `json:"reasoning_cost_usd"`
+	CacheCost           float64 `json:"cache_cost_usd"`
+	TotalCost           float64 `json:"total_cost_usd"`
+	ContextWindowUsage  int     `json:"context_window_usage"`
+	ModelContextWindow  int     `json:"model_context_window"`
+	ContextUsagePercent float64 `json:"context_usage_percent"`
+}
+
+// SessionCostSummary represents cost summary for a single chat session
+type SessionCostSummary struct {
+	SessionID   string                     `json:"session_id"`
+	Title       string                     `json:"title"`
+	AgentMode   string                     `json:"agent_mode"`
+	CreatedAt   time.Time                  `json:"created_at"`
+	Status      string                     `json:"status"`
+	TotalCost   float64                    `json:"total_cost_usd"`
+	TotalInput  int                        `json:"total_input_tokens"`
+	TotalOutput int                        `json:"total_output_tokens"`
+	TotalCalls  int                        `json:"total_llm_calls"`
+	ByModel     map[string]*ChatModelUsage `json:"by_model"`
+	ByAgent     map[string]*ChatModelUsage `json:"by_agent,omitempty"`
+}
+
+// AggregateCosts represents aggregate costs across all sessions
+type AggregateCosts struct {
+	TotalCost     float64                    `json:"total_cost_usd"`
+	TotalInput    int                        `json:"total_input_tokens"`
+	TotalOutput   int                        `json:"total_output_tokens"`
+	TotalCalls    int                        `json:"total_llm_calls"`
+	TotalSessions int                        `json:"total_sessions"`
+	ByModel       map[string]*ChatModelUsage `json:"by_model"`
+	ByAgent       map[string]*ChatModelUsage `json:"by_agent,omitempty"`
+}
+
+// UserCostsResponse is the response for GET /api/chat-history/costs
+type UserCostsResponse struct {
+	Sessions  []SessionCostSummary `json:"sessions"`
+	Aggregate AggregateCosts       `json:"aggregate"`
+}
+
+// SessionCostDetail is the response for GET /api/chat-history/sessions/:session_id/costs
+type SessionCostDetail struct {
+	SessionID       string                                `json:"session_id"`
+	Title           string                                `json:"title"`
+	CreatedAt       time.Time                             `json:"created_at"`
+	ByModel         map[string]*ChatModelUsage            `json:"by_model"`
+	ByTurnAndModel  map[string]map[string]*ChatModelUsage `json:"by_turn_and_model,omitempty"`
+	ByAgentAndModel map[string]map[string]*ChatModelUsage `json:"by_agent_and_model,omitempty"`
+	TotalCost       float64                               `json:"total_cost_usd"`
+	TotalInput      int                                   `json:"total_input_tokens"`
+	TotalOutput     int                                   `json:"total_output_tokens"`
+	TotalCalls      int                                   `json:"total_llm_calls"`
+}
+
+// tokenUsageData represents the parsed token_usage event data from the DB
+type tokenUsageData struct {
+	ModelID          string                 `json:"model_id"`
+	Provider         string                 `json:"provider"`
+	PromptTokens     int                    `json:"prompt_tokens"`
+	CompletionTokens int                    `json:"completion_tokens"`
+	ReasoningTokens  int                    `json:"reasoning_tokens"`
+	InputCost        float64                `json:"input_cost_usd"`
+	OutputCost       float64                `json:"output_cost_usd"`
+	ReasoningCost    float64                `json:"reasoning_cost_usd"`
+	CacheCost        float64                `json:"cache_cost_usd"`
+	TotalCost        float64                `json:"total_cost_usd"`
+	Turn             int                    `json:"turn"`
+	Component        string                 `json:"component"`
+	ContextWindowUsage  int                 `json:"context_window_usage"`
+	ModelContextWindow  int                 `json:"model_context_window"`
+	ContextUsagePercent float64             `json:"context_usage_percent"`
+	GenerationInfo   map[string]interface{} `json:"generation_info"`
+	// Extracted from GenerationInfo (not from JSON directly)
+	cacheReadTokens  int
+	cacheWriteTokens int
+	// Extracted from event wrapper (not from inner data JSON)
+	correlationID string
+}
+
+// ============================================================================
+// Cost Analysis Handlers
+// ============================================================================
+
+// getAllSessionCosts returns aggregate costs across all user's chat sessions
+func getAllSessionCosts(db database.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := GetUserIDFromContext(c.Request.Context())
+		agentMode := c.Query("agent_mode")
+		limitStr := c.DefaultQuery("limit", "100")
+
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit < 1 {
+			limit = 100
+		}
+
+		// Convert agent_mode to pointer for optional filtering
+		var agentModePtr *string
+		if agentMode != "" {
+			agentModePtr = &agentMode
+		}
+
+		// Get user's chat sessions
+		sessions, _, err := db.ListChatSessionsWithUser(c.Request.Context(), limit, 0, nil, agentModePtr, userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to list sessions: %v", err)})
+			return
+		}
+
+		aggregate := AggregateCosts{
+			ByModel: make(map[string]*ChatModelUsage),
+			ByAgent: make(map[string]*ChatModelUsage),
+		}
+
+		var sessionCosts []SessionCostSummary
+
+		for _, session := range sessions {
+			// Query token_usage events for this session
+			tokenEvents, err := getTokenUsageEventsForSession(c, db, session.SessionID)
+			if err != nil {
+				log.Printf("[COSTS] Error getting token events for session %s: %v", session.SessionID, err)
+				continue
+			}
+
+			summary := SessionCostSummary{
+				SessionID: session.SessionID,
+				Title:     session.Title,
+				AgentMode: session.AgentMode,
+				CreatedAt: session.CreatedAt,
+				Status:    session.Status,
+				ByModel:   make(map[string]*ChatModelUsage),
+				ByAgent:   make(map[string]*ChatModelUsage),
+			}
+
+			for _, tud := range tokenEvents {
+				// Accumulate by model
+				modelUsage := getOrCreateModelUsage(summary.ByModel, tud.ModelID)
+				accumulateUsage(modelUsage, &tud)
+
+				// Accumulate by agent (component)
+				if tud.Component != "" {
+					agentUsage := getOrCreateModelUsage(summary.ByAgent, tud.Component)
+					accumulateUsage(agentUsage, &tud)
+				}
+
+				// Session totals
+				summary.TotalCost += tud.TotalCost
+				summary.TotalInput += tud.PromptTokens
+				summary.TotalOutput += tud.CompletionTokens
+				summary.TotalCalls++
+			}
+
+			sessionCosts = append(sessionCosts, summary)
+
+			// Aggregate totals
+			aggregate.TotalCost += summary.TotalCost
+			aggregate.TotalInput += summary.TotalInput
+			aggregate.TotalOutput += summary.TotalOutput
+			aggregate.TotalCalls += summary.TotalCalls
+
+			// Merge per-model into aggregate
+			for modelID, usage := range summary.ByModel {
+				aggModel := getOrCreateModelUsage(aggregate.ByModel, modelID)
+				mergeUsage(aggModel, usage)
+			}
+			for agentName, usage := range summary.ByAgent {
+				aggAgent := getOrCreateModelUsage(aggregate.ByAgent, agentName)
+				mergeUsage(aggAgent, usage)
+			}
+		}
+
+		aggregate.TotalSessions = len(sessionCosts)
+
+		// Ensure sessions is never null
+		if sessionCosts == nil {
+			sessionCosts = []SessionCostSummary{}
+		}
+
+		c.JSON(http.StatusOK, UserCostsResponse{
+			Sessions:  sessionCosts,
+			Aggregate: aggregate,
+		})
+	}
+}
+
+// getSessionCosts returns detailed cost breakdown for a single session
+func getSessionCosts(db database.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID := c.Param("session_id")
+		if sessionID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
+			return
+		}
+
+		userID := GetUserIDFromContext(c.Request.Context())
+
+		// Validate session ownership
+		session, err := db.GetChatSessionWithUser(c.Request.Context(), sessionID, userID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+			return
+		}
+
+		// Query token_usage events
+		tokenEvents, err := getTokenUsageEventsForSession(c, db, sessionID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get token events: %v", err)})
+			return
+		}
+
+		detail := SessionCostDetail{
+			SessionID:       session.SessionID,
+			Title:           session.Title,
+			CreatedAt:       session.CreatedAt,
+			ByModel:         make(map[string]*ChatModelUsage),
+			ByTurnAndModel:  make(map[string]map[string]*ChatModelUsage),
+			ByAgentAndModel: make(map[string]map[string]*ChatModelUsage),
+		}
+
+		for _, tud := range tokenEvents {
+			// By model
+			modelUsage := getOrCreateModelUsage(detail.ByModel, tud.ModelID)
+			accumulateUsage(modelUsage, &tud)
+
+			// By turn and model
+			turnKey := fmt.Sprintf("turn-%d", tud.Turn)
+			if detail.ByTurnAndModel[turnKey] == nil {
+				detail.ByTurnAndModel[turnKey] = make(map[string]*ChatModelUsage)
+			}
+			turnModelUsage := getOrCreateModelUsage(detail.ByTurnAndModel[turnKey], tud.ModelID)
+			accumulateUsage(turnModelUsage, &tud)
+
+			// By agent and model
+			agentKey := tud.Component
+			if agentKey == "" {
+				agentKey = "main"
+			}
+			if detail.ByAgentAndModel[agentKey] == nil {
+				detail.ByAgentAndModel[agentKey] = make(map[string]*ChatModelUsage)
+			}
+			agentModelUsage := getOrCreateModelUsage(detail.ByAgentAndModel[agentKey], tud.ModelID)
+			accumulateUsage(agentModelUsage, &tud)
+
+			// Totals
+			detail.TotalCost += tud.TotalCost
+			detail.TotalInput += tud.PromptTokens
+			detail.TotalOutput += tud.CompletionTokens
+			detail.TotalCalls++
+		}
+
+		// Also fetch sub-agent session costs (IDs like {parent}-sub-{n}-{ts})
+		subSessionPrefix := sessionID + "-sub-"
+		subTokenEvents := getSubSessionTokenEvents(c, db, subSessionPrefix)
+		for _, tud := range subTokenEvents {
+			modelUsage := getOrCreateModelUsage(detail.ByModel, tud.ModelID)
+			accumulateUsage(modelUsage, &tud)
+
+			agentKey := tud.Component
+			if agentKey == "" {
+				agentKey = "sub-agent"
+			}
+			if detail.ByAgentAndModel[agentKey] == nil {
+				detail.ByAgentAndModel[agentKey] = make(map[string]*ChatModelUsage)
+			}
+			agentModelUsage := getOrCreateModelUsage(detail.ByAgentAndModel[agentKey], tud.ModelID)
+			accumulateUsage(agentModelUsage, &tud)
+
+			detail.TotalCost += tud.TotalCost
+			detail.TotalInput += tud.PromptTokens
+			detail.TotalOutput += tud.CompletionTokens
+			detail.TotalCalls++
+		}
+
+		c.JSON(http.StatusOK, detail)
+	}
+}
+
+// ============================================================================
+// Cost Analysis Helpers
+// ============================================================================
+
+// getTokenUsageEventsForSession queries and parses token_usage events for a session
+func getTokenUsageEventsForSession(c *gin.Context, db database.Database, sessionID string) ([]tokenUsageData, error) {
+	// Get all events for this session, then filter for token_usage
+	// We query with a high limit since token_usage events are small and sparse
+	dbEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, 10000, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []tokenUsageData
+	for _, dbEvent := range dbEvents {
+		if dbEvent.EventType != "token_usage" {
+			continue
+		}
+
+		tud, err := parseTokenUsageEvent(dbEvent.EventData)
+		if err != nil {
+			log.Printf("[COSTS] Error parsing token_usage event: %v", err)
+			continue
+		}
+		result = append(result, tud)
+	}
+
+	return result, nil
+}
+
+// parseTokenUsageEvent parses a token_usage event from the DB event_data JSON
+// The event_data is an AgentEvent wrapper with a "data" field containing the TokenUsageEvent fields
+func parseTokenUsageEvent(eventData json.RawMessage) (tokenUsageData, error) {
+	// AgentEvent wrapper structure
+	var wrapper struct {
+		Component     string          `json:"component"`
+		CorrelationID string          `json:"correlation_id"`
+		Data          json.RawMessage `json:"data"`
+	}
+
+	if err := json.Unmarshal(eventData, &wrapper); err != nil {
+		return tokenUsageData{}, fmt.Errorf("failed to parse event wrapper: %w", err)
+	}
+
+	var tud tokenUsageData
+	if err := json.Unmarshal(wrapper.Data, &tud); err != nil {
+		return tokenUsageData{}, fmt.Errorf("failed to parse token usage data: %w", err)
+	}
+
+	// Use wrapper-level component if data-level is empty
+	if tud.Component == "" && wrapper.Component != "" {
+		tud.Component = wrapper.Component
+	}
+
+	// Store correlation_id for delegation name resolution
+	tud.correlationID = wrapper.CorrelationID
+
+	// Extract cache tokens from generation_info if available
+	if tud.GenerationInfo != nil {
+		if cacheRead, ok := extractFloat(tud.GenerationInfo, "cache_read_input_tokens"); ok {
+			tud.cacheReadTokens = int(cacheRead)
+		}
+		if cacheWrite, ok := extractFloat(tud.GenerationInfo, "cache_creation_input_tokens"); ok {
+			tud.cacheWriteTokens = int(cacheWrite)
+		}
+	}
+
+	return tud, nil
+}
+
+// extractFloat extracts a float64 value from a map[string]interface{}
+func extractFloat(m map[string]interface{}, key string) (float64, bool) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+	switch f := v.(type) {
+	case float64:
+		return f, true
+	case int:
+		return float64(f), true
+	case json.Number:
+		val, err := f.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return val, true
+	default:
+		return 0, false
+	}
+}
+
+// getSubSessionTokenEvents finds token_usage events from sub-agent sessions
+func getSubSessionTokenEvents(c *gin.Context, db database.Database, subSessionPrefix string) []tokenUsageData {
+	// Query events that have session_id starting with the sub-session prefix
+	// Use the search events API with a session_id filter
+	sqlDB := db.GetDB()
+	if sqlDB == nil {
+		return nil
+	}
+
+	// Find chat_sessions whose session_id starts with the prefix
+	rows, err := sqlDB.QueryContext(c.Request.Context(),
+		`SELECT session_id FROM chat_sessions WHERE session_id LIKE ?`,
+		subSessionPrefix+"%",
+	)
+	if err != nil {
+		log.Printf("[COSTS] Error finding sub-sessions: %v", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var result []tokenUsageData
+	for rows.Next() {
+		var subSessionID string
+		if err := rows.Scan(&subSessionID); err != nil {
+			continue
+		}
+
+		events, err := getTokenUsageEventsForSession(c, db, subSessionID)
+		if err != nil {
+			log.Printf("[COSTS] Error getting sub-session events for %s: %v", subSessionID, err)
+			continue
+		}
+		result = append(result, events...)
+	}
+
+	return result
+}
+
+// getOrCreateModelUsage gets or creates a ChatModelUsage entry in a map
+func getOrCreateModelUsage(m map[string]*ChatModelUsage, key string) *ChatModelUsage {
+	if m[key] == nil {
+		m[key] = &ChatModelUsage{}
+	}
+	return m[key]
+}
+
+// accumulateUsage adds token usage data to a ChatModelUsage
+func accumulateUsage(usage *ChatModelUsage, tud *tokenUsageData) {
+	if usage.Provider == "" {
+		usage.Provider = tud.Provider
+	}
+	usage.InputTokens += tud.PromptTokens
+	usage.OutputTokens += tud.CompletionTokens
+	usage.ReasoningTokens += tud.ReasoningTokens
+	usage.CacheReadTokens += tud.cacheReadTokens
+	usage.CacheWriteTokens += tud.cacheWriteTokens
+	usage.LLMCallCount++
+	usage.InputCost += tud.InputCost
+	usage.OutputCost += tud.OutputCost
+	usage.ReasoningCost += tud.ReasoningCost
+	usage.CacheCost += tud.CacheCost
+	usage.TotalCost += tud.TotalCost
+
+	// Keep the latest context window values
+	if tud.ContextWindowUsage > usage.ContextWindowUsage {
+		usage.ContextWindowUsage = tud.ContextWindowUsage
+	}
+	if tud.ModelContextWindow > usage.ModelContextWindow {
+		usage.ModelContextWindow = tud.ModelContextWindow
+	}
+	if tud.ContextUsagePercent > usage.ContextUsagePercent {
+		usage.ContextUsagePercent = tud.ContextUsagePercent
+	}
+}
+
+// mergeUsage merges one ChatModelUsage into another
+func mergeUsage(dst, src *ChatModelUsage) {
+	if dst.Provider == "" {
+		dst.Provider = src.Provider
+	}
+	dst.InputTokens += src.InputTokens
+	dst.OutputTokens += src.OutputTokens
+	dst.ReasoningTokens += src.ReasoningTokens
+	dst.CacheTokens += src.CacheTokens
+	dst.CacheReadTokens += src.CacheReadTokens
+	dst.CacheWriteTokens += src.CacheWriteTokens
+	dst.LLMCallCount += src.LLMCallCount
+	dst.InputCost += src.InputCost
+	dst.OutputCost += src.OutputCost
+	dst.ReasoningCost += src.ReasoningCost
+	dst.CacheCost += src.CacheCost
+	dst.TotalCost += src.TotalCost
 }

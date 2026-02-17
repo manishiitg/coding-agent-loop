@@ -1219,6 +1219,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/events", api.handleGetSessionEvents).Methods("GET")
+	apiRouter.HandleFunc("/sessions/{session_id}/events/stream", api.handleSSEStream).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/status", api.handleGetSessionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/dismiss", api.handleDismissSession).Methods("POST", "OPTIONS")
@@ -1242,6 +1243,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/events", getSessionEventsHandler(chatDB)).Methods("GET")
 	apiRouter.HandleFunc("/chat-history/events", searchEventsHandler(chatDB)).Methods("GET")
 	apiRouter.HandleFunc("/chat-history/health", chatHistoryHealthCheckHandler(chatDB)).Methods("GET")
+	apiRouter.HandleFunc("/chat-history/costs", getAllSessionCostsHandler(chatDB)).Methods("GET")
+	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/costs", getSessionCostsHandler(chatDB)).Methods("GET")
 
 	// Preset Queries API routes
 	PresetQueryRoutes(router, chatDB)
@@ -2338,7 +2341,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// 3. Update config if skills or other settings changed
 		// This ensures selected_skills and other settings are persisted on each query
-		hasConfigToUpdate := len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.LLMConfig != nil
+		hasConfigToUpdate := len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.LLMConfig != nil || req.DelegationMode != ""
 		if hasConfigToUpdate {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
@@ -2370,6 +2373,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				config.LLMConfig = &database.LLMConfigForStorage{
 					Provider: req.Provider,
 					ModelID:  req.ModelID,
+				}
+			}
+
+			// Preserve delegation mode and tier config on session updates
+			if req.DelegationMode != "" {
+				config.DelegationMode = req.DelegationMode
+			}
+			if req.DelegationTierConfig != nil {
+				tierJSON, marshalErr := json.Marshal(req.DelegationTierConfig)
+				if marshalErr == nil {
+					config.DelegationTierConfig = tierJSON
 				}
 			}
 
@@ -3953,6 +3967,66 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
+
+					// Register memory tools for multi-agent plan mode only
+					if delegationMode == "plan" {
+						memoryTools := virtualtools.CreateMemoryTools()
+						memoryExecutors := virtualtools.CreateMemoryToolExecutors()
+						memoryRegistered := 0
+
+						for _, tool := range memoryTools {
+							if tool.Function == nil {
+								continue
+							}
+							toolName := tool.Function.Name
+							if executor, exists := memoryExecutors[toolName]; exists {
+								var params map[string]interface{}
+								if tool.Function.Parameters != nil {
+									paramsBytes, err := json.Marshal(tool.Function.Parameters)
+									if err == nil {
+										json.Unmarshal(paramsBytes, &params)
+									}
+								}
+								if params == nil {
+									log.Printf("[MEMORY TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
+									continue
+								}
+
+								exec := executor
+								wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+									ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
+									ctx = context.WithValue(ctx, virtualtools.PlanEventEmitterKey, &planEventEmitter{
+										eventStore: api.eventStore,
+										sessionID:  sessionID,
+										chatDB:     api.chatDB,
+									})
+									if bgDelegateFunc != nil {
+										ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, bgDelegateFunc)
+									}
+									if bgQuerier != nil {
+										ctx = context.WithValue(ctx, virtualtools.BGAgentRegistryKey, bgQuerier)
+										ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
+									}
+									return exec(ctx, args)
+								}
+
+								if err := delegationAgent.RegisterCustomToolWithTimeout(
+									toolName,
+									tool.Function.Description,
+									params,
+									wrappedExecutor,
+									0, // No timeout — memory sub-agents run until complete
+									delegationCategory,
+								); err != nil {
+									log.Printf("[MEMORY TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+									continue
+								}
+								memoryRegistered++
+								log.Printf("[MEMORY TOOLS] Registered memory tool: %s", toolName)
+							}
+						}
+						log.Printf("[MEMORY TOOLS] Successfully registered %d memory tools", memoryRegistered)
+					}
 				}
 			}
 		}
@@ -4114,6 +4188,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						underlyingAgent.AppendSystemPrompt(tierSection)
 					}
 				}
+				// Add memory system instructions for plan mode
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
+				log.Printf("[MEMORY] Added memory system instructions to system prompt")
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
 				// Inject custom tier descriptions into system prompt so the manager knows about them
@@ -4981,6 +5058,415 @@ func chatHistoryHealthCheckHandler(db database.Database) http.HandlerFunc {
 		})
 	}
 }
+
+// getAllSessionCostsHandler returns aggregate costs across all user's chat sessions
+func getAllSessionCostsHandler(db database.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := GetUserIDFromContext(r.Context())
+		agentMode := r.URL.Query().Get("agent_mode")
+		limitStr := r.URL.Query().Get("limit")
+
+		limit := 100
+		if limitStr != "" {
+			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+				limit = l
+			}
+		}
+
+		var agentModePtr *string
+		if agentMode != "" {
+			agentModePtr = &agentMode
+		}
+
+		sessions, _, err := db.ListChatSessionsWithUser(r.Context(), limit, 0, nil, agentModePtr, userID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to list sessions: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Collect all session IDs for batch query
+		sessionIDs := make([]string, len(sessions))
+		sessionMap := make(map[string]*database.ChatHistorySummary, len(sessions))
+		for i, s := range sessions {
+			sessionIDs[i] = s.SessionID
+			sCopy := s
+			sessionMap[s.SessionID] = &sCopy
+		}
+
+		// Batch fetch token_usage + delegation_start events for ALL sessions in one query
+		allEvents, err := batchGetCostEvents(r.Context(), db, sessionIDs)
+		if err != nil {
+			log.Printf("[COSTS] Error batch fetching cost events: %v", err)
+			// Fall through with empty events
+		}
+
+		aggregate := AggregateCosts{
+			ByModel: make(map[string]*ChatModelUsage),
+			ByAgent: make(map[string]*ChatModelUsage),
+		}
+
+		var sessionCosts []SessionCostSummary
+
+		for _, session := range sessions {
+			sessEvents := allEvents[session.SessionID]
+
+			// Build delegation name map from delegation_start events
+			delegationNameMap := make(map[string]string)
+			for _, ev := range sessEvents {
+				if ev.eventType == "delegation_start" {
+					delegationNameMap[ev.delegationID] = ev.bgAgentID
+				}
+			}
+
+			// Determine display mode
+			displayMode := session.AgentMode
+			if session.AgentMode == "simple" {
+				if cfg, err := database.ChatSessionConfigFromJSON(session.Config); err == nil && cfg != nil && cfg.DelegationMode == "plan" {
+					displayMode = "multi-agent"
+				}
+			}
+
+			summary := SessionCostSummary{
+				SessionID: session.SessionID,
+				Title:     session.Title,
+				AgentMode: displayMode,
+				CreatedAt: session.CreatedAt,
+				Status:    session.Status,
+				ByModel:   make(map[string]*ChatModelUsage),
+				ByAgent:   make(map[string]*ChatModelUsage),
+			}
+
+			for _, ev := range sessEvents {
+				if ev.eventType != "token_usage" {
+					continue
+				}
+				tud := ev.tokenData
+
+				// Resolve delegation component name
+				if tud.correlationID != "" {
+					if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
+						tud.Component = agentName
+					}
+				}
+
+				modelUsage := getOrCreateModelUsage(summary.ByModel, tud.ModelID)
+				accumulateUsage(modelUsage, &tud)
+
+				if tud.Component != "" {
+					agentUsage := getOrCreateModelUsage(summary.ByAgent, tud.Component)
+					accumulateUsage(agentUsage, &tud)
+				}
+
+				summary.TotalCost += tud.TotalCost
+				summary.TotalInput += tud.PromptTokens
+				summary.TotalOutput += tud.CompletionTokens
+				summary.TotalCalls++
+			}
+
+			sessionCosts = append(sessionCosts, summary)
+
+			aggregate.TotalCost += summary.TotalCost
+			aggregate.TotalInput += summary.TotalInput
+			aggregate.TotalOutput += summary.TotalOutput
+			aggregate.TotalCalls += summary.TotalCalls
+
+			for modelID, usage := range summary.ByModel {
+				aggModel := getOrCreateModelUsage(aggregate.ByModel, modelID)
+				mergeUsage(aggModel, usage)
+			}
+			for agentName, usage := range summary.ByAgent {
+				aggAgent := getOrCreateModelUsage(aggregate.ByAgent, agentName)
+				mergeUsage(aggAgent, usage)
+			}
+		}
+
+		aggregate.TotalSessions = len(sessionCosts)
+
+		if sessionCosts == nil {
+			sessionCosts = []SessionCostSummary{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(UserCostsResponse{
+			Sessions:  sessionCosts,
+			Aggregate: aggregate,
+		})
+	}
+}
+
+// getSessionCostsHandler returns detailed cost breakdown for a single session
+func getSessionCostsHandler(db database.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		sessionID := vars["session_id"]
+		if sessionID == "" {
+			http.Error(w, "session_id is required", http.StatusBadRequest)
+			return
+		}
+
+		userID := GetUserIDFromContext(r.Context())
+
+		session, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
+		if err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		// Use batch query for single session (same optimized path)
+		allEvents, err := batchGetCostEvents(r.Context(), db, []string{sessionID})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to get token events: %v", err), http.StatusInternalServerError)
+			return
+		}
+		sessEvents := allEvents[sessionID]
+
+		// Build delegation name map
+		delegationNameMap := make(map[string]string)
+		for _, ev := range sessEvents {
+			if ev.eventType == "delegation_start" {
+				delegationNameMap[ev.delegationID] = ev.bgAgentID
+			}
+		}
+
+		detail := SessionCostDetail{
+			SessionID:       session.SessionID,
+			Title:           session.Title,
+			CreatedAt:       session.CreatedAt,
+			ByModel:         make(map[string]*ChatModelUsage),
+			ByTurnAndModel:  make(map[string]map[string]*ChatModelUsage),
+			ByAgentAndModel: make(map[string]map[string]*ChatModelUsage),
+		}
+
+		for _, ev := range sessEvents {
+			if ev.eventType != "token_usage" {
+				continue
+			}
+			tud := ev.tokenData
+
+			// Resolve delegation component name
+			if tud.correlationID != "" {
+				if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
+					tud.Component = agentName
+				}
+			}
+
+			modelUsage := getOrCreateModelUsage(detail.ByModel, tud.ModelID)
+			accumulateUsage(modelUsage, &tud)
+
+			turnKey := fmt.Sprintf("turn-%d", tud.Turn)
+			if detail.ByTurnAndModel[turnKey] == nil {
+				detail.ByTurnAndModel[turnKey] = make(map[string]*ChatModelUsage)
+			}
+			turnModelUsage := getOrCreateModelUsage(detail.ByTurnAndModel[turnKey], tud.ModelID)
+			accumulateUsage(turnModelUsage, &tud)
+
+			agentKey := tud.Component
+			if agentKey == "" {
+				agentKey = "main"
+			}
+			if detail.ByAgentAndModel[agentKey] == nil {
+				detail.ByAgentAndModel[agentKey] = make(map[string]*ChatModelUsage)
+			}
+			agentModelUsage := getOrCreateModelUsage(detail.ByAgentAndModel[agentKey], tud.ModelID)
+			accumulateUsage(agentModelUsage, &tud)
+
+			detail.TotalCost += tud.TotalCost
+			detail.TotalInput += tud.PromptTokens
+			detail.TotalOutput += tud.CompletionTokens
+			detail.TotalCalls++
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(detail)
+	}
+}
+
+// costEvent is a lightweight struct for batch cost queries (holds either token_usage or delegation_start data)
+type costEvent struct {
+	eventType    string         // "token_usage" or "delegation_start"
+	tokenData    tokenUsageData // populated for token_usage events
+	delegationID string         // populated for delegation_start events
+	bgAgentID    string         // populated for delegation_start events
+}
+
+// batchGetCostEvents fetches token_usage and delegation_start events for multiple sessions in a single query
+func batchGetCostEvents(ctx context.Context, db database.Database, sessionIDs []string) (map[string][]costEvent, error) {
+	result := make(map[string][]costEvent)
+	if len(sessionIDs) == 0 {
+		return result, nil
+	}
+
+	sqlDB := db.GetDB()
+	if sqlDB == nil {
+		return result, fmt.Errorf("no database connection")
+	}
+
+	// Resolve session UUIDs to internal IDs
+	// Build placeholder string for IN clause
+	placeholders := make([]string, len(sessionIDs))
+	args := make([]interface{}, len(sessionIDs))
+	for i, sid := range sessionIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = sid
+	}
+	inClause := "(" + strings.Join(placeholders, ",") + ")"
+
+	// Step 1: Resolve session_id UUIDs -> internal hex IDs
+	resolveQuery := `SELECT id, session_id FROM chat_sessions WHERE session_id IN ` + inClause
+	rows, err := sqlDB.QueryContext(ctx, resolveQuery, args...)
+	if err != nil {
+		return result, fmt.Errorf("failed to resolve session IDs: %w", err)
+	}
+
+	internalToUUID := make(map[string]string) // internal hex ID -> UUID
+	internalIDs := make([]string, 0, len(sessionIDs))
+	for rows.Next() {
+		var internalID, uuid string
+		if err := rows.Scan(&internalID, &uuid); err != nil {
+			continue
+		}
+		internalToUUID[internalID] = uuid
+		internalIDs = append(internalIDs, internalID)
+	}
+	rows.Close()
+
+	if len(internalIDs) == 0 {
+		return result, nil
+	}
+
+	// Step 2: Batch query events filtered by event_type
+	placeholders2 := make([]string, len(internalIDs))
+	args2 := make([]interface{}, len(internalIDs)+2)
+	args2[0] = "token_usage"
+	args2[1] = "delegation_start"
+	for i, id := range internalIDs {
+		placeholders2[i] = fmt.Sprintf("$%d", i+3)
+		args2[i+2] = id
+	}
+	inClause2 := "(" + strings.Join(placeholders2, ",") + ")"
+
+	eventsQuery := `SELECT chat_session_id, event_type, event_data FROM events
+		WHERE event_type IN ($1, $2) AND chat_session_id IN ` + inClause2 + `
+		ORDER BY timestamp ASC`
+
+	eventRows, err := sqlDB.QueryContext(ctx, eventsQuery, args2...)
+	if err != nil {
+		return result, fmt.Errorf("failed to batch query events: %w", err)
+	}
+	defer eventRows.Close()
+
+	for eventRows.Next() {
+		var chatSessionID, eventType, eventDataJSON string
+		if err := eventRows.Scan(&chatSessionID, &eventType, &eventDataJSON); err != nil {
+			continue
+		}
+
+		// Map internal ID back to UUID
+		uuid, ok := internalToUUID[chatSessionID]
+		if !ok {
+			continue
+		}
+
+		eventData := json.RawMessage(eventDataJSON)
+
+		if eventType == "token_usage" {
+			tud, err := parseTokenUsageEvent(eventData)
+			if err != nil {
+				continue
+			}
+			result[uuid] = append(result[uuid], costEvent{
+				eventType: "token_usage",
+				tokenData: tud,
+			})
+		} else if eventType == "delegation_start" {
+			var wrapper struct {
+				Data json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(eventData, &wrapper); err != nil {
+				continue
+			}
+			var delegData struct {
+				DelegationID      string `json:"delegation_id"`
+				BackgroundAgentID string `json:"background_agent_id"`
+			}
+			if err := json.Unmarshal(wrapper.Data, &delegData); err != nil {
+				continue
+			}
+			result[uuid] = append(result[uuid], costEvent{
+				eventType:    "delegation_start",
+				delegationID: delegData.DelegationID,
+				bgAgentID:    delegData.BackgroundAgentID,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// getTokenUsageEventsForHTTPSession queries token_usage events for a session (http handler version)
+// It also resolves delegation component names using delegation_start events (e.g. "delegation-0" -> "sear-0001")
+func getTokenUsageEventsForHTTPSession(r *http.Request, db database.Database, sessionID string) ([]tokenUsageData, error) {
+	dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, 10000, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	// First pass: build delegation_id -> background_agent_id map from delegation_start events
+	delegationNameMap := buildDelegationNameMap(dbEvents)
+
+	var result []tokenUsageData
+	for _, dbEvent := range dbEvents {
+		if dbEvent.EventType != "token_usage" {
+			continue
+		}
+
+		tud, err := parseTokenUsageEvent(dbEvent.EventData)
+		if err != nil {
+			log.Printf("[COSTS] Error parsing token_usage event: %v", err)
+			continue
+		}
+
+		// Resolve delegation component name using the map
+		if tud.correlationID != "" {
+			if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
+				tud.Component = agentName
+			}
+		}
+
+		result = append(result, tud)
+	}
+
+	return result, nil
+}
+
+// buildDelegationNameMap scans events for delegation_start and extracts delegation_id -> background_agent_id mapping
+func buildDelegationNameMap(dbEvents []database.Event) map[string]string {
+	nameMap := make(map[string]string)
+	for _, dbEvent := range dbEvents {
+		if dbEvent.EventType != "delegation_start" {
+			continue
+		}
+		var wrapper struct {
+			Data json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
+			continue
+		}
+		var delegData struct {
+			DelegationID      string `json:"delegation_id"`
+			BackgroundAgentID string `json:"background_agent_id"`
+		}
+		if err := json.Unmarshal(wrapper.Data, &delegData); err != nil {
+			continue
+		}
+		if delegData.DelegationID != "" && delegData.BackgroundAgentID != "" {
+			nameMap[delegData.DelegationID] = delegData.BackgroundAgentID
+		}
+	}
+	return nameMap
+}
+
+
 
 // --- ACTIVE SESSION MANAGEMENT ---
 

@@ -1,7 +1,5 @@
 import React, { useState } from 'react'
-
-// Module-level cache: survives React remounts, resets on page reload
-const submittedQuestionsCache = new Map<string, { answers: Record<string, string>; general_feedback: string }>()
+import { getSubmittedQuestions, setSubmittedQuestions } from '../../utils/notificationDedup'
 
 export interface BlockingHumanQuestionsQuestion {
   id: string
@@ -30,7 +28,7 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
   onFeedbackSubmitted
 }) => {
   const questions = event.data.questions || []
-  const cachedData = event.data.request_id ? submittedQuestionsCache.get(event.data.request_id) : undefined
+  const cachedData = event.data.request_id ? getSubmittedQuestions(event.data.request_id) : undefined
   const [answers, setAnswers] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {}
     for (const q of questions) {
@@ -59,7 +57,7 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
       }
       const jsonString = JSON.stringify(responseData)
       await onSubmitFeedback(event.data.request_id, jsonString)
-      if (event.data.request_id) submittedQuestionsCache.set(event.data.request_id, responseData)
+      if (event.data.request_id) setSubmittedQuestions(event.data.request_id, responseData)
       setSubmittedData(responseData)
       setHasSubmitted(true)
       if (onFeedbackSubmitted) {

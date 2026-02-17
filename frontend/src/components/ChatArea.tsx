@@ -1,9 +1,7 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import debounce from 'lodash.debounce'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
-import type { PollingEvent, ActiveSessionInfo, ExtendedLLMConfiguration } from '../services/api-types'
-import { shouldShowEventByMode } from './events/eventModeUtils'
+import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
@@ -17,12 +15,10 @@ import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { ModeEmptyState } from './ModeEmptyState'
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
-import { ChatHeader } from './ChatHeader'
 import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset } from '../types/preset'
 import { WORKSPACE_TOOLS } from '../utils/customToolNames'
-import { truncateTabTitle } from '../utils/textUtils'
-import { buildTabConfigFromSession, hydrateTabEvents } from '../utils/sessionRestore'
+import { restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
@@ -34,6 +30,10 @@ import {
   createUserMessageEvent,
   validateExecutionGroups,
 } from '../utils/chatSubmitHelpers'
+
+// Stable empty array to avoid infinite re-render loops in Zustand selectors
+// (a new [] on every selector call breaks referential equality checks)
+const EMPTY_EVENTS: PollingEvent[] = []
 
 interface ChatAreaProps {
   // New chat handler
@@ -65,25 +65,17 @@ export interface ChatAreaRef {
 // Global flag to ensure auto-restore only happens once per page load
 let globalHasRestored = false
 
-// Global Set to track session IDs currently being restored to prevent race conditions
-// between auto-restore and manual session detection creating duplicate tabs
-const sessionsBeingRestored = new Set<string>()
-
 // Inner component that can use the EventMode context
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
   
   // Store subscriptions
-  const { 
-    agentMode, 
+  const {
+    agentMode,
     setCurrentQuery,
-    chatSessionId,
-    chatSessionTitle
   } = useAppStore(useShallow(state => ({
     agentMode: state.agentMode,
     setCurrentQuery: state.setCurrentQuery,
-    chatSessionId: state.chatSessionId,
-    chatSessionTitle: state.chatSessionTitle
   })))
   
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
@@ -236,7 +228,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     removeToast,
     resetChatState,
     isAtBottom,
-    createChatTab,
     switchTab
   } = useChatStore(useShallow(state => ({
     isStreaming: state.isStreaming,
@@ -271,89 +262,34 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     removeToast: state.removeToast,
     resetChatState: state.resetChatState,
     isAtBottom: state.isAtBottom,
-    createChatTab: state.createChatTab,
     switchTab: state.switchTab
   })))
 
-  // Subscribe to tabEvents directly from store to ensure reactivity
-  const tabEventsStore = useChatStore((state) => state.tabEvents)
+  // Session-specific selector: only re-renders when the ACTIVE session's events change
+  // (not when any other session gets events)
+  const activeSessionId = activeTab?.sessionId
+  const tabEvents = useChatStore((state) =>
+    activeSessionId ? state.tabEvents[activeSessionId] || EMPTY_EVENTS : EMPTY_EVENTS
+  )
 
   // Get active preset for workflow mode
   const activeWorkflowPreset = getActivePreset('workflow')
   const selectedWorkflowPreset = activeWorkflowPreset?.id || null
   
-  // Get events for the active tab (per-tab event storage)
-  // Subscribe directly to tabEvents from store to ensure reactivity
-  // CRITICAL: Only show events for the active tab's session ID to prevent cross-tab event mixing
-  // NEVER fall back to global events - always use tab-specific events to prevent mixing
-  // If activeTab has no sessionId, return empty array (allows header to render for mode/preset selection)
-  
-  const tabEvents = useMemo(() => {
-    // Get sessionId from activeTab
-    const effectiveSessionId = activeTab?.sessionId
-    
-    if (effectiveSessionId) {
-      // CRITICAL: Use the session ID from activeTab, ensuring correct isolation
-      // Multiple observers can view the same session, but events are stored per session
-      const currentSessionId = effectiveSessionId
-      
-      // Only get events for this specific session ID
-      const eventsForTab = tabEventsStore[currentSessionId] || []
-      
-      // Debug logging to help diagnose event filtering issues
-      const allSessionIds = Object.keys(tabEventsStore)
-      if (allSessionIds.length > 0) {
-        const chatStore = useChatStore.getState()
-        const sessionIdToTabs = allSessionIds.map(id => {
-          const tabsUsingThisId = Object.values(chatStore.chatTabs)
-            .filter((t: ChatTab) => t.sessionId === id)
-            .map((t: ChatTab) => t.tabId)
-          return { 
-            sessionId: id, 
-            eventCount: tabEventsStore[id]?.length || 0,
-            tabsUsingThisId
-          }
-        })
-        
-        const duplicateSessionIds = sessionIdToTabs.filter(item => item.tabsUsingThisId.length > 1)
-        if (duplicateSessionIds.length > 0) {
-          logger.warn('ChatArea', 'Multiple tabs sharing session IDs:', duplicateSessionIds)
-        }
-        
-        // Check if the current sessionId matches any in the store (only warn on issues)
-        const sessionDetails = sessionIdToTabs.map(item => ({
-          sessionId: item.sessionId,
-          eventCount: item.eventCount,
-          tabs: item.tabsUsingThisId
-        }))
-        const matchingSession = sessionDetails.find(item => item.sessionId === currentSessionId)
-        if (!matchingSession) {
-          logger.warn('ChatArea', `SessionId ${currentSessionId} not found in store`, sessionDetails.map(item => item.sessionId))
-        } else if (matchingSession.eventCount !== eventsForTab.length) {
-          logger.warn('ChatArea', `Event count mismatch: store=${matchingSession.eventCount}, found=${eventsForTab.length}`)
-        }
-      }
-      return eventsForTab
-    }
-    
-    // No session ID - return empty array (allows header to render for mode/preset selection)
-    return []
-  }, [activeTab?.sessionId, tabEventsStore])
-  
   // Always use tab events - never fall back to global events to prevent cross-tab mixing
   // If there are no tabs, return empty array (tabs should always exist in multi-tab mode)
-  // Filter out workspace_file_operation events from display in basic/tiny mode
+  // Filter out workspace_file_operation events from display in micro mode
   // (These events are still sent to frontend for workspace store processing, but hidden from chat UI)
   const displayEvents = useMemo(() => {
     const eventMode = activeTab?.eventMode || 'micro'
-    // In tiny/micro mode, hide workspace_file_operation events from display
+    // In micro mode, hide workspace_file_operation events from display
     // (they're still processed by useWorkspaceStore for file highlighting)
-    if (eventMode === 'tiny' || eventMode === 'micro') {
+    if (eventMode === 'micro') {
       return tabEvents.filter(event => {
         if (event.type === 'workspace_file_operation') return false
-        
-        // In tiny/micro mode, also hide Total Token Usage and Context Offloading events
-        if (eventMode === 'tiny' || eventMode === 'micro') {
+
+        // In micro mode, also hide Total Token Usage and Context Offloading events
+        if (eventMode === 'micro') {
           if (event.type === 'token_usage') {
             const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
             const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
@@ -375,8 +311,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     return tabEvents
   }, [tabEvents, activeTab?.eventMode])
   
-  // Debug: Log when displayEvents changes
-
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
     if (selectedModeCategory !== 'workflow') return true; // No validation needed for other modes
@@ -666,7 +600,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   }, [finalResponse, autoScroll, scrollToBottom])
 
   // Auto-scroll when streaming text first appears (brings the "Generating..." card into view)
-  const activeSessionId = activeTab?.sessionId
   const hasStreamingText = useChatStore(state =>
     activeSessionId ? !!state.streamingText[activeSessionId] : false
   )
@@ -786,11 +719,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Update workflow status to the determined next phase
       await agentApi.updateWorkflow(presetQueryId, nextPhase)
       
-      // Stop any ongoing polling to prevent events from coming back
+      // Stop any ongoing SSE / polling to prevent events from coming back
+      if (currentTab?.sessionId) {
+        disconnectSSE(currentTab.sessionId)
+      }
       if (pollingInterval) {
         stopPolling()
       }
-      
+
       // Clear all events to show clean slate for execution phase
       // Note: Using tabEvents now, not global events
       if (currentTab?.sessionId) {
@@ -817,38 +753,30 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Observer initialization removed - no longer needed
 
-  // Event batching for performance
-  const eventBatchRef = useRef<PollingEvent[]>([])
-  const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  
-  // Debounced function to flush event batch
-  // CRITICAL: This should NOT be used - all events should be stored via addTabEvents in polling
-  // This function is kept for backward compatibility but should never be called in tab mode
-  const flushEventBatch = useCallback(() => {
-    if (eventBatchRef.current.length === 0) return
-    
-    const batch = [...eventBatchRef.current]
-    eventBatchRef.current = []
-    
-    // Tabs should always exist - this should never be called
-    // Log error and discard to prevent mixing
-    logger.error('ChatArea', `flushEventBatch should not be called in tab mode. Discarding ${batch.length} events.`)
-  }, [])
-  
-  // Create debounced flush function (100ms delay)
-  const debouncedFlush = useMemo(
-    () => debounce(flushEventBatch, 100),
-    [flushEventBatch]
-  )
+  // SSE event batching: accumulate non-streaming events per session and flush once per animation frame
+  // Streaming events (streaming_start/chunk/end) bypass batching for real-time text display
+  interface PendingSSEBatch {
+    events: PollingEvent[]
+    sessionStatus?: string
+    lastProcessedIndex: number
+    hasMore?: boolean
+    hasRunningBgAgents?: boolean
+    sessionId: string // actualSessionId (may differ from map key)
+  }
+  const pendingSSEEventsRef = useRef<Map<string, PendingSSEBatch>>(new Map())
+  const flushRAFRef = useRef<number>(0)
 
   // Removed extractUserMessageContent - no longer needed since we removed duplicate detection
 
 
   // Get polling management actions from store (before pollEvents callback)
-  const { startPolling, stopPolling, getActiveSessions } = useChatStore(useShallow(state => ({
+  const { startPolling, stopPolling, getActiveSessions, connectSSE, disconnectSSE, disconnectAllSSE } = useChatStore(useShallow(state => ({
     startPolling: state.startPolling,
     stopPolling: state.stopPolling,
-    getActiveSessions: state.getActiveSessions
+    getActiveSessions: state.getActiveSessions,
+    connectSSE: state.connectSSE,
+    disconnectSSE: state.disconnectSSE,
+    disconnectAllSSE: state.disconnectAllSSE,
   })))
 
   // Get active sessions from cache (shared across all components)
@@ -861,8 +789,334 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     return new Set(activeSessionsCache.map(s => s.session_id))
   }, [activeSessionsCache])
 
-  // Polling function to get events for ALL active sessions
+  // Reusable event processing logic — shared by both SSE and polling paths.
+  // Takes an events response (same shape from SSE or REST) and a tab, then processes
+  // session status, streaming chunks, event filtering, and stores events.
+  const processEventsResponse = useCallback((
+    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; session_id?: string },
+    sessionId: string,
+    tab: ChatTab | null
+  ) => {
+    const chatStore = useChatStore.getState()
+    const actualSessionId = response.session_id || sessionId
+
+
+    // --- Session status handling ---
+    const sessionStatus = response.session_status
+    if (tab && sessionStatus) {
+      const hasBgAgents = response.has_running_background_agents ?? false
+      if (sessionStatus === 'completed' || sessionStatus === 'error') {
+        if (hasBgAgents) {
+          chatStore.setTabCompleted(tab.tabId, false)
+          chatStore.setTabStreaming(tab.tabId, false)
+        } else {
+          chatStore.setTabCompleted(tab.tabId, true)
+          chatStore.setTabStreaming(tab.tabId, false)
+        }
+      } else if (sessionStatus === 'running') {
+        chatStore.setTabCompleted(tab.tabId, false)
+        chatStore.setTabStreaming(tab.tabId, true)
+      } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
+        chatStore.setTabCompleted(tab.tabId, false)
+        chatStore.setTabStreaming(tab.tabId, false)
+      }
+      chatStore.setTabHasRunningBgAgents(tab.tabId, hasBgAgents)
+    } else if (!tab && sessionStatus) {
+      if (sessionStatus === 'completed' || sessionStatus === 'error') {
+        setIsStreaming(false)
+        setIsCompleted(true)
+        setHasActiveChat(false)
+      } else if (sessionStatus === 'running') {
+        setIsStreaming(true)
+        setIsCompleted(false)
+      } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
+        setIsStreaming(false)
+        setIsCompleted(false)
+      }
+    }
+
+    // --- Update last event index ---
+    // CRITICAL: Must happen BEFORE the empty-events early return below.
+    // SSE backfill may contain only streaming events (handled immediately in handleSSEMessage),
+    // leaving the batched events array empty. Without updating the index here, tabEventIndices
+    // stays at 0 and every SSE reconnection re-fetches all events from the beginning.
+    if (response.last_processed_index !== undefined && response.last_processed_index >= 0) {
+      let newLastEventIndex = response.last_processed_index
+      if (tab) {
+        setTabLastEventIndex(actualSessionId, newLastEventIndex)
+        if (response.has_more !== undefined) {
+          chatStore.setTabHasMoreOlderEvents(actualSessionId, response.has_more)
+        }
+      } else {
+        setLastEventIndex(newLastEventIndex)
+      }
+    }
+
+    if (response.events.length === 0) return
+
+    // --- Event filtering & processing ---
+    const eventsBeforeFilter = response.events as PollingEvent[]
+    const newEvents: PollingEvent[] = []
+    let hasCompletionEvent = false
+
+    for (const event of eventsBeforeFilter) {
+      const agentEvent = event.data as Record<string, unknown> | undefined
+      const innerData = agentEvent?.data as Record<string, unknown> | undefined
+      const rawComponent = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
+      const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
+      const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
+        || (typeof rawCorrelationId === 'string' && rawCorrelationId.startsWith('delegation-'))
+
+      if (event.type === 'streaming_start') {
+        // Only treat as delegation streaming if correlationId starts with "delegation-"
+        // Root-agent streaming may have hierarchy_level > 0 and a component (e.g. "llm")
+        // which triggers isSubAgentEvent, but these are NOT delegation events
+        const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+        const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        if (isDelegationStreaming) {
+          chatStore.clearDelegationStreamingText(correlationId as string)
+        } else {
+          chatStore.clearStreamingText(actualSessionId)
+        }
+        continue
+      }
+      if (event.type === 'streaming_chunk') {
+        const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+        const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        const rawContent = innerData?.content ?? agentEvent?.content
+        const content = typeof rawContent === 'string' ? rawContent : ''
+        const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
+        const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+        if (isDelegationStreaming) {
+          if (content) {
+            if (chunkIndex === 0) chatStore.clearDelegationStreamingText(correlationId as string)
+            chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
+          }
+        } else if (content) {
+          if (chunkIndex === 0) {
+            chatStore.clearStreamingText(actualSessionId)
+          }
+          chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
+        }
+        continue
+      }
+      if (event.type === 'streaming_end') continue
+      if (event.type === 'user_message') continue
+
+      if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end')) {
+        hasCompletionEvent = true
+      }
+
+      if (event.type === 'delegation_end') {
+        const correlationId = innerData?.correlation_id ?? innerData?.delegation_id ?? agentEvent?.correlation_id ?? agentEvent?.delegation_id
+        if (correlationId && typeof correlationId === 'string') {
+          chatStore.clearDelegationStreamingText(correlationId)
+        }
+      }
+
+      const { processWorkspaceEvent } = useWorkspaceStore.getState()
+      processWorkspaceEvent(event)
+
+      newEvents.push(event)
+    }
+
+    // Defer streaming text clear
+    if (hasCompletionEvent) {
+      const sid = actualSessionId
+      const textBeforeClear = useChatStore.getState().streamingText[sid]
+      requestAnimationFrame(() => {
+        const currentText = useChatStore.getState().streamingText[sid]
+        if (currentText === textBeforeClear) {
+          useChatStore.getState().clearStreamingText(sid)
+        }
+      })
+    }
+
+    // Process workflow events
+    if (selectedModeCategory === 'workflow') {
+      const workflowStore = useWorkflowStore.getState()
+      for (const event of response.events as PollingEvent[]) {
+        if (event.type === 'batch_group_start') {
+          const eventData = event.data as Record<string, unknown> | undefined
+          const batchGroupStartData = (eventData?.data as Record<string, unknown>) || eventData
+          const groupId = batchGroupStartData?.group_id as string | undefined
+          const runFolder = batchGroupStartData?.run_folder as string | undefined
+          const workspacePath = batchGroupStartData?.workspace_path as string | undefined
+          const groupIndex = batchGroupStartData?.group_index as number | undefined
+          const totalGroups = batchGroupStartData?.total_groups as number | undefined
+          if (groupId && runFolder) {
+            workflowStore.handleBatchGroupStart(groupId, runFolder, workspacePath, groupIndex, totalGroups)
+          }
+        }
+        if (event.type === 'batch_group_end') {
+          const eventData = event.data as Record<string, unknown> | undefined
+          const batchGroupEndData = (eventData?.data as Record<string, unknown>) || eventData
+          const groupId = batchGroupEndData?.group_id as string | undefined
+          const success = batchGroupEndData?.success as boolean | undefined
+          const remainingGroups = batchGroupEndData?.remaining_groups as number | undefined
+          if (groupId) {
+            workflowStore.handleBatchGroupEnd(groupId, success, remainingGroups)
+          }
+        }
+        if (event.type === 'step_progress_updated') {
+          const eventData = event.data as Record<string, unknown> | undefined
+          const stepProgressData = (eventData?.data as Record<string, unknown>) || eventData
+          const stepId = stepProgressData?.current_step_id as string | undefined
+          const status = stepProgressData?.status as string | undefined
+          if (stepId && status) {
+            if (status === 'start') {
+              workflowStore.setCurrentStepId(stepId)
+              workflowStore.setStepStatus(stepId, 'running')
+            } else if (status === 'end') {
+              workflowStore.setStepStatus(stepId, 'completed')
+            } else if (status === 'failed') {
+              workflowStore.setStepStatus(stepId, 'failed')
+            }
+          }
+          const groupId = stepProgressData?.group_id as string | undefined
+          const groupIndex = stepProgressData?.group_index as number | undefined
+          const totalGroups = stepProgressData?.total_groups as number | undefined
+          const runFolder = stepProgressData?.run_folder as string | undefined
+          if (groupId && totalGroups !== undefined && totalGroups > 0) {
+            workflowStore.handleBatchGroupStart(groupId, runFolder || '', undefined, groupIndex, totalGroups)
+          }
+        }
+      }
+    }
+
+    // Store events
+    if (tab) {
+      const finalTab = chatStore.getTab(tab.tabId)
+      if (!finalTab) return
+      addTabEvents(actualSessionId, newEvents)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getTabEvents, setTabLastEventIndex, setLastEventIndex, addTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, selectedModeCategory])
+
+  // Flush all pending SSE events: merges accumulated events per session into a single processEventsResponse call
+  const flushPendingSSEEvents = useCallback(() => {
+    flushRAFRef.current = 0
+    const pending = pendingSSEEventsRef.current
+    if (pending.size === 0) return
+
+    // Take snapshot and clear
+    const batches = new Map(pending)
+    pending.clear()
+
+    for (const [sid, batch] of batches) {
+      const store = useChatStore.getState()
+      const matchingTab = Object.values(store.chatTabs).find(t => t.sessionId === sid) || null
+      processEventsResponse(
+        {
+          events: batch.events,
+          session_status: batch.sessionStatus,
+          last_processed_index: batch.lastProcessedIndex,
+          has_more: batch.hasMore,
+          has_running_background_agents: batch.hasRunningBgAgents,
+          session_id: batch.sessionId !== sid ? batch.sessionId : undefined,
+        },
+        sid,
+        matchingTab
+      )
+    }
+  }, [processEventsResponse])
+
+  // Handle an incoming SSE event message: process streaming events immediately, batch the rest
+  const handleSSEMessage = useCallback((msg: SSEEventMessage, sid: string) => {
+    const chatStore = useChatStore.getState()
+    const actualSessionId = (msg as unknown as Record<string, unknown>).session_id as string || sid
+
+    // Separate streaming events (immediate) from non-streaming events (batched)
+    const nonStreamingEvents: PollingEvent[] = []
+    for (const event of msg.events) {
+      if (event.type === 'streaming_start' || event.type === 'streaming_chunk' || event.type === 'streaming_end') {
+        // Process streaming events immediately for real-time text display
+        const agentEvent = event.data as Record<string, unknown> | undefined
+        const innerData = agentEvent?.data as Record<string, unknown> | undefined
+
+        if (event.type === 'streaming_start') {
+          const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+          const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          if (isDelegation) {
+            chatStore.clearDelegationStreamingText(correlationId as string)
+          } else {
+            chatStore.clearStreamingText(actualSessionId)
+          }
+        } else if (event.type === 'streaming_chunk') {
+          const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+          const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          const rawContent = innerData?.content ?? agentEvent?.content
+          const content = typeof rawContent === 'string' ? rawContent : ''
+          const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
+          const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
+          if (isDelegation) {
+            if (content) {
+              if (chunkIndex === 0) chatStore.clearDelegationStreamingText(correlationId as string)
+              chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
+            }
+          } else if (content) {
+            if (chunkIndex === 0) chatStore.clearStreamingText(actualSessionId)
+            chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
+          }
+        }
+        // streaming_end is a no-op
+      } else {
+        nonStreamingEvents.push(event)
+      }
+    }
+
+    // Accumulate non-streaming events and metadata into the pending batch
+    const pending = pendingSSEEventsRef.current
+    const existing = pending.get(sid)
+    if (existing) {
+      if (nonStreamingEvents.length > 0) existing.events.push(...nonStreamingEvents)
+      if (msg.session_status) existing.sessionStatus = msg.session_status
+      if (msg.last_processed_index > existing.lastProcessedIndex) {
+        existing.lastProcessedIndex = msg.last_processed_index
+      }
+      const msgAny = msg as unknown as Record<string, unknown>
+      if (msgAny.has_more !== undefined) existing.hasMore = msgAny.has_more as boolean
+      if (msg.has_running_background_agents !== undefined) existing.hasRunningBgAgents = msg.has_running_background_agents
+      if (actualSessionId !== sid) existing.sessionId = actualSessionId
+    } else {
+      const msgAny = msg as unknown as Record<string, unknown>
+      pending.set(sid, {
+        events: nonStreamingEvents,
+        sessionStatus: msg.session_status,
+        lastProcessedIndex: msg.last_processed_index,
+        hasMore: msgAny.has_more as boolean | undefined,
+        hasRunningBgAgents: msg.has_running_background_agents,
+        sessionId: actualSessionId,
+      })
+    }
+
+    // Schedule flush on next animation frame (batches all events arriving within one frame)
+    if (!flushRAFRef.current) {
+      flushRAFRef.current = requestAnimationFrame(flushPendingSSEEvents)
+    }
+  }, [flushPendingSSEEvents])
+
+  // Handle SSE status-only messages (no events, just session status updates)
+  const handleSSEStatus = useCallback((msg: SSEStatusMessage, sid: string) => {
+    handleSSEMessage(
+      { events: [], ...msg, last_processed_index: -1 } as SSEEventMessage,
+      sid
+    )
+  }, [handleSSEMessage])
+
+  // Cancel pending SSE flush on unmount
+  useEffect(() => {
+    return () => {
+      if (flushRAFRef.current) {
+        cancelAnimationFrame(flushRAFRef.current)
+        flushRAFRef.current = 0
+      }
+    }
+  }, [])
+
+  // Polling function to get events for ALL active sessions (fallback when SSE unavailable)
   const pollEvents = useCallback(async () => {
+
     const chatStore = useChatStore.getState()
 
     // Read mode from store directly to avoid stale closure from setInterval capture
@@ -880,34 +1134,40 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // CRITICAL: Only poll tabs that are:
     // 1. Actively streaming (query in progress)
     // 2. Have session ID in backend's active sessions list (backend determines activity based on events)
+    // 3. Multi-agent tabs (always poll — bg agents can produce events after orchestrator completes)
     // We don't poll completed sessions - they're done and won't have new events
     // We also don't poll uninitialized sessions (no query submitted yet)
+    //
+    // Read activeSessionIds fresh from the store to avoid stale closure from setInterval capture
+    const freshActiveIds = new Set(chatStore.activeSessionsCache.map(s => s.session_id))
     const tabsToPoll = allTabs.filter(tab => {
       const currentTab = chatStore.getTab(tab.tabId)
       if (!currentTab?.sessionId) {
         return false
       }
-      
+
+      // Multi-agent tabs always get polled — bg agents can produce events
+      // after the orchestrator completes (session_status='completed')
+      if (currentTab.metadata?.mode === 'multi-agent') {
+        return true
+      }
+
       // Check if session is in backend's active sessions list (source of truth)
       // Backend determines activity based on event activity (10 min timeout)
       // CRITICAL: Also allow polling if tab is streaming (user just submitted a query)
       const isStreaming = currentTab.isStreaming
-      const isInActiveSessions = activeSessionIds.has(currentTab.sessionId)
-      
+      const isInActiveSessions = freshActiveIds.has(currentTab.sessionId)
+
       // Allow polling if:
       // 1. Session is in backend's active sessions list, OR
       // 2. Tab is currently streaming (query just submitted)
       if (!isInActiveSessions && !isStreaming) {
         return false
       }
-      
-      // Skip if completed (definitely done)
-      // BUT: In multi-agent mode, keep polling — background agents can restart the session
-      if (currentTab.isCompleted) {
-        const isMultiAgent = currentTab.metadata?.mode === 'multi-agent'
-        if (!isMultiAgent) {
-          return false
-        }
+
+      // Skip if completed (definitely done) — unless background agents are still running
+      if (currentTab.isCompleted && !currentTab.hasRunningBgAgents) {
+        return false
       }
 
       return true
@@ -1012,340 +1272,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
       try {
         // Get event mode from current tab (defaults to 'micro')
-        const eventMode: 'advanced' | 'tiny' | 'micro' = (currentTab?.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
+        const eventMode: 'advanced' | 'micro' = (currentTab?.eventMode || 'micro') as 'advanced' | 'micro'
         
         const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { eventMode })
 
-        // Use session ID from response if available (it's the source of truth)
-        const actualSessionId = response.session_id || effectiveSessionId
-        
         // If response has a different session ID, update the tab
         if (currentTab && response.session_id && response.session_id !== effectiveSessionId) {
           chatStore.updateTabSessionId(currentTab.tabId, response.session_id)
         }
 
-        // Check session status from response (source of truth - replaces event parsing)
-        // session_status is always present in the response (required field)
-        // Update isStreaming for UI feedback only (not used for polling decisions)
-        const sessionStatus = response.session_status
-        
-        if (currentTab) {
-          const chatStore = useChatStore.getState()
-          
-          // Handle different session statuses - update UI state (isStreaming) for user feedback
-          if (sessionStatus === 'completed' || sessionStatus === 'error') {
-            // Session is done - update UI state
-            chatStore.setTabCompleted(currentTab.tabId, true)
-            chatStore.setTabStreaming(currentTab.tabId, false) // UI: Hide stop button, show send button
-          } else if (sessionStatus === 'running') {
-            // Session is active - update UI state
-            chatStore.setTabCompleted(currentTab.tabId, false)
-            chatStore.setTabStreaming(currentTab.tabId, true) // UI: Show stop button, disable send button
-          } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
-            // Session stopped or inactive - update UI state
-            chatStore.setTabCompleted(currentTab.tabId, false)
-            chatStore.setTabStreaming(currentTab.tabId, false) // UI: Show send button, hide stop button
-          }
-          // Update background agents flag from polling response
-          chatStore.setTabHasRunningBgAgents(
-            currentTab.tabId,
-            response.has_running_background_agents ?? false
-          )
-        } else {
-          // No tab - update global UI state
-          if (sessionStatus === 'completed' || sessionStatus === 'error') {
-            setIsStreaming(false) // UI: Hide stop button
-            setIsCompleted(true)
-            setHasActiveChat(false)
-          } else if (sessionStatus === 'running') {
-            setIsStreaming(true) // UI: Show stop button
-            setIsCompleted(false)
-          } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
-            setIsStreaming(false) // UI: Hide stop button
-            setIsCompleted(false)
-          }
-        }
-
-        if (response.events.length > 0) {
-          // Update last event index for this session
-          // CRITICAL: Use last_processed_index from backend (tracks unfiltered array position)
-          // This ensures correct tracking even when filtering reduces the number of events returned
-          // Require last_processed_index from backend (new system - no fallback)
-          if (response.last_processed_index === undefined) {
-            logger.warn('ChatArea', `Backend didn't provide last_processed_index for session ${effectiveSessionId}`)
-            return // Skip processing if backend doesn't provide required field
-          }
-          
-          // CRITICAL: Detect sentinel value (9999) which means "all events processed" but not an actual index
-          // If API returns 0 events with last_processed_index=9999, use the actual last index from stored events
-          let newLastEventIndex = response.last_processed_index
-          if (response.events.length === 0 && response.last_processed_index >= 9999) {
-            // This is likely a sentinel value - check stored events to get the actual last index
-            const storedEvents = getTabEvents(actualSessionId)
-            if (storedEvents && storedEvents.length > 0) {
-              // Use the actual last event index from stored events (0-indexed)
-              const actualLastIndex = storedEvents.length - 1
-              newLastEventIndex = actualLastIndex
-            } else {
-              // No stored events, but sentinel value - keep current index to avoid going backwards
-              newLastEventIndex = currentLastEventIndex
-            }
-          }
-          
-          if (currentTab) {
-            setTabLastEventIndex(actualSessionId, newLastEventIndex)
-            // If this is an initial fetch (sinceIndex=0), store has_more flag for older events
-            if (currentLastEventIndex === 0 && response.has_more !== undefined) {
-              useChatStore.getState().setTabHasMoreOlderEvents(actualSessionId, response.has_more)
-            }
-          } else {
-            setLastEventIndex(newLastEventIndex)
-          }
-          
-          // Filter events first (synchronous)
-          // Type assertion: response.events is PollingEvent[] from GetEventsResponse
-          const eventsBeforeFilter = response.events as PollingEvent[]
-
-          const newEvents: PollingEvent[] = []
-          let hasCompletionEvent = false
-          for (const event of eventsBeforeFilter) {
-            // Extract component from event (used to identify sub-agent events)
-            // Sub-agent events have component like "delegation-0", "delegation-1", etc.
-            // Check multiple locations: event top-level, event.data (AgentEvent), event.data.data (inner)
-            const agentEvent = event.data as Record<string, unknown> | undefined
-            const innerData = agentEvent?.data as Record<string, unknown> | undefined
-            const rawComponent = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
-            const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
-            const rawHierarchyLevel = (event as unknown as Record<string, unknown>).hierarchy_level ?? innerData?.hierarchy_level ?? agentEvent?.hierarchy_level
-            const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
-              || (typeof rawCorrelationId === 'string' && rawCorrelationId.startsWith('delegation-'))
-              || (typeof rawHierarchyLevel === 'number' && (rawHierarchyLevel as number) > 0 && typeof rawComponent === 'string' && rawComponent !== '')
-
-            // Intercept streaming events - accumulate text in store, don't add to event list
-            // Parent agent streaming → streamingText[sessionId]
-            // Sub-agent streaming → delegationStreamingText[delegationId]
-            if (event.type === 'streaming_start') {
-              if (isSubAgentEvent) {
-                const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
-                if (correlationId && typeof correlationId === 'string') {
-                  chatStore.clearDelegationStreamingText(correlationId)
-                }
-              } else {
-                chatStore.clearStreamingText(actualSessionId)
-              }
-              continue
-            }
-            if (event.type === 'streaming_chunk') {
-              if (isSubAgentEvent) {
-                // Route sub-agent streaming to delegation-specific slot
-                const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
-                if (correlationId && typeof correlationId === 'string') {
-                  const rawContent = innerData?.content ?? agentEvent?.content
-                  const content = typeof rawContent === 'string' ? rawContent : ''
-                  const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
-                  const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
-                  if (content) {
-                    if (chunkIndex === 0) chatStore.clearDelegationStreamingText(correlationId)
-                    chatStore.appendDelegationStreamingChunk(correlationId, chunkIndex, content)
-                  }
-                }
-                continue
-              }
-              // Parent agent streaming chunk
-              const rawContent = innerData?.content ?? agentEvent?.content
-              const content = typeof rawContent === 'string' ? rawContent : ''
-
-              const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
-              const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
-
-              // Debug: Log if this chunk might actually be from a sub-agent (has hierarchy metadata)
-              if (typeof rawHierarchyLevel === 'number' && rawHierarchyLevel > 0) {
-                logger.warn('ChatArea', `streaming_chunk routed to parent but has hierarchy_level=${rawHierarchyLevel}, component=${rawComponent}, correlation_id=${rawCorrelationId}`)
-              }
-
-              if (content) {
-                if (chunkIndex === 0) {
-                  chatStore.clearStreamingText(actualSessionId)
-                }
-                chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
-              }
-              continue
-            }
-            if (event.type === 'streaming_end') {
-              continue
-            }
-
-            // Track completion events but don't clear streaming text synchronously.
-            // Clearing synchronously in the same loop as appendStreamingChunk prevents
-            // React from ever rendering the streaming card (state is set then cleared
-            // before the next render).
-            // Only track parent agent completion events for clearing streaming text
-            if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end')) {
-              hasCompletionEvent = true
-            }
-
-            // Clear delegation streaming text when delegation ends
-            if (event.type === 'delegation_end') {
-              const correlationId = innerData?.correlation_id ?? innerData?.delegation_id ?? agentEvent?.correlation_id ?? agentEvent?.delegation_id
-              if (correlationId && typeof correlationId === 'string') {
-                chatStore.clearDelegationStreamingText(correlationId)
-              }
-            }
-
-            if (event.type === 'request_human_feedback' && currentTab) {
-              chatStore.setTabStreaming(currentTab.tabId, false)
-              chatStore.setTabCompleted(currentTab.tabId, false)
-            }
-
-            const { processWorkspaceEvent } = useWorkspaceStore.getState()
-            processWorkspaceEvent(event)
-
-            newEvents.push(event)
-          }
-
-          // Defer streaming text clear so React renders the accumulated text first.
-          // Use requestAnimationFrame to ensure at least one paint with the streaming card
-          // before it's replaced by the full response from the event list.
-          if (hasCompletionEvent) {
-            const sid = actualSessionId
-            const textBeforeClear = useChatStore.getState().streamingText[sid]
-            requestAnimationFrame(() => {
-              // Only clear if no new streaming generation started since the defer
-              const currentText = useChatStore.getState().streamingText[sid]
-              if (currentText === textBeforeClear) {
-                useChatStore.getState().clearStreamingText(sid)
-              }
-            })
-          }
-          
-          // Process workflow-specific events (after filtering)
-          if (selectedModeCategory === 'workflow') {
-            const workflowStore = useWorkflowStore.getState()
-            // phases removed
-
-            for (const event of response.events as PollingEvent[]) {
-              // Handle batch progress updates from polling layer (more reliable than component useEffect)
-              // Note: Batch events have data directly in event.data, not event.data.data
-              if (event.type === 'batch_group_start') {
-                // Extract data - try event.data.data first (standard format), then event.data (direct format)
-                const eventData = event.data as Record<string, unknown> | undefined
-                const batchGroupStartData = (eventData?.data as Record<string, unknown>) || eventData
-
-                const groupId = batchGroupStartData?.group_id as string | undefined
-                const runFolder = batchGroupStartData?.run_folder as string | undefined
-                const workspacePath = batchGroupStartData?.workspace_path as string | undefined
-                const groupIndex = batchGroupStartData?.group_index as number | undefined
-                const totalGroups = batchGroupStartData?.total_groups as number | undefined
-
-                logger.debug('ChatArea', 'batch_group_start', { groupId, groupIndex, totalGroups })
-
-                if (groupId && runFolder) {
-                  workflowStore.handleBatchGroupStart(
-                    groupId,
-                    runFolder,
-                    workspacePath,
-                    groupIndex,
-                    totalGroups
-                  )
-                }
-              }
-
-              if (event.type === 'batch_group_end') {
-                // Extract data - try event.data.data first (standard format), then event.data (direct format)
-                const eventData = event.data as Record<string, unknown> | undefined
-                const batchGroupEndData = (eventData?.data as Record<string, unknown>) || eventData
-
-                const groupId = batchGroupEndData?.group_id as string | undefined
-                const success = batchGroupEndData?.success as boolean | undefined
-                const remainingGroups = batchGroupEndData?.remaining_groups as number | undefined
-
-                if (groupId) {
-                  workflowStore.handleBatchGroupEnd(
-                    groupId,
-                    success,
-                    remainingGroups
-                  )
-                }
-              }
-
-              // Handle step progress updates for auto-focus and status on canvas
-              if (event.type === 'step_progress_updated') {
-                // Extract data - try event.data.data first (standard format), then event.data (direct format)
-                const eventData = event.data as Record<string, unknown> | undefined
-                const stepProgressData = (eventData?.data as Record<string, unknown>) || eventData
-
-                const stepId = stepProgressData?.current_step_id as string | undefined
-                const status = stepProgressData?.status as string | undefined
-
-                if (stepId && status) {
-                  // Update step status in store
-                  if (status === 'start') {
-                    workflowStore.setCurrentStepId(stepId)
-                    workflowStore.setStepStatus(stepId, 'running')
-                  } else if (status === 'end') {
-                    workflowStore.setStepStatus(stepId, 'completed')
-                  } else if (status === 'failed') {
-                    workflowStore.setStepStatus(stepId, 'failed')
-                  }
-                }
-
-                // Update batch progress from step_progress_updated event (batch info is always included)
-                const groupId = stepProgressData?.group_id as string | undefined
-                const groupIndex = stepProgressData?.group_index as number | undefined
-                const totalGroups = stepProgressData?.total_groups as number | undefined
-                const runFolder = stepProgressData?.run_folder as string | undefined
-
-                if (groupId && totalGroups !== undefined && totalGroups > 0) {
-                  logger.debug('ChatArea', 'batch progress update', { groupId, groupIndex, totalGroups })
-                  workflowStore.handleBatchGroupStart(
-                    groupId,
-                    runFolder || '',
-                    undefined,
-                    groupIndex,
-                    totalGroups
-                  )
-                }
-              }
-            }
-          }
-          
-          // Add events to the correct tab's event list
-          if (currentTab) {
-            // CRITICAL: Re-verify the tab's session ID right before storing events
-            // This prevents storing events under the wrong session ID if the tab's session ID changed
-            const finalTab = chatStore.getTab(currentTab.tabId)
-            if (!finalTab) {
-              continue
-            }
-            
-            // Use the actual session ID from the response (source of truth)
-            // If response has a different session ID, use that one
-            const sessionIdForStorage = actualSessionId
-            
-            // Store events per session (by sessionId)
-            // CRITICAL: Use the sessionId from the response (actualSessionId) as it's the source of truth
-            // Multiple observers can view the same session, but events are stored per session
-            addTabEvents(sessionIdForStorage, newEvents)
-            
-            // NOTE: Completion detection is now handled by session_status above
-            // No need to parse events for completion anymore
-          } else {
-            // No tab - this should not happen in tab mode
-            // Discard events to prevent mixing
-            // NOTE: Completion detection is now handled by session_status above
-            // No need to parse events for completion anymore
-          }
-        }
+        processEventsResponse(response, effectiveSessionId, currentTab)
       } catch {
         // Continue polling other observers even if one fails
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedModeCategory read from store directly inside callback to avoid stale setInterval closure
-  }, [getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds])
+  }, [getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, getTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, activeSessionIds, processEventsResponse])
 
 
-  // Track if we're already processing to prevent infinite loops
-  const processingRef = useRef<string | null>(null)
   
   // Start centralized active sessions polling when component mounts
   useEffect(() => {
@@ -1356,269 +1300,83 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
   }, [startActiveSessionsPolling])
 
-  // Auto-restore active sessions on page load
-  // This ensures that if the user refreshes the page, active chats are automatically restored
+  // Unified page-load restore: handles both active sessions AND persisted tabs with no events.
+  // Runs once per page load to avoid duplicate restores from separate effects racing each other.
   useEffect(() => {
-    // Only restore once per page load (using global flag)
-    if (globalHasRestored) {
-      return
-    }
-    
-    const restoreActiveSessions = async () => {
-      // Mark as restored immediately to prevent concurrent executions
+    if (globalHasRestored) return
+    // Only restore in chat / multi-agent modes (workflow handles its own restore)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') return
+
+    const restoreAll = async () => {
       globalHasRestored = true
-      
+
       try {
-        // Wait a bit for active sessions polling to start and fetch initial data
+        // Wait for active-sessions polling to start and return initial data
         await new Promise(resolve => setTimeout(resolve, 500))
-        
-        const chatStore = useChatStore.getState()
-        const activeSessions = await getActiveSessions(true) // Force refresh to get latest
-        
-        if (activeSessions.length === 0) {
-          console.log('[AutoRestore] No active sessions found, skipping restore')
-          return
-        }
-        
-        console.log(`[AutoRestore] Found ${activeSessions.length} active session(s), checking if tabs need to be created`)
-        
-        // Filter to only running sessions (active ones)
-        // CRITICAL: Filter based on current mode category to ensure sessions appear in correct mode
-        // Workflow sessions are handled by the Running Workflows drawer in Workflow mode
-        const runningSessions = activeSessions.filter(s => {
-          const isRunning = s.status === 'running'
-          const agentMode = s.agent_mode?.toLowerCase()
-          const isWorkflow = agentMode === 'workflow'
 
-          // Filter by current mode (chat and multi-agent both use simple agent mode)
-          if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
-            // In chat/multi-agent mode, skip workflow sessions
-            if (isWorkflow) {
-              console.log(`[AutoRestore] Skipping ${agentMode} session in ${selectedModeCategory} mode: ${s.session_id}`)
-              return false
+        // --- Phase 1: restore active / recently-completed sessions from backend ---
+        const activeSessions = await getActiveSessions(true)
+        const restoredSessionIds = new Set<string>()
+
+        if (activeSessions.length > 0) {
+          const runningSessions = activeSessions.filter(s => {
+            if (s.agent_mode?.toLowerCase() === 'workflow') return false
+            if (s.status === 'running') return true
+            if (s.status === 'completed' && s.last_activity) {
+              if (new Date(s.last_activity).getTime() > Date.now() - 30 * 60 * 1000) return true
             }
-          } else {
-            // Workflow mode handles its own session restore
             return false
-          }
-          
-          if (isRunning) return true
+          })
 
-          // Also include recently completed sessions (within last 30 minutes)
-          if (s.status === 'completed' && s.last_activity) {
-            const lastActivityTime = new Date(s.last_activity).getTime()
-            const thirtyMinutesAgo = Date.now() - (30 * 60 * 1000)
-            
-            if (lastActivityTime > thirtyMinutesAgo) {
-              console.log(`[AutoRestore] Including recently completed session: ${s.session_id} (completed at ${s.last_activity})`)
-              return true
-            }
-          }
+          // Only restore sessions that have a persisted tab or are actively running
+          const chatStore = useChatStore.getState()
+          const persistedSessionIds = new Set(
+            Object.values(chatStore.chatTabs)
+              .filter(tab => tab.sessionId)
+              .map(tab => tab.sessionId!)
+          )
+          const sessionsToRestore = runningSessions.filter(s =>
+            persistedSessionIds.has(s.session_id) || s.status === 'running'
+          )
 
-          return false
-        })
-        
-        if (runningSessions.length === 0) {
-          console.log('[AutoRestore] No running sessions found (after filtering), skipping restore')
-          return
-        }
-        
-        // Determine tab mode — match current mode so tabs appear in correct tab bar
-        const tabMode = (selectedModeCategory === 'multi-agent' ? 'multi-agent' : 'chat') as 'chat' | 'multi-agent'
-
-        // Collect persisted tabs that already have a sessionId (restored from localStorage)
-        const persistedTabsBySession = new Map<string, typeof chatStore.chatTabs[string]>()
-        // Collect orphaned tabs (no sessionId — legacy or cleared)
-        const orphanedTabs = [] as typeof chatStore.chatTabs[string][]
-        for (const tab of Object.values(chatStore.chatTabs)) {
-          if (tab.metadata?.mode !== tabMode) continue
-          if (tab.sessionId) {
-            persistedTabsBySession.set(tab.sessionId, tab)
-          } else {
-            orphanedTabs.push(tab)
-          }
-        }
-        orphanedTabs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-
-        // Build set of session IDs that have persisted tabs
-        const persistedSessionIds = new Set(persistedTabsBySession.keys())
-
-        // Only restore sessions that either:
-        // 1. Have a matching persisted tab (user had this tab open before refresh)
-        // 2. Are actively running (new session started since last refresh)
-        const sessionsToRestore = runningSessions.filter(s =>
-          persistedSessionIds.has(s.session_id) || s.status === 'running'
-        )
-
-        if (sessionsToRestore.length < runningSessions.length) {
-          console.log(`[AutoRestore] Filtered ${runningSessions.length} sessions down to ${sessionsToRestore.length} (only persisted tabs + running)`)
-        }
-
-        // For each session to restore, find or create a tab
-        for (const activeSession of sessionsToRestore) {
-          const sessionId = activeSession.session_id
-
-          // Check if a tab already exists for this session (by sessionId match — works with persisted sessionIds)
-          const existingTab = persistedTabsBySession.get(sessionId) ||
-            Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
-
-          if (existingTab) {
-            console.log(`[AutoRestore] Tab already exists for session ${sessionId}, skipping`)
-            if (sessionsToRestore.indexOf(activeSession) === 0) {
-              switchTab(existingTab.tabId)
-            }
-            continue
-          }
-
-          // CRITICAL: Check if this session is already being restored by another code path
-          if (sessionsBeingRestored.has(sessionId)) {
-            console.log(`[AutoRestore] Session ${sessionId} is already being restored, skipping`)
-            continue
-          }
-          sessionsBeingRestored.add(sessionId)
-
-          // Try to re-use an orphaned persisted tab (legacy: sessionId was null)
-          const sessionTitle = truncateTabTitle(activeSession.query || 'Active Chat')
-          let targetTabId: string
-
-          const matchedOrphanIdx = orphanedTabs.findIndex(tab => tab.name === sessionTitle)
-          if (matchedOrphanIdx >= 0) {
-            const orphanedTab = orphanedTabs[matchedOrphanIdx]
-            orphanedTabs.splice(matchedOrphanIdx, 1)
-            console.log(`[AutoRestore] Re-associating orphaned tab ${orphanedTab.tabId} with session ${sessionId} (name match)`)
-            chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
-            targetTabId = orphanedTab.tabId
-          } else if (orphanedTabs.length > 0) {
-            const orphanedTab = orphanedTabs.shift()!
-            console.log(`[AutoRestore] Re-associating orphaned tab ${orphanedTab.tabId} with session ${sessionId} (fallback)`)
-            chatStore.updateTabSessionId(orphanedTab.tabId, sessionId)
-            targetTabId = orphanedTab.tabId
-          } else {
-            // No orphans left — create a new tab (only for truly new running sessions)
-            const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-            const defaultEventMode: 'advanced' | 'micro' =
-              agentMode === 'orchestrator' ? 'advanced' : 'micro'
-
+          for (const activeSession of sessionsToRestore) {
             try {
-              console.log(`[AutoRestore] Creating tab for running session ${sessionId}: ${sessionTitle} (mode: ${tabMode})`)
-              targetTabId = await createChatTab(sessionTitle, { mode: tabMode }, sessionId, defaultEventMode)
-            } catch (error) {
-              console.error(`[AutoRestore] Failed to create tab for session ${sessionId}:`, error)
-              sessionsBeingRestored.delete(sessionId)
-              continue
-            }
-          }
-
-          const targetTab = chatStore.getTab(targetTabId)
-
-          if (!targetTab) {
-            console.error(`[AutoRestore] Tab ${targetTabId} not found in store`)
-            sessionsBeingRestored.delete(sessionId)
-            continue
-          }
-
-          // Load session config and events
-          try {
-            // Get full chat session details including config
-            const chatSession = await agentApi.getChatSession(sessionId)
-
-            // Restore config from stored session using shared utility
-            if (chatSession.config) {
-              const configUpdate = buildTabConfigFromSession(chatSession.config)
-              if (Object.keys(configUpdate).length > 0) {
-                chatStore.setTabConfig(targetTabId, configUpdate)
-                console.log(`[AutoRestore] Restored config for active session ${sessionId}`)
+              const tabId = await restoreSession(activeSession.session_id, {
+                title: activeSession.query || 'Active Chat',
+                source: 'auto-restore',
+              })
+              restoredSessionIds.add(activeSession.session_id)
+              if (sessionsToRestore.indexOf(activeSession) === 0) {
+                switchTab(tabId)
               }
+            } catch (err) {
+              console.error(`[SessionRestore] auto-restore failed for ${activeSession.session_id}:`, err)
             }
-
-            // Load events using shared utility
-            const eventMode: 'advanced' | 'tiny' | 'micro' = (targetTab.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
-            await hydrateTabEvents(sessionId, eventMode)
-            console.log(`[AutoRestore] Loaded events for session ${sessionId}`)
-
-            // Set streaming/completed status based on actual session status
-            if (activeSession.status === 'completed') {
-              chatStore.setTabStreaming(targetTabId, false)
-              chatStore.setTabCompleted(targetTabId, true)
-              console.log(`[AutoRestore] Restored completed session ${sessionId}`)
-            } else {
-              chatStore.setTabStreaming(targetTabId, true)
-              chatStore.setTabCompleted(targetTabId, false)
-            }
-
-            // If this is the first active session, switch to it
-            if (runningSessions.indexOf(activeSession) === 0) {
-              switchTab(targetTabId)
-              console.log(`[AutoRestore] Switched to first active session tab: ${targetTabId}`)
-            }
-          } catch (error) {
-            console.error(`[AutoRestore] Failed to load events/config for session ${sessionId}:`, error)
-          } finally {
-            // Remove from sessionsBeingRestored after processing is complete
-            sessionsBeingRestored.delete(sessionId)
           }
         }
 
-        console.log(`[AutoRestore] Completed restoring ${runningSessions.length} active session(s)`)
+        // --- Phase 2: hydrate persisted tabs that Phase 1 didn't cover ---
+        // (completed sessions from history that are in localStorage but have no events)
+        const chatStore = useChatStore.getState()
+        const tabs = Object.values(chatStore.chatTabs)
+        for (const tab of tabs) {
+          if (!tab.sessionId || tab.metadata?.mode === 'workflow') continue
+          if (restoredSessionIds.has(tab.sessionId)) continue // already handled above
+          const events = chatStore.getTabEvents(tab.sessionId)
+          if (events.length > 0) continue
+          try {
+            await restoreSession(tab.sessionId, { source: 'page-refresh', skipConfigRestore: true })
+          } catch (err) {
+            console.error(`[SessionRestore] page-refresh hydrate failed for tab ${tab.tabId}:`, err)
+          }
+        }
       } catch (error) {
-        console.error('[AutoRestore] Failed to restore active sessions:', error)
+        console.error('[SessionRestore] page-load restore failed:', error)
       }
     }
-    
-    // Restore in chat and multi-agent modes (workflow handles its own restore)
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
-      restoreActiveSessions()
-    }
-  }, [getActiveSessions, createChatTab, switchTab, setTabEvents, setTabLastEventIndex, selectedModeCategory])
 
-  // Hydrate persisted tabs that have a sessionId but no events (e.g. after page refresh for completed sessions)
-  // The auto-restore above only handles active/running sessions; completed sessions restored from history
-  // are persisted in localStorage but their events are not — they need to be reloaded from the DB.
-  useEffect(() => {
-    const chatStore = useChatStore.getState()
-    const tabs = Object.values(chatStore.chatTabs)
-
-    for (const tab of tabs) {
-      if (!tab.sessionId) continue
-      // Only hydrate chat and multi-agent tabs — workflow tabs handle their own restore
-      if (tab.metadata?.mode === 'workflow') continue
-      const events = chatStore.getTabEvents(tab.sessionId)
-      if (events.length > 0) continue
-
-      // This tab has a session but no events — hydrate it
-      const sessionId = tab.sessionId
-      const tabId = tab.tabId
-      console.log(`[HydratePersistedTab] Tab ${tabId} has session ${sessionId} but 0 events, hydrating`)
-
-      ;(async () => {
-        try {
-          // Config is already persisted in localStorage — only load events
-          const eventMode = (tab.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
-          await hydrateTabEvents(sessionId, eventMode)
-
-          // Restore completion/view-only state from backend status (may 404 for old sessions)
-          try {
-            const chatSession = await agentApi.getChatSession(sessionId)
-            if (chatSession.status === 'completed' || chatSession.status === 'stopped') {
-              chatStore.setTabCompleted(tabId, true)
-              chatStore.setTabStreaming(tabId, false)
-            }
-            if (chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error') {
-              chatStore.setTabMetadata(tabId, { isViewOnly: true })
-            }
-          } catch {
-            // Session not found in DB — use persisted metadata as-is
-          }
-
-          console.log(`[HydratePersistedTab] Hydrated tab ${tabId} for session ${sessionId}`)
-        } catch (err) {
-          console.error(`[HydratePersistedTab] Failed to hydrate tab ${tabId}:`, err)
-        }
-      })()
-    }
-  // Run once on mount — persisted tabs are available immediately from localStorage
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    restoreAll()
+  }, [getActiveSessions, switchTab, selectedModeCategory])
 
   // Only poll tabs that have their session ID in the backend's active sessions list
   // Backend determines activity based on event activity (10 min timeout)
@@ -1634,18 +1392,34 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         return false
       }
       
+      // Workflow tabs: keep SSE alive during active execution.
+      // The workflow orchestrator manages the lifecycle — sessions may complete between phases
+      // and be reactivated when the next query is submitted. Relying on activeSessionIds
+      // (refreshed every 60s) causes SSE to disconnect in the gap between phases.
+      // SSE is cleaned up when the tab is closed.
+      // However, exclude truly completed workflow tabs (isCompleted && !isStreaming) to avoid
+      // keeping SSE connections for old finished workflows.
+      if (tab.metadata?.mode === 'workflow') {
+        const freshTab = chatStore.getTab(tab.tabId)
+        // Keep SSE alive unless the tab is definitively completed and not streaming
+        if (freshTab?.isCompleted && !freshTab?.isStreaming) {
+          return false
+        }
+        return true
+      }
+
       // Skip completed sessions (definitely done) — unless bg agents are still running
       // In multi-agent mode, always keep polling (background agents can restart the session)
       const freshTab = chatStore.getTab(tab.tabId)
       if (tab.isCompleted && !(freshTab?.hasRunningBgAgents) && tab.metadata?.mode !== 'multi-agent') {
         return false
       }
-      
+
       // CRITICAL: Check streaming status directly from store (not from tab object)
       // This ensures we get the latest streaming status even if tabsWithSessions is stale
       const currentTab = chatStore.getTab(tab.tabId)
       const isStreaming = currentTab?.isStreaming ?? tab.isStreaming
-      
+
       // CRITICAL: Include tabs that are streaming (user just submitted a query)
       // This handles the case where a restored session is being replied to
       // The backend might not have added it to active sessions yet, but we should poll it
@@ -1676,18 +1450,48 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     return filtered
   }, [tabsWithSessions, activeSessionIds, chatTabs])
   
-  // Start/stop polling based on active sessions using store actions
-  // Use tabsWithActiveSessions (backend-driven) instead of updatePollingState (isStreaming-based)
+  // SSE connection management — connect/disconnect based on active sessions
+  // Falls back to polling if SSE connection fails (handled inside connectSSE's onError callback)
+  // NOTE: sseConnections is intentionally NOT in the dependency array to avoid infinite loops
+  // (connectSSE updates the store → sseConnections changes → effect re-fires → connectSSE again)
   useEffect(() => {
-    // If there are active sessions and no polling interval, start polling
-    if (tabsWithActiveSessions.length > 0 && !pollingInterval) {
-      startPolling(pollEvents)
+    // Read SSE state fresh from store (not from React state to avoid dep cycle)
+    const currentSSE = useChatStore.getState().sseConnections
+
+    // Determine which session IDs need SSE connections
+    const neededSessionIds = new Set<string>()
+    for (const tab of tabsWithActiveSessions) {
+      if (tab.sessionId) neededSessionIds.add(tab.sessionId)
     }
-    // If there are no active sessions but polling is running, stop it
-    else if (tabsWithActiveSessions.length === 0 && pollingInterval) {
+
+    // Connect SSE for sessions that don't have a connection yet
+    for (const tab of tabsWithActiveSessions) {
+      if (!tab.sessionId) continue
+      const sid = tab.sessionId
+      if (currentSSE[sid]) continue // Already connected
+
+      const eventMode = tab.eventMode || 'micro'
+      connectSSE(
+        sid,
+        eventMode,
+        (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
+        (msg: SSEStatusMessage) => handleSSEStatus(msg, sid)
+      )
+    }
+
+    // Disconnect SSE for sessions that are no longer active
+    for (const sid of Object.keys(currentSSE)) {
+      if (!neededSessionIds.has(sid)) {
+        disconnectSSE(sid)
+      }
+    }
+
+    // Stop polling when no active sessions
+    if (neededSessionIds.size === 0 && pollingInterval) {
       stopPolling()
     }
-  }, [pollingInterval, startPolling, stopPolling, pollEvents, tabsWithActiveSessions, activeSessionIds, activeTab])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sseConnections excluded to prevent infinite loop
+  }, [tabsWithActiveSessions, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, pollingInterval, startPolling, stopPolling, pollEvents])
 
   // Trigger immediate reload when event mode changes
   // This ensures events are reloaded with the new filter when user switches modes
@@ -1696,32 +1500,33 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   useEffect(() => {
     const currentEventMode = activeTab?.eventMode
     const prevEventMode = prevEventModeRef.current
-    
+
     // Only trigger if event mode actually changed and we have a session
     if (currentEventMode && currentEventMode !== prevEventMode && activeTab?.sessionId) {
       // Update ref to current value
       prevEventModeRef.current = currentEventMode
-      
-      // When event mode changes, fetch events from the beginning (sinceIndex=0)
-      // The store already cleared events and reset index to -1
-      // We need to explicitly fetch from beginning to get all events with new filter
+
+      const sessionId = activeTab.sessionId!
+
+      // If SSE is connected for this session, reconnect with new mode
+      const chatStore = useChatStore.getState()
+      const sseConn = chatStore.sseConnections[sessionId]
+      if (sseConn) {
+        sseConn.reconnectWithMode(currentEventMode)
+      }
+
+      // Also fetch from beginning to backfill events with new filter
       const fetchFromBeginning = async () => {
-        const chatStore = useChatStore.getState()
         const eventMode = currentEventMode
-        const sessionId = activeTab.sessionId!
-        
+
         try {
-          // Explicitly fetch from beginning (sinceIndex=0) with new event mode
           const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
-          
+
           if (response.events.length > 0) {
-            // Add events to store
             chatStore.addTabEvents(sessionId, response.events)
-            // Update last event index
             if (response.last_processed_index !== undefined) {
               chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
             }
-            // Update hasMoreOlderEvents flag
             if (response.has_more !== undefined) {
               chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
             }
@@ -1730,438 +1535,25 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           logger.error('ChatArea', 'Failed to fetch events from beginning:', error)
         }
       }
-      
+
       fetchFromBeginning()
     } else if (currentEventMode !== prevEventMode) {
-      // Update ref even if we don't trigger reload (e.g., no sessionId)
       prevEventModeRef.current = currentEventMode
     }
   }, [activeTab?.eventMode, activeTab?.sessionId])
 
-  // Cleanup polling on unmount
+  // Cleanup polling and SSE on unmount
   useEffect(() => {
-    const timeout = batchTimeoutRef.current
     return () => {
+      // Disconnect all SSE connections
+      disconnectAllSSE()
       // Use store's stopPolling to clean up
       if (pollingInterval) {
         stopPolling()
       }
-      // Cleanup debounced function
-      debouncedFlush.cancel()
-      // Cleanup batch timeout if it exists
-      if (timeout) {
-        clearTimeout(timeout)
-      }
     }
-  }, [pollingInterval, stopPolling, debouncedFlush])
+  }, [pollingInterval, stopPolling, disconnectAllSSE])
   
-  // Simple session state detection
-  useEffect(() => {
-    if (!chatSessionId) {
-      setSessionState('not_found')
-      return
-    }
-
-    // Extract original session ID (remove timestamp if present)
-    const originalSessionId = chatSessionId.includes('_') ? chatSessionId.split('_')[0] : chatSessionId
-    
-    // Prevent infinite loops
-    if (processingRef.current === originalSessionId) {
-      return
-    }
-    
-    const handleSession = async () => {
-      processingRef.current = originalSessionId
-      setIsCheckingActiveSessions(true)
-      setSessionState('loading')
-      
-      try {
-        // Check if session is currently active using cached active sessions
-        const { getActiveSessions } = useChatStore.getState()
-        const activeSessions = await getActiveSessions()
-        const activeSession = activeSessions.find(
-          (session: ActiveSessionInfo) => session.session_id === originalSessionId
-        )
-        
-        if (activeSession) {
-          setSessionState('active')
-          
-          // CRITICAL: Create a tab for this active session if one doesn't exist
-          // This ensures events can be displayed (displayEvents depends on activeTab?.sessionId)
-          const chatStore = useChatStore.getState()
-          let tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
-          
-          // Fetch full chat session details to restore config
-          let chatSession: Awaited<ReturnType<typeof agentApi.getChatSession>> | null = null
-          try {
-            chatSession = await agentApi.getChatSession(originalSessionId)
-            console.log(`[History] Retrieved chat session for active session ${originalSessionId}:`, { 
-              status: chatSession.status, 
-              title: chatSession.title,
-              hasConfig: !!chatSession.config 
-            })
-          } catch (error) {
-            console.error(`[History] Failed to fetch chat session for active session ${originalSessionId}:`, error)
-            // Continue without config restoration
-          }
-          
-          if (!tabWithSession) {
-            // CRITICAL: Check if this session is already being restored by auto-restore
-            // This prevents race conditions creating duplicate tabs
-            if (sessionsBeingRestored.has(originalSessionId)) {
-              console.log(`[History] Session ${originalSessionId} is already being restored by auto-restore, waiting...`)
-              // Wait a bit and check again - auto-restore should finish soon
-              await new Promise(resolve => setTimeout(resolve, 1000))
-              // Re-check if tab was created
-              tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
-              if (tabWithSession) {
-                console.log(`[History] Tab was created by auto-restore for session ${originalSessionId}, using it`)
-                switchTab(tabWithSession.tabId)
-                setIsCheckingActiveSessions(false)
-                processingRef.current = null
-                return
-              }
-              // Still no tab and still being restored - bail out to avoid conflict
-              if (sessionsBeingRestored.has(originalSessionId)) {
-                console.log(`[History] Session ${originalSessionId} still being restored, bailing out`)
-                setIsCheckingActiveSessions(false)
-                processingRef.current = null
-                return
-              }
-            }
-
-            // Mark as being restored to prevent duplicate creation
-            sessionsBeingRestored.add(originalSessionId)
-
-            // Create a tab for this active session (truncate to 3 words for display)
-            const sessionTitle = truncateTabTitle(chatSessionTitle || chatSession?.title || activeSession.query || 'Active Chat')
-
-            // Determine default event mode based on agent mode
-            // orchestrator -> advanced (more complex, needs detailed view)
-            // simple -> micro (minimal view for restored sessions)
-            const agentMode = activeSession.agent_mode?.toLowerCase() || ''
-            const defaultEventMode: 'advanced' | 'micro' =
-              agentMode === 'orchestrator' ? 'advanced' : 'micro'
-
-            try {
-              const newTabId = await createChatTab(sessionTitle, { mode: 'chat' }, originalSessionId, defaultEventMode)
-              tabWithSession = chatStore.getTab(newTabId)
-              if (!tabWithSession) {
-                console.error(`[History] Tab ${newTabId} was created but not found in store`)
-                setIsLoadingHistory(false)
-                processingRef.current = null
-                return
-              }
-              
-              // Restore config using shared utility
-              if (chatSession?.config) {
-                const configUpdate = buildTabConfigFromSession(chatSession.config)
-                if (Object.keys(configUpdate).length > 0) {
-                  chatStore.setTabConfig(newTabId, configUpdate)
-                  console.log(`[History] Restored config for active session ${originalSessionId}`)
-                }
-              }
-
-              // Switch to the new tab to display events
-              switchTab(newTabId)
-              console.log(`[History] Created tab ${newTabId} for active session ${originalSessionId}`)
-            } catch (error) {
-              console.error(`[History] Failed to create tab for active session:`, error)
-              setIsLoadingHistory(false)
-              processingRef.current = null
-              // Remove from sessionsBeingRestored on error
-              sessionsBeingRestored.delete(originalSessionId)
-              return
-            } finally {
-              // Remove from sessionsBeingRestored after processing is complete
-              sessionsBeingRestored.delete(originalSessionId)
-            }
-          } else {
-            // Tab exists, restore config if not already restored
-            if (chatSession?.config) {
-              const configUpdate = buildTabConfigFromSession(chatSession.config)
-              if (Object.keys(configUpdate).length > 0) {
-                chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
-                console.log(`[History] Restored config for existing active session tab ${tabWithSession.tabId}`)
-              }
-            }
-
-            // Switch to it (events should already be loaded)
-            switchTab(tabWithSession.tabId)
-            console.log(`[History] Tab ${tabWithSession.tabId} already exists for active session ${originalSessionId}, switching to it`)
-          }
-          
-          // Ensure we have a valid tab with sessionId
-          if (!tabWithSession || !tabWithSession.sessionId) {
-            console.error(`[History] No valid tab or sessionId found for active session ${originalSessionId}`)
-            setIsLoadingHistory(false)
-            processingRef.current = null
-            return
-          }
-          
-          // CRITICAL: Always use tabEvents - store by sessionId
-          const sessionIdForHistory = tabWithSession.sessionId
-          
-          // Check if events are already loaded for this session
-          const existingEvents = getTabEvents(sessionIdForHistory)
-          if (existingEvents.length > 0) {
-            // Events already loaded, skip reloading
-            console.log(`[History] Events already loaded for active session ${sessionIdForHistory} (${existingEvents.length} events), skipping reload`)
-            setIsLoadingHistory(false)
-          } else {
-            // First, load historical events for the active session
-            setIsLoadingHistory(true)
-            
-            try {
-              // Get event mode from the tab we just created/switched to
-              const eventMode: 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
-              const response = await agentApi.getSessionEvents(originalSessionId, 0, { eventMode })
-              
-              // Convert and set historical events
-              // response.events is already PollingEvent[] from GetEventsResponse
-              const pollingEvents: PollingEvent[] = response.events
-
-              // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
-              // When restoring historical events, we want to replace any existing events to maintain order
-              setTabEvents(sessionIdForHistory, pollingEvents)
-              // CRITICAL: Use last_processed_index from backend (not events.length - 1)
-              // Backend tracks the actual event index which may be higher due to filtering/cleanup
-              const lastIndex = response.last_processed_index ?? (pollingEvents.length > 0 ? pollingEvents.length - 1 : -1)
-              setTabLastEventIndex(sessionIdForHistory, lastIndex)
-              console.log(`[History] Loaded ${pollingEvents.length} events for session ${sessionIdForHistory}, last_processed_index=${lastIndex}`)
-              setIsLoadingHistory(false)
-            } catch (error) {
-              console.error('[SESSION_STATE] Failed to load historical events:', error)
-              setIsLoadingHistory(false)
-              addToast('Failed to load historical events', 'info')
-            }
-          }
-          
-          // Now reconnect to active session for live updates
-          try {
-            const reconnectResponse = await agentApi.reconnectSession(activeSession.session_id)
-            
-            if (reconnectResponse.session_id) {
-              setIsStreaming(true)
-              setIsCompleted(false)
-              
-              // Start polling for new events - use the store's polling management
-              if (!pollingInterval) {
-                console.log('[SESSION_STATE] Starting polling interval after reconnecting to active session')
-                startPolling(pollEvents)
-              } else {
-                console.log('[SESSION_STATE] Polling interval already exists, reusing it')
-              }
-              
-              // Note: The global pollEvents function will poll all tabs with sessionIds,
-              // including this reconnected session, so we don't need separate polling logic here
-              addToast('Reconnected to active session', 'success')
-              
-            } else {
-              console.error('[SESSION_STATE] No session_id in reconnect response:', reconnectResponse)
-              addToast('Failed to reconnect - no session ID', 'info')
-            }
-          } catch (error) {
-            console.error('[SESSION_STATE] Failed to reconnect to active session:', error)
-            addToast('Failed to reconnect to active session', 'info')
-          }
-          
-          processingRef.current = null
-          return
-        }
-        
-        // Check if session exists in database (completed or active)
-        try {
-          // Get full chat session details including config
-          const chatSession = await agentApi.getChatSession(originalSessionId)
-          console.log(`[History] Retrieved chat session for ${originalSessionId}:`, { 
-            status: chatSession.status, 
-            title: chatSession.title,
-            hasConfig: !!chatSession.config 
-          })
-          
-          // Handle 'completed', 'active', 'stopped', and 'error' status
-          // These are all non-active sessions that should load events from database
-          if (chatSession.status === 'completed' || chatSession.status === 'active' || chatSession.status === 'stopped' || chatSession.status === 'error') {
-            setSessionState('completed')
-            
-            // CRITICAL: Create a tab for this historical session if one doesn't exist
-            // This ensures events can be displayed (displayEvents depends on activeTab?.sessionId)
-            const chatStore = useChatStore.getState()
-            let tabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === originalSessionId)
-            
-            if (!tabWithSession) {
-              // Create a tab for this historical session (truncate to 3 words for display)
-              const sessionTitle = truncateTabTitle(chatSessionTitle || chatSession.title || 'Historical Chat')
-              
-              // View-only for completed/stopped/error (cannot continue conversation)
-              const isViewOnly = chatSession.status === 'completed' || chatSession.status === 'stopped' || chatSession.status === 'error'
-              
-              // Determine default event mode based on agent mode
-              // orchestrator -> advanced (more complex, needs detailed view)
-              // simple -> micro (minimal view for restored sessions)
-              const agentMode = chatSession.agent_mode?.toLowerCase() || ''
-              const defaultEventMode: 'advanced' | 'micro' =
-                agentMode === 'orchestrator' ? 'advanced' : 'micro'
-
-              try {
-                const newTabId = await createChatTab(sessionTitle, { mode: 'chat', isViewOnly }, originalSessionId, defaultEventMode)
-                tabWithSession = chatStore.getTab(newTabId)
-                if (!tabWithSession) {
-                  console.error(`[History] Tab ${newTabId} was created but not found in store`)
-                  setIsLoadingHistory(false)
-                  processingRef.current = null
-                  return
-                }
-                
-                // Restore config using shared utility
-                if (chatSession.config) {
-                  const configUpdate = buildTabConfigFromSession(chatSession.config)
-                  if (Object.keys(configUpdate).length > 0) {
-                    chatStore.setTabConfig(newTabId, configUpdate)
-                    console.log(`[History] Restored config for session ${originalSessionId}`)
-                  }
-                }
-
-                // Switch to the new tab to display events
-                switchTab(newTabId)
-                console.log(`[History] Created tab ${newTabId} for historical session ${originalSessionId}`)
-              } catch (error) {
-                console.error(`[History] Failed to create tab for historical session:`, error)
-                setIsLoadingHistory(false)
-                processingRef.current = null
-                return
-              }
-            } else {
-              // Tab exists, restore config if available
-              if (chatSession.config) {
-                const configUpdate = buildTabConfigFromSession(chatSession.config)
-                if (Object.keys(configUpdate).length > 0) {
-                  chatStore.setTabConfig(tabWithSession.tabId, configUpdate)
-                  console.log(`[History] Restored config for existing tab ${tabWithSession.tabId}`)
-                }
-              }
-
-              // Switch to it (events should already be loaded)
-              switchTab(tabWithSession.tabId)
-              
-              // Check/Update event mode if needed (e.g. if created as micro but needs advanced)
-              const agentMode = chatSession.agent_mode?.toLowerCase() || ''
-              const targetEventMode: 'advanced' | 'micro' =
-                agentMode === 'orchestrator' ? 'advanced' : 'micro'
-              
-              if (tabWithSession.eventMode !== targetEventMode) {
-                 const chatStore = useChatStore.getState()
-                 chatStore.setTabEventMode(tabWithSession.tabId, targetEventMode)
-                 console.log(`[History] Updated event mode for tab ${tabWithSession.tabId} to ${targetEventMode}`)
-              }
-              
-              console.log(`[History] Tab ${tabWithSession.tabId} already exists for session ${originalSessionId}, switching to it`)
-            }
-            
-            // Ensure we have a valid tab with sessionId
-            if (!tabWithSession || !tabWithSession.sessionId) {
-              console.error(`[History] No valid tab or sessionId found for session ${originalSessionId}`)
-              setIsLoadingHistory(false)
-              processingRef.current = null
-              return
-            }
-            
-            const sessionIdForHistory = tabWithSession.sessionId
-            
-            // Check if events are already loaded for this session
-            const existingEvents = getTabEvents(sessionIdForHistory)
-            if (existingEvents.length > 0) {
-              // Events already loaded, skip reloading
-              console.log(`[History] Events already loaded for session ${sessionIdForHistory} (${existingEvents.length} events), skipping reload`)
-              setIsCompleted(true)
-              setIsStreaming(false)
-              setHasActiveChat(false)
-              setIsLoadingHistory(false)
-              processingRef.current = null
-              return
-            }
-            
-            // Load historical events from database (special code path for sidebar clicks - no polling)
-            setIsLoadingHistory(true)
-            try {
-            // Get event mode from the tab we just created/switched to
-            const eventMode: 'advanced' | 'tiny' | 'micro' = (tabWithSession.eventMode || 'micro') as 'advanced' | 'tiny' | 'micro'
-              console.log(`[History] Loading events from database for completed session ${originalSessionId} with eventMode: ${eventMode}`)
-              
-              // Use database endpoint (not polling endpoint) for completed sessions
-              // Backend now returns the same structure as polling API (events.Event[])
-              const dbResponse = await agentApi.getChatSessionEvents(originalSessionId, 1000, 0, eventMode)
-              
-              console.log(`[History] Database API response for session ${originalSessionId}:`, {
-                eventCount: dbResponse.events?.length || 0,
-                total: dbResponse.total,
-                limit: dbResponse.limit,
-                offset: dbResponse.offset
-              })
-            
-              // Backend now returns PollingEvent[] directly (same structure as polling API)
-              // No conversion needed - use events directly
-              const allPollingEvents: PollingEvent[] = (dbResponse.events || []) as PollingEvent[]
-              
-              // Apply event mode filtering (frontend-side filtering)
-              const filteredEvents = allPollingEvents.filter(event => {
-                if (!event.type) return false
-                return shouldShowEventByMode(event.type, eventMode)
-              })
-            
-            // CRITICAL: Use setTabEvents instead of addTabEvents to ensure correct chronological order
-            // When restoring historical events, we want to replace any existing events to maintain order
-            setTabEvents(sessionIdForHistory, filteredEvents)
-            setTabLastEventIndex(sessionIdForHistory, filteredEvents.length > 0 ? filteredEvents.length - 1 : -1)
-              console.log(`[History] Loaded ${filteredEvents.length} events (${allPollingEvents.length} total) for completed session ${sessionIdForHistory}`)
-              
-              if (filteredEvents.length === 0 && allPollingEvents.length === 0) {
-                console.warn(`[History] No events found for session ${originalSessionId}. This might mean:`)
-                console.warn(`  - Events were not stored in the backend`)
-                console.warn(`  - Session ID mismatch between chat_sessions and events tables`)
-                console.warn(`  - Events were deleted`)
-              }
-            } catch (error) {
-              console.error(`[History] Failed to load events for session ${originalSessionId}:`, error)
-              addToast('Failed to load chat history events', 'error')
-            } finally {
-              setIsLoadingHistory(false)
-            }
-            // Deprecated: setTotalEvents removed
-            setIsCompleted(true)
-            setIsStreaming(false)
-            setHasActiveChat(false)
-            setIsLoadingHistory(false)
-            processingRef.current = null
-            return
-          } else {
-            console.log(`[History] Session ${originalSessionId} found but has unexpected status: ${chatSession.status}`)
-          }
-        } catch (error: unknown) {
-          // Session not found in database or other error
-          const axiosError = error as { response?: { status?: number }; message?: string }
-          if (axiosError?.response?.status === 404) {
-            console.log(`[History] Session ${originalSessionId} not found in database (404)`)
-          } else {
-            console.error(`[History] Error loading chat session ${originalSessionId}:`, error)
-          }
-        }
-        
-        // Session not found
-        setSessionState('not_found')
-        
-      } catch (error) {
-        console.error('[SESSION_STATE] Error:', error)
-        setSessionState('error')
-      } finally {
-        setIsCheckingActiveSessions(false)
-        processingRef.current = null
-      }
-    }
-
-    handleSession()
-  }, [chatSessionId, addToast]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stopStreaming = useCallback(async () => {
     const chatStore = useChatStore.getState()
@@ -2323,10 +1715,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     chatStore.setTabCompleted(currentTab.tabId, false)
     chatStore.setTabStreaming(currentTab.tabId, true)
 
-    // Start polling immediately
-    if (!chatStore.pollingInterval) {
-      startPolling(pollEvents)
-    }
+    // Reset lastEventIndex so polling starts fresh from the in-memory event store
+    // (critical when continuing a restored session — DB events have different indices than in-memory)
+    chatStore.setTabLastEventIndex(tabSessionId, -1)
+
+    // SSE connection is established in connectAfterRefresh below (after getActiveSessions)
+    // Polling is only used as a fallback if SSE fails (handled by connectSSE's onError)
 
     processedCompletionEventsRef.current.clear()
 
@@ -2424,20 +1818,27 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           chatStore.setSessionState('active')
         }
 
-        // Refresh active sessions cache then start polling
-        const startPollingAfterRefresh = () => {
-          const currentPollingInterval = useChatStore.getState().pollingInterval
-          if (!currentPollingInterval) {
-            startPolling(pollEvents)
+        // Refresh active sessions cache — SSE connection useEffect will pick up the new session
+        const connectAfterRefresh = () => {
+          const store = useChatStore.getState()
+          const sid = responseSessionId
+          const eventMode = (currentTab.eventMode || 'micro') as string
+          // Connect SSE for the new session immediately
+          if (!store.sseConnections[sid]) {
+            connectSSE(
+              sid,
+              eventMode,
+              (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
+              (msg: SSEStatusMessage) => handleSSEStatus(msg, sid)
+            )
           }
-          setTimeout(() => { pollEvents() }, 150)
         }
 
         getActiveSessions(true)
-          .then(startPollingAfterRefresh)
+          .then(connectAfterRefresh)
           .catch(error => {
             logger.error('ChatArea', 'Failed to refresh active sessions cache:', error)
-            startPollingAfterRefresh()
+            connectAfterRefresh()
           })
       } else {
         logger.error('ChatArea', 'Backend error:', response)
@@ -2448,7 +1849,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       resetStreamingState(currentTab.tabId)
     }
 
-  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState])
+  }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
 
   // Auto-send queued messages one by one when chat completes
   const prevIsCompletedRef = useRef<boolean>(false)
@@ -2603,14 +2004,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         />
       )}
 
-      {/* Header - hidden when used inside WorkflowLayout */}
-      {!hideHeader && (
-      <ChatHeader
-        chatSessionTitle={chatSessionTitle}
-        chatSessionId={chatSessionId}
-        sessionState={sessionState === 'not_found' ? 'not-found' : sessionState}
-      />
-      )}
 
 
       {/* Chat Content - Separated to prevent input re-renders */}
@@ -2676,7 +2069,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* Empty State - Show when no events and not in historical session */}
-            {!chatSessionId && displayEvents.length === 0 && !isStreaming && (
+            {displayEvents.length === 0 && !isStreaming && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             
@@ -2687,7 +2080,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         ) : (
           <>
             {/* Empty State - Show when no events and not in historical session */}
-            {!chatSessionId && displayEvents.length === 0 && !isStreaming && (
+            {displayEvents.length === 0 && !isStreaming && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 

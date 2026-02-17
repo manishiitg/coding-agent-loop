@@ -6,7 +6,6 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
-import { ChatHeader } from '../ChatHeader'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
 import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/useRunningWorkflowsStore'
 import { useAppStore } from '../../stores/useAppStore'
@@ -59,7 +58,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
     }
 
     // Load events for this session
-    const eventMode = 'tiny'
+    const eventMode = 'micro'
     const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
     const events = response.events as PollingEvent[]
 
@@ -972,12 +971,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   if (!activeWorkflowPreset) {
     return (
       <div className={`flex flex-col h-full ${className}`}>
-        {/* Header */}
-        <ChatHeader
-          chatSessionTitle=""
-          chatSessionId=""
-          sessionState="active"
-        />
         
         <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
@@ -1013,7 +1006,24 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             onStartPhase={handleStartPhase}
             onCreatePlan={onCreatePlan || handleCreatePlan}
             showChatArea={showChatArea}
-            onToggleChatArea={() => setShowChatArea(!showChatArea)}
+            onToggleChatArea={() => {
+              const newShow = !showChatArea
+              if (newShow) {
+                // Ensure a workflow tab is active when showing the chat panel
+                // (activeTabId might point to a chat/multi-agent tab from a different mode)
+                const chatStore = useChatStore.getState()
+                const activeTab = chatStore.getActiveTab()
+                if (!activeTab || activeTab.metadata?.mode !== 'workflow') {
+                  const workflowTabs = Object.values(chatStore.chatTabs)
+                    .filter(t => t.metadata?.mode === 'workflow')
+                    .sort((a, b) => b.createdAt - a.createdAt)
+                  if (workflowTabs.length > 0) {
+                    chatStore.switchTab(workflowTabs[0].tabId)
+                  }
+                }
+              }
+              setShowChatArea(newShow)
+            }}
             className="h-full"
           />
         </div>

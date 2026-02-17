@@ -2138,18 +2138,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const effectiveError = isPlanNotFoundError ? null : error
   const hasError = effectiveError || workspaceStateError
 
-  console.log('[WORKFLOW_BUILDER] WorkflowCanvas render check:', {
-    error,
-    isPlanNotFoundError,
-    effectiveError,
-    workspaceStateError,
-    hasError,
-    hasPlan: !!(workflowMode === 'plan' ? (plan && plan.steps && plan.steps.length > 0) : false),
-    loading,
-    isLoadingWorkspaceState,
-    workspacePath,
-  })
-
   if (hasError) {
     return (
       <div className={`flex items-center justify-center h-full bg-gray-50 dark:bg-gray-900 ${className}`}>

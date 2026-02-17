@@ -1,9 +1,12 @@
 import React, { useState } from 'react'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import { playNotificationSound } from '../../utils/sound'
-
-// Module-level cache: survives React remounts, resets on page reload
-const submittedFeedbackCache = new Map<string, string>()
+import {
+  hasBeenNotified,
+  markNotified,
+  getSubmittedFeedback,
+  setSubmittedFeedback as persistSubmittedFeedback,
+} from '../../utils/notificationDedup'
 
 export interface BlockingHumanFeedbackEvent {
   question?: string
@@ -37,7 +40,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   onFeedbackSubmitted,
   isApproving = false
 }) => {
-  const cachedValue = event.data.request_id ? submittedFeedbackCache.get(event.data.request_id) : undefined
+  const cachedValue = event.data.request_id ? getSubmittedFeedback(event.data.request_id) : undefined
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(!!cachedValue)
@@ -87,41 +90,45 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     }
   }, [hasSubmitted])
 
-  // Show browser notification when component mounts (if not already submitted)
+  // Show browser notification when component mounts (if not already submitted or notified)
   React.useEffect(() => {
+    const requestId = event.data.request_id || ''
     const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
-    if (enabled && !hasSubmitted && 'Notification' in window && Notification.permission === 'granted') {
-      try {
-        playNotificationSound()
-        
-        const notification = new Notification('Action Required', {
-          body: question,
-          icon: '/favicon.ico',
-          tag: `blocking-feedback-${event.data.request_id || Date.now()}`,
-          requireInteraction: true,
-          silent: false
-        })
+    // Skip if already submitted, already notified (e.g. page refresh), or notifications disabled
+    if (!enabled || hasSubmitted || (requestId && hasBeenNotified(requestId))) return
+    if (!('Notification' in window) || Notification.permission !== 'granted') return
 
-        notification.onclick = () => {
-          window.focus()
-          notification.close()
-        }
+    try {
+      playNotificationSound()
+      if (requestId) markNotified(requestId)
 
-        notification.onerror = (error) => {
-          console.error('[BLOCKING_FEEDBACK] Notification error:', error)
-        }
+      const notification = new Notification('Action Required', {
+        body: question,
+        icon: '/favicon.ico',
+        tag: `blocking-feedback-${requestId || Date.now()}`,
+        requireInteraction: true,
+        silent: false
+      })
 
-        // Auto-close notification after 30 seconds
-        setTimeout(() => {
-          notification.close()
-        }, 30000)
-
-        return () => {
-          notification.close()
-        }
-      } catch (error) {
-        console.error('[BLOCKING_FEEDBACK] Failed to create notification:', error)
+      notification.onclick = () => {
+        window.focus()
+        notification.close()
       }
+
+      notification.onerror = (error) => {
+        console.error('[BLOCKING_FEEDBACK] Notification error:', error)
+      }
+
+      // Auto-close notification after 30 seconds
+      setTimeout(() => {
+        notification.close()
+      }, 30000)
+
+      return () => {
+        notification.close()
+      }
+    } catch (error) {
+      console.error('[BLOCKING_FEEDBACK] Failed to create notification:', error)
     }
   }, [question, event.data.request_id, hasSubmitted])
 
@@ -136,7 +143,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       setIsSubmittingFeedback(true)
       try {
         await onSubmitFeedback(event.data.request_id, feedback.trim())
-        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, feedback.trim())
+        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, feedback.trim())
         setSubmittedFeedback(feedback.trim())
         setHasSubmitted(true)
         setFeedback('')
@@ -155,9 +162,10 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       try {
         if (onSubmitFeedback) {
           await onSubmitFeedback(event.data.request_id, "Approve")
+        } else {
+          onApprove(event.data.request_id, { ...event.data, feedback: "Approve" })
         }
-        onApprove(event.data.request_id, { ...event.data, feedback: "Approve" })
-        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, yesLabel || "Approved")
+        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, yesLabel || "Approved")
         setSubmittedFeedback(yesLabel || "Approved")
         setHasSubmitted(true)
         triggerScrollCallback()
@@ -175,9 +183,10 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
       try {
         if (onSubmitFeedback) {
           await onSubmitFeedback(event.data.request_id, "Reject")
+        } else {
+          onApprove(event.data.request_id, { ...event.data, feedback: "Reject" })
         }
-        onApprove(event.data.request_id, { ...event.data, feedback: "Reject" })
-        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, "Reject")
+        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, "Reject")
         setSubmittedFeedback("Reject")
         setHasSubmitted(true)
         triggerScrollCallback()
@@ -193,10 +202,11 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     if (event.data.request_id && onSubmitFeedback) {
       setIsSubmittingFeedback(true)
       try {
-        const optionValue = `option${index}`
-        await onSubmitFeedback(event.data.request_id, optionValue)
-        if (event.data.request_id) submittedFeedbackCache.set(event.data.request_id, options[index] || optionValue)
-        setSubmittedFeedback(options[index] || optionValue)
+        // Send the actual option label text so the LLM clearly understands the user's choice
+        const optionLabel = options[index] || `option${index}`
+        await onSubmitFeedback(event.data.request_id, optionLabel)
+        if (event.data.request_id) persistSubmittedFeedback(event.data.request_id, optionLabel)
+        setSubmittedFeedback(optionLabel)
         setHasSubmitted(true)
         triggerScrollCallback()
       } catch (error) {
@@ -249,16 +259,13 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   // Waiting state
   return (
     <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-md px-3 py-2.5 my-2">
-      <div className="flex items-center gap-3">
-        {/* Question text */}
-        <div className="flex-1 min-w-0">
-          <div className="text-xs text-indigo-700 dark:text-indigo-300">
-            <MarkdownRenderer content={question} className="text-xs" />
-          </div>
-        </div>
+      {/* Question text */}
+      <div className="text-xs text-indigo-700 dark:text-indigo-300">
+        <MarkdownRenderer content={question} className="text-xs" />
+      </div>
 
-        {/* Action Buttons */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+      {/* Action Buttons */}
+      <div className="flex flex-wrap items-center gap-2 mt-2">
           {hasMultipleOptions ? (
             // Multiple-choice mode
             options.map((optionLabel, index) => {
@@ -302,7 +309,6 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
               </button>
             </>
           ) : null}
-        </div>
       </div>
 
       {/* Feedback textarea + buttons — below the main row, only in normal mode */}

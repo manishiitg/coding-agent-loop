@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools, persist } from 'zustand/middleware'
-import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary, DelegationTierConfig } from '../services/api-types'
+import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary, DelegationTierConfig, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
+import { SSEConnection } from '../services/sse'
 import { shouldShowEventByMode } from '../components/events/eventModeUtils'
 import type { EventMode } from '../components/events/EventContext'
 import type { StoreActions } from './types'
@@ -23,7 +24,6 @@ export type PerModeEventCounts = Record<EventMode, number>
 const computePerModeCounts = (events: PollingEvent[]): PerModeEventCounts => {
   return {
     advanced: events.length, // Advanced shows all events
-    tiny: events.filter(e => e.type && shouldShowEventByMode(e.type, 'tiny')).length,
     micro: events.filter(e => e.type && shouldShowEventByMode(e.type, 'micro')).length,
   }
 }
@@ -113,7 +113,7 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
-  eventMode: 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
+  eventMode: 'advanced' | 'micro'  // Event display mode for this tab
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
@@ -125,7 +125,7 @@ export interface ChatTab {
     phaseName?: string  // For workflow mode: phase name
     mode?: 'chat' | 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
-    isViewOnly?: boolean  // True when restored from history - view only, cannot continue
+    isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
   }
 }
 
@@ -340,7 +340,7 @@ interface ChatState extends StoreActions {
   clearToasts: () => void
   
   // Tab management actions
-  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'tiny' | 'micro') => Promise<string>  // Returns tabId
+  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'micro') => Promise<string>  // Returns tabId
   switchTab: (tabId: string) => void
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
@@ -351,7 +351,7 @@ interface ChatState extends StoreActions {
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
-  setTabEventMode: (tabId: string, eventMode: 'advanced' | 'tiny' | 'micro') => void
+  setTabEventMode: (tabId: string, eventMode: 'advanced' | 'micro') => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
@@ -383,6 +383,12 @@ interface ChatState extends StoreActions {
   // Delegation streaming text actions
   appendDelegationStreamingChunk: (delegationId: string, chunkIndex: number, chunk: string) => void
   clearDelegationStreamingText: (delegationId: string) => void
+
+  // SSE connection management
+  sseConnections: Record<string, SSEConnection>  // sessionId -> SSEConnection
+  connectSSE: (sessionId: string, eventMode: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void) => void
+  disconnectSSE: (sessionId: string) => void
+  disconnectAllSSE: () => void
 
   // Helper methods
   resetChatState: () => void
@@ -438,6 +444,9 @@ export const useChatStore = create<ChatState>()(
       // Sub-agent streaming text accumulation (per delegation)
       delegationStreamingText: {},
       lastDelegationChunkIndex: {},
+
+      // SSE connections (not persisted)
+      sseConnections: {},
 
       // Actions
       setIsStreaming: (streaming) => {
@@ -580,21 +589,37 @@ export const useChatStore = create<ChatState>()(
           }
 
           const newEvents = [...currentEvents, ...uniqueNewEvents]
-          
+
           // Trigger cleanup if threshold exceeded
           let finalEvents = newEvents
           if (newEvents.length >= CLEANUP_THRESHOLD) {
             logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${newEvents.length} -> ${MAX_EVENTS}`)
             finalEvents = cleanupOldEvents(newEvents)
           }
-          
-          return {
+
+          // Update lastViewedEventCounts for the ACTIVE tab if it owns this session.
+          // Events arriving on the active tab are visible to the user in real-time,
+          // so they shouldn't show as "new" in the badge.
+          const updates: Partial<ChatState> = {
             tabEvents: {
               ...state.tabEvents,
               [sessionId]: finalEvents
             },
-            // Deprecated: totalEvents removed
           }
+
+          const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
+          if (activeTab && activeTab.sessionId === sessionId) {
+            updates.chatTabs = {
+              ...state.chatTabs,
+              [activeTab.tabId]: {
+                ...activeTab,
+                lastViewedEventCount: finalEvents.length,
+                lastViewedEventCounts: computePerModeCounts(finalEvents)
+              }
+            }
+          }
+
+          return updates
         })
       },
       
@@ -868,10 +893,62 @@ export const useChatStore = create<ChatState>()(
         })
       },
 
+      // SSE connection management
+      connectSSE: (sessionId, eventMode, onMessage, onStatus) => {
+        const state = get()
+        // Close existing connection for this session if any
+        if (state.sseConnections[sessionId]) {
+          state.sseConnections[sessionId].close()
+        }
+        const lastIndex = state.tabEventIndices[sessionId] ?? 0
+        const conn = new SSEConnection(sessionId, lastIndex, eventMode, {
+          onMessage,
+          onStatusUpdate: onStatus,
+          onError: () => {
+            // Fallback to polling on persistent SSE errors
+            logger.warn('ChatStore', `SSE fallback triggered for session ${sessionId}, falling back to polling`)
+            // Remove the failed SSE connection
+            set((s) => {
+              const conns = { ...s.sseConnections }
+              delete conns[sessionId]
+              return { sseConnections: conns }
+            })
+          },
+          onOpen: () => {
+            logger.debug('ChatStore', `SSE connected for session ${sessionId}`)
+          },
+        })
+        set((s) => ({
+          sseConnections: { ...s.sseConnections, [sessionId]: conn },
+        }))
+      },
+
+      disconnectSSE: (sessionId) => {
+        const state = get()
+        const conn = state.sseConnections[sessionId]
+        if (conn) {
+          conn.close()
+          set((s) => {
+            const conns = { ...s.sseConnections }
+            delete conns[sessionId]
+            return { sseConnections: conns }
+          })
+        }
+      },
+
+      disconnectAllSSE: () => {
+        const state = get()
+        Object.values(state.sseConnections).forEach((conn) => conn.close())
+        set({ sseConnections: {} })
+      },
+
       // Helper methods
       resetChatState: () => {
         const state = get()
-        
+
+        // Close all SSE connections
+        Object.values(state.sseConnections).forEach((conn) => conn.close())
+
         // Close all tabs and stop sessions
         Object.values(state.chatTabs).forEach(async (tab) => {
           try {
@@ -938,7 +1015,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       // Tab management actions
-      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'tiny' | 'micro') => {
+      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'micro') => {
         // Generate unique tab ID
         const timestamp = Date.now()
         const mode = metadata?.mode || 'chat'
@@ -987,7 +1064,7 @@ export const useChatStore = create<ChatState>()(
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
-          lastViewedEventCounts: { advanced: 0, tiny: 0, micro: 0 }, // Initialize all modes to 0
+          lastViewedEventCounts: { advanced: 0, micro: 0 }, // Initialize all modes to 0
           metadata
         }
         
@@ -1090,10 +1167,21 @@ export const useChatStore = create<ChatState>()(
           logger.info('SessionStore', `Tab ${tabId} has no sessionId, skipping dismiss`)
         }
 
+        // Check if any OTHER tab shares this sessionId (e.g., duplicate workflow tabs)
+        // If so, don't disconnect SSE or clean up session-keyed resources — the other tab needs them
+        const otherTabUsesSession = tab.sessionId && Object.values(state.chatTabs).some(
+          t => t.tabId !== tabId && t.sessionId === tab.sessionId
+        )
+
+        // Disconnect SSE connection for this session (only if no other tab shares it)
+        if (tab.sessionId && !otherTabUsesSession && state.sseConnections[tab.sessionId]) {
+          state.sseConnections[tab.sessionId].close()
+        }
+
         // Clear tab's events (by sessionId) unless keepEvents is true (e.g., for background workflows)
         let newTabEvents = state.tabEvents
         let newTabEventIndices = state.tabEventIndices
-        if (!keepEvents && tab.sessionId) {
+        if (!keepEvents && tab.sessionId && !otherTabUsesSession) {
           newTabEvents = { ...state.tabEvents }
           delete newTabEvents[tab.sessionId]
           newTabEventIndices = { ...state.tabEventIndices }
@@ -1111,12 +1199,42 @@ export const useChatStore = create<ChatState>()(
           newActiveTabId = remainingTabs.length > 0 ? remainingTabs[0].tabId : null
         }
 
-        set({
+        // Clean up all resources associated with this tab
+        const updates: Partial<ChatState> = {
           chatTabs: newTabs,
           activeTabId: newActiveTabId,
           tabEvents: newTabEvents,
           tabEventIndices: newTabEventIndices
-        })
+        }
+
+        // Clean up SSE connection entry (only if no other tab shares the session)
+        if (tab.sessionId && !otherTabUsesSession && state.sseConnections[tab.sessionId]) {
+          const newConns = { ...state.sseConnections }
+          delete newConns[tab.sessionId]
+          updates.sseConnections = newConns
+        }
+
+        // Clean up session-keyed resources (only if no other tab shares the session)
+        if (tab.sessionId && !otherTabUsesSession) {
+          const newStreamingText = { ...state.streamingText }
+          delete newStreamingText[tab.sessionId]
+          updates.streamingText = newStreamingText
+
+          const newLastChunkIndex = { ...state.lastStreamingChunkIndex }
+          delete newLastChunkIndex[tab.sessionId]
+          updates.lastStreamingChunkIndex = newLastChunkIndex
+
+          const newHasMore = { ...state.tabHasMoreOlderEvents }
+          delete newHasMore[tab.sessionId]
+          updates.tabHasMoreOlderEvents = newHasMore
+        }
+
+        // Clean up tab session status (always — this is keyed by tabId, not sessionId)
+        const newTabSessionStatus = { ...state.tabSessionStatus }
+        delete newTabSessionStatus[tabId]
+        updates.tabSessionStatus = newTabSessionStatus
+
+        set(updates)
       },
       
       getTab: (tabId: string) => {
@@ -1259,7 +1377,7 @@ export const useChatStore = create<ChatState>()(
       
       // updateTabObserverId removed - observers no longer used
       
-      setTabEventMode: (tabId: string, eventMode: 'advanced' | 'tiny' | 'micro') => {
+      setTabEventMode: (tabId: string, eventMode: 'advanced' | 'micro') => {
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return
@@ -1280,7 +1398,7 @@ export const useChatStore = create<ChatState>()(
           
           // CRITICAL: When event mode changes, reset lastEventIndex and clear events IMMEDIATELY
           // This forces the frontend to fetch all events from the beginning
-          // because the filtered view is completely different (basic vs advanced vs tiny)
+          // because the filtered view is completely different (micro vs advanced)
           // The old events in the store are from the previous filter mode and are invalid
           // Clear events FIRST to ensure UI shows empty state immediately
           if (modeChanged && tab.sessionId) {
@@ -1299,8 +1417,11 @@ export const useChatStore = create<ChatState>()(
               ...state.tabHasMoreOlderEvents,
               [tab.sessionId]: false
             }
+            // NOTE: SSE reconnection is handled by ChatArea's event mode change effect
+            // which calls sseConn.reconnectWithMode(). Do NOT disconnect SSE here —
+            // sseConnections isn't in the SSE effect's deps, so it can't re-create the connection.
           }
-          
+
           return updates
         })
       },
@@ -1643,18 +1764,18 @@ export const useChatStore = create<ChatState>()(
           return state.chatHistoryCache
         }
         
-        // Fetch fresh data - load only 10 initially
+        // Fetch fresh data — fetch 50 to give client-side mode filtering enough to work with
         try {
                 // Map mode category to agent mode for filtering
                 let agentMode: string | undefined
                 if (modeCategory === 'workflow') {
                   agentMode = 'workflow'
                 }
-                // For 'chat' mode, we want all non-workflow sessions
-                // Leaving agentMode undefined fetches all, and client-side filtering handles the rest
+                // For 'chat' and 'multi-agent', fetch all non-workflow sessions;
+                // client-side filtering splits them by delegation_mode
 
-                logger.debug('ChatStore', `Fetching fresh chat history for mode: ${modeCategory} (agentMode: ${agentMode}) (initial load: 10 sessions)`)
-                const response = await agentApi.getChatSessions(10, 0, undefined, agentMode)
+                logger.debug('ChatStore', `Fetching fresh chat history for mode: ${modeCategory} (agentMode: ${agentMode})`)
+                const response = await agentApi.getChatSessions(50, 0, undefined, agentMode)
                 const sessions = response.sessions || []
           
           set({
@@ -1682,7 +1803,7 @@ export const useChatStore = create<ChatState>()(
           return state.chatHistoryCache
         }
         
-        // Load next 10 sessions
+        // Load next batch
         try {
                 // Map mode category to agent mode for filtering
                 let agentMode: string | undefined
@@ -1690,8 +1811,8 @@ export const useChatStore = create<ChatState>()(
                   agentMode = 'workflow'
                 }
 
-                logger.debug('ChatStore', `Loading more chat history for mode: ${modeCategory} (agentMode: ${agentMode}) (offset: ${state.chatHistoryLoadedCount}, limit: 10)`)
-                const response = await agentApi.getChatSessions(10, state.chatHistoryLoadedCount, undefined, agentMode)
+                logger.debug('ChatStore', `Loading more chat history for mode: ${modeCategory} (agentMode: ${agentMode}) (offset: ${state.chatHistoryLoadedCount}, limit: 50)`)
+                const response = await agentApi.getChatSessions(50, state.chatHistoryLoadedCount, undefined, agentMode)
                 const newSessions = response.sessions || []
           
           // Append new sessions to existing cache
@@ -1751,7 +1872,7 @@ export const useChatStore = create<ChatState>()(
                 // - enableContextSummarization
                 createdAt: tab.createdAt, // Persist for ordering
                 lastViewedEventCount: 0, // @deprecated - Reset on reload
-                lastViewedEventCounts: { advanced: 0, tiny: 0, micro: 0 }, // Reset on reload
+                lastViewedEventCounts: { advanced: 0, micro: 0 }, // Reset on reload
                 metadata: tab.metadata // Persist mode and phase info
               }
             ])

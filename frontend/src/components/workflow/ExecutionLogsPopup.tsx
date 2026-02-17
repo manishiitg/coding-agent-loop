@@ -105,11 +105,11 @@ const parseStepId = (stepId: string): (string | number)[] => {
   const withoutPrefix = stepId.replace(/^step-/, '')
 
   // Match: number, or 'true', or 'false', or 'sub-agent', or 'sub', or 'generic'
-  const pattern = /(\d+|true|false|sub-agent|sub|generic)/g
+  const pattern = /(\d+|true|false|sub-agent|sub|generic|decision)/g
   let match
   while ((match = pattern.exec(withoutPrefix)) !== null) {
     const val = match[1]
-    if (val === 'true' || val === 'false' || val === 'sub-agent' || val === 'sub' || val === 'generic') {
+    if (val === 'true' || val === 'false' || val === 'sub-agent' || val === 'sub' || val === 'generic' || val === 'decision') {
       segments.push(val)
     } else {
       segments.push(parseInt(val, 10))
@@ -156,7 +156,7 @@ const getStepNestingLevel = (stepId: string): number => {
   let level = 0
 
   for (const seg of segments) {
-    if (seg === 'true' || seg === 'false' || seg === 'sub-agent' || seg === 'sub' || seg === 'generic') {
+    if (seg === 'true' || seg === 'false' || seg === 'sub-agent' || seg === 'sub' || seg === 'generic' || seg === 'decision') {
       level++
     }
   }
@@ -167,7 +167,7 @@ const getStepNestingLevel = (stepId: string): number => {
 // Determine the nesting context (what type of parent this is nested under)
 const getStepNestingContext = (stepId: string): 'none' | 'branch' | 'sub-agent' => {
   // Check the last nesting indicator in the ID
-  const lastBranchIndex = Math.max(stepId.lastIndexOf('-true-'), stepId.lastIndexOf('-false-'))
+  const lastBranchIndex = Math.max(stepId.lastIndexOf('-true-'), stepId.lastIndexOf('-false-'), stepId.lastIndexOf('-decision-'))
   const lastSubIndex = Math.max(stepId.lastIndexOf('-sub-'), stepId.lastIndexOf('-generic-'))
   const lastSubAgentIndex = Math.max(stepId.lastIndexOf('-sub-agent-'), lastSubIndex)
 
@@ -226,10 +226,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
 
   // Update selected run folder when prop changes
   useEffect(() => {
-    if (initialRunFolder !== selectedRunFolder) {
-      setSelectedRunFolder(initialRunFolder || '')
-    }
-  }, [initialRunFolder, selectedRunFolder])
+    setSelectedRunFolder(initialRunFolder || '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRunFolder])
 
   useEffect(() => {
     if (isOpen && workspacePath && selectedRunFolder) {
@@ -1656,35 +1655,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 .map(([stepId, stepLogs]) => {
                   const isExpanded = expandedSteps.has(stepId)
                   // Determine overall status based on step_done.json, validations, or other activity
-                  const validations = stepLogs.validations || []
-                  let status = 'NOT RUN' // Default if no execution logs
-
-                  // Check for activity
-                  if (
-                    (stepLogs.executions && stepLogs.executions.length > 0) ||
-                    (stepLogs.orchestration && stepLogs.orchestration.length > 0) ||
-                    (stepLogs.todo_task && stepLogs.todo_task.length > 0) ||
-                    validations.length > 0 ||
-                    (stepLogs.conditionals && stepLogs.conditionals.length > 0) ||
-                    (stepLogs.decisions && stepLogs.decisions.length > 0) ||
-                    stepLogs.is_completed
-                  ) {
-                      status = 'RUNNING' // Default if active
-
-                      if (stepLogs.is_completed) {
-                          status = 'COMPLETED'
-                      } else if (stepLogs.conditionals && stepLogs.conditionals.length > 0) {
-                          status = 'COMPLETED'
-                      } else if (stepLogs.decisions && stepLogs.decisions.length > 0) {
-                          status = 'COMPLETED'
-                      } else if (validations.length > 0) {
-                          const lastVal = validations[validations.length - 1].content?.execution_status
-                          if (lastVal === 'FAILED') {
-                              status = 'FAILED'
-                          }
-                      }
-                  }
-
                   const title = stepLogs.title || stepId
                   const description = stepLogs.description || ''
                   const nestingLevel = getStepNestingLevel(stepId)
@@ -1716,23 +1686,6 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                         </div>
                         
                         <div className="flex items-center gap-3 flex-shrink-0 ml-4">
-                            {/* Status Badge */}
-                            {status === 'COMPLETED' ? (
-                                <span className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
-                                <CheckCircle className="w-3 h-3" />
-                                Completed
-                                </span>
-                            ) : status === 'FAILED' ? (
-                                <span className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                                <XCircle className="w-3 h-3" />
-                                Failed
-                                </span>
-                            ) : (
-                                <span className="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground">
-                                <Clock className="w-3 h-3" />
-                                {status || 'Pending'}
-                                </span>
-                            )}
                             <div className="text-xs text-muted-foreground hidden sm:block">
                                 {stepLogs.executions.length} exec • {stepLogs.validations.length} val
                                 {stepLogs.todo_task && stepLogs.todo_task.length > 0 && ` • ${stepLogs.todo_task.length} todo`}

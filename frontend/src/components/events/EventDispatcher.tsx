@@ -1434,10 +1434,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     // Look up live stats via background agent ID → delegation stats mapping
     const liveStats = agentId ? backgroundAgentStats?.get(agentId) : undefined
     const hasLiveStats = liveStats && (liveStats.toolCalls > 0 || liveStats.inputTokens > 0)
-    if (agentId) {
-      console.log('[BG_AGENT_RENDER]', agentId, 'liveStats:', liveStats, 'hasLiveStats:', hasLiveStats, 'bgStatsSize:', backgroundAgentStats?.size)
-    }
-
     return (
       <CompactWrapper>
         <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
@@ -1619,7 +1615,7 @@ export const EventList: React.FC<{
   isApproving?: boolean
   compact?: boolean
   flatHierarchy?: boolean
-  eventMode?: 'advanced' | 'tiny' | 'micro'
+  eventMode?: 'advanced' | 'micro'
 }> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact = false, flatHierarchy = false, eventMode }) => {
   if (events.length === 0) {
     return <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>No events to display</div>

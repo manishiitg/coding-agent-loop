@@ -84,7 +84,6 @@ export default function ChatHistorySection({
         if ((s.agent_mode || '').toLowerCase() === 'workflow') return false
         const isMultiAgent = s.config?.delegation_mode === 'plan'
         if (selectedModeCategory === 'multi-agent') return isMultiAgent
-        // In chat mode, show only non-multi-agent sessions
         return !isMultiAgent
       })
       setSessions(filteredSessions)

@@ -78,24 +78,18 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
   // Handle workflow approval
   const handleApproveWorkflow = React.useCallback(async (requestId: string) => {
-    try {
-      // Submit "Approve" response to unblock the orchestrator
-      await agentApi.submitHumanFeedback(requestId, "Approve")
-      console.log('Workflow approved:', requestId)
-    } catch (error) {
-      console.error('Failed to approve workflow:', error)
-    }
+    // Submit "Approve" response to unblock the orchestrator
+    // Let errors propagate so callers can handle failure
+    await agentApi.submitHumanFeedback(requestId, "Approve")
+    console.log('Workflow approved:', requestId)
   }, [])
 
   // Handle feedback submission
   const handleSubmitFeedback = React.useCallback(async (requestId: string, feedback: string) => {
-    try {
-      // Submit feedback response to unblock the orchestrator
-      await agentApi.submitHumanFeedback(requestId, feedback)
-      console.log('Feedback submitted:', requestId, feedback)
-    } catch (error) {
-      console.error('Failed to submit feedback:', error)
-    }
+    // Submit feedback response to unblock the orchestrator
+    // Let errors propagate so callers can handle failure (e.g. reset UI state)
+    await agentApi.submitHumanFeedback(requestId, feedback)
+    console.log('Feedback submitted:', requestId, feedback)
   }, [])
 
   return (

@@ -2,10 +2,9 @@ import React, { useEffect, useMemo } from 'react'
 import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
-import { EventModeToggle, ToolCallToggle } from './events'
+import { EventModeToggle } from './events'
 import { shouldShowEventByMode } from './events/eventModeUtils'
 import { logger } from '../utils/logger'
-
 interface ChatTabsProps {
   // For chat mode: callback when starting a new chat
   onNewChat?: () => void
@@ -22,7 +21,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     switchTab,
     closeTab,
     tabSessionStatus,
-    fetchAllTabSessionStatuses,
     tabEvents,
     autoScroll: storeAutoScroll,
     setAutoScroll
@@ -60,41 +58,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     ).sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs, selectedModeCategory])
   
-  // Get stable list of tab IDs with sessions for dependency
-  const tabIdsWithSessions = useMemo(() => {
-    return modeTabs
-      .filter(tab => tab.sessionId)
-      .map(tab => `${tab.tabId}:${tab.sessionId}`)
-      .join(',')
-  }, [modeTabs])
-  
-  // Fetch session status for tabs with session IDs
-  useEffect(() => {
-    // Use modeTabs directly (it's memoized, so safe to use)
-    const tabsWithSessions = modeTabs.filter(tab => tab.sessionId)
-    
-    if (tabsWithSessions.length === 0) {
-      logger.debug('ChatTabs', 'No tabs with session IDs to fetch status for')
-      return
-    }
-    
-    const tabIds = tabsWithSessions.map(tab => tab.tabId)
-    
-    // Fetch status for all tabs
-    const fetchStatuses = async () => {
-      logger.debug('ChatTabs', `Fetching session status for ${tabIds.length} tabs`)
-      await fetchAllTabSessionStatuses(tabIds)
-    }
-    
-    // Fetch immediately
-    fetchStatuses()
-    
-    // Refresh status every 5 seconds
-    const interval = setInterval(fetchStatuses, 5000)
-    return () => clearInterval(interval)
-    // Only depend on tabIdsWithSessions (the string) - it changes only when tabs/sessions actually change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabIdsWithSessions])
+  // Session status is now delivered via SSE status events — no polling needed
 
   const handleTabClick = (tabId: string) => {
     switchTab(tabId)
@@ -103,6 +67,15 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   const handleTabClose = async (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation()
     await closeTab(tabId)
+
+    // If no tabs remain for the current mode, auto-create a new one
+    const remaining = Object.values(useChatStore.getState().chatTabs)
+      .filter(t => t.metadata?.mode === selectedModeCategory)
+    if (remaining.length === 0 && (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent')) {
+      const isMultiAgent = selectedModeCategory === 'multi-agent'
+      const tabName = isMultiAgent ? 'Agent Chat 1' : 'Chat 1'
+      await useChatStore.getState().createChatTab(tabName, { mode: selectedModeCategory })
+    }
   }
 
   const handleNewTab = async () => {
@@ -251,11 +224,10 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
                 </span>
               )}
               
-              {/* Event Mode Toggle + Tool Call Toggle - show inside active tab header */}
-              {isActive && (
+              {/* Event Mode Toggle - only for fresh (non-restored) sessions */}
+              {isActive && !tab.metadata?.isRestored && (
                 <div className="ml-1 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                   <EventModeToggle />
-                  <ToolCallToggle />
                 </div>
               )}
               

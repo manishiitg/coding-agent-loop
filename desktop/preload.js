@@ -12,5 +12,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const port = ipcRenderer.sendSync('get-workspace-port');
     return `http://127.0.0.1:${port}`;
   },
-  setDockBadge: (text) => ipcRenderer.send('set-dock-badge', text)
+  setDockBadge: (text) => ipcRenderer.send('set-dock-badge', text),
+  openExternal: (url) => ipcRenderer.send('open-external', url)
 });

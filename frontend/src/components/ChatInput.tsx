@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -1586,6 +1586,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return "Ask anything... (@ files, / commands, # workflows)"
   }, [isViewOnly])
 
+  // For view-only (restored) tabs, show a minimal indicator instead of the full input form
+  if (isViewOnly) {
+    return (
+      <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
+          <History className="w-3.5 h-3.5" />
+          <span>View only — restored conversation</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <TooltipProvider>
       <div className="space-y-2">
@@ -2014,6 +2026,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 {cdpChecking ? 'Checking...' : 'Check Connection'}
                               </button>
                             </div>
+
+                            {/* macOS: Download launcher + instructions */}
+                            {navigator.platform?.includes('Mac') && (
+                              <div className="rounded-lg bg-gray-900/80 border border-gray-600 p-3 space-y-2">
+                                <p className="text-xs font-medium text-gray-300">macOS: Easy setup</p>
+                                <a
+                                  href="/downloads/Chrome-CDP-macOS.zip"
+                                  download="Chrome-CDP-macOS.zip"
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-green-700 hover:bg-green-600 text-white rounded-md transition-colors"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  Download Chrome CDP launcher
+                                </a>
+                                <ol className="text-xs text-gray-400 list-decimal list-inside space-y-0.5">
+                                  <li>Double-click the zip to unzip.</li>
+                                  <li>Move &quot;Chrome CDP.app&quot; to Applications (e.g. drag to Applications in Finder).</li>
+                                  <li>Open &quot;Chrome CDP&quot; from Spotlight (⌘+Space) or LaunchPad.</li>
+                                  <li>A new Chrome window will open with CDP on port {cdpPort}. Then click Check Connection above.</li>
+                                </ol>
+                              </div>
+                            )}
 
                             {/* Connection status */}
                             <div className="flex items-start gap-2">

@@ -3,7 +3,7 @@ import { Button } from './ui/Button';
 import { Input } from './ui/Input';
 import { Textarea } from './ui/Textarea';
 import { Card } from './ui/Card';
-import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search } from 'lucide-react';
+import { Folder, Plus, X, Settings, Sparkles, Code2, Info, Search, Download } from 'lucide-react';
 import { FolderSelectionDialog } from './FolderSelectionDialog';
 import { ToolSelectionSection } from './ToolSelectionSection';
 import { SkillSelectionSection } from './skills/SkillSelectionSection';
@@ -1001,6 +1001,23 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                 {cdpChecking ? 'Checking...' : 'Check'}
                               </button>
                             </div>
+                            {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
+                              <div className="rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/80 p-2 space-y-1.5">
+                                <p className="text-xs font-medium text-gray-700 dark:text-gray-300">macOS: Easy setup</p>
+                                <a
+                                  href="/downloads/Chrome-CDP-macOS.zip"
+                                  download="Chrome-CDP-macOS.zip"
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded transition-colors"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  Download Chrome CDP launcher
+                                </a>
+                                <ol className="text-xs text-gray-600 dark:text-gray-400 list-decimal list-inside space-y-0.5">
+                                  <li>Unzip, move &quot;Chrome CDP.app&quot; to Applications, then open it from Spotlight or LaunchPad.</li>
+                                  <li>Click Check above to verify connection.</li>
+                                </ol>
+                              </div>
+                            )}
                             <div className="flex items-center gap-1.5">
                               {cdpChecking ? (
                                 <>

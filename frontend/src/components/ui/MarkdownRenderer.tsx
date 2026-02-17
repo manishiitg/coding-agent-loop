@@ -154,7 +154,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
   // Standard file opening logic extracted from Workspace.tsx
   const handleWorkspaceLink = async (filepath: string) => {
-    console.log('[MarkdownWorkspace] handleWorkspaceLink called for:', filepath)
     try {
       // Auto-resolve folder paths to their default file (e.g. Plans/foo -> Plans/foo/plan.md)
       let resolvedPath = filepath
@@ -236,8 +235,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     // SOLUTION: Use explicit `...args` rest parameter to reliably capture `offset` and `string` regardless of capture groups.
     processed = processed.replace(pathRegex, (match, backtick, path, ...args) => {
       try {
-        console.log('[MarkdownWorkspace] Regex match found:', match)
-        
         // args contains [offset, string] because we have 2 capture groups
         let str = args[args.length - 1] as string
         let offset = args[args.length - 2] as number
@@ -260,13 +257,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         const before = str.substring(Math.max(0, offset - 1), offset)
         const after = str.substring(offset + match.length, offset + match.length + 1)
         
-        console.log(`[MarkdownWorkspace] Match: "${match}", Path: "${path}", Backtick: "${backtick}", Before: "${before}", After: "${after}"`)
-
         // If capture group 1 (backtick) is present, we are unwrapping, so we don't skip.
         // If capture group 1 is empty, we check if we are inside OTHER code/links/formatting.
         if (!backtick) {
            if (before === '`' || before === '[' || before === '(' || before === '*' || after === ']' || after === '`' || after === '*') {
-             console.log('[MarkdownWorkspace] Skipping match (inside link or code)')
              return match
            }
         }
@@ -284,20 +278,12 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         
         // Use hash-based link to avoid protocol sanitization issues
         const result = `[${cleanPath}](#workspace/${encodeURIComponent(cleanPath)})${suffix}`
-        console.log('[MarkdownWorkspace] Replacing with:', result)
         return result
       } catch (err) {
         console.error('[MarkdownWorkspace] Error in regex replace:', err)
         return match
       }
     })
-    
-    const idx = processed.indexOf('#workspace/')
-    if (idx !== -1) {
-      console.log('[MarkdownWorkspace] Final processed markdown (around link):', processed.slice(Math.max(0, idx - 50), idx + 100))
-    } else {
-      console.log('[MarkdownWorkspace] No #workspace/ link found in processed markdown (start):', processed.slice(0, 200))
-    }
     
     return processed
   }, [content])
@@ -491,21 +477,15 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            console.log('[MarkdownWorkspace] Rendering link with href:', href)
-            
             if (href?.startsWith('#workspace/')) {
               const filepath = decodeURIComponent(href.replace('#workspace/', ''))
               return (
                 <a 
                   href={href}
                   onClick={(e) => {
-                    console.log('[MarkdownWorkspace] Clicked link (onClick):', filepath)
                     e.preventDefault()
                     e.stopPropagation()
                     handleWorkspaceLink(filepath)
-                  }}
-                  onMouseDown={() => {
-                     console.log('[MarkdownWorkspace] Mouse down on link:', filepath)
                   }}
                   style={{ pointerEvents: 'auto', cursor: 'pointer' }}
                   className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 underline cursor-pointer break-words overflow-wrap-anywhere font-medium transition-colors"
@@ -520,14 +500,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
                 href={href} 
                 target="_blank" 
                 rel="noopener noreferrer"
-                onClick={(e) => {
-                  console.log('[MarkdownWorkspace] Clicked default link:', href)
-                  // Check for Electron API
-                  if ((window as any).electronAPI?.openExternal) {
-                    e.preventDefault()
-                    ;(window as any).electronAPI.openExternal(href)
-                  }
-                }}
                 className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere"
               >
                 {children}

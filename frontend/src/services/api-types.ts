@@ -697,6 +697,19 @@ export interface GetSessionEventsResponse {
   offset: number;
 }
 
+// SSE message types (match backend sseEventMessage / sseStatusMessage)
+export interface SSEEventMessage {
+  events: PollingEvent[]
+  session_status?: string
+  last_processed_index: number
+  has_running_background_agents?: boolean
+}
+
+export interface SSEStatusMessage {
+  session_status?: string
+  has_running_background_agents?: boolean
+}
+
 export interface CreateChatSessionRequest {
   session_id: string;
   title?: string;
@@ -1349,4 +1362,69 @@ export interface WorkflowPhase {
   title: string;
   description: string;
   options?: WorkflowPhaseOption[];
+}
+
+// ============================================================================
+// Chat Cost Analysis Types
+// ============================================================================
+
+export interface ChatModelUsage {
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  reasoning_tokens: number;
+  cache_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  llm_call_count: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  reasoning_cost_usd: number;
+  cache_cost_usd: number;
+  total_cost_usd: number;
+  context_window_usage: number;
+  model_context_window: number;
+  context_usage_percent: number;
+}
+
+export interface SessionCostSummary {
+  session_id: string;
+  title: string;
+  agent_mode: string;
+  created_at: string;
+  status: string;
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_llm_calls: number;
+  by_model: Record<string, ChatModelUsage>;
+  by_agent?: Record<string, ChatModelUsage>;
+}
+
+export interface AggregateCosts {
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_llm_calls: number;
+  total_sessions: number;
+  by_model: Record<string, ChatModelUsage>;
+  by_agent?: Record<string, ChatModelUsage>;
+}
+
+export interface UserCostsResponse {
+  sessions: SessionCostSummary[];
+  aggregate: AggregateCosts;
+}
+
+export interface SessionCostDetail {
+  session_id: string;
+  title: string;
+  created_at: string;
+  by_model: Record<string, ChatModelUsage>;
+  by_turn_and_model?: Record<string, Record<string, ChatModelUsage>>;
+  by_agent_and_model?: Record<string, Record<string, ChatModelUsage>>;
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_llm_calls: number;
 }

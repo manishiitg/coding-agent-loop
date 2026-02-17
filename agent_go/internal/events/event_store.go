@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/json"
+	"log"
 	"sync"
 	"time"
 
@@ -27,6 +28,13 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 	"cache_cleanup":             true,
 	"cache_error":               true,
 	"cache_operation_start":     true,
+	// Streaming events — ephemeral, only useful in real-time via subscriber.
+	// Excluding from GetEvents/polling prevents them from consuming the InitialEventsLimit (300)
+	// and pushing important events (request_human_feedback, tool calls) out of range.
+	// Subscribers still receive these in real-time (see AddEvent override).
+	"streaming_start": true,
+	"streaming_chunk": true,
+	"streaming_end":   true,
 }
 
 // ADVANCED_MODE_EVENTS contains event types that are only shown in advanced mode
@@ -120,6 +128,13 @@ func (e Event) MarshalJSON() ([]byte, error) {
 // ActivityCallback is called when an event is added to update session activity
 type ActivityCallback func(sessionID string)
 
+// Subscriber represents a client subscribed to real-time events for a session via SSE.
+type Subscriber struct {
+	Ch        chan Event
+	EventMode string
+	SessionID string
+}
+
 // EventStore manages in-memory event storage for sessions
 // Events are stored by sessionID, allowing multiple observers to view the same session
 type EventStore struct {
@@ -130,6 +145,10 @@ type EventStore struct {
 	cleanupTicker       *time.Ticker
 	stopCh              chan struct{}
 	activityCallback    ActivityCallback // Optional callback to update session activity
+
+	// SSE subscriber registry: sessionID -> list of subscribers
+	subscribers   map[string][]*Subscriber
+	subscribersMu sync.RWMutex
 }
 
 // NewEventStore creates a new event store with configurable limits
@@ -146,6 +165,7 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 		cleanupTicker:       time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
 		stopCh:              make(chan struct{}),
 		activityCallback:    activityCallback,
+		subscribers:         make(map[string][]*Subscriber),
 	}
 
 	// Start background cleanup
@@ -159,6 +179,35 @@ func (es *EventStore) SetActivityCallback(callback ActivityCallback) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 	es.activityCallback = callback
+}
+
+// Subscribe creates a new subscriber for real-time events on a session.
+// The returned Subscriber's Ch channel receives events as they are added.
+// Buffer size is 256 to absorb bursts without blocking AddEvent.
+func (es *EventStore) Subscribe(sessionID, eventMode string) *Subscriber {
+	sub := &Subscriber{
+		Ch:        make(chan Event, 256),
+		EventMode: eventMode,
+		SessionID: sessionID,
+	}
+	es.subscribersMu.Lock()
+	es.subscribers[sessionID] = append(es.subscribers[sessionID], sub)
+	es.subscribersMu.Unlock()
+	return sub
+}
+
+// Unsubscribe removes a subscriber and closes its channel.
+func (es *EventStore) Unsubscribe(sessionID string, sub *Subscriber) {
+	es.subscribersMu.Lock()
+	defer es.subscribersMu.Unlock()
+	subs := es.subscribers[sessionID]
+	for i, s := range subs {
+		if s == sub {
+			es.subscribers[sessionID] = append(subs[:i], subs[i+1:]...)
+			close(sub.Ch)
+			return
+		}
+	}
 }
 
 // AddEvent adds an event for a specific session
@@ -190,6 +239,26 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 	if activityCallback != nil && sessionID != "" {
 		activityCallback(sessionID)
 	}
+
+	// Notify SSE subscribers (non-blocking send; drop if buffer full)
+	es.subscribersMu.RLock()
+	subs := es.subscribers[sessionID]
+	for _, sub := range subs {
+		// Apply event mode filtering for subscriber.
+		// Exception: streaming events are always delivered to subscribers for real-time display,
+		// even though they're in NEVER_SHOW_EVENTS (excluded from GetEvents backfill/polling).
+		isStreamingEvent := event.Type == "streaming_start" || event.Type == "streaming_chunk" || event.Type == "streaming_end"
+		if !isStreamingEvent && sub.EventMode != "" && !ShouldShowEventByMode(event.Type, sub.EventMode) {
+			continue
+		}
+		select {
+		case sub.Ch <- event:
+		default:
+			// Channel full, drop event (subscriber will catch up via backfill)
+			log.Printf("[EventStore] WARNING: channel full, dropping %s for session %s", event.Type, sessionID)
+		}
+	}
+	es.subscribersMu.RUnlock()
 }
 
 // InitializeSession creates an empty event list for a session

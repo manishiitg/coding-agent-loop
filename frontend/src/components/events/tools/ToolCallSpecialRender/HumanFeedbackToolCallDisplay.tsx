@@ -2,6 +2,7 @@ import React from 'react'
 import type { ToolCallStartEvent } from '../../../../generated/event-types'
 import { MarkdownRenderer } from '../../../ui/MarkdownRenderer'
 import { playNotificationSound } from '../../../../utils/sound'
+import { hasBeenNotified, markNotified } from '../../../../utils/notificationDedup'
 
 interface HumanFeedbackToolCallDisplayProps {
   event: ToolCallStartEvent
@@ -64,40 +65,44 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
   }, [])
 
   // Show browser notification when component mounts (feedback request)
+  // Skip if already notified (e.g. page refresh replaying events)
   React.useEffect(() => {
+    const uniqueId = toolParams.unique_id
     const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
-    if (enabled && 'Notification' in window && Notification.permission === 'granted') {
-      try {
-        playNotificationSound()
-        
-        const notification = new Notification('Human Feedback Required', {
-          body: toolParams.message_for_user,
-          icon: '/favicon.ico',
-          tag: `human-feedback-${toolParams.unique_id}`,
-          requireInteraction: true,
-          silent: false
-        })
+    if (!enabled || (uniqueId && hasBeenNotified(uniqueId))) return
+    if (!('Notification' in window) || Notification.permission !== 'granted') return
 
-        notification.onclick = () => {
-          window.focus()
-          notification.close()
-        }
+    try {
+      playNotificationSound()
+      if (uniqueId) markNotified(uniqueId)
 
-        notification.onerror = (error) => {
-          console.error('[HUMAN_FEEDBACK] Notification error:', error)
-        }
+      const notification = new Notification('Human Feedback Required', {
+        body: toolParams.message_for_user,
+        icon: '/favicon.ico',
+        tag: `human-feedback-${uniqueId}`,
+        requireInteraction: true,
+        silent: false
+      })
 
-        // Auto-close notification after 30 seconds
-        setTimeout(() => {
-          notification.close()
-        }, 30000)
-
-        return () => {
-          notification.close()
-        }
-      } catch (error) {
-        console.error('[HUMAN_FEEDBACK] Failed to create notification:', error)
+      notification.onclick = () => {
+        window.focus()
+        notification.close()
       }
+
+      notification.onerror = (error) => {
+        console.error('[HUMAN_FEEDBACK] Notification error:', error)
+      }
+
+      // Auto-close notification after 30 seconds
+      setTimeout(() => {
+        notification.close()
+      }, 30000)
+
+      return () => {
+        notification.close()
+      }
+    } catch (error) {
+      console.error('[HUMAN_FEEDBACK] Failed to create notification:', error)
     }
   }, [toolParams.message_for_user, toolParams.unique_id])
 
@@ -130,9 +135,10 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
   }
 
   const handleOption = async (index: number) => {
-    const optionValue = `option${index}`
-    const displayLabel = toolParams.options[index] || optionValue
-    await submitFeedback(optionValue, displayLabel)
+    // Send the actual option label text (not "optionN") so the LLM
+    // clearly understands which choice the user made.
+    const optionLabel = toolParams.options[index] || `option${index}`
+    await submitFeedback(optionLabel)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -166,58 +172,54 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
   // Waiting state
   return (
     <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800/60 rounded-md px-3 py-2.5 my-2">
-      <div className="flex items-center gap-3">
-        {/* Question text */}
-        <div className="flex-1 min-w-0">
-          <div className="text-xs text-indigo-700 dark:text-indigo-300">
-            <MarkdownRenderer content={toolParams.message_for_user} className="text-xs" />
-          </div>
-        </div>
+      {/* Question text */}
+      <div className="text-xs text-indigo-700 dark:text-indigo-300">
+        <MarkdownRenderer content={toolParams.message_for_user} className="text-xs" />
+      </div>
 
-        {/* Action buttons: option buttons when options provided, else notification status */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {hasMultipleOptions ? (
-            toolParams.options.map((optionLabel, index) => {
-              const colorClasses = [
-                'bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50',
-                'bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 disabled:opacity-50',
-                'bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 disabled:opacity-50',
-                'bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50',
-              ]
-              const colorClass = colorClasses[index % colorClasses.length]
-              return (
-                <button
-                  key={index}
-                  onClick={() => handleOption(index)}
-                  disabled={isSubmitting}
-                  className={`px-3 py-1.5 ${colorClass} text-white text-xs font-medium rounded transition-colors`}
-                >
-                  {isSubmitting ? 'Processing...' : optionLabel}
-                </button>
-              )
-            })
-          ) : (
-            <>
-              {notificationPermission === 'granted' && (
-                <span className="text-[10px] text-indigo-500 dark:text-indigo-400">Notifications on</span>
-              )}
-              {notificationPermission === 'default' && (
-                <button
-                  onClick={() => {
-                    if ('Notification' in window) {
-                      Notification.requestPermission().then((permission) => {
-                        setNotificationPermission(permission)
-                      })
-                    }
-                  }}
-                  className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline"
-                >
-                  Enable notifications
-                </button>
-              )}
-            </>
-          )}
-        </div>
+      {/* Action buttons: option buttons when options provided, else notification status */}
+      <div className="flex flex-wrap items-center gap-2 mt-2">
+        {hasMultipleOptions ? (
+          toolParams.options.map((optionLabel, index) => {
+            const colorClasses = [
+              'bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50',
+              'bg-indigo-600 hover:bg-indigo-700 dark:bg-indigo-700 dark:hover:bg-indigo-600 disabled:opacity-50',
+              'bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 disabled:opacity-50',
+              'bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50',
+            ]
+            const colorClass = colorClasses[index % colorClasses.length]
+            return (
+              <button
+                key={index}
+                onClick={() => handleOption(index)}
+                disabled={isSubmitting}
+                className={`px-3 py-1.5 ${colorClass} text-white text-xs font-medium rounded transition-colors`}
+              >
+                {isSubmitting ? 'Processing...' : optionLabel}
+              </button>
+            )
+          })
+        ) : (
+          <>
+            {notificationPermission === 'granted' && (
+              <span className="text-[10px] text-indigo-500 dark:text-indigo-400">Notifications on</span>
+            )}
+            {notificationPermission === 'default' && (
+              <button
+                onClick={() => {
+                  if ('Notification' in window) {
+                    Notification.requestPermission().then((permission) => {
+                      setNotificationPermission(permission)
+                    })
+                  }
+                }}
+                className="text-[10px] text-indigo-500 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 underline"
+              >
+                Enable notifications
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {/* Free-text mode: textarea + Approve button (optional input) or Submit Feedback */}
@@ -228,7 +230,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
             value={response}
             onChange={(e) => setResponse(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type feedback here if needed... (Enter to submit. Or click Approve & Continue)"
+            placeholder="Type feedback here if needed... (Enter to submit)"
             className="w-full px-2.5 py-1.5 text-xs border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800/80 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 resize-none"
             rows={5}
             disabled={isSubmitting}
@@ -240,7 +242,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
                 disabled={isSubmitting}
                 className="px-3 py-1.5 bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 text-white text-xs font-medium rounded transition-colors disabled:opacity-50"
               >
-                {isSubmitting ? 'Processing...' : 'Approve & Continue'}
+                {isSubmitting ? 'Processing...' : 'Submit'}
               </button>
             )}
             {response.trim() && (

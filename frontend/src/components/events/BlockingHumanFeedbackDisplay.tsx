@@ -226,19 +226,21 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     }
   }
 
-  // Submitted state — compact confirmation + keep plan toggle
+  // Submitted state — show question + answer
   if (hasSubmitted) {
     return (
       <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-md px-3 py-2 my-2">
+        {/* Question */}
+        <div className="text-xs text-green-700 dark:text-green-300 mb-1.5">
+          <MarkdownRenderer content={question} className="text-xs" />
+        </div>
+        {/* Answer */}
         <div className="flex items-center gap-2">
           <svg className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
           <span className="text-xs font-medium text-green-800 dark:text-green-200">
             {submittedFeedback}
-          </span>
-          <span className="text-[10px] text-green-600 dark:text-green-400 italic ml-auto">
-            Processing...
           </span>
         </div>
         {context && (

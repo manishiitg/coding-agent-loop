@@ -1330,6 +1330,7 @@ export const useChatStore = create<ChatState>()(
           }
 
           // Migrate events from old sessionId to new sessionId (if old session had events)
+          // This preserves conversation history for chat/multi-agent when session ID changes
           if (oldSessionId && state.tabEvents[oldSessionId]) {
             const oldEvents = state.tabEvents[oldSessionId]
             const oldEventIndex = state.tabEventIndices[oldSessionId]

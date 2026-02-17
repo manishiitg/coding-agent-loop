@@ -145,6 +145,11 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     setError(null)
     setManualStatus(null) // Clear any manual status
 
+    // Clear previous events from the tab — a re-run should start fresh
+    const chatStore = useChatStore.getState()
+    chatStore.clearTabEvents(currentSessionId)
+    chatStore.clearStreamingText(currentSessionId)
+
     try {
       // Get active preset for LLM config
       const activePreset = getActivePreset('workflow')

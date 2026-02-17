@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { devtools } from 'zustand/middleware'
 import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
@@ -124,7 +123,6 @@ interface LLMState extends StoreActions {
 }
 
 export const useLLMStore = create<LLMState>()(
-  devtools(
     persist(
       (set, get) => ({
         // Initial state - will be loaded from backend
@@ -902,9 +900,5 @@ export const useLLMStore = create<LLMState>()(
           }
         }
       }
-    ),
-    {
-      name: 'llm-store'
-    }
-  )
+    )
 )

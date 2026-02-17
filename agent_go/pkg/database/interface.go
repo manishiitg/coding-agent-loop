@@ -44,6 +44,24 @@ type Database interface {
 	UpdateWorkflow(ctx context.Context, presetQueryID string, req *UpdateWorkflowRequest) (*Workflow, error)
 	DeleteWorkflow(ctx context.Context, presetQueryID string) error
 
+	// Bot connector config management
+	UpsertBotConnectorConfig(ctx context.Context, req *CreateBotConnectorConfigRequest) (*BotConnectorConfig, error)
+	GetBotConnectorConfig(ctx context.Context, id string) (*BotConnectorConfig, error)
+	ListBotConnectorConfigs(ctx context.Context) ([]BotConnectorConfig, error)
+
+	// Bot session management
+	CreateBotSession(ctx context.Context, req *CreateBotSessionRequest) (*BotSession, error)
+	GetBotSession(ctx context.Context, id string) (*BotSession, error)
+	GetBotSessionByThread(ctx context.Context, platform, channelID, threadTS string) (*BotSession, error)
+	GetBotSessionBySessionID(ctx context.Context, sessionID string) (*BotSession, error)
+	UpdateBotSession(ctx context.Context, id string, req *UpdateBotSessionRequest) (*BotSession, error)
+	CompleteBotSession(ctx context.Context, id string, status string) error
+	ListBotSessions(ctx context.Context, limit, offset int, status string) ([]BotSession, int, error)
+
+	// Bot message management
+	CreateBotMessage(ctx context.Context, req *CreateBotMessageRequest) (*BotMessage, error)
+	ListBotMessages(ctx context.Context, botSessionID string, limit, offset int) ([]BotMessage, int, error)
+
 	// Health check
 	Ping(ctx context.Context) error
 	Close() error

@@ -539,3 +539,96 @@ type UpdateWorkflowRequest struct {
 	WorkflowStatus  *string                  `json:"workflow_status,omitempty"`
 	SelectedOptions *WorkflowSelectedOptions `json:"selected_options,omitempty"`
 }
+
+// Bot session status constants
+const (
+	BotSessionStatusAnalyzing           = "analyzing"
+	BotSessionStatusAwaitingConfirmation = "awaiting_confirmation"
+	BotSessionStatusRunning             = "running"
+	BotSessionStatusCompleted           = "completed"
+	BotSessionStatusFailed              = "failed"
+)
+
+// BotConnectorConfig represents configuration for a bot connector platform
+type BotConnectorConfig struct {
+	ID              string    `json:"id" db:"id"`                             // "slack", "discord", etc.
+	Enabled         bool      `json:"enabled" db:"enabled"`
+	BotMode         bool      `json:"bot_mode" db:"bot_mode"`                // full bot vs notification-only
+	ConfigJSON      string    `json:"config_json" db:"config_json"`          // platform-specific config
+	DefaultPresetID string    `json:"default_preset_id" db:"default_preset_id"`
+	AutoConfirm     bool      `json:"auto_confirm" db:"auto_confirm"`
+	AllowedChannels string    `json:"allowed_channels" db:"allowed_channels"` // JSON array
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// BotSession represents a bot conversation session tied to a platform thread
+type BotSession struct {
+	ID            string     `json:"id" db:"id"`
+	Platform      string     `json:"platform" db:"platform"`
+	ChannelID     string     `json:"channel_id" db:"channel_id"`
+	ThreadTS      string     `json:"thread_ts" db:"thread_ts"`
+	SessionID     string     `json:"session_id" db:"session_id"`         // internal chat session ID
+	UserID        string     `json:"user_id" db:"user_id"`               // platform user ID
+	UserName      string     `json:"user_name" db:"user_name"`
+	Query         string     `json:"query" db:"query"`
+	Status        string     `json:"status" db:"status"`
+	AnalysisJSON  string     `json:"analysis_json" db:"analysis_json"`
+	PresetID      string     `json:"preset_id" db:"preset_id"`
+	ConfigJSON    string     `json:"config_json" db:"config_json"`       // final QueryRequest config
+	ThreadContext string     `json:"thread_context" db:"thread_context"` // JSON of thread history
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+	CompletedAt   *time.Time `json:"completed_at" db:"completed_at"`
+}
+
+// BotMessage represents a message in a bot session (audit trail)
+type BotMessage struct {
+	ID                string    `json:"id" db:"id"`
+	BotSessionID      string    `json:"bot_session_id" db:"bot_session_id"`
+	Direction         string    `json:"direction" db:"direction"`                   // "incoming" / "outgoing"
+	MessageType       string    `json:"message_type" db:"message_type"`             // "user_request", "analysis", "confirmation", "progress", "result", "human_feedback"
+	Content           string    `json:"content" db:"content"`
+	PlatformMessageID string    `json:"platform_message_id" db:"platform_message_id"` // for message updates
+	CreatedAt         time.Time `json:"created_at" db:"created_at"`
+}
+
+// CreateBotConnectorConfigRequest for creating/updating a bot connector config
+type CreateBotConnectorConfigRequest struct {
+	ID              string `json:"id"`
+	Enabled         bool   `json:"enabled"`
+	BotMode         bool   `json:"bot_mode"`
+	ConfigJSON      string `json:"config_json,omitempty"`
+	DefaultPresetID string `json:"default_preset_id,omitempty"`
+	AutoConfirm     bool   `json:"auto_confirm"`
+	AllowedChannels string `json:"allowed_channels,omitempty"`
+}
+
+// CreateBotSessionRequest for creating a new bot session
+type CreateBotSessionRequest struct {
+	Platform      string `json:"platform"`
+	ChannelID     string `json:"channel_id"`
+	ThreadTS      string `json:"thread_ts"`
+	UserID        string `json:"user_id"`
+	UserName      string `json:"user_name,omitempty"`
+	Query         string `json:"query"`
+	ThreadContext string `json:"thread_context,omitempty"`
+}
+
+// UpdateBotSessionRequest for updating a bot session
+type UpdateBotSessionRequest struct {
+	SessionID    string `json:"session_id,omitempty"`
+	Status       string `json:"status,omitempty"`
+	AnalysisJSON string `json:"analysis_json,omitempty"`
+	PresetID     string `json:"preset_id,omitempty"`
+	ConfigJSON   string `json:"config_json,omitempty"`
+}
+
+// CreateBotMessageRequest for creating a bot message
+type CreateBotMessageRequest struct {
+	BotSessionID      string `json:"bot_session_id"`
+	Direction         string `json:"direction"`
+	MessageType       string `json:"message_type"`
+	Content           string `json:"content,omitempty"`
+	PlatformMessageID string `json:"platform_message_id,omitempty"`
+}

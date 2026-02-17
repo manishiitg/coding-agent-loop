@@ -763,6 +763,9 @@ type StreamingAPI struct {
 
 	// Logger for structured logging
 	logger loggerv2.Logger
+
+	// Bot conversation manager for Slack/Discord/Telegram bot sessions
+	botManager *slackservice.BotConversationManager
 }
 
 // QueryRequest represents an agent query request
@@ -1173,6 +1176,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
+	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
@@ -1252,6 +1256,38 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api, chatDB)
 
+	// Initialize Bot Conversation Manager
+	workspaceURL := os.Getenv("WORKSPACE_API_URL")
+	if workspaceURL == "" {
+		workspaceURL = "http://localhost:8081"
+	}
+	botManager := slackservice.NewBotConversationManager(chatDB, configPath, workspaceURL)
+	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
+	api.botManager = botManager
+	// Wire startSessionInternal after api is created (closure captures api)
+	botManager.SetStartSessionFunc(api.startSessionInternal)
+
+	// Wire bot session checker for human feedback (skip 2-min delay for bot sessions)
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+	if feedbackStore != nil {
+		feedbackStore.SetBotSessionChecker(func(sessionID string) bool {
+			return botManager.IsBotSession(sessionID)
+		})
+	}
+
+	// Register Slack as a bot connector if bot_mode is enabled
+	if slackSvc != nil {
+		botConfig, _ := chatDB.GetBotConnectorConfig(context.Background(), "slack")
+		if botConfig != nil && botConfig.BotMode {
+			botManager.RegisterConnector(slackSvc)
+			slackSvc.StartListening(context.Background())
+			log.Printf("✅ Slack bot mode enabled")
+		}
+	}
+
+	// Register bot routes
+	BotRoutes(router, api, chatDB)
+
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {
 		api.updateSessionActivity(sessionID)
@@ -1310,20 +1346,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 
 	// Create HTTP server
-	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", addr, err)
-	}
-
-	actualPort := listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("✅ Server started on %s:%d (dynamic port)\n", config.Host, actualPort)
-	fmt.Printf("DynamicPort: %d\n", actualPort)
-	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, actualPort)
-	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, actualPort)
-
 	srv := &http.Server{
-		Addr:         addr,
+		Addr:         fmt.Sprintf("%s:%d", config.Host, config.Port),
 		WriteTimeout: time.Second * 30,  // Increased for streaming
 		ReadTimeout:  time.Second * 30,  // Increased for streaming
 		IdleTimeout:  time.Second * 300, // 5 min idle timeout to prevent early closes during long queries
@@ -1332,10 +1356,14 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
+
+	fmt.Printf("✅ Server started on %s:%d\n", config.Host, config.Port)
+	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, config.Port)
+	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, config.Port)
 
 	// Initialize tool cache on server startup
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
@@ -3967,66 +3995,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
-
-					// Register memory tools for multi-agent plan mode only
-					if delegationMode == "plan" {
-						memoryTools := virtualtools.CreateMemoryTools()
-						memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-						memoryRegistered := 0
-
-						for _, tool := range memoryTools {
-							if tool.Function == nil {
-								continue
-							}
-							toolName := tool.Function.Name
-							if executor, exists := memoryExecutors[toolName]; exists {
-								var params map[string]interface{}
-								if tool.Function.Parameters != nil {
-									paramsBytes, err := json.Marshal(tool.Function.Parameters)
-									if err == nil {
-										json.Unmarshal(paramsBytes, &params)
-									}
-								}
-								if params == nil {
-									log.Printf("[MEMORY TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
-									continue
-								}
-
-								exec := executor
-								wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-									ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
-									ctx = context.WithValue(ctx, virtualtools.PlanEventEmitterKey, &planEventEmitter{
-										eventStore: api.eventStore,
-										sessionID:  sessionID,
-										chatDB:     api.chatDB,
-									})
-									if bgDelegateFunc != nil {
-										ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, bgDelegateFunc)
-									}
-									if bgQuerier != nil {
-										ctx = context.WithValue(ctx, virtualtools.BGAgentRegistryKey, bgQuerier)
-										ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
-									}
-									return exec(ctx, args)
-								}
-
-								if err := delegationAgent.RegisterCustomToolWithTimeout(
-									toolName,
-									tool.Function.Description,
-									params,
-									wrappedExecutor,
-									0, // No timeout — memory sub-agents run until complete
-									delegationCategory,
-								); err != nil {
-									log.Printf("[MEMORY TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-									continue
-								}
-								memoryRegistered++
-								log.Printf("[MEMORY TOOLS] Registered memory tool: %s", toolName)
-							}
-						}
-						log.Printf("[MEMORY TOOLS] Successfully registered %d memory tools", memoryRegistered)
-					}
 				}
 			}
 		}
@@ -4188,9 +4156,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						underlyingAgent.AppendSystemPrompt(tierSection)
 					}
 				}
-				// Add memory system instructions for plan mode
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
-				log.Printf("[MEMORY] Added memory system instructions to system prompt")
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
 				// Inject custom tier descriptions into system prompt so the manager knows about them
@@ -5402,71 +5367,6 @@ func batchGetCostEvents(ctx context.Context, db database.Database, sessionIDs []
 
 	return result, nil
 }
-
-// getTokenUsageEventsForHTTPSession queries token_usage events for a session (http handler version)
-// It also resolves delegation component names using delegation_start events (e.g. "delegation-0" -> "sear-0001")
-func getTokenUsageEventsForHTTPSession(r *http.Request, db database.Database, sessionID string) ([]tokenUsageData, error) {
-	dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, 10000, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	// First pass: build delegation_id -> background_agent_id map from delegation_start events
-	delegationNameMap := buildDelegationNameMap(dbEvents)
-
-	var result []tokenUsageData
-	for _, dbEvent := range dbEvents {
-		if dbEvent.EventType != "token_usage" {
-			continue
-		}
-
-		tud, err := parseTokenUsageEvent(dbEvent.EventData)
-		if err != nil {
-			log.Printf("[COSTS] Error parsing token_usage event: %v", err)
-			continue
-		}
-
-		// Resolve delegation component name using the map
-		if tud.correlationID != "" {
-			if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
-				tud.Component = agentName
-			}
-		}
-
-		result = append(result, tud)
-	}
-
-	return result, nil
-}
-
-// buildDelegationNameMap scans events for delegation_start and extracts delegation_id -> background_agent_id mapping
-func buildDelegationNameMap(dbEvents []database.Event) map[string]string {
-	nameMap := make(map[string]string)
-	for _, dbEvent := range dbEvents {
-		if dbEvent.EventType != "delegation_start" {
-			continue
-		}
-		var wrapper struct {
-			Data json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
-			continue
-		}
-		var delegData struct {
-			DelegationID      string `json:"delegation_id"`
-			BackgroundAgentID string `json:"background_agent_id"`
-		}
-		if err := json.Unmarshal(wrapper.Data, &delegData); err != nil {
-			continue
-		}
-		if delegData.DelegationID != "" && delegData.BackgroundAgentID != "" {
-			nameMap[delegData.DelegationID] = delegData.BackgroundAgentID
-		}
-	}
-	return nameMap
-}
-
-
 
 // --- ACTIVE SESSION MANAGEMENT ---
 

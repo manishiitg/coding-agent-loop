@@ -426,8 +426,6 @@ export default function Workspace({
   const filteredFiles = useMemo(() => {
     let result = files
 
-    console.log('[WORKSPACE_DEBUG] filteredFiles recalc — mode:', selectedModeCategory, '| workflowFolderPath:', workflowFolderPath, '| raw files count:', files.length, '| raw top-level paths:', files.map(f => f.filepath).join(', '))
-
     // Only filter if we're in workflow mode and have a workflow folder path
     // When in chat mode, show all files regardless of preset
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
@@ -449,7 +447,6 @@ export default function Workspace({
         // Fallback: no hierarchical folder found, adjust all items
         result = adjustFilePathsRecursive(result, workflowFolderPath)
       }
-      console.log('[WORKSPACE_DEBUG] after adjustFilePathsRecursive:', result.length, 'items, paths:', result.map(f => f.filepath).join(', '))
     } else if (selectedModeCategory === 'multi-agent') {
       // Multi Agent Chat mode: show Plans/, Chats/, skills/ and subagents/ folders
       result = files.filter(f => {
@@ -799,9 +796,17 @@ export default function Workspace({
   }, [])
 
   // Select file and enter selection mode
+  // If it's a folder with children, enter selection mode without pre-selecting the folder itself
+  // (to prevent accidentally deleting the entire folder when user only wants to select children)
+  // If it's a file or leaf folder, pre-select it
   const selectFileAndEnterSelectionMode = useCallback((file: PlannerFile) => {
     setIsSelectionMode(true)
-    setSelectedFiles(new Set([file.filepath]))
+    if (file.type === 'folder' && file.children && file.children.length > 0) {
+      // Don't pre-select parent folders — user likely wants to select items inside
+      setSelectedFiles(new Set())
+    } else {
+      setSelectedFiles(new Set([file.filepath]))
+    }
   }, [])
 
   // Select/Deselect all visible files (top-level only, not recursive)
@@ -854,13 +859,20 @@ export default function Workspace({
   // Handle bulk delete
   const handleBulkDelete = useCallback(() => {
     const selectedItems = getSelectedFilesAsObjects()
+    console.log('[BulkDelete] Selected files set:', Array.from(selectedFiles))
+    console.log('[BulkDelete] Resolved items:', selectedItems.map(item => ({
+      filepath: item.filepath,
+      originalFilepath: item.originalFilepath,
+      type: item.type,
+      hasChildren: !!(item.children && item.children.length > 0)
+    })))
     if (selectedItems.length === 0) return
     setBulkDeleteDialog({
       isOpen: true,
       isLoading: false,
       items: selectedItems
     })
-  }, [getSelectedFilesAsObjects])
+  }, [getSelectedFilesAsObjects, selectedFiles])
 
   // Confirm bulk delete
   const confirmBulkDelete = async () => {
@@ -870,19 +882,48 @@ export default function Workspace({
 
     try {
       const errors: string[] = []
-      
+
+      // Deduplicate: if a parent folder is selected along with its children,
+      // only delete the parent (folder deletion is recursive).
+      // This prevents accidentally deleting more than intended.
+      const allPaths = new Set(bulkDeleteDialog.items.map(item => getOriginalFilePath(item)))
+      const itemsToDelete = bulkDeleteDialog.items.filter(item => {
+        const itemPath = getOriginalFilePath(item)
+        // Check if any ancestor of this item is also in the selection
+        const parts = itemPath.split('/')
+        for (let i = 1; i < parts.length; i++) {
+          const ancestorPath = parts.slice(0, i).join('/')
+          if (allPaths.has(ancestorPath)) {
+            // An ancestor folder is also selected — skip this item (parent will handle it)
+            console.log(`[BulkDelete] Skipping "${itemPath}" — ancestor "${ancestorPath}" is also selected`)
+            return false
+          }
+        }
+        return true
+      })
+
+      console.log('[BulkDelete] Items to delete:', itemsToDelete.map(item => ({
+        filepath: item.filepath,
+        originalFilepath: item.originalFilepath,
+        resolvedPath: getOriginalFilePath(item),
+        type: item.type
+      })))
+
       // Delete each item sequentially
-      for (const item of bulkDeleteDialog.items) {
+      for (const item of itemsToDelete) {
         try {
           const fullFilePath = getOriginalFilePath(item)
+          console.log(`[BulkDelete] Deleting ${item.type}: "${fullFilePath}" (display: "${item.filepath}")`)
           if (item.type === 'file') {
             await agentApi.deletePlannerFile(fullFilePath)
           } else {
             await agentApi.deletePlannerFolder(fullFilePath)
           }
+          console.log(`[BulkDelete] Successfully deleted: "${fullFilePath}"`)
         } catch (err) {
           const fileName = item.filepath.split('/').pop() || item.filepath
           errors.push(`${fileName}: ${err instanceof Error ? err.message : 'Failed to delete'}`)
+          console.error(`[BulkDelete] Failed to delete "${item.filepath}":`, err)
         }
       }
 
@@ -2086,8 +2127,7 @@ export default function Workspace({
         onConfirm={confirmBulkDelete}
         title={`Delete ${bulkDeleteDialog.items.length} Item${bulkDeleteDialog.items.length !== 1 ? 's' : ''}`}
         message={`Are you sure you want to delete ${bulkDeleteDialog.items.length} item${bulkDeleteDialog.items.length !== 1 ? 's' : ''}? This action cannot be undone.\n\n${bulkDeleteDialog.items.slice(0, 10).map(item => {
-          const fileName = item.filepath.split('/').pop() || item.filepath
-          return `• ${fileName}${item.type === 'folder' ? ' (folder)' : ''}`
+          return `• ${item.filepath}${item.type === 'folder' ? ' (folder)' : ''}`
         }).join('\n')}${bulkDeleteDialog.items.length > 10 ? `\n... and ${bulkDeleteDialog.items.length - 10} more` : ''}`}
         confirmText={`Delete ${bulkDeleteDialog.items.length} Item${bulkDeleteDialog.items.length !== 1 ? 's' : ''}`}
         cancelText="Cancel"

@@ -275,11 +275,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Debounced fetchFiles: coalesces rapid step_progress_updated events into one fetch
   const debouncedFetchFiles = useCallback((folder?: string) => {
-    console.log('[WORKSPACE_DEBUG] debouncedFetchFiles queued with folder:', folder)
     if (fetchFilesTimerRef.current) clearTimeout(fetchFilesTimerRef.current)
     fetchFilesTimerRef.current = setTimeout(() => {
       fetchFilesTimerRef.current = null
-      console.log('[WORKSPACE_DEBUG] debouncedFetchFiles FIRING with folder:', folder)
       fetchFiles(folder).catch(err =>
         logger.error('WorkflowLayout', 'Failed to refresh workspace files:', err)
       )

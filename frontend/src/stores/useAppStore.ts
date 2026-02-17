@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { devtools } from 'zustand/middleware'
 import type { AgentMode } from './types'
 import { useModeStore, type ModeCategory } from './useModeStore'
 
@@ -43,7 +42,6 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>()(
-  devtools(
     persist(
       (set, get) => {
         // Sync flag to prevent circular updates
@@ -159,9 +157,5 @@ export const useAppStore = create<AppState>()(
           return state as unknown as AppState
         }
       }
-    ),
-    {
-      name: 'app-store'
-    }
-  )
+    )
 )

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { devtools, persist } from 'zustand/middleware'
+import { persist } from 'zustand/middleware'
 import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary, DelegationTierConfig, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
 import { SSEConnection } from '../services/sse'
 import { shouldShowEventByMode } from '../components/events/eventModeUtils'
@@ -126,6 +126,7 @@ export interface ChatTab {
     mode?: 'chat' | 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
     isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
+    isViewOnly?: boolean  // True when tab is read-only (e.g., bot connector sessions)
   }
 }
 
@@ -396,7 +397,6 @@ interface ChatState extends StoreActions {
 }
 
 export const useChatStore = create<ChatState>()(
-  devtools(
     persist(
       (set, get) => ({
       // Initial state
@@ -1898,9 +1898,5 @@ export const useChatStore = create<ChatState>()(
           }
         }
       }
-    ),
-    {
-      name: 'chat-store'
-    }
-  )
+    )
 )

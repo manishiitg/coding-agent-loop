@@ -212,6 +212,7 @@ func shouldSkipAuth(path string) bool {
 		"/api/capabilities",
 		"/api/shared/",          // Shared session links are public
 		"/api/oauth/callback",   // OAuth callback comes from external provider without our JWT
+		"/api/downloads/",       // Chrome CDP launcher zip (macOS)
 	}
 
 	for _, p := range publicPaths {

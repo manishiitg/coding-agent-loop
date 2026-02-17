@@ -55,6 +55,11 @@ type SlackService struct {
 	socketCtx     context.Context
 	socketCancel  context.CancelFunc
 	socketMux     sync.RWMutex
+
+	// Bot connector handlers (set by BotConversationManager)
+	messageHandler     BotMessageHandler
+	interactionHandler BotInteractionHandler
+	botUserID          string // Bot's own Slack user ID (for stripping @mentions)
 }
 
 // Name returns the name of this connector
@@ -813,6 +818,8 @@ func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.MessageEvent:
 			s.handleSocketModeMessage(ev)
+		case *slackevents.AppMentionEvent:
+			s.handleAppMentionEvent(ev)
 		}
 	}
 }
@@ -824,27 +831,41 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// Get unique ID from thread
+	// Check if this thread belongs to a bot session — if so, route to BotConversationManager
+	if s.messageHandler != nil {
+		s.messageHandler(BotIncomingMessage{
+			Platform:      "slack",
+			UserID:        ev.User,
+			ChannelID:     ev.Channel,
+			ThreadTS:      ev.ThreadTimeStamp,
+			Text:          ev.Text,
+			Timestamp:     time.Now(),
+			IsThreadReply: true,
+		})
+		// Don't return — also try the feedback path below, since the message handler
+		// will silently ignore if this isn't a bot session thread
+	}
+
+	// Get unique ID from thread (for feedback responses)
 	uniqueID, err := s.GetUniqueIDFromThread(
 		context.Background(),
 		ev.ThreadTimeStamp,
 		ev.Channel,
 	)
 	if err != nil {
-		log.Printf("[SLACK_SOCKET] ⚠️  Failed to get unique_id for thread %s: %v", ev.ThreadTimeStamp, err)
+		// Not a feedback thread — this is normal for bot session threads
 		return
 	}
 
 	// Submit feedback through notification manager (which updates the feedback store)
-	// This ensures all connectors go through the same path
 	notificationManager := GetNotificationManager()
 	if notificationManager == nil {
-		log.Printf("[SLACK_SOCKET] ❌ Notification manager not available, cannot submit response")
+		log.Printf("[SLACK_SOCKET] Notification manager not available, cannot submit response")
 		return
 	}
 
 	if err := notificationManager.ReceiveNotification(uniqueID, ev.Text, "slack"); err != nil {
-		log.Printf("[SLACK_SOCKET] ❌ Failed to submit feedback via notification manager: %v", err)
+		log.Printf("[SLACK_SOCKET] Failed to submit feedback via notification manager: %v", err)
 		return
 	}
 }
@@ -879,6 +900,23 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 		var response string
 
 		actionID := action.ActionID
+
+		// Handle bot connector actions (confirm/cancel)
+		if strings.HasPrefix(actionID, "bot_confirm_") || strings.HasPrefix(actionID, "bot_cancel_") {
+			if s.interactionHandler != nil {
+				value := "confirm"
+				if strings.HasPrefix(actionID, "bot_cancel_") {
+					value = "cancel"
+				}
+				threadTS := callback.Message.ThreadTimestamp
+				if threadTS == "" {
+					threadTS = callback.Message.Timestamp
+				}
+				s.interactionHandler("slack", callback.Channel.ID, threadTS, actionID, value, callback.User.ID)
+			}
+			continue
+		}
+
 		if strings.HasPrefix(actionID, "feedback_yes_") {
 			uniqueID = strings.TrimPrefix(actionID, "feedback_yes_")
 			response = action.Text.Text // Use button label (e.g., "Approve")
@@ -892,11 +930,11 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 				uniqueID = strings.Join(parts[3:], "_") // uniqueID may contain underscores
 				response = action.Text.Text             // Use button label (the option text)
 			} else {
-				log.Printf("[SLACK_SOCKET] ⚠️  Invalid option action ID format: %s", actionID)
+				log.Printf("[SLACK_SOCKET] Invalid option action ID format: %s", actionID)
 				continue
 			}
 		} else {
-			log.Printf("[SLACK_SOCKET] ⚠️  Unknown action ID format: %s", actionID)
+			log.Printf("[SLACK_SOCKET] Unknown action ID format: %s", actionID)
 			continue
 		}
 
@@ -920,6 +958,273 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 		// Update the message to show the button was clicked (optional - can disable buttons)
 		// For now, we'll just log it - Slack will automatically disable the button after click
 	}
+}
+
+// --- BotConnector interface implementation ---
+
+// StartListening starts the bot listener (Socket Mode is already started separately)
+func (s *SlackService) StartListening(ctx context.Context) error {
+	// Socket Mode is already started via StartSocketMode
+	// Resolve bot user ID for mention stripping
+	if s.client != nil {
+		authResp, err := s.client.AuthTest()
+		if err == nil {
+			s.botUserID = authResp.UserID
+			log.Printf("[SLACK_BOT] Bot user ID resolved: %s", s.botUserID)
+		}
+	}
+	return nil
+}
+
+// StopListening stops the bot listener
+func (s *SlackService) StopListening() {
+	s.StopSocketMode()
+}
+
+// SetMessageHandler sets the callback for incoming bot messages
+func (s *SlackService) SetMessageHandler(handler BotMessageHandler) {
+	s.messageHandler = handler
+}
+
+// SetInteractionHandler sets the callback for button interactions
+func (s *SlackService) SetInteractionHandler(handler BotInteractionHandler) {
+	s.interactionHandler = handler
+}
+
+// GetFormatter returns the Slack message formatter
+func (s *SlackService) GetFormatter() MessageFormatter {
+	return &SlackFormatter{}
+}
+
+// SendThreadMessage sends a message to a Slack thread
+func (s *SlackService) SendThreadMessage(ctx context.Context, threadID ThreadID, message string) (string, error) {
+	if s.client == nil {
+		return "", fmt.Errorf("slack client not initialized")
+	}
+
+	formatted := convertMarkdownToSlackMrkdwn(message)
+
+	// Split long messages
+	formatter := &SlackFormatter{}
+	parts := formatter.SplitLongMessage(formatted)
+
+	var lastTS string
+	for _, part := range parts {
+		_, ts, err := s.client.PostMessageContext(ctx,
+			threadID.ChannelID,
+			slack.MsgOptionText(part, false),
+			slack.MsgOptionTS(threadID.ThreadTS),
+		)
+		if err != nil {
+			return lastTS, fmt.Errorf("failed to post thread message: %w", err)
+		}
+		lastTS = ts
+	}
+
+	return lastTS, nil
+}
+
+// SendThreadMessageWithBlocks sends a message with interactive blocks to a Slack thread
+func (s *SlackService) SendThreadMessageWithBlocks(ctx context.Context, threadID ThreadID, message string, blocks []MessageBlock) (string, error) {
+	if s.client == nil {
+		return "", fmt.Errorf("slack client not initialized")
+	}
+
+	formatted := convertMarkdownToSlackMrkdwn(message)
+
+	// Build Slack blocks
+	var slackBlocks []slack.Block
+
+	// Text section
+	slackBlocks = append(slackBlocks, slack.NewSectionBlock(
+		slack.NewTextBlockObject(slack.MarkdownType, formatted, false, false),
+		nil, nil,
+	))
+
+	// Convert MessageBlocks to Slack blocks
+	for _, block := range blocks {
+		if block.Type == "actions" && len(block.Buttons) > 0 {
+			var actionElements []slack.BlockElement
+			for _, btn := range block.Buttons {
+				style := slack.StyleDefault
+				if btn.Style == "primary" {
+					style = slack.StylePrimary
+				} else if btn.Style == "danger" {
+					style = slack.StyleDanger
+				}
+				btnElement := slack.NewButtonBlockElement(btn.ActionID, btn.Value,
+					slack.NewTextBlockObject(slack.PlainTextType, btn.Text, false, false),
+				)
+				btnElement.Style = style
+				actionElements = append(actionElements, btnElement)
+			}
+			slackBlocks = append(slackBlocks, slack.NewActionBlock("", actionElements...))
+		}
+	}
+
+	_, ts, err := s.client.PostMessageContext(ctx,
+		threadID.ChannelID,
+		slack.MsgOptionBlocks(slackBlocks...),
+		slack.MsgOptionTS(threadID.ThreadTS),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to post thread message with blocks: %w", err)
+	}
+
+	return ts, nil
+}
+
+// UpdateMessage updates an existing Slack message
+func (s *SlackService) UpdateMessage(ctx context.Context, threadID ThreadID, messageID string, newText string) error {
+	if s.client == nil {
+		return fmt.Errorf("slack client not initialized")
+	}
+
+	formatted := convertMarkdownToSlackMrkdwn(newText)
+
+	_, _, _, err := s.client.UpdateMessageContext(ctx,
+		threadID.ChannelID,
+		messageID,
+		slack.MsgOptionText(formatted, false),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update message: %w", err)
+	}
+
+	return nil
+}
+
+// GetThreadHistory retrieves the full history of a Slack thread
+func (s *SlackService) GetThreadHistory(ctx context.Context, threadID ThreadID) ([]ThreadMessage, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("slack client not initialized")
+	}
+
+	params := &slack.GetConversationRepliesParameters{
+		ChannelID: threadID.ChannelID,
+		Timestamp: threadID.ThreadTS,
+		Limit:     100,
+	}
+
+	msgs, _, _, err := s.client.GetConversationRepliesContext(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get thread replies: %w", err)
+	}
+
+	var history []ThreadMessage
+	for _, msg := range msgs {
+		isBot := msg.BotID != "" || (s.botUserID != "" && msg.User == s.botUserID)
+
+		// Parse timestamp
+		ts := time.Now()
+		if msg.Timestamp != "" {
+			// Slack timestamps are Unix epoch with fractional seconds
+			parts := strings.SplitN(msg.Timestamp, ".", 2)
+			if len(parts) >= 1 {
+				var sec int64
+				fmt.Sscanf(parts[0], "%d", &sec)
+				ts = time.Unix(sec, 0)
+			}
+		}
+
+		history = append(history, ThreadMessage{
+			UserID:    msg.User,
+			UserName:  msg.User, // Slack API returns user ID; resolving display names would need users.info
+			Text:      msg.Text,
+			Timestamp: ts,
+			IsBot:     isBot,
+		})
+	}
+
+	return history, nil
+}
+
+// handleAppMentionEvent handles @mention events
+func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
+	if s.messageHandler == nil {
+		log.Printf("[SLACK_BOT] AppMention received but no message handler set, ignoring")
+		return
+	}
+
+	// Strip the @mention from the text
+	text := s.stripMention(ev.Text)
+
+	// Determine if this is in a thread
+	isThreadReply := ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp
+	threadTS := ev.ThreadTimeStamp
+	if threadTS == "" {
+		// New channel message — use the message's own timestamp as the thread root
+		threadTS = ev.TimeStamp
+	}
+
+	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
+
+	s.messageHandler(BotIncomingMessage{
+		Platform:      "slack",
+		UserID:        ev.User,
+		UserName:      ev.User,
+		ChannelID:     ev.Channel,
+		ThreadTS:      threadTS,
+		Text:          text,
+		Timestamp:     time.Now(),
+		IsThreadReply: isThreadReply,
+	})
+}
+
+// stripMention removes <@BOTID> from message text
+func (s *SlackService) stripMention(text string) string {
+	if s.botUserID != "" {
+		mention := fmt.Sprintf("<@%s>", s.botUserID)
+		text = strings.Replace(text, mention, "", -1)
+	}
+	// Also strip any remaining <@...> patterns
+	mentionRegex := regexp.MustCompile(`<@[A-Z0-9]+>`)
+	text = mentionRegex.ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
+}
+
+// --- SlackFormatter implements MessageFormatter ---
+
+// SlackFormatter converts Markdown to Slack mrkdwn format
+type SlackFormatter struct{}
+
+// FormatMessage converts standard Markdown to Slack mrkdwn
+func (f *SlackFormatter) FormatMessage(markdown string) string {
+	return convertMarkdownToSlackMrkdwn(markdown)
+}
+
+// MaxMessageLength returns Slack's message length limit
+func (f *SlackFormatter) MaxMessageLength() int {
+	return 4000
+}
+
+// SplitLongMessage splits a message into chunks within Slack's limit
+func (f *SlackFormatter) SplitLongMessage(text string) []string {
+	maxLen := f.MaxMessageLength()
+	if len(text) <= maxLen {
+		return []string{text}
+	}
+
+	var parts []string
+	for len(text) > 0 {
+		if len(text) <= maxLen {
+			parts = append(parts, text)
+			break
+		}
+
+		// Try to split at a newline
+		splitIdx := strings.LastIndex(text[:maxLen], "\n")
+		if splitIdx < maxLen/2 {
+			// No good newline split point, split at max length
+			splitIdx = maxLen
+		}
+
+		parts = append(parts, text[:splitIdx])
+		text = text[splitIdx:]
+		text = strings.TrimLeft(text, "\n")
+	}
+
+	return parts
 }
 
 // GetConfig returns current Slack configuration (with masked tokens)

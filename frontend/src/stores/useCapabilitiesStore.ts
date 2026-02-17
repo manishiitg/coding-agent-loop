@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
 import { agentApi } from '../services/api'
 import type { CapabilitiesResponse } from '../services/api-types'
 
@@ -18,7 +17,6 @@ interface CapabilitiesState {
 }
 
 export const useCapabilitiesStore = create<CapabilitiesState>()(
-  devtools(
     (set, get) => ({
       capabilities: null,
       loading: false,
@@ -49,7 +47,5 @@ export const useCapabilitiesStore = create<CapabilitiesState>()(
       isLocalMode: () => {
         return get().capabilities?.local_mode ?? false
       }
-    }),
-    { name: 'capabilities-store' }
-  )
+    })
 )

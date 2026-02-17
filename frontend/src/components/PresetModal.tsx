@@ -14,7 +14,7 @@ import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/a
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore';
-import { agentApi } from '../services/api';
+import { agentApi, getApiBaseUrl } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import type { LLMOption } from '../types/llm';
 
@@ -1005,7 +1005,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                               <div className="rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/80 p-2 space-y-1.5">
                                 <p className="text-xs font-medium text-gray-700 dark:text-gray-300">macOS: Easy setup</p>
                                 <a
-                                  href="/downloads/Chrome-CDP-macOS.zip"
+                                  href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
                                   download="Chrome-CDP-macOS.zip"
                                   className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded transition-colors"
                                 >

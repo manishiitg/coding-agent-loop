@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
 import type { WorkflowPhase, StepProgress, ExecutionOptions, AgentLLMConfig, VariablesManifest, EvaluationPlan } from '../services/api-types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 import { ExecutionStrategy } from '../services/api-types'
@@ -250,7 +249,6 @@ interface WorkflowStore {
 }
 
 export const useWorkflowStore = create<WorkflowStore>()(
-  devtools(
     (set, get) => ({
       // === Initial State ===
       // Constants
@@ -294,7 +292,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Execution options
       selectedExecutionMode: 'with_learning',
       selectedStartPoint: 0,
-      
+      selectedBranchStep: null,
+
       // Temporary LLM overrides (persists across page refreshes via localStorage)
       // Load from localStorage on initialization
       tempOverrideLLM: (() => {
@@ -2131,11 +2130,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
       },
 
-    }),
-    {
-      name: 'workflow-store'
-    }
-  )
+    })
 )
 
 // Selector hooks for common patterns

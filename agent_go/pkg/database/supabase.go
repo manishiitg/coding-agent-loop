@@ -1782,3 +1782,429 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 
 	return presets, total, nil
 }
+
+// --- Bot Connector Config CRUD (PostgreSQL) ---
+
+func (s *SupabaseDB) UpsertBotConnectorConfig(ctx context.Context, req *CreateBotConnectorConfigRequest) (*BotConnectorConfig, error) {
+	query := `
+		INSERT INTO bot_connector_config (id, enabled, bot_mode, config_json, default_preset_id, auto_confirm, allowed_channels, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		ON CONFLICT(id) DO UPDATE SET
+			enabled = EXCLUDED.enabled,
+			bot_mode = EXCLUDED.bot_mode,
+			config_json = EXCLUDED.config_json,
+			default_preset_id = EXCLUDED.default_preset_id,
+			auto_confirm = EXCLUDED.auto_confirm,
+			allowed_channels = EXCLUDED.allowed_channels,
+			updated_at = NOW()
+	`
+
+	configJSON := req.ConfigJSON
+	if configJSON == "" {
+		configJSON = "{}"
+	}
+	allowedChannels := req.AllowedChannels
+	if allowedChannels == "" {
+		allowedChannels = "[]"
+	}
+
+	_, err := s.db.ExecContext(ctx, query,
+		req.ID, req.Enabled, req.BotMode, configJSON,
+		req.DefaultPresetID, req.AutoConfirm, allowedChannels,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upsert bot connector config: %w", err)
+	}
+
+	return s.GetBotConnectorConfig(ctx, req.ID)
+}
+
+func (s *SupabaseDB) GetBotConnectorConfig(ctx context.Context, id string) (*BotConnectorConfig, error) {
+	query := `SELECT id, enabled, bot_mode, config_json, default_preset_id, auto_confirm, allowed_channels, created_at, updated_at FROM bot_connector_config WHERE id = $1`
+
+	var cfg BotConnectorConfig
+	var defaultPresetID, configJSON, allowedChannels sql.NullString
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&cfg.ID, &cfg.Enabled, &cfg.BotMode, &configJSON,
+		&defaultPresetID, &cfg.AutoConfirm, &allowedChannels,
+		&cfg.CreatedAt, &cfg.UpdatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("bot connector config not found: %s", id)
+		}
+		return nil, fmt.Errorf("failed to get bot connector config: %w", err)
+	}
+
+	if configJSON.Valid {
+		cfg.ConfigJSON = configJSON.String
+	} else {
+		cfg.ConfigJSON = "{}"
+	}
+	if defaultPresetID.Valid {
+		cfg.DefaultPresetID = defaultPresetID.String
+	}
+	if allowedChannels.Valid {
+		cfg.AllowedChannels = allowedChannels.String
+	} else {
+		cfg.AllowedChannels = "[]"
+	}
+
+	return &cfg, nil
+}
+
+func (s *SupabaseDB) ListBotConnectorConfigs(ctx context.Context) ([]BotConnectorConfig, error) {
+	query := `SELECT id, enabled, bot_mode, config_json, default_preset_id, auto_confirm, allowed_channels, created_at, updated_at FROM bot_connector_config ORDER BY id`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list bot connector configs: %w", err)
+	}
+	defer rows.Close()
+
+	configs := make([]BotConnectorConfig, 0)
+	for rows.Next() {
+		var cfg BotConnectorConfig
+		var defaultPresetID, configJSON, allowedChannels sql.NullString
+		err := rows.Scan(
+			&cfg.ID, &cfg.Enabled, &cfg.BotMode, &configJSON,
+			&defaultPresetID, &cfg.AutoConfirm, &allowedChannels,
+			&cfg.CreatedAt, &cfg.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan bot connector config: %w", err)
+		}
+		if configJSON.Valid {
+			cfg.ConfigJSON = configJSON.String
+		} else {
+			cfg.ConfigJSON = "{}"
+		}
+		if defaultPresetID.Valid {
+			cfg.DefaultPresetID = defaultPresetID.String
+		}
+		if allowedChannels.Valid {
+			cfg.AllowedChannels = allowedChannels.String
+		} else {
+			cfg.AllowedChannels = "[]"
+		}
+		configs = append(configs, cfg)
+	}
+
+	return configs, nil
+}
+
+func (s *SupabaseDB) CreateBotSession(ctx context.Context, req *CreateBotSessionRequest) (*BotSession, error) {
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	query := `
+		INSERT INTO bot_sessions (id, platform, channel_id, thread_ts, user_id, user_name, query, status, thread_context)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'analyzing', $8)
+	`
+
+	threadContext := req.ThreadContext
+	if threadContext == "" {
+		threadContext = "[]"
+	}
+
+	_, err := s.db.ExecContext(ctx, query,
+		id, req.Platform, req.ChannelID, req.ThreadTS,
+		req.UserID, req.UserName, req.Query, threadContext,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bot session: %w", err)
+	}
+
+	return s.GetBotSession(ctx, id)
+}
+
+func (s *SupabaseDB) GetBotSession(ctx context.Context, id string) (*BotSession, error) {
+	query := `
+		SELECT id, platform, channel_id, thread_ts, session_id, user_id, user_name, query, status,
+		       analysis_json, preset_id, config_json, thread_context, created_at, updated_at, completed_at
+		FROM bot_sessions WHERE id = $1
+	`
+
+	var bs BotSession
+	var sessionID, userName, analysisJSON, presetID, configJSON, threadContext sql.NullString
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&bs.ID, &bs.Platform, &bs.ChannelID, &bs.ThreadTS,
+		&sessionID, &bs.UserID, &userName, &bs.Query, &bs.Status,
+		&analysisJSON, &presetID, &configJSON, &threadContext,
+		&bs.CreatedAt, &bs.UpdatedAt, &bs.CompletedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("bot session not found: %s", id)
+		}
+		return nil, fmt.Errorf("failed to get bot session: %w", err)
+	}
+
+	if sessionID.Valid {
+		bs.SessionID = sessionID.String
+	}
+	if userName.Valid {
+		bs.UserName = userName.String
+	}
+	if analysisJSON.Valid {
+		bs.AnalysisJSON = analysisJSON.String
+	}
+	if presetID.Valid {
+		bs.PresetID = presetID.String
+	}
+	if configJSON.Valid {
+		bs.ConfigJSON = configJSON.String
+	}
+	if threadContext.Valid {
+		bs.ThreadContext = threadContext.String
+	}
+
+	return &bs, nil
+}
+
+func (s *SupabaseDB) GetBotSessionByThread(ctx context.Context, platform, channelID, threadTS string) (*BotSession, error) {
+	query := `
+		SELECT id FROM bot_sessions
+		WHERE platform = $1 AND channel_id = $2 AND thread_ts = $3
+		ORDER BY created_at DESC LIMIT 1
+	`
+
+	var id string
+	err := s.db.QueryRowContext(ctx, query, platform, channelID, threadTS).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get bot session by thread: %w", err)
+	}
+
+	return s.GetBotSession(ctx, id)
+}
+
+func (s *SupabaseDB) GetBotSessionBySessionID(ctx context.Context, sessionID string) (*BotSession, error) {
+	query := `SELECT id FROM bot_sessions WHERE session_id = $1 LIMIT 1`
+
+	var id string
+	err := s.db.QueryRowContext(ctx, query, sessionID).Scan(&id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get bot session by session ID: %w", err)
+	}
+
+	return s.GetBotSession(ctx, id)
+}
+
+func (s *SupabaseDB) UpdateBotSession(ctx context.Context, id string, req *UpdateBotSessionRequest) (*BotSession, error) {
+	var updateFields []string
+	var args []interface{}
+	paramIdx := 1
+
+	if req.SessionID != "" {
+		updateFields = append(updateFields, fmt.Sprintf("session_id = $%d", paramIdx))
+		args = append(args, req.SessionID)
+		paramIdx++
+	}
+	if req.Status != "" {
+		updateFields = append(updateFields, fmt.Sprintf("status = $%d", paramIdx))
+		args = append(args, req.Status)
+		paramIdx++
+	}
+	if req.AnalysisJSON != "" {
+		updateFields = append(updateFields, fmt.Sprintf("analysis_json = $%d", paramIdx))
+		args = append(args, req.AnalysisJSON)
+		paramIdx++
+	}
+	if req.PresetID != "" {
+		updateFields = append(updateFields, fmt.Sprintf("preset_id = $%d", paramIdx))
+		args = append(args, req.PresetID)
+		paramIdx++
+	}
+	if req.ConfigJSON != "" {
+		updateFields = append(updateFields, fmt.Sprintf("config_json = $%d", paramIdx))
+		args = append(args, req.ConfigJSON)
+		paramIdx++
+	}
+
+	if len(updateFields) == 0 {
+		return s.GetBotSession(ctx, id)
+	}
+
+	updateFields = append(updateFields, "updated_at = NOW()")
+	args = append(args, id)
+
+	query := fmt.Sprintf("UPDATE bot_sessions SET %s WHERE id = $%d", strings.Join(updateFields, ", "), paramIdx)
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update bot session: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, fmt.Errorf("bot session not found: %s", id)
+	}
+
+	return s.GetBotSession(ctx, id)
+}
+
+func (s *SupabaseDB) CompleteBotSession(ctx context.Context, id string, status string) error {
+	query := `UPDATE bot_sessions SET status = $1, completed_at = NOW(), updated_at = NOW() WHERE id = $2`
+
+	result, err := s.db.ExecContext(ctx, query, status, id)
+	if err != nil {
+		return fmt.Errorf("failed to complete bot session: %w", err)
+	}
+
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("bot session not found: %s", id)
+	}
+
+	return nil
+}
+
+func (s *SupabaseDB) ListBotSessions(ctx context.Context, limit, offset int, status string) ([]BotSession, int, error) {
+	var whereClause string
+	var args []interface{}
+	paramIdx := 1
+
+	if status != "" {
+		whereClause = fmt.Sprintf(" WHERE status = $%d", paramIdx)
+		args = append(args, status)
+		paramIdx++
+	}
+
+	countQuery := "SELECT COUNT(*) FROM bot_sessions" + whereClause
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count bot sessions: %w", err)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, platform, channel_id, thread_ts, session_id, user_id, user_name, query, status,
+		       analysis_json, preset_id, config_json, thread_context, created_at, updated_at, completed_at
+		FROM bot_sessions%s
+		ORDER BY created_at DESC LIMIT $%d OFFSET $%d
+	`, whereClause, paramIdx, paramIdx+1)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list bot sessions: %w", err)
+	}
+	defer rows.Close()
+
+	sessions := make([]BotSession, 0)
+	for rows.Next() {
+		var bs BotSession
+		var sessionID, userName, analysisJSON, presetID, configJSON, threadContext sql.NullString
+		err := rows.Scan(
+			&bs.ID, &bs.Platform, &bs.ChannelID, &bs.ThreadTS,
+			&sessionID, &bs.UserID, &userName, &bs.Query, &bs.Status,
+			&analysisJSON, &presetID, &configJSON, &threadContext,
+			&bs.CreatedAt, &bs.UpdatedAt, &bs.CompletedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan bot session: %w", err)
+		}
+		if sessionID.Valid {
+			bs.SessionID = sessionID.String
+		}
+		if userName.Valid {
+			bs.UserName = userName.String
+		}
+		if analysisJSON.Valid {
+			bs.AnalysisJSON = analysisJSON.String
+		}
+		if presetID.Valid {
+			bs.PresetID = presetID.String
+		}
+		if configJSON.Valid {
+			bs.ConfigJSON = configJSON.String
+		}
+		if threadContext.Valid {
+			bs.ThreadContext = threadContext.String
+		}
+		sessions = append(sessions, bs)
+	}
+
+	return sessions, total, nil
+}
+
+func (s *SupabaseDB) CreateBotMessage(ctx context.Context, req *CreateBotMessageRequest) (*BotMessage, error) {
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	query := `
+		INSERT INTO bot_messages (id, bot_session_id, direction, message_type, content, platform_message_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		id, req.BotSessionID, req.Direction, req.MessageType,
+		req.Content, req.PlatformMessageID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bot message: %w", err)
+	}
+
+	var msg BotMessage
+	getQuery := `SELECT id, bot_session_id, direction, message_type, content, platform_message_id, created_at FROM bot_messages WHERE id = $1`
+	var content, platformMsgID sql.NullString
+	err = s.db.QueryRowContext(ctx, getQuery, id).Scan(
+		&msg.ID, &msg.BotSessionID, &msg.Direction, &msg.MessageType,
+		&content, &platformMsgID, &msg.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get created bot message: %w", err)
+	}
+	if content.Valid {
+		msg.Content = content.String
+	}
+	if platformMsgID.Valid {
+		msg.PlatformMessageID = platformMsgID.String
+	}
+
+	return &msg, nil
+}
+
+func (s *SupabaseDB) ListBotMessages(ctx context.Context, botSessionID string, limit, offset int) ([]BotMessage, int, error) {
+	countQuery := `SELECT COUNT(*) FROM bot_messages WHERE bot_session_id = $1`
+	var total int
+	err := s.db.QueryRowContext(ctx, countQuery, botSessionID).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count bot messages: %w", err)
+	}
+
+	query := `
+		SELECT id, bot_session_id, direction, message_type, content, platform_message_id, created_at
+		FROM bot_messages WHERE bot_session_id = $1
+		ORDER BY created_at ASC LIMIT $2 OFFSET $3
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, botSessionID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list bot messages: %w", err)
+	}
+	defer rows.Close()
+
+	messages := make([]BotMessage, 0)
+	for rows.Next() {
+		var msg BotMessage
+		var content, platformMsgID sql.NullString
+		err := rows.Scan(
+			&msg.ID, &msg.BotSessionID, &msg.Direction, &msg.MessageType,
+			&content, &platformMsgID, &msg.CreatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan bot message: %w", err)
+		}
+		if content.Valid {
+			msg.Content = content.String
+		}
+		if platformMsgID.Valid {
+			msg.PlatformMessageID = platformMsgID.String
+		}
+		messages = append(messages, msg)
+	}
+
+	return messages, total, nil
+}

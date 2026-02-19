@@ -44,6 +44,11 @@ import type {
   CapabilitiesResponse,
   UserCostsResponse,
   SessionCostDetail,
+  DelegationLogsResponse,
+  AllDelegationLogsResponse,
+  SimulatorMessage,
+  SimulatorSendResponse,
+  SimulatorThreadInfo,
 } from './api-types'
 import type { PlanStep, AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -480,6 +485,85 @@ export const agentApi = {
     }
   },
 
+  // --- Bot Simulator API ---
+
+  // Send a message to the bot simulator (synchronous — returns analysis result or conversational reply)
+  // Pass thread_id to route follow-up messages into an existing thread/session
+  simulateBotMessage: async (message: string, threadId?: string): Promise<SimulatorSendResponse> => {
+    const response = await api.post('/api/bot/simulate/send', { message, thread_id: threadId })
+    return response.data
+  },
+
+  // Get messages from a simulator thread
+  getSimulatorMessages: async (threadId: string, since: number = 0): Promise<{ messages: SimulatorMessage[]; total: number }> => {
+    const response = await api.get(`/api/bot/simulate/${threadId}/messages`, { params: { since } })
+    return response.data
+  },
+
+  // Send a button interaction to the simulator
+  simulateBotInteract: async (threadId: string, actionId: string, value: string): Promise<{ success: boolean }> => {
+    const response = await api.post(`/api/bot/simulate/${threadId}/interact`, { action_id: actionId, value })
+    return response.data
+  },
+
+  // Cleanup a simulator thread
+  clearSimulatorThread: async (threadId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(`/api/bot/simulate/${threadId}`)
+    return response.data
+  },
+
+  // Get bot simulator config
+  getSimulatorConfig: async (): Promise<{ delegation_tier_config?: Record<string, unknown>; default_servers?: string[]; default_skills?: string[]; delegation_mode?: string }> => {
+    const response = await api.get('/api/bot/simulate/config')
+    return response.data
+  },
+
+  // Save bot simulator config (delegation tier config + default servers/skills)
+  saveBotConfig: async (config: {
+    delegation_tier_config?: Record<string, unknown>;
+    provider_api_keys?: Record<string, string>;
+    default_servers?: string[];
+    default_skills?: string[];
+    delegation_mode?: string;
+    allowed_emails?: string[];
+  }): Promise<{ success: boolean }> => {
+    const response = await api.post('/api/bot/simulate/config', config)
+    return response.data
+  },
+
+  // Save only delegation tier config to server (for bot sessions)
+  saveDelegationTierConfig: async (config: Record<string, unknown>, providerApiKeys?: Record<string, string>): Promise<{ success: boolean }> => {
+    const response = await api.post('/api/bot/simulate/config', {
+      delegation_tier_config: config,
+      ...(providerApiKeys ? { provider_api_keys: providerApiKeys } : {}),
+    })
+    return response.data
+  },
+
+  // Get available MCP servers and skills for bot config
+  getAvailableCapabilities: async (): Promise<{ servers: string[]; skills: { name: string; description?: string }[] }> => {
+    const response = await api.get('/api/bot/simulate/available-capabilities')
+    return response.data
+  },
+
+  // List all simulator threads
+  listSimulatorThreads: async (): Promise<{ threads: SimulatorThreadInfo[] }> => {
+    const response = await api.get('/api/bot/simulate/threads')
+    return response.data
+  },
+
+  // Get current simulator mode (threaded / non-threaded)
+  getSimulatorMode: async (): Promise<{ threaded: boolean }> => {
+    const response = await api.get('/api/bot/simulate/mode')
+    return response.data
+  },
+
+  // Set simulator mode (threaded / non-threaded)
+  setSimulatorMode: async (threaded: boolean): Promise<{ success: boolean; threaded: boolean }> => {
+    const response = await api.post('/api/bot/simulate/mode', { threaded })
+    return response.data
+  },
+
   // Get tool list and status
   getTools: async () => {
     const response = await api.get('/api/tools')
@@ -783,6 +867,24 @@ export const agentApi = {
 
   getSessionCosts: async (sessionId: string, signal?: AbortSignal): Promise<SessionCostDetail> => {
     const response = await api.get(`/api/chat-history/sessions/${sessionId}/costs`, { signal })
+    return response.data
+  },
+
+  // Delegation Logs API (Multi-Agent Mode)
+  getDelegationLogs: async (sessionId: string, signal?: AbortSignal): Promise<DelegationLogsResponse> => {
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}/delegation-logs`, { signal })
+    return response.data
+  },
+
+  getAllDelegationLogs: async (limit = 50, signal?: AbortSignal): Promise<AllDelegationLogsResponse> => {
+    const response = await api.get('/api/chat-history/delegation-logs', { params: { limit }, signal })
+    return response.data
+  },
+
+  getDelegationEvents: async (sessionId: string, delegationId: string, limit = 500, offset = 0): Promise<{ events: unknown[]; total: number }> => {
+    const response = await api.get(`/api/chat-history/sessions/${sessionId}/delegation-logs/${delegationId}/events`, {
+      params: { limit, offset }
+    })
     return response.data
   },
 

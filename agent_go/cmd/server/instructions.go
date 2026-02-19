@@ -122,11 +122,13 @@ func buildSkillPrompt(selectedSkills []string) string {
 
 	// Add skills discovery instructions
 	promptParts = append(promptParts, `
-## Active Skills
+## Available Skills
 
-The following skills are activated for this conversation. You **MUST** read each skill's SKILL.md before responding to the user's request.
+The following skills are available for this conversation. Each skill extends your capabilities with specialized instructions and tools.
 
-### Activated Skills:
+**Important:** Before taking any significant action (creating a plan, delegating tasks, executing multi-step work, or performing analysis), read the SKILL.md files for relevant skills so you understand what capabilities are available and can use them effectively. For simple conversational messages (greetings, clarifying questions, etc.), you do not need to read skills first — just respond naturally.
+
+### Available Skills:
 `)
 
 	// List each skill with its path
@@ -148,7 +150,10 @@ The following skills are activated for this conversation. You **MUST** read each
 	}
 
 	promptParts = append(promptParts, `
-**Action Required:** Before proceeding, read each SKILL.md using execute_shell_command(command: "cat skills/<name>/SKILL.md", working_directory: ".").
+**How to read skills efficiently:**
+1. **Quick scan first:** Use execute_shell_command(command: "head -100 skills/<name>/SKILL.md", working_directory: ".") to read the first few lines (frontmatter + description) of each skill to determine if it is relevant to the user's request.
+2. **Read fully if relevant:** If a skill matches the user's intent, read the complete file: execute_shell_command(command: "cat skills/<name>/SKILL.md", working_directory: "."). Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
+3. **Skip if not relevant:** If the description clearly does not match the user's request, move on — no need to read the full file.
 `)
 
 	return strings.Join(promptParts, "\n")

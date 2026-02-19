@@ -19,11 +19,21 @@ type HumanFeedbackRequest struct {
 	CreatedAt      time.Time
 }
 
+// BotSessionCheckerFunc checks if a given session ID belongs to a bot session.
+// Set by the server layer to enable skip-delay behavior.
+type BotSessionCheckerFunc func(sessionID string) bool
+
 // HumanFeedbackStore manages interactive feedback requests
 type HumanFeedbackStore struct {
-	requests map[string]*HumanFeedbackRequest
-	waiters  map[string]chan string
-	mu       sync.RWMutex
+	requests          map[string]*HumanFeedbackRequest
+	waiters           map[string]chan string
+	mu                sync.RWMutex
+	botSessionChecker BotSessionCheckerFunc
+}
+
+// SetBotSessionChecker sets the function to check if a session is a bot session
+func (s *HumanFeedbackStore) SetBotSessionChecker(fn BotSessionCheckerFunc) {
+	s.botSessionChecker = fn
 }
 
 // Global singleton instance
@@ -90,10 +100,22 @@ func (s *HumanFeedbackStore) CreateRequestWithSlack(ctx context.Context, uniqueI
 	}
 
 	// Start delayed notification: wait 2 minutes, then check if user responded
-	// If no response, send Slack notification
+	// If no response, send notification via connectors.
+	// For bot sessions, send immediately (the thread IS the primary interface).
 	go func() {
-		// Wait 2 minutes
-		time.Sleep(2 * time.Minute)
+		// Check if this is a bot session (extract sessionID from uniqueID pattern)
+		isBotSession := false
+		if s.botSessionChecker != nil {
+			// uniqueID often contains the sessionID — check if any active bot session matches
+			isBotSession = s.botSessionChecker(uniqueID)
+		}
+
+		if !isBotSession {
+			// Standard delay: wait 2 minutes before sending external notification
+			time.Sleep(2 * time.Minute)
+		} else {
+			log.Printf("[HUMAN_FEEDBACK_STORE] Bot session detected for %s, sending notification immediately", uniqueID)
+		}
 
 		// Check if user has already responded
 		s.mu.RLock()

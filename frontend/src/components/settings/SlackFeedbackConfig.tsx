@@ -61,6 +61,7 @@ export default function SlackFeedbackConfig({ isOpen, onClose }: SlackFeedbackCo
         bot_token: config.bot_token || '',
         app_token: config.app_token || '',
         channel_id: config.channel_id || '',
+        bot_mode: config.bot_mode || false,
       }
 
       await agentApi.updateSlackFeedbackConfig(request)
@@ -90,6 +91,7 @@ export default function SlackFeedbackConfig({ isOpen, onClose }: SlackFeedbackCo
         bot_token: config.bot_token || '',
         app_token: config.app_token || '',
         channel_id: config.channel_id || '',
+        bot_mode: config.bot_mode || false,
       }
 
       const result = await agentApi.testSlackConnection(testConfig)
@@ -225,6 +227,29 @@ export default function SlackFeedbackConfig({ isOpen, onClose }: SlackFeedbackCo
                 </div>
               </Card>
 
+              {/* Bot Mode Toggle */}
+              {config.enabled && (
+                <Card className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-medium text-foreground">Bot Mode (@mention)</h3>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Users can @mention the bot to start agent sessions directly from Slack
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.bot_mode || false}
+                        onChange={(e) => setConfig({ ...config, bot_mode: e.target.checked })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                    </label>
+                  </div>
+                </Card>
+              )}
+
               {/* Configuration Fields */}
               {config.enabled && (
                 <div className="space-y-4">
@@ -317,76 +342,75 @@ export default function SlackFeedbackConfig({ isOpen, onClose }: SlackFeedbackCo
                     </p>
                   </Card>
 
-                  {/* OAuth Scopes Required */}
+                  {/* Step-by-Step Installation Guide */}
                   <Card className="p-4 bg-secondary/50 border-border">
                     <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
+                      <Settings className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
                       <div className="flex-1 text-sm text-foreground">
-                        <p className="font-medium mb-2">Required OAuth Scopes (Bot Token):</p>
-                        <p className="text-xs mb-2 text-muted-foreground">Go to <strong>OAuth & Permissions</strong> → <strong>Scopes</strong> → <strong>Bot Token Scopes</strong> and add:</p>
-                        <ul className="list-disc list-inside space-y-1 text-xs text-muted-foreground">
-                          <li><code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">chat:write</code> - Required to send messages to channels</li>
-                          <li><code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">channels:read</code> - Required to read channel information</li>
-                          <li><code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">channels:history</code> - <strong>Required to receive messages in public channels</strong></li>
-                          <li><code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">groups:history</code> - Required to receive messages in private channels (if using private channels)</li>
+                        <p className="font-medium mb-3">Slack Bot Installation Guide</p>
+
+                        <p className="text-xs font-medium text-foreground mb-1">Step 1: Create a Slack App</p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-xs text-muted-foreground mb-3 ml-2">
+                          <li>Go to <a href="https://api.slack.com/apps" target="_blank" rel="noopener noreferrer" className="text-primary underline">api.slack.com/apps</a></li>
+                          <li>Click <strong>"Create New App"</strong> → <strong>"From scratch"</strong></li>
+                          <li>Name your app (e.g. "AI Agent") and select your workspace</li>
+                        </ol>
+
+                        <p className="text-xs font-medium text-foreground mb-1">Step 2: Enable Socket Mode</p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-xs text-muted-foreground mb-3 ml-2">
+                          <li>Go to <strong>Socket Mode</strong> (left sidebar) → Toggle <strong>Enable Socket Mode</strong> on</li>
+                          <li>When prompted, name the token (e.g. "Socket Mode Token")</li>
+                          <li>It auto-adds <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">connections:write</code> scope</li>
+                          <li>Click <strong>Generate</strong> → Copy the <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">xapp-...</code> token — this is your <strong>App Token</strong></li>
+                        </ol>
+
+                        <p className="text-xs font-medium text-foreground mb-1">Step 3: Add Bot Token Scopes</p>
+                        <p className="text-xs text-muted-foreground mb-1 ml-2">Go to <strong>OAuth & Permissions</strong> → <strong>Scopes</strong> → <strong>Bot Token Scopes</strong> → Add:</p>
+                        <ul className="list-disc list-inside space-y-0.5 text-xs text-muted-foreground mb-3 ml-4">
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">chat:write</code> — send messages</li>
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">channels:read</code> — read channel info</li>
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">channels:history</code> — receive messages in public channels</li>
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">groups:history</code> — receive messages in private channels</li>
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">app_mentions:read</code> — receive @mention events (for bot mode)</li>
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">users:read</code> — look up user profiles</li>
+                          <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">users:read.email</code> — resolve user emails (for allowed emails filter)</li>
                         </ul>
-                        <p className="text-xs mt-2 italic text-muted-foreground">⚠️ <strong>Important:</strong> After adding scopes, you must reinstall the app to your workspace for changes to take effect. Go to <strong>OAuth & Permissions</strong> → Click <strong>"Reinstall to Workspace"</strong></p>
-                      </div>
-                    </div>
-                  </Card>
 
-                  {/* Socket Mode Permissions */}
-                  <Card className="p-4 bg-info/10 border-info/30">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-info flex-shrink-0 mt-0.5" />
-                      <div className="flex-1 text-sm text-foreground">
-                        <p className="font-medium mb-2 text-foreground">ℹ️ Socket Mode Permissions (App-Level Token):</p>
-                        <p className="text-xs mb-2 text-muted-foreground">Socket Mode requires an <strong>App-Level Token</strong> (different from Bot Token):</p>
-                        <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
-                          <li>Go to <strong>Basic Information</strong> → <strong>App-Level Tokens</strong></li>
-                          <li>Click <strong>"Generate Token and Scopes"</strong></li>
-                          <li>Token name: e.g., "Socket Mode Token"</li>
-                          <li>Add scope: <code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">connections:write</code> (required for Socket Mode)</li>
-                          <li>Click <strong>"Generate"</strong> and copy the token (starts with <code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">xapp-</code>)</li>
+                        <p className="text-xs font-medium text-foreground mb-1">Step 4: Install App to Workspace</p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-xs text-muted-foreground mb-3 ml-2">
+                          <li>Go to <strong>OAuth & Permissions</strong> → Click <strong>"Install to Workspace"</strong></li>
+                          <li>Authorize the requested permissions</li>
+                          <li>Copy the <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">xoxb-...</code> token — this is your <strong>Bot Token</strong></li>
                         </ol>
-                        <p className="text-xs mt-2 text-muted-foreground">⚠️ <strong>Note:</strong> App-Level Tokens are different from Bot Tokens. Socket Mode requires both - Bot Token for API calls and App-Level Token for WebSocket connection.</p>
-                      </div>
-                    </div>
-                  </Card>
 
-                  {/* Channel Permissions */}
-                  <Card className="p-4 bg-warning/10 border-warning/30">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
-                      <div className="flex-1 text-sm text-foreground">
-                        <p className="font-medium mb-2 text-foreground">⚠️ Channel Permissions (Required for Receiving Messages):</p>
-                        <p className="text-xs mb-2 text-muted-foreground">The bot must be a member of the channel to receive messages:</p>
-                        <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
-                          <li>Open your Slack channel</li>
-                          <li>Type <code className="bg-secondary px-1.5 py-0.5 rounded font-mono text-foreground">/invite @YourBotName</code> in the channel</li>
-                          <li>Or: Right-click channel name → <strong>Integrations</strong> → <strong>Add apps</strong> → Select your bot</li>
+                        <p className="text-xs font-medium text-foreground mb-1">Step 5: Subscribe to Events</p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-xs text-muted-foreground mb-3 ml-2">
+                          <li>Go to <strong>Event Subscriptions</strong> → Toggle <strong>Enable Events</strong> on</li>
+                          <li>Under <strong>"Subscribe to bot events"</strong>, add:
+                            <ul className="list-disc list-inside ml-4 mt-0.5 space-y-0.5">
+                              <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">message.channels</code> — messages in public channels</li>
+                              <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">message.groups</code> — messages in private channels</li>
+                              <li><code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">app_mention</code> — @mentions of the bot</li>
+                            </ul>
+                          </li>
+                          <li>Click <strong>Save Changes</strong></li>
                         </ol>
-                        <p className="text-xs mt-2 font-medium text-foreground">If the bot is not in the channel, it cannot receive thread replies!</p>
-                      </div>
-                    </div>
-                  </Card>
 
-                  {/* Help Text */}
-                  <Card className="p-4 bg-secondary/50 border-border">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-0.5" />
-                      <div className="flex-1 text-sm text-foreground">
-                        <p className="font-medium mb-2">Setup Instructions:</p>
-                        <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
-                          <li>Create a Slack App at https://api.slack.com/apps</li>
-                          <li>Add required OAuth scopes (see above) - <strong>Make sure to add <code className="bg-secondary px-1 rounded text-foreground">channels:history</code>!</strong></li>
-                          <li>Install app to workspace: <strong>OAuth & Permissions</strong> → <strong>Install to Workspace</strong></li>
-                          <li>Enable Socket Mode: Go to <strong>Socket Mode</strong> → Enable Socket Mode</li>
-                          <li>Create App-Level Token: <strong>Basic Information</strong> → <strong>App-Level Tokens</strong> → Generate Token with <code className="bg-secondary px-1 rounded text-foreground">connections:write</code> scope (required for Socket Mode)</li>
-                          <li>Enable Events API: <strong>Event Subscriptions</strong> → Enable Events → Subscribe to <code className="bg-secondary px-1 rounded text-foreground">message.channels</code> under <strong>Subscribe to bot events</strong></li>
-                          <li><strong>Invite bot to channel:</strong> In your Slack channel, type <code className="bg-secondary px-1 rounded text-foreground">/invite @YourBotName</code></li>
-                          <li>Copy Bot Token, App Token, and Channel ID to the fields above</li>
+                        <p className="text-xs font-medium text-foreground mb-1">Step 6: Invite Bot to Channel</p>
+                        <ol className="list-decimal list-inside space-y-0.5 text-xs text-muted-foreground mb-3 ml-2">
+                          <li>Open the Slack channel you want to use</li>
+                          <li>Type <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">/invite @YourBotName</code></li>
+                          <li>Get the Channel ID: right-click channel name → <strong>View channel details</strong> → scroll to find the <strong>Channel ID</strong> (starts with <code className="bg-secondary px-1 py-0.5 rounded font-mono text-foreground">C</code>)</li>
                         </ol>
+
+                        <p className="text-xs font-medium text-foreground mb-1">Step 7: Configure Here</p>
+                        <p className="text-xs text-muted-foreground ml-2">
+                          Paste your <strong>Bot Token</strong>, <strong>App Token</strong>, and <strong>Channel ID</strong> into the fields above, enable the toggle, and save. Use <strong>Test Connection</strong> to verify everything works.
+                        </p>
+
+                        <div className="mt-3 p-2 bg-warning/10 border border-warning/30 rounded text-xs text-muted-foreground">
+                          <strong className="text-foreground">Re-install after scope changes:</strong> If you add new scopes later, you must go to <strong>OAuth & Permissions</strong> → <strong>"Reinstall to Workspace"</strong> for changes to take effect.
+                        </div>
                       </div>
                     </div>
                   </Card>

@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -485,12 +488,133 @@ func (api *StreamingAPI) handleRemoveServer(w http.ResponseWriter, r *http.Reque
 
 // --- BACKGROUND TOOL DISCOVERY ---
 
+// discoveryFailedFile is the on-disk format for persisted discovery failures.
+// It includes a config hash so that manual edits to the JSON config file
+// automatically invalidate the persisted failures.
+type discoveryFailedFile struct {
+	ConfigHash string            `json:"config_hash"`
+	Servers    map[string]string `json:"servers"`
+}
+
+// configFileHash returns a SHA-256 hash of the user MCP config file contents.
+// If the file changes (manual edit, API update, etc.) the hash changes.
+func (api *StreamingAPI) configFileHash() string {
+	userConfigPath := strings.TrimSuffix(api.mcpConfigPath, ".json") + "_user.json"
+	data, err := os.ReadFile(userConfigPath)
+	if err != nil {
+		// Fall back to base config
+		data, err = os.ReadFile(api.mcpConfigPath)
+		if err != nil {
+			return ""
+		}
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:])
+}
+
+// persistDiscoveryFailedServers saves the failed servers map to disk so it
+// survives server restarts. This prevents wasting ~19s per OAuth-failing server
+// on every startup. A config hash is stored alongside so that manual config
+// edits automatically invalidate the persisted failures.
+func (api *StreamingAPI) persistDiscoveryFailedServers() {
+	cacheManager := mcpcache.GetCacheManager(api.logger)
+	filePath := filepath.Join(cacheManager.GetCacheDirectory(), "discovery_failed_servers.json")
+
+	payload := discoveryFailedFile{
+		ConfigHash: api.configFileHash(),
+		Servers:    api.discoveryFailedServers,
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		api.logger.Warn(fmt.Sprintf("Failed to marshal discoveryFailedServers: %v", err))
+		return
+	}
+
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		api.logger.Warn(fmt.Sprintf("Failed to create cache directory: %v", err))
+		return
+	}
+
+	if err := os.WriteFile(filePath, data, 0644); err != nil {
+		api.logger.Warn(fmt.Sprintf("Failed to persist discoveryFailedServers: %v", err))
+		return
+	}
+
+	api.logger.Info(fmt.Sprintf("Persisted %d failed servers to disk", len(api.discoveryFailedServers)))
+}
+
+// loadDiscoveryFailedServers loads previously failed servers from disk.
+// If the MCP config file has changed since the failures were persisted,
+// the file is discarded so all servers are retried.
+func (api *StreamingAPI) loadDiscoveryFailedServers() {
+	cacheManager := mcpcache.GetCacheManager(api.logger)
+	filePath := filepath.Join(cacheManager.GetCacheDirectory(), "discovery_failed_servers.json")
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			api.logger.Warn(fmt.Sprintf("Failed to read discoveryFailedServers from disk: %v", err))
+		}
+		return
+	}
+
+	var payload discoveryFailedFile
+	if err := json.Unmarshal(data, &payload); err != nil {
+		api.logger.Warn(fmt.Sprintf("Failed to unmarshal discoveryFailedServers: %v", err))
+		return
+	}
+
+	// If config changed, discard stale failures so servers are retried
+	currentHash := api.configFileHash()
+	if payload.ConfigHash != currentHash {
+		api.logger.Info("MCP config changed since last run — clearing persisted failed servers")
+		_ = os.Remove(filePath)
+		return
+	}
+
+	api.discoveryFailedServers = payload.Servers
+	api.logger.Info(fmt.Sprintf("Loaded %d previously failed servers from disk", len(payload.Servers)))
+	for name, reason := range payload.Servers {
+		api.logger.Debug(fmt.Sprintf("  Previously failed: %s — %s", name, reason))
+	}
+}
+
+// deleteDiscoveryFailedServersFile removes the persisted file (used on config reload).
+func (api *StreamingAPI) deleteDiscoveryFailedServersFile() {
+	cacheManager := mcpcache.GetCacheManager(api.logger)
+	filePath := filepath.Join(cacheManager.GetCacheDirectory(), "discovery_failed_servers.json")
+	_ = os.Remove(filePath)
+}
+
+// hasOAuthTokenFile checks whether a server's OAuth token file exists on disk.
+// Returns true if the server doesn't use OAuth or if the token file is present.
+func hasOAuthTokenFile(cfg mcpclient.MCPServerConfig) bool {
+	if cfg.OAuth == nil {
+		return true // no OAuth needed
+	}
+	tokenFile := cfg.OAuth.TokenFile
+	if tokenFile == "" {
+		tokenFile = "~/.config/mcpagent/tokens/default.json"
+	}
+	if strings.HasPrefix(tokenFile, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			tokenFile = filepath.Join(home, tokenFile[2:])
+		}
+	}
+	_, err := os.Stat(tokenFile)
+	return err == nil
+}
+
 // initializeToolCache initializes the tool cache on server startup using existing mcpcache service
 func (api *StreamingAPI) initializeToolCache() {
 	api.logger.Info("🚀 Initializing tool cache on server startup using existing mcpcache service...")
 
 	// Get the existing cache manager
 	cacheManager := mcpcache.GetCacheManager(api.logger)
+
+	// Load previously failed servers from disk to avoid re-attempting OAuth failures
+	api.loadDiscoveryFailedServers()
 
 	// Log cache statistics
 	stats := cacheManager.GetStats()
@@ -758,6 +882,24 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 			continue
 		}
 
+		// Pre-check: skip OAuth servers with no token file — avoids ~19s of futile retries
+		if !hasOAuthTokenFile(serverConfig) {
+			reason := "OAuth token file not found — authentication required before discovery"
+			api.discoveryFailedServers[serverName] = reason
+			api.logger.Info(fmt.Sprintf("⏭️ Skipping server %s: no OAuth token file", serverName))
+			api.appendServerLog(serverName, "warn", reason)
+
+			api.toolStatusMux.Lock()
+			api.toolStatus[serverName] = ToolStatus{
+				Name:   serverName,
+				Server: serverName,
+				Status: "error",
+				Error:  "OAuth authentication required — no token available",
+			}
+			api.toolStatusMux.Unlock()
+			continue
+		}
+
 		// No valid cache, discover fresh data
 		api.logger.Info(fmt.Sprintf("🔍 Discovering tools for server: %s", serverName))
 		api.appendServerLog(serverName, "info", "Starting background discovery...")
@@ -832,6 +974,11 @@ func (api *StreamingAPI) runBackgroundDiscovery() {
 
 	api.lastDiscovery = time.Now()
 	api.logger.Info(fmt.Sprintf("✅ Background tool discovery completed: %d servers processed", discoveredServers))
+
+	// Persist failed servers to disk so they're skipped on next restart
+	if len(api.discoveryFailedServers) > 0 {
+		api.persistDiscoveryFailedServers()
+	}
 
 	// Start periodic refresh (every 24 hours)
 	api.startPeriodicRefresh()

@@ -19,3 +19,7 @@
 30.. also add a slack hook to talk to multi chat agnet 
 
 31. read image tool response not visible
+
+32. add anthrpic latest models in multi llm provider and start with cloude code also, and vertex to only support api key?
+
+33. look at comflaux

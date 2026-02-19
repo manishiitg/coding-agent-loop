@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { devtools } from 'zustand/middleware'
 import { authApi, getAuthToken, setAuthToken, clearAuthToken } from '../services/api'
 import type { AuthUser, AuthProvider } from '../services/api'
 
@@ -54,7 +53,6 @@ function getAndClearOAuthState(): { state: string; provider: string } | null {
 }
 
 export const useAuthStore = create<AuthState>()(
-  devtools(
     persist(
       (set) => ({
         // Initial state
@@ -202,7 +200,5 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: state.isAuthenticated,
         }),
       }
-    ),
-    { name: 'AuthStore' }
-  )
+    )
 )

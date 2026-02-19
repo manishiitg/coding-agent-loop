@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { devtools } from 'zustand/middleware'
 import type { AgentMode } from './types'
 
 export type ModeCategory = 'chat' | 'workflow' | 'multi-agent' | null
@@ -27,7 +26,6 @@ interface ModeState {
 }
 
 export const useModeStore = create<ModeState>()(
-  devtools(
     persist(
       (set, get) => {
         // Sync flag to prevent circular updates
@@ -136,9 +134,5 @@ export const useModeStore = create<ModeState>()(
           return persistedState as ModeState
         }
       }
-    ),
-    {
-      name: 'mode-store'
-    }
-  )
+    )
 )

@@ -763,6 +763,12 @@ type StreamingAPI struct {
 
 	// Logger for structured logging
 	logger loggerv2.Logger
+
+	// Bot conversation manager for Slack/Discord/Telegram bot sessions
+	botManager *slackservice.BotConversationManager
+
+	// Web simulator connector for testing bot flow without Slack
+	webSimulator *slackservice.WebSimulatorConnector
 }
 
 // QueryRequest represents an agent query request
@@ -1173,6 +1179,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
+	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
@@ -1207,6 +1214,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/global", api.handleGetGlobalSecrets).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/store", api.handleStoreUserSecret).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/store/{name}", api.handleDeleteUserSecret).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/stored", api.handleListStoredSecrets).Methods("GET", "OPTIONS")
 
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
@@ -1245,12 +1255,72 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/chat-history/health", chatHistoryHealthCheckHandler(chatDB)).Methods("GET")
 	apiRouter.HandleFunc("/chat-history/costs", getAllSessionCostsHandler(chatDB)).Methods("GET")
 	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/costs", getSessionCostsHandler(chatDB)).Methods("GET")
+	apiRouter.HandleFunc("/chat-history/delegation-logs", getAllDelegationLogsHandler(chatDB)).Methods("GET")
+	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/delegation-logs", getDelegationLogsHandler(chatDB)).Methods("GET")
+	apiRouter.HandleFunc("/chat-history/sessions/{session_id}/delegation-logs/{delegation_id}/events", getDelegationEventsHandler(chatDB)).Methods("GET")
 
 	// Preset Queries API routes
 	PresetQueryRoutes(router, chatDB)
 
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api, chatDB)
+
+	// Initialize Bot Conversation Manager
+	workspaceURL := os.Getenv("WORKSPACE_API_URL")
+	if workspaceURL == "" {
+		workspaceURL = "http://localhost:8081"
+	}
+	botManager := slackservice.NewBotConversationManager(chatDB, configPath, workspaceURL)
+	botManager.SetEventSubscriber(NewBotEventSubscriberAdapter(eventStore))
+	// Bot sessions use ONLY delegation tier config from DB for LLM selection — no server defaults needed
+	api.botManager = botManager
+	// Wire startSessionInternal after api is created (closure captures api)
+	botManager.SetStartSessionFunc(api.startSessionInternal)
+	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
+	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]slackservice.DecryptedSecret, error) {
+		stored, err := chatDB.ListUserSecrets(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		var result []slackservice.DecryptedSecret
+		for _, s := range stored {
+			plaintext, err := decryptSecretValue(s.EncryptedValue, userID)
+			if err != nil {
+				log.Printf("[SECRETS] Failed to decrypt stored secret %q for user %s: %v", s.Name, userID, err)
+				continue // skip broken secrets
+			}
+			result = append(result, slackservice.DecryptedSecret{Name: s.Name, Value: plaintext})
+		}
+		return result, nil
+	})
+
+	// Wire bot session checker for human feedback (skip 2-min delay for bot sessions)
+	feedbackStore := virtualtools.GetHumanFeedbackStore()
+	if feedbackStore != nil {
+		feedbackStore.SetBotSessionChecker(func(sessionID string) bool {
+			return botManager.IsBotSession(sessionID)
+		})
+	}
+
+	// Register Slack as a bot connector if bot_mode is enabled
+	if slackSvc != nil {
+		botConfig, _ := chatDB.GetBotConnectorConfig(context.Background(), "slack")
+		if botConfig != nil && botConfig.BotMode {
+			botManager.RegisterConnector(slackSvc)
+			slackSvc.StartListening(context.Background())
+			log.Printf("✅ Slack bot mode enabled")
+		}
+	}
+
+	// Register web simulator connector (always available, no config needed)
+	webSimulator := slackservice.NewWebSimulatorConnector()
+	botManager.RegisterConnector(webSimulator)
+	api.webSimulator = webSimulator
+	log.Printf("✅ Web bot simulator enabled")
+
+	// Register bot routes
+	BotRoutes(router, api, chatDB)
+	BotSimulatorRoutes(router, api, chatDB)
 
 	// Set activity callback for event store to update session LastActivity when events are added
 	eventStore.SetActivityCallback(func(sessionID string) {
@@ -1313,20 +1383,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("./static/")))
 
 	// Create HTTP server
-	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", addr, err)
-	}
-
-	actualPort := listener.Addr().(*net.TCPAddr).Port
-	fmt.Printf("✅ Server started on %s:%d (dynamic port)\n", config.Host, actualPort)
-	fmt.Printf("DynamicPort: %d\n", actualPort)
-	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, actualPort)
-	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, actualPort)
-
 	srv := &http.Server{
-		Addr:         addr,
+		Addr:         fmt.Sprintf("%s:%d", config.Host, config.Port),
 		WriteTimeout: time.Second * 30,  // Increased for streaming
 		ReadTimeout:  time.Second * 30,  // Increased for streaming
 		IdleTimeout:  time.Second * 300, // 5 min idle timeout to prevent early closes during long queries
@@ -1335,10 +1393,14 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed to start: %v", err)
 		}
 	}()
+
+	fmt.Printf("✅ Server started on %s:%d\n", config.Host, config.Port)
+	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, config.Port)
+	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, config.Port)
 
 	// Initialize tool cache on server startup
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
@@ -2495,6 +2557,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Fall back to request defaults
 		finalProvider = req.Provider
 		finalModelID = req.ModelID
+	}
+
+	// If provider is still empty (e.g. follow-up message with no config), load from stored session config
+	if finalProvider == "" && chatSession != nil && len(chatSession.Config) > 0 {
+		var storedConfig database.ChatSessionConfig
+		if err := json.Unmarshal(chatSession.Config, &storedConfig); err == nil && storedConfig.LLMConfig != nil {
+			if storedConfig.LLMConfig.Provider != "" {
+				finalProvider = storedConfig.LLMConfig.Provider
+				finalModelID = storedConfig.LLMConfig.ModelID
+				log.Printf("[SESSION FALLBACK] Loaded provider/model from stored session config: %s/%s", finalProvider, finalModelID)
+			}
+		}
 	}
 
 	// Handle workflow mode - use workflow orchestrator
@@ -3970,66 +4044,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					log.Printf("[DELEGATION TOOLS] Successfully registered %d delegation tools for chat mode", len(delegationTools))
-
-					// Register memory tools for multi-agent plan mode only
-					if delegationMode == "plan" {
-						memoryTools := virtualtools.CreateMemoryTools()
-						memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-						memoryRegistered := 0
-
-						for _, tool := range memoryTools {
-							if tool.Function == nil {
-								continue
-							}
-							toolName := tool.Function.Name
-							if executor, exists := memoryExecutors[toolName]; exists {
-								var params map[string]interface{}
-								if tool.Function.Parameters != nil {
-									paramsBytes, err := json.Marshal(tool.Function.Parameters)
-									if err == nil {
-										json.Unmarshal(paramsBytes, &params)
-									}
-								}
-								if params == nil {
-									log.Printf("[MEMORY TOOLS] Warning: Failed to convert parameters for tool %s", toolName)
-									continue
-								}
-
-								exec := executor
-								wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
-									ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, planWorkspaceClient)
-									ctx = context.WithValue(ctx, virtualtools.PlanEventEmitterKey, &planEventEmitter{
-										eventStore: api.eventStore,
-										sessionID:  sessionID,
-										chatDB:     api.chatDB,
-									})
-									if bgDelegateFunc != nil {
-										ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, bgDelegateFunc)
-									}
-									if bgQuerier != nil {
-										ctx = context.WithValue(ctx, virtualtools.BGAgentRegistryKey, bgQuerier)
-										ctx = context.WithValue(ctx, virtualtools.BGAgentSessionIDKey, sessionID)
-									}
-									return exec(ctx, args)
-								}
-
-								if err := delegationAgent.RegisterCustomToolWithTimeout(
-									toolName,
-									tool.Function.Description,
-									params,
-									wrappedExecutor,
-									0, // No timeout — memory sub-agents run until complete
-									delegationCategory,
-								); err != nil {
-									log.Printf("[MEMORY TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
-									continue
-								}
-								memoryRegistered++
-								log.Printf("[MEMORY TOOLS] Registered memory tool: %s", toolName)
-							}
-						}
-						log.Printf("[MEMORY TOOLS] Successfully registered %d memory tools", memoryRegistered)
-					}
 				}
 			}
 		}
@@ -4191,9 +4205,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						underlyingAgent.AppendSystemPrompt(tierSection)
 					}
 				}
-				// Add memory system instructions for plan mode
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
-				log.Printf("[MEMORY] Added memory system instructions to system prompt")
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
 				// Inject custom tier descriptions into system prompt so the manager knows about them
@@ -5284,6 +5295,462 @@ func getSessionCostsHandler(db database.Database) http.HandlerFunc {
 	}
 }
 
+// getDelegationLogsHandler returns delegation log entries with costs for a session (mux handler)
+func getDelegationLogsHandler(db database.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		sessionID := vars["session_id"]
+		if sessionID == "" {
+			http.Error(w, "session_id is required", http.StatusBadRequest)
+			return
+		}
+
+		// Check session exists
+		userID := GetUserIDFromContext(r.Context())
+		_, err := db.GetChatSessionWithUser(r.Context(), sessionID, userID)
+		if err != nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+
+		// Get all events for this session
+		dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, 10000, 0)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to get events: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Also fetch sub-agent session events
+		sqlDB := db.GetDB()
+		var subSessionEvents []database.Event
+		if sqlDB != nil {
+			subSessionPrefix := sessionID + "-sub-"
+			query := `SELECT session_id FROM chat_sessions WHERE session_id LIKE ?`
+			if isPostgresDB(db) {
+				query = `SELECT session_id FROM chat_sessions WHERE session_id LIKE $1`
+			}
+			rows, err := sqlDB.QueryContext(r.Context(),
+				query,
+				subSessionPrefix+"%",
+			)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var subSessionID string
+					if err := rows.Scan(&subSessionID); err != nil {
+						continue
+					}
+					subEvents, err := db.GetEventsBySession(r.Context(), subSessionID, 10000, 0)
+					if err == nil {
+						subSessionEvents = append(subSessionEvents, subEvents...)
+					}
+				}
+			}
+		}
+
+		allEvents := append(dbEvents, subSessionEvents...)
+
+		// Build delegation entries from start/end events and aggregate token_usage
+		delegationMap := make(map[string]*DelegationLogEntry)
+		var delegationOrder []string
+
+		for _, dbEvent := range allEvents {
+			var wrapper struct {
+				CorrelationID string          `json:"correlation_id"`
+				Timestamp     time.Time       `json:"timestamp"`
+				Data          json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
+				continue
+			}
+
+			switch dbEvent.EventType {
+			case "delegation_start":
+				var startData struct {
+					DelegationID      string   `json:"delegation_id"`
+					Depth             int      `json:"depth"`
+					Instruction       string   `json:"instruction"`
+					ReasoningLevel    string   `json:"reasoning_level"`
+					ModelID           string   `json:"model_id"`
+					ToolMode          string   `json:"tool_mode"`
+					Servers           []string `json:"servers"`
+					BackgroundAgentID string   `json:"background_agent_id"`
+					Timestamp         string   `json:"timestamp"`
+				}
+				if err := json.Unmarshal(wrapper.Data, &startData); err != nil {
+					continue
+				}
+
+				entry := &DelegationLogEntry{
+					DelegationID:      startData.DelegationID,
+					Instruction:       startData.Instruction,
+					ReasoningLevel:    startData.ReasoningLevel,
+					ModelID:           startData.ModelID,
+					ToolMode:          startData.ToolMode,
+					Servers:           startData.Servers,
+					BackgroundAgentID: startData.BackgroundAgentID,
+					Depth:             startData.Depth,
+					Status:            "running",
+					StartTime:         startData.Timestamp,
+					TokenUsage:        make(map[string]*ChatModelUsage),
+				}
+				delegationMap[startData.DelegationID] = entry
+				delegationOrder = append(delegationOrder, startData.DelegationID)
+
+			case "delegation_end":
+				var endData struct {
+					DelegationID string `json:"delegation_id"`
+					Result       string `json:"result"`
+					Error        string `json:"error"`
+					Success      bool   `json:"success"`
+					Timestamp    string `json:"timestamp"`
+					InputTokens  int64  `json:"input_tokens"`
+					OutputTokens int64  `json:"output_tokens"`
+					ToolCalls    int64  `json:"tool_calls"`
+					Duration     string `json:"duration"`
+				}
+				if err := json.Unmarshal(wrapper.Data, &endData); err != nil {
+					continue
+				}
+
+				entry, ok := delegationMap[endData.DelegationID]
+				if !ok {
+					continue
+				}
+
+				if endData.Success {
+					entry.Status = "completed"
+				} else {
+					entry.Status = "failed"
+				}
+				entry.EndTime = endData.Timestamp
+				entry.Duration = endData.Duration
+				entry.Result = endData.Result
+				entry.Error = endData.Error
+				entry.InputTokens = endData.InputTokens
+				entry.OutputTokens = endData.OutputTokens
+				entry.ToolCalls = endData.ToolCalls
+
+			case "token_usage":
+				correlationID := wrapper.CorrelationID
+				if correlationID == "" {
+					continue
+				}
+
+				entry, ok := delegationMap[correlationID]
+				if !ok {
+					continue
+				}
+
+				tud, err := parseTokenUsageEvent(dbEvent.EventData)
+				if err != nil {
+					continue
+				}
+
+				modelUsage := getOrCreateModelUsage(entry.TokenUsage, tud.ModelID)
+				accumulateUsage(modelUsage, &tud)
+				entry.TotalCostUSD += tud.TotalCost
+			}
+		}
+
+		// Build ordered response
+		response := DelegationLogsResponse{
+			Delegations: make([]DelegationLogEntry, 0, len(delegationOrder)),
+			ByModel:     make(map[string]*ChatModelUsage),
+		}
+
+		for _, id := range delegationOrder {
+			entry := delegationMap[id]
+			response.Delegations = append(response.Delegations, *entry)
+			response.TotalCost += entry.TotalCostUSD
+			response.TotalInput += entry.InputTokens
+			response.TotalOutput += entry.OutputTokens
+			response.TotalCalls++
+
+			for modelID, usage := range entry.TokenUsage {
+				aggModel := getOrCreateModelUsage(response.ByModel, modelID)
+				mergeUsage(aggModel, usage)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// getAllDelegationLogsHandler returns delegation logs grouped by session with main agent + sub-agent breakdown
+func getAllDelegationLogsHandler(db database.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := GetUserIDFromContext(r.Context())
+		limitStr := r.URL.Query().Get("limit")
+
+		limit := 50
+		if limitStr != "" {
+			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+				limit = l
+			}
+		}
+
+		sessions, _, err := db.ListChatSessionsWithUser(r.Context(), limit, 0, nil, nil, userID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to list sessions: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Build session info map and filter to multi-agent sessions
+		type sessionInfo struct {
+			summary database.ChatHistorySummary
+		}
+		var multiAgentSessions []sessionInfo
+		for _, s := range sessions {
+			cfg, err := database.ChatSessionConfigFromJSON(s.Config)
+			if err == nil && cfg != nil && cfg.DelegationMode == "plan" {
+				multiAgentSessions = append(multiAgentSessions, sessionInfo{summary: s})
+			}
+		}
+
+		response := AllDelegationLogsResponse{
+			Sessions: make([]SessionDelegationLogs, 0),
+			ByModel:  make(map[string]*ChatModelUsage),
+		}
+
+		for _, si := range multiAgentSessions {
+			sid := si.summary.SessionID
+			dbEvents, err := db.GetEventsBySession(r.Context(), sid, 10000, 0)
+			if err != nil {
+				continue
+			}
+
+			sessLog := SessionDelegationLogs{
+				SessionID:   sid,
+				Title:       si.summary.Title,
+				CreatedAt:   si.summary.CreatedAt,
+				Status:      si.summary.Status,
+				Delegations: make([]DelegationLogEntry, 0),
+				ByModel:     make(map[string]*ChatModelUsage),
+				MainAgent: AgentCostSummary{
+					Name:    "Main Agent",
+					ByModel: make(map[string]*ChatModelUsage),
+				},
+			}
+
+			delegationMap := make(map[string]*DelegationLogEntry)
+			var delegationOrder []string
+			// Track which correlation_ids belong to delegations
+			delegationCorrelations := make(map[string]bool)
+
+			for _, dbEvent := range dbEvents {
+				var wrapper struct {
+					CorrelationID string          `json:"correlation_id"`
+					Data          json.RawMessage `json:"data"`
+				}
+				if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
+					continue
+				}
+
+				switch dbEvent.EventType {
+				case "delegation_start":
+					var startData struct {
+						DelegationID      string   `json:"delegation_id"`
+						Depth             int      `json:"depth"`
+						Instruction       string   `json:"instruction"`
+						ReasoningLevel    string   `json:"reasoning_level"`
+						ModelID           string   `json:"model_id"`
+						ToolMode          string   `json:"tool_mode"`
+						Servers           []string `json:"servers"`
+						BackgroundAgentID string   `json:"background_agent_id"`
+						Timestamp         string   `json:"timestamp"`
+					}
+					if err := json.Unmarshal(wrapper.Data, &startData); err != nil {
+						continue
+					}
+					entry := &DelegationLogEntry{
+						DelegationID:      startData.DelegationID,
+						SessionID:         sid,
+						Instruction:       startData.Instruction,
+						ReasoningLevel:    startData.ReasoningLevel,
+						ModelID:           startData.ModelID,
+						ToolMode:          startData.ToolMode,
+						Servers:           startData.Servers,
+						BackgroundAgentID: startData.BackgroundAgentID,
+						Depth:             startData.Depth,
+						Status:            "running",
+						StartTime:         startData.Timestamp,
+						TokenUsage:        make(map[string]*ChatModelUsage),
+					}
+					delegationMap[startData.DelegationID] = entry
+					delegationOrder = append(delegationOrder, startData.DelegationID)
+					delegationCorrelations[startData.DelegationID] = true
+
+				case "delegation_end":
+					var endData struct {
+						DelegationID string `json:"delegation_id"`
+						Result       string `json:"result"`
+						Error        string `json:"error"`
+						Success      bool   `json:"success"`
+						Timestamp    string `json:"timestamp"`
+						InputTokens  int64  `json:"input_tokens"`
+						OutputTokens int64  `json:"output_tokens"`
+						ToolCalls    int64  `json:"tool_calls"`
+						Duration     string `json:"duration"`
+					}
+					if err := json.Unmarshal(wrapper.Data, &endData); err != nil {
+						continue
+					}
+					entry, ok := delegationMap[endData.DelegationID]
+					if !ok {
+						continue
+					}
+					if endData.Success {
+						entry.Status = "completed"
+					} else {
+						entry.Status = "failed"
+					}
+					entry.EndTime = endData.Timestamp
+					entry.Duration = endData.Duration
+					entry.Result = endData.Result
+					entry.Error = endData.Error
+					entry.InputTokens = endData.InputTokens
+					entry.OutputTokens = endData.OutputTokens
+					entry.ToolCalls = endData.ToolCalls
+
+				case "token_usage":
+					tud, err := parseTokenUsageEvent(dbEvent.EventData)
+					if err != nil {
+						continue
+					}
+
+					correlationID := wrapper.CorrelationID
+					if correlationID != "" {
+						if entry, ok := delegationMap[correlationID]; ok {
+							// Sub-agent token usage
+							modelUsage := getOrCreateModelUsage(entry.TokenUsage, tud.ModelID)
+							accumulateUsage(modelUsage, &tud)
+							entry.TotalCostUSD += tud.TotalCost
+							continue
+						}
+					}
+
+					// Main agent token usage (no correlation_id or doesn't match a delegation)
+					mainModel := getOrCreateModelUsage(sessLog.MainAgent.ByModel, tud.ModelID)
+					accumulateUsage(mainModel, &tud)
+					sessLog.MainAgent.InputTokens += int64(tud.PromptTokens)
+					sessLog.MainAgent.OutputTokens += int64(tud.CompletionTokens)
+					sessLog.MainAgent.TotalCostUSD += tud.TotalCost
+					sessLog.MainAgent.LLMCalls++
+				}
+			}
+
+			// Build session-level aggregates
+			for _, id := range delegationOrder {
+				entry := delegationMap[id]
+				sessLog.Delegations = append(sessLog.Delegations, *entry)
+				for modelID, usage := range entry.TokenUsage {
+					aggModel := getOrCreateModelUsage(sessLog.ByModel, modelID)
+					mergeUsage(aggModel, usage)
+				}
+			}
+
+			// Add main agent costs to session totals
+			for modelID, usage := range sessLog.MainAgent.ByModel {
+				aggModel := getOrCreateModelUsage(sessLog.ByModel, modelID)
+				mergeUsage(aggModel, usage)
+			}
+
+			// Compute session totals
+			for _, usage := range sessLog.ByModel {
+				sessLog.TotalCost += usage.TotalCost
+				sessLog.TotalInput += int64(usage.InputTokens)
+				sessLog.TotalOutput += int64(usage.OutputTokens)
+				sessLog.TotalCalls += int64(usage.LLMCallCount)
+			}
+
+			// Only include sessions that have delegations or main agent costs
+			if len(sessLog.Delegations) > 0 || sessLog.MainAgent.LLMCalls > 0 {
+				response.Sessions = append(response.Sessions, sessLog)
+				response.TotalCost += sessLog.TotalCost
+				response.TotalInput += sessLog.TotalInput
+				response.TotalOutput += sessLog.TotalOutput
+				response.TotalCalls += sessLog.TotalCalls
+				for modelID, usage := range sessLog.ByModel {
+					aggModel := getOrCreateModelUsage(response.ByModel, modelID)
+					mergeUsage(aggModel, usage)
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// getDelegationEventsHandler returns events for a specific delegation (drill-down, mux handler)
+func getDelegationEventsHandler(db database.Database) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		sessionID := vars["session_id"]
+		delegationID := vars["delegation_id"]
+
+		if sessionID == "" || delegationID == "" {
+			http.Error(w, "session_id and delegation_id are required", http.StatusBadRequest)
+			return
+		}
+
+		limitStr := r.URL.Query().Get("limit")
+		offsetStr := r.URL.Query().Get("offset")
+
+		limit := 500
+		if limitStr != "" {
+			if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+				limit = l
+			}
+		}
+		offset := 0
+		if offsetStr != "" {
+			if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+				offset = o
+			}
+		}
+
+		// Query events with matching correlation_id
+		dbEvents, err := db.GetEventsByCorrelationID(r.Context(), sessionID, delegationID, limit, offset)
+		if err != nil || len(dbEvents) == 0 {
+			// Fallback: try sub-agent session
+			subSessionID := sessionID + "-sub-" + delegationID
+			dbEvents, err = db.GetEventsBySession(r.Context(), subSessionID, limit, offset)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("failed to get delegation events: %v", err), http.StatusInternalServerError)
+				return
+			}
+		}
+
+		type rawEvent struct {
+			ID        string          `json:"id"`
+			Type      string          `json:"type"`
+			Timestamp time.Time       `json:"timestamp"`
+			SessionID string          `json:"session_id"`
+			Data      json.RawMessage `json:"data"`
+		}
+
+		events := make([]rawEvent, 0, len(dbEvents))
+		for _, dbEvent := range dbEvents {
+			events = append(events, rawEvent{
+				ID:        dbEvent.ID,
+				Type:      dbEvent.EventType,
+				Timestamp: dbEvent.Timestamp,
+				SessionID: sessionID,
+				Data:      dbEvent.EventData,
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"events": events,
+			"total":  len(events),
+		})
+	}
+}
+
 // costEvent is a lightweight struct for batch cost queries (holds either token_usage or delegation_start data)
 type costEvent struct {
 	eventType    string         // "token_usage" or "delegation_start"
@@ -5405,71 +5872,6 @@ func batchGetCostEvents(ctx context.Context, db database.Database, sessionIDs []
 
 	return result, nil
 }
-
-// getTokenUsageEventsForHTTPSession queries token_usage events for a session (http handler version)
-// It also resolves delegation component names using delegation_start events (e.g. "delegation-0" -> "sear-0001")
-func getTokenUsageEventsForHTTPSession(r *http.Request, db database.Database, sessionID string) ([]tokenUsageData, error) {
-	dbEvents, err := db.GetEventsBySession(r.Context(), sessionID, 10000, 0)
-	if err != nil {
-		return nil, err
-	}
-
-	// First pass: build delegation_id -> background_agent_id map from delegation_start events
-	delegationNameMap := buildDelegationNameMap(dbEvents)
-
-	var result []tokenUsageData
-	for _, dbEvent := range dbEvents {
-		if dbEvent.EventType != "token_usage" {
-			continue
-		}
-
-		tud, err := parseTokenUsageEvent(dbEvent.EventData)
-		if err != nil {
-			log.Printf("[COSTS] Error parsing token_usage event: %v", err)
-			continue
-		}
-
-		// Resolve delegation component name using the map
-		if tud.correlationID != "" {
-			if agentName, ok := delegationNameMap[tud.correlationID]; ok && agentName != "" {
-				tud.Component = agentName
-			}
-		}
-
-		result = append(result, tud)
-	}
-
-	return result, nil
-}
-
-// buildDelegationNameMap scans events for delegation_start and extracts delegation_id -> background_agent_id mapping
-func buildDelegationNameMap(dbEvents []database.Event) map[string]string {
-	nameMap := make(map[string]string)
-	for _, dbEvent := range dbEvents {
-		if dbEvent.EventType != "delegation_start" {
-			continue
-		}
-		var wrapper struct {
-			Data json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
-			continue
-		}
-		var delegData struct {
-			DelegationID      string `json:"delegation_id"`
-			BackgroundAgentID string `json:"background_agent_id"`
-		}
-		if err := json.Unmarshal(wrapper.Data, &delegData); err != nil {
-			continue
-		}
-		if delegData.DelegationID != "" && delegData.BackgroundAgentID != "" {
-			nameMap[delegData.DelegationID] = delegData.BackgroundAgentID
-		}
-	}
-	return nameMap
-}
-
-
 
 // --- ACTIVE SESSION MANAGEMENT ---
 

@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { extractFolderPaths, processHierarchicalFiles } from '../utils/fileUtils'
@@ -340,7 +339,6 @@ const initialState = {
 let inflightFetch: { folder: string | undefined; promise: Promise<void> } | null = null
 
 export const useWorkspaceStore = create<WorkspaceState>()(
-  devtools(
     (set, get) => ({
       ...initialState,
       
@@ -523,10 +521,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         // Skip if file already exists in the index — no work needed
         const normalizedPath = filepath.trim()
         if (state.fileIndex.has(normalizedPath)) {
-          console.log('[WORKSPACE_DEBUG] addFileToTree SKIP (already exists):', normalizedPath)
           return state
         }
-        console.log('[WORKSPACE_DEBUG] addFileToTree INSERT:', normalizedPath, '| current top-level:', state.files.map(f => f.filepath).join(', '))
 
         const fileName = normalizedPath.split('/').pop() || normalizedPath
         const newFile: PlannerFile = {
@@ -652,7 +648,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // When components call fetchFiles() without a folder, this prevents them from
       // accidentally fetching the entire root tree and replacing the workflow-scoped tree.
       setActiveFolder: (folder: string | null) => {
-        console.log('[WORKSPACE_DEBUG] setActiveFolder:', folder)
         set({ activeFolder: folder })
       },
 
@@ -666,12 +661,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
         // Deduplicate: if a fetch for the same folder is already in flight, reuse it
         if (inflightFetch && inflightFetch.folder === effectiveFolder) {
-          console.log('[WORKSPACE_DEBUG] fetchFiles DEDUP — reusing in-flight request for:', effectiveFolder)
           return inflightFetch.promise
         }
-
-        const callStack = new Error().stack?.split('\n').slice(1, 6).join(' <- ')
-        console.log('[WORKSPACE_DEBUG] fetchFiles called — folder arg:', folder, '| activeFolder:', get().activeFolder, '| effectiveFolder:', effectiveFolder, '| stack:', callStack)
 
         const promise = (async () => {
           try {
@@ -684,7 +675,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               // results would replace the correctly scoped tree with the full root tree.
               const currentActiveFolder = get().activeFolder
               if (!effectiveFolder && currentActiveFolder) {
-                console.log('[WORKSPACE_DEBUG] fetchFiles DISCARDING unscoped result — activeFolder was set to', currentActiveFolder, 'while fetch was in flight | CALLER:', callStack)
                 return
               }
 
@@ -693,7 +683,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               // Process hierarchical structure from API
               const processedFiles = processHierarchicalFiles(allFiles)
               const index = buildFileIndex(processedFiles)
-              console.log('[WORKSPACE_DEBUG] fetchFiles got', processedFiles.length, 'top-level items, paths:', processedFiles.map(f => f.filepath).join(', '), '| effectiveFolder was:', effectiveFolder, '| CALLER:', callStack)
               set({ files: processedFiles, fileIndex: index })
 
               // NOTE: Expansion restoration is now handled by the Workspace component
@@ -1033,9 +1022,5 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           highlightTimeout: null
         })
       }
-    }),
-    {
-      name: 'workspace-store'
-    }
-  )
+    })
 )

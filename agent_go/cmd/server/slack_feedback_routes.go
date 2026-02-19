@@ -19,6 +19,7 @@ type SlackConfigRequest struct {
 	BotToken  string `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
 	AppToken  string `json:"app_token"` // App-level token (xapp-...) for Socket Mode
 	ChannelID string `json:"channel_id"`
+	BotMode   bool   `json:"bot_mode"` // Enable @mention bot mode (starts agent sessions from Slack)
 }
 
 // SlackConfigResponse represents the Slack configuration response
@@ -27,6 +28,7 @@ type SlackConfigResponse struct {
 	BotToken  string `json:"bot_token,omitempty"` // Masked in GET
 	AppToken  string `json:"app_token,omitempty"` // Masked in GET
 	ChannelID string `json:"channel_id,omitempty"`
+	BotMode   bool   `json:"bot_mode"`
 }
 
 // SlackTestResponse represents test connection response
@@ -75,8 +77,23 @@ func getSlackConfigHandler(api *StreamingAPI, db database.Database) http.Handler
 
 		config := slackService.GetConfig()
 
+		// Check bot_mode from bot_connector_config table
+		botMode := false
+		botCfg, _ := db.GetBotConnectorConfig(r.Context(), "slack")
+		if botCfg != nil {
+			botMode = botCfg.BotMode
+		}
+
+		resp := SlackConfigResponse{
+			Enabled:   config.Enabled,
+			BotToken:  config.BotToken,
+			AppToken:  config.AppToken,
+			ChannelID: config.ChannelID,
+			BotMode:   botMode,
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(config)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -125,9 +142,34 @@ func updateSlackConfigHandler(api *StreamingAPI, db database.Database) http.Hand
 			return
 		}
 
+		// Save bot_mode to bot_connector_config table
+		_, err := db.UpsertBotConnectorConfig(r.Context(), &database.CreateBotConnectorConfigRequest{
+			ID:      "slack",
+			Enabled: req.Enabled,
+			BotMode: req.BotMode,
+		})
+		if err != nil {
+			log.Printf("[SLACK] Failed to save bot_mode: %v", err)
+			// Non-fatal — Slack config itself was saved
+		}
+
+		// Dynamically register/unregister Slack bot connector
+		if api.botManager != nil {
+			if req.BotMode && req.Enabled {
+				// Register if not already registered
+				if api.botManager.GetConnector("slack") == nil {
+					api.botManager.RegisterConnector(slackService)
+					slackService.StartListening(r.Context())
+					log.Printf("[SLACK] Bot mode enabled — registered with bot manager")
+				}
+			}
+			// Note: unregistering at runtime is complex (active sessions) — disable takes effect on restart
+		}
+
 		response := SlackConfigResponse{
 			Enabled:   config.Enabled,
 			ChannelID: config.ChannelID,
+			BotMode:   req.BotMode,
 		}
 
 		w.Header().Set("Content-Type", "application/json")

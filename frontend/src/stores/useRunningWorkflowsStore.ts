@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
 import type { StepProgress } from '../services/api-types'
 import { agentApi } from '../services/api'
 import { useChatStore } from './useChatStore'
@@ -100,7 +99,6 @@ interface RunningWorkflowsStore {
 }
 
 export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
-  devtools(
     (set, get) => ({
       // Initial State
       runningWorkflows: loadRunningWorkflowsFromStorage(),
@@ -616,11 +614,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
           saveRunningWorkflowsToStorage(filtered)
         }
       },
-    }),
-    {
-      name: 'running-workflows-store'
-    }
-  )
+    })
 )
 
 // Selector hooks

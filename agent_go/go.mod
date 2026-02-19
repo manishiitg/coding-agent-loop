@@ -15,7 +15,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
 	github.com/manishiitg/mcpagent v1.3.0
-	github.com/manishiitg/multi-llm-provider-go v0.3.5
+	github.com/manishiitg/multi-llm-provider-go v0.3.6
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8

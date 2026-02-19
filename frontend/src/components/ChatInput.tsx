@@ -33,7 +33,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
-import { agentApi } from '../services/api'
+import { agentApi, getApiBaseUrl } from '../services/api'
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -2004,7 +2004,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               <div className="rounded-lg bg-gray-900/80 border border-gray-600 p-3 space-y-2">
                                 <p className="text-xs font-medium text-gray-300">macOS: Easy setup</p>
                                 <a
-                                  href="/downloads/Chrome-CDP-macOS.zip"
+                                  href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
                                   download="Chrome-CDP-macOS.zip"
                                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-green-700 hover:bg-green-600 text-white rounded-md transition-colors"
                                 >

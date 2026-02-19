@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { devtools } from 'zustand/middleware'
 import type { ToolDefinition } from './types'
 import { agentApi } from '../services/api'
 
@@ -48,7 +47,6 @@ const createInitialInstanceState = (): ToolSelectionInstanceState => ({
 })
 
 export const useToolSelectionStore = create<ToolSelectionState>()(
-  devtools(
     (set, get) => ({
       // Initial state
       toolDetails: {},
@@ -285,10 +283,6 @@ export const useToolSelectionStore = create<ToolSelectionState>()(
           return { instances: newInstances }
         })
       },
-    }),
-    {
-      name: 'tool-selection-store',
-    }
-  )
+    })
 )
 

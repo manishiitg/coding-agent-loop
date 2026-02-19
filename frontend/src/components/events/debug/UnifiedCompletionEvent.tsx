@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, Maximize2, Minimize2 } from 'lucide-react'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
 
 interface UnifiedCompletionEvent {
@@ -80,6 +80,9 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
     )
   }
 
+  // Expand/collapse state
+  const [expanded, setExpanded] = useState(false)
+
   // Copy handler
   const [copied, setCopied] = useState(false)
   const handleCopy = useCallback(() => {
@@ -107,19 +110,28 @@ export const UnifiedCompletionEventDisplay: React.FC<UnifiedCompletionEventDispl
         <div className="flex-1 min-w-0">
           <div className="bg-white dark:bg-gray-800 rounded-lg p-3">
             <div className="relative group">
-              <button
-                onClick={handleCopy}
-                className="absolute top-0 right-0 p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Copy markdown"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
+              <div className="absolute top-0 right-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => setExpanded(e => !e)}
+                  className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title={expanded ? 'Collapse' : 'Expand to full height'}
+                >
+                  {expanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                </button>
+                <button
+                  onClick={handleCopy}
+                  className="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title="Copy markdown"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
               {isJSON ? (
-                <pre className="text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap">
+                <pre className={`text-xs text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap${!expanded ? ' max-h-96 overflow-y-auto' : ''}`}>
                   {JSON.stringify(parsedJSON, null, 2)}
                 </pre>
               ) : (
-                <ConversationMarkdownRenderer content={event.final_result} />
+                <ConversationMarkdownRenderer content={event.final_result} maxHeight={expanded ? 'none' : '384px'} />
               )}
             </div>
           </div>

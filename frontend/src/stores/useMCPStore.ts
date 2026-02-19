@@ -1,6 +1,5 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { devtools } from 'zustand/middleware'
 import type { ToolDefinition, StoreActions } from './types'
 import { agentApi } from '../services/api'
 import { mcpConfigApi } from '../services/mcpConfigApi'
@@ -77,7 +76,6 @@ interface MCPState extends StoreActions {
 }
 
 export const useMCPStore = create<MCPState>()(
-  devtools(
     persist(
       (set, get) => ({
         // Initial state
@@ -383,9 +381,5 @@ export const useMCPStore = create<MCPState>()(
           }
         }
       }
-    ),
-    {
-      name: 'mcp-store'
-    }
-  )
+    )
 )

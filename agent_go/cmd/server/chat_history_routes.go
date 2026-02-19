@@ -35,6 +35,10 @@ func ChatHistoryRoutes(router *gin.Engine, db database.Database) {
 		api.GET("/costs", getAllSessionCosts(db))
 		api.GET("/sessions/:session_id/costs", getSessionCosts(db))
 
+		// Delegation logs (multi-agent mode)
+		api.GET("/sessions/:session_id/delegation-logs", getDelegationLogs(db))
+		api.GET("/sessions/:session_id/delegation-logs/:delegation_id/events", getDelegationEvents(db))
+
 		// Preset queries management
 		api.POST("/presets", createPresetQuery(db))
 		api.GET("/presets", listPresetQueries(db))
@@ -1026,4 +1030,312 @@ func mergeUsage(dst, src *ChatModelUsage) {
 	dst.ReasoningCost += src.ReasoningCost
 	dst.CacheCost += src.CacheCost
 	dst.TotalCost += src.TotalCost
+}
+
+// ============================================================================
+// Delegation Logs Types & Handlers (Multi-Agent Mode)
+// ============================================================================
+
+// DelegationLogEntry represents a single delegation with its costs
+type DelegationLogEntry struct {
+	DelegationID      string                     `json:"delegation_id"`
+	SessionID         string                     `json:"session_id,omitempty"`
+	Instruction       string                     `json:"instruction"`
+	ReasoningLevel    string                     `json:"reasoning_level,omitempty"`
+	ModelID           string                     `json:"model_id,omitempty"`
+	ToolMode          string                     `json:"tool_mode,omitempty"`
+	Servers           []string                   `json:"servers,omitempty"`
+	BackgroundAgentID string                     `json:"background_agent_id,omitempty"`
+	Depth             int                        `json:"depth"`
+	Status            string                     `json:"status"` // running, completed, failed
+	StartTime         string                     `json:"start_time"`
+	EndTime           string                     `json:"end_time,omitempty"`
+	Duration          string                     `json:"duration,omitempty"`
+	Result            string                     `json:"result,omitempty"`
+	Error             string                     `json:"error,omitempty"`
+	InputTokens       int64                      `json:"input_tokens"`
+	OutputTokens      int64                      `json:"output_tokens"`
+	ToolCalls         int64                      `json:"tool_calls"`
+	TokenUsage        map[string]*ChatModelUsage `json:"token_usage,omitempty"`
+	TotalCostUSD      float64                    `json:"total_cost_usd"`
+}
+
+// DelegationLogsResponse is the response for GET /sessions/:id/delegation-logs
+type DelegationLogsResponse struct {
+	Delegations []DelegationLogEntry       `json:"delegations"`
+	TotalCost   float64                    `json:"total_cost_usd"`
+	TotalInput  int64                      `json:"total_input_tokens"`
+	TotalOutput int64                      `json:"total_output_tokens"`
+	TotalCalls  int64                      `json:"total_llm_calls"`
+	ByModel     map[string]*ChatModelUsage `json:"by_model"`
+}
+
+// AgentCostSummary holds cost/token info for one agent (main or sub-agent)
+type AgentCostSummary struct {
+	Name         string                     `json:"name"`
+	InputTokens  int64                      `json:"input_tokens"`
+	OutputTokens int64                      `json:"output_tokens"`
+	TotalCostUSD float64                    `json:"total_cost_usd"`
+	LLMCalls     int64                      `json:"llm_calls"`
+	ByModel      map[string]*ChatModelUsage `json:"by_model"`
+}
+
+// SessionDelegationLogs groups delegation logs + costs per session
+type SessionDelegationLogs struct {
+	SessionID    string                     `json:"session_id"`
+	Title        string                     `json:"title"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	Status       string                     `json:"status"`
+	TotalCost    float64                    `json:"total_cost_usd"`
+	TotalInput   int64                      `json:"total_input_tokens"`
+	TotalOutput  int64                      `json:"total_output_tokens"`
+	TotalCalls   int64                      `json:"total_llm_calls"`
+	MainAgent    AgentCostSummary           `json:"main_agent"`
+	Delegations  []DelegationLogEntry       `json:"delegations"`
+	ByModel      map[string]*ChatModelUsage `json:"by_model"`
+}
+
+// AllDelegationLogsResponse is the response for GET /delegation-logs (all sessions)
+type AllDelegationLogsResponse struct {
+	Sessions    []SessionDelegationLogs    `json:"sessions"`
+	TotalCost   float64                    `json:"total_cost_usd"`
+	TotalInput  int64                      `json:"total_input_tokens"`
+	TotalOutput int64                      `json:"total_output_tokens"`
+	TotalCalls  int64                      `json:"total_llm_calls"`
+	ByModel     map[string]*ChatModelUsage `json:"by_model"`
+}
+
+// getDelegationLogs returns delegation log entries with costs for a session
+func getDelegationLogs(db database.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID := c.Param("session_id")
+		if sessionID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
+			return
+		}
+
+		// Get all events for this session (high limit to get everything)
+		dbEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, 10000, 0)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get events: %v", err)})
+			return
+		}
+
+		// Also fetch sub-agent session events
+		sqlDB := db.GetDB()
+		var subSessionEvents []database.Event
+		if sqlDB != nil {
+			subSessionPrefix := sessionID + "-sub-"
+			rows, err := sqlDB.QueryContext(c.Request.Context(),
+				`SELECT session_id FROM chat_sessions WHERE session_id LIKE ?`,
+				subSessionPrefix+"%",
+			)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var subSessionID string
+					if err := rows.Scan(&subSessionID); err != nil {
+						continue
+					}
+					subEvents, err := db.GetEventsBySession(c.Request.Context(), subSessionID, 10000, 0)
+					if err == nil {
+						subSessionEvents = append(subSessionEvents, subEvents...)
+					}
+				}
+			}
+		}
+
+		// Combine all events
+		allEvents := append(dbEvents, subSessionEvents...)
+
+		// Build delegation entries from start/end events and aggregate token_usage
+		delegationMap := make(map[string]*DelegationLogEntry)
+		var delegationOrder []string
+
+		for _, dbEvent := range allEvents {
+			// Parse event_data wrapper to get correlation_id and data
+			var wrapper struct {
+				CorrelationID string          `json:"correlation_id"`
+				Timestamp     time.Time       `json:"timestamp"`
+				Data          json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(dbEvent.EventData, &wrapper); err != nil {
+				continue
+			}
+
+			switch dbEvent.EventType {
+			case "delegation_start":
+				var startData struct {
+					DelegationID      string   `json:"delegation_id"`
+					Depth             int      `json:"depth"`
+					Instruction       string   `json:"instruction"`
+					ReasoningLevel    string   `json:"reasoning_level"`
+					ModelID           string   `json:"model_id"`
+					ToolMode          string   `json:"tool_mode"`
+					Servers           []string `json:"servers"`
+					BackgroundAgentID string   `json:"background_agent_id"`
+					Timestamp         string   `json:"timestamp"`
+				}
+				if err := json.Unmarshal(wrapper.Data, &startData); err != nil {
+					continue
+				}
+
+				entry := &DelegationLogEntry{
+					DelegationID:      startData.DelegationID,
+					Instruction:       startData.Instruction,
+					ReasoningLevel:    startData.ReasoningLevel,
+					ModelID:           startData.ModelID,
+					ToolMode:          startData.ToolMode,
+					Servers:           startData.Servers,
+					BackgroundAgentID: startData.BackgroundAgentID,
+					Depth:             startData.Depth,
+					Status:            "running",
+					StartTime:         startData.Timestamp,
+					TokenUsage:        make(map[string]*ChatModelUsage),
+				}
+				delegationMap[startData.DelegationID] = entry
+				delegationOrder = append(delegationOrder, startData.DelegationID)
+
+			case "delegation_end":
+				var endData struct {
+					DelegationID string `json:"delegation_id"`
+					Result       string `json:"result"`
+					Error        string `json:"error"`
+					Success      bool   `json:"success"`
+					Timestamp    string `json:"timestamp"`
+					InputTokens  int64  `json:"input_tokens"`
+					OutputTokens int64  `json:"output_tokens"`
+					ToolCalls    int64  `json:"tool_calls"`
+					Duration     string `json:"duration"`
+				}
+				if err := json.Unmarshal(wrapper.Data, &endData); err != nil {
+					continue
+				}
+
+				entry, ok := delegationMap[endData.DelegationID]
+				if !ok {
+					continue
+				}
+
+				if endData.Success {
+					entry.Status = "completed"
+				} else {
+					entry.Status = "failed"
+				}
+				entry.EndTime = endData.Timestamp
+				entry.Duration = endData.Duration
+				entry.Result = endData.Result
+				entry.Error = endData.Error
+				entry.InputTokens = endData.InputTokens
+				entry.OutputTokens = endData.OutputTokens
+				entry.ToolCalls = endData.ToolCalls
+
+			case "token_usage":
+				// Aggregate token_usage events per delegation using correlation_id
+				correlationID := wrapper.CorrelationID
+				if correlationID == "" {
+					continue
+				}
+
+				entry, ok := delegationMap[correlationID]
+				if !ok {
+					continue
+				}
+
+				tud, err := parseTokenUsageEvent(dbEvent.EventData)
+				if err != nil {
+					continue
+				}
+
+				modelUsage := getOrCreateModelUsage(entry.TokenUsage, tud.ModelID)
+				accumulateUsage(modelUsage, &tud)
+				entry.TotalCostUSD += tud.TotalCost
+			}
+		}
+
+		// Build ordered response
+		response := DelegationLogsResponse{
+			Delegations: make([]DelegationLogEntry, 0, len(delegationOrder)),
+			ByModel:     make(map[string]*ChatModelUsage),
+		}
+
+		for _, id := range delegationOrder {
+			entry := delegationMap[id]
+			response.Delegations = append(response.Delegations, *entry)
+			response.TotalCost += entry.TotalCostUSD
+			response.TotalInput += entry.InputTokens
+			response.TotalOutput += entry.OutputTokens
+			response.TotalCalls++
+
+			// Merge per-model usage into aggregate
+			for modelID, usage := range entry.TokenUsage {
+				aggModel := getOrCreateModelUsage(response.ByModel, modelID)
+				mergeUsage(aggModel, usage)
+			}
+		}
+
+		c.JSON(http.StatusOK, response)
+	}
+}
+
+// getDelegationEvents returns events for a specific delegation (drill-down)
+func getDelegationEvents(db database.Database) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		sessionID := c.Param("session_id")
+		delegationID := c.Param("delegation_id")
+
+		if sessionID == "" || delegationID == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "session_id and delegation_id are required"})
+			return
+		}
+
+		limitStr := c.DefaultQuery("limit", "500")
+		offsetStr := c.DefaultQuery("offset", "0")
+
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit < 1 {
+			limit = 500
+		}
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil || offset < 0 {
+			offset = 0
+		}
+
+		// Query events with matching correlation_id
+		dbEvents, err := db.GetEventsByCorrelationID(c.Request.Context(), sessionID, delegationID, limit, offset)
+		if err != nil {
+			// Also try sub-agent sessions
+			subSessionID := sessionID + "-sub-" + delegationID
+			dbEvents, err = db.GetEventsBySession(c.Request.Context(), subSessionID, limit, offset)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get delegation events: %v", err)})
+				return
+			}
+		}
+
+		// Return raw DB events (event_data is already JSON)
+		type rawEvent struct {
+			ID        string          `json:"id"`
+			Type      string          `json:"type"`
+			Timestamp time.Time       `json:"timestamp"`
+			SessionID string          `json:"session_id"`
+			Data      json.RawMessage `json:"data"`
+		}
+
+		convertedEvents := make([]rawEvent, 0, len(dbEvents))
+		for _, dbEvent := range dbEvents {
+			convertedEvents = append(convertedEvents, rawEvent{
+				ID:        dbEvent.ID,
+				Type:      dbEvent.EventType,
+				Timestamp: dbEvent.Timestamp,
+				SessionID: sessionID,
+				Data:      dbEvent.EventData,
+			})
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"events": convertedEvents,
+			"total":  len(convertedEvents),
+		})
+	}
 }

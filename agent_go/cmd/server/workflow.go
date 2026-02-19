@@ -4694,11 +4694,28 @@ func (api *StreamingAPI) handleGetLogFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Restrict to log files only (must be .json files in logs or runs directories)
-	if !strings.HasSuffix(cleanedPath, ".json") {
-		http.Error(w, "Only JSON log files can be accessed", http.StatusBadRequest)
+	// Restrict to allowed file types only (must be in logs or runs directories)
+	allowedExtensions := map[string]string{
+		".json":  "application/json",
+		".txt":   "text/plain",
+		".md":    "text/markdown",
+		".log":   "text/plain",
+		".csv":   "text/csv",
+		".jsonl": "application/x-jsonlines",
+		".yaml":  "text/yaml",
+		".yml":   "text/yaml",
+		".xml":   "application/xml",
+		".sql":   "text/x-sql",
+		".sh":    "text/x-shellscript",
+	}
+
+	ext := filepath.Ext(cleanedPath)
+	contentType, allowed := allowedExtensions[ext]
+	if !allowed {
+		http.Error(w, "Unsupported file format. Allowed formats: .json, .txt, .md, .log, .csv, .jsonl, .yaml, .yml, .xml, .sql, .sh", http.StatusBadRequest)
 		return
 	}
+
 	if !strings.Contains(cleanedPath, "/logs/") && !strings.Contains(cleanedPath, "/runs/") {
 		http.Error(w, "File must be in logs or runs directory", http.StatusBadRequest)
 		return
@@ -4715,11 +4732,6 @@ func (api *StreamingAPI) handleGetLogFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Determine content type based on file extension
-	contentType := "text/plain"
-	if strings.HasSuffix(cleanedPath, ".json") {
-		contentType = "application/json"
-	}
 	w.Header().Set("Content-Type", contentType)
 
 	w.Write([]byte(content))

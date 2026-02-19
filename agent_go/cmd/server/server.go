@@ -1368,6 +1368,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Sub-agent template API routes (from subagent_routes.go)
 	RegisterSubAgentRoutes(apiRouter, api)
 
+	// User-defined command routes (from command_routes.go)
+	RegisterCommandRoutes(apiRouter, api)
+
 	// Public file sharing routes — filepath passed as base64 query param
 	apiRouter.HandleFunc("/public/file", api.handlePublicFile).Methods("GET")
 	apiRouter.HandleFunc("/public/folder", api.handlePublicFolder).Methods("GET")

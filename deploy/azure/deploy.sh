@@ -121,11 +121,10 @@ run_build() {
 create_clean_context() {
   local TEMP_DIR="$1"
   echo "    Creating clean build context in $TEMP_DIR..."
-  mkdir -p "$TEMP_DIR"
+  mkdir -p "$TEMP_DIR/mcp-agent-builder-go"
   
-  # rsync from PARENT_DIR to TEMP_DIR with exclusions
-  # We use a filter file or explicit excludes to avoid copying garbage
-  rsync -avq "$PARENT_DIR/" "$TEMP_DIR/" \
+  # rsync from REPO_ROOT to TEMP_DIR/mcp-agent-builder-go with exclusions
+  rsync -avq "$REPO_ROOT/" "$TEMP_DIR/mcp-agent-builder-go/" \
     --exclude='.git' \
     --exclude='node_modules' \
     --exclude='workspace-docs' \
@@ -146,11 +145,6 @@ create_clean_context() {
 
   # Aggressively prune known heavy folders that are not needed
   echo "    Pruning unnecessary heavy folders..."
-  rm -rf "$TEMP_DIR/mcpagent/examples"
-  rm -rf "$TEMP_DIR/mcpagent/sdk-node"
-  rm -rf "$TEMP_DIR/mcpagent/bin"
-  rm -rf "$TEMP_DIR/multi-llm-provider-go/bin"
-  rm -rf "$TEMP_DIR/multi-llm-provider-go/examples"
   rm -rf "$TEMP_DIR/mcp-agent-builder-go/frontend/node_modules"
   rm -rf "$TEMP_DIR/mcp-agent-builder-go/frontend/dist"
     
@@ -167,26 +161,12 @@ build_agent() {
      mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
      cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/mcp-agent-builder-go/"
      cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/mcp-agent-builder-go/"
-     # Local multi-llm-provider-go (streaming fix) - must be inside context for Dockerfile
-     cp -r "$PARENT_DIR/multi-llm-provider-go" "$CONTEXT_DIR/mcp-agent-builder-go/multi-llm-provider-go"
-     # Local mcpagent - must be inside context for Dockerfile (same as multi-llm-provider-go)
-     cp -r "$PARENT_DIR/mcpagent" "$CONTEXT_DIR/mcp-agent-builder-go/mcpagent"
-     # Copy sibling dependencies for local build
-     cp -r "$PARENT_DIR/mcpagent" "$CONTEXT_DIR/mcpagent"
-     cp -r "$PARENT_DIR/multi-llm-provider-go" "$CONTEXT_DIR/multi-llm-provider-go"
   else 
      # Use the same selective context for remote build to be consistent
      echo "    Creating selective build context in $CONTEXT_DIR..."
      mkdir -p "$CONTEXT_DIR/mcp-agent-builder-go"
      cp -r "$REPO_ROOT/agent_go" "$CONTEXT_DIR/mcp-agent-builder-go/"
      cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/mcp-agent-builder-go/"
-     # Local multi-llm-provider-go (streaming fix) - must be inside context for Dockerfile
-     cp -r "$PARENT_DIR/multi-llm-provider-go" "$CONTEXT_DIR/mcp-agent-builder-go/multi-llm-provider-go"
-     # Local mcpagent - must be inside context for Dockerfile (same as multi-llm-provider-go)
-     cp -r "$PARENT_DIR/mcpagent" "$CONTEXT_DIR/mcp-agent-builder-go/mcpagent"
-     # Copy sibling dependencies for remote build
-     cp -r "$PARENT_DIR/mcpagent" "$CONTEXT_DIR/mcpagent"
-     cp -r "$PARENT_DIR/multi-llm-provider-go" "$CONTEXT_DIR/multi-llm-provider-go"
   fi
 
   # MCP config: use deploy/azure/mcp_config.json if present (like K8s deploy/k8s/agent/mcp_config.json); else use repo default

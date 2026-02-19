@@ -17,20 +17,12 @@ COPY workspace/ ./workspace/
 
 COPY agent_go/go.mod agent_go/go.sum ./agent_go/
 
-COPY multi-llm-provider-go/go.mod multi-llm-provider-go/go.sum ./multi-llm-provider-go/
-COPY multi-llm-provider-go/ ./multi-llm-provider-go/
-
-COPY mcpagent/go.mod mcpagent/go.sum ./mcpagent/
-COPY mcpagent/ ./mcpagent/
-
-# Use local workspace + multi-llm-provider-go + mcpagent via go.work
-RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n\t./multi-llm-provider-go\n\t./mcpagent\n)\n' > /app/go.work
-ENV GOWORK=/app/go.work
-# RUN go work sync - removed to force local module usage
+# Download dependencies (now fetches mcpagent and multi-llm-provider-go from git)
+RUN cd agent_go && go mod download
 
 COPY agent_go/ ./agent_go/
 
-RUN cd /app && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
+RUN cd /app/agent_go && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent .
 
 # Runtime: use shared base (only copy app artifacts here)
 FROM runtime

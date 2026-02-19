@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"workspace/models"
-	"workspace/parsers"
-	"workspace/utils"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/parsers"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"

@@ -46,6 +46,7 @@ type SlackConfig struct {
 // It implements the NotificationConnector interface
 type SlackService struct {
 	db            *sql.DB
+	isPostgres    bool
 	client        *slack.Client
 	socketClient  *socketmode.Client // Socket Mode client for WebSocket connection
 	config        *SlackConfig
@@ -95,8 +96,12 @@ func GetSlackService() *SlackService {
 // InitSlackService initializes the Slack service with database connection
 // This is called on server startup and will automatically start Socket Mode if config is enabled
 func InitSlackService(db *sql.DB) (*SlackService, error) {
+	// Detect postgres by checking the driver type name
+	driverName := fmt.Sprintf("%T", db.Driver())
+	isPostgres := strings.Contains(driverName, "postgres") || strings.Contains(driverName, "pq") || strings.Contains(driverName, "pgx")
 	service := &SlackService{
-		db: db,
+		db:         db,
+		isPostgres: isPostgres,
 	}
 
 	// Load config first
@@ -277,6 +282,19 @@ func convertMarkdownToSlackMrkdwn(text string) string {
 		return match
 	})
 
+	// Convert bold: **text** -> *text* (Slack uses single * for bold)
+	// Use non-greedy .+? to handle nested formatting and multi-word bold
+	boldRegex := regexp.MustCompile(`\*\*(.+?)\*\*`)
+	result = boldRegex.ReplaceAllString(result, "*$1*")
+
+	// Convert italic: _text_ is the same in both formats, no change needed
+	// Markdown *text* (single asterisk italic) conflicts with Slack bold *text*,
+	// so we leave single asterisks as-is (they render as bold in Slack, which is close enough)
+
+	// Convert bullet lists: "* item" or "- item" -> "• item"
+	bulletRegex := regexp.MustCompile(`(?m)^(\s*)[*\-]\s+`)
+	result = bulletRegex.ReplaceAllString(result, "${1}• ")
+
 	// Convert markdown horizontal rules (---) to a simple separator
 	result = regexp.MustCompile(`(?m)^---+$`).ReplaceAllString(result, "---")
 
@@ -386,9 +404,16 @@ func (s *SlackService) StoreMessageMapping(
 	messageTS string,
 	channelID string,
 ) error {
-	query := `INSERT INTO slack_feedback_messages (unique_id, slack_message_ts, slack_channel_id, slack_thread_ts)
-	          VALUES (?, ?, ?, ?)
-	          ON CONFLICT(unique_id, slack_message_ts) DO NOTHING`
+	var query string
+	if s.isPostgres {
+		query = `INSERT INTO slack_feedback_messages (unique_id, slack_message_ts, slack_channel_id, slack_thread_ts)
+		         VALUES ($1, $2, $3, $4)
+		         ON CONFLICT(unique_id, slack_message_ts) DO NOTHING`
+	} else {
+		query = `INSERT INTO slack_feedback_messages (unique_id, slack_message_ts, slack_channel_id, slack_thread_ts)
+		         VALUES (?, ?, ?, ?)
+		         ON CONFLICT(unique_id, slack_message_ts) DO NOTHING`
+	}
 
 	_, err := s.db.ExecContext(ctx, query, uniqueID, messageTS, channelID, messageTS)
 	if err != nil {
@@ -405,9 +430,16 @@ func (s *SlackService) GetUniqueIDFromThread(
 	channelID string,
 ) (string, error) {
 	// First, try to get from database mapping (thread_ts is the parent message timestamp)
-	query := `SELECT unique_id FROM slack_feedback_messages 
-	          WHERE slack_message_ts = ? AND slack_channel_id = ?
-	          LIMIT 1`
+	var query string
+	if s.isPostgres {
+		query = `SELECT unique_id FROM slack_feedback_messages
+		         WHERE slack_message_ts = $1 AND slack_channel_id = $2
+		         LIMIT 1`
+	} else {
+		query = `SELECT unique_id FROM slack_feedback_messages
+		         WHERE slack_message_ts = ? AND slack_channel_id = ?
+		         LIMIT 1`
+	}
 
 	var uniqueID string
 	err := s.db.QueryRowContext(ctx, query, threadTS, channelID).Scan(&uniqueID)
@@ -611,14 +643,26 @@ func (s *SlackService) TestConnection(ctx context.Context) error {
 
 // SaveConfig saves Slack configuration to database (Socket Mode only)
 func (s *SlackService) SaveConfig(ctx context.Context, config *SlackConfig) error {
-	query := `INSERT INTO slack_feedback_config (id, enabled, bot_token, channel_id, app_token, updated_at)
-	          VALUES ('slack_config', ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	          ON CONFLICT(id) DO UPDATE SET
-	            enabled = excluded.enabled,
-	            bot_token = excluded.bot_token,
-	            channel_id = excluded.channel_id,
-	            app_token = excluded.app_token,
-	            updated_at = CURRENT_TIMESTAMP`
+	var query string
+	if s.isPostgres {
+		query = `INSERT INTO slack_feedback_config (id, enabled, bot_token, channel_id, app_token, updated_at)
+		         VALUES ('slack_config', $1, $2, $3, $4, CURRENT_TIMESTAMP)
+		         ON CONFLICT(id) DO UPDATE SET
+		           enabled = excluded.enabled,
+		           bot_token = excluded.bot_token,
+		           channel_id = excluded.channel_id,
+		           app_token = excluded.app_token,
+		           updated_at = CURRENT_TIMESTAMP`
+	} else {
+		query = `INSERT INTO slack_feedback_config (id, enabled, bot_token, channel_id, app_token, updated_at)
+		         VALUES ('slack_config', ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		         ON CONFLICT(id) DO UPDATE SET
+		           enabled = excluded.enabled,
+		           bot_token = excluded.bot_token,
+		           channel_id = excluded.channel_id,
+		           app_token = excluded.app_token,
+		           updated_at = CURRENT_TIMESTAMP`
+	}
 
 	_, err := s.db.ExecContext(ctx, query,
 		config.Enabled,
@@ -831,11 +875,20 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	// Check if this thread belongs to a bot session — if so, route to BotConversationManager
+	// Skip messages that contain an @mention of the bot — those are handled by handleAppMentionEvent.
+	// This prevents duplicate processing when a user @mentions the bot in a thread.
+	if s.botUserID != "" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", s.botUserID)) {
+		return
+	}
+
+	// Only route thread replies to the bot manager if the bot is awaiting user input
+	// (e.g., plan approval, human feedback). For all other cases, require an @mention
+	// so that other users chatting in the thread don't accidentally trigger the bot.
 	if s.messageHandler != nil {
 		s.messageHandler(BotIncomingMessage{
 			Platform:      "slack",
 			UserID:        ev.User,
+			UserEmail:     s.resolveUserEmail(ev.User),
 			ChannelID:     ev.Channel,
 			ThreadTS:      ev.ThreadTimeStamp,
 			Text:          ev.Text,
@@ -962,6 +1015,11 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 
 // --- BotConnector interface implementation ---
 
+// SupportsThreads returns true because Slack natively supports threads
+func (s *SlackService) SupportsThreads() bool {
+	return true
+}
+
 // StartListening starts the bot listener (Socket Mode is already started separately)
 func (s *SlackService) StartListening(ctx context.Context) error {
 	// Socket Mode is already started via StartSocketMode
@@ -1010,9 +1068,15 @@ func (s *SlackService) SendThreadMessage(ctx context.Context, threadID ThreadID,
 
 	var lastTS string
 	for _, part := range parts {
+		// Use section blocks with explicit mrkdwn type for reliable formatting
+		sectionBlock := slack.NewSectionBlock(
+			slack.NewTextBlockObject(slack.MarkdownType, part, false, false),
+			nil, nil,
+		)
 		_, ts, err := s.client.PostMessageContext(ctx,
 			threadID.ChannelID,
 			slack.MsgOptionText(part, false),
+			slack.MsgOptionBlocks(sectionBlock),
 			slack.MsgOptionTS(threadID.ThreadTS),
 		)
 		if err != nil {
@@ -1163,11 +1227,13 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 		Platform:      "slack",
 		UserID:        ev.User,
 		UserName:      ev.User,
+		UserEmail:     s.resolveUserEmail(ev.User),
 		ChannelID:     ev.Channel,
 		ThreadTS:      threadTS,
 		Text:          text,
 		Timestamp:     time.Now(),
 		IsThreadReply: isThreadReply,
+		IsMention:     true,
 	})
 }
 
@@ -1183,6 +1249,20 @@ func (s *SlackService) stripMention(text string) string {
 	return strings.TrimSpace(text)
 }
 
+// resolveUserEmail looks up a Slack user's email via users.info API.
+// Returns empty string on failure (non-fatal).
+func (s *SlackService) resolveUserEmail(userID string) string {
+	if s.client == nil || userID == "" {
+		return ""
+	}
+	user, err := s.client.GetUserInfo(userID)
+	if err != nil {
+		log.Printf("[SLACK_BOT] Failed to resolve email for user %s: %v", userID, err)
+		return ""
+	}
+	return user.Profile.Email
+}
+
 // --- SlackFormatter implements MessageFormatter ---
 
 // SlackFormatter converts Markdown to Slack mrkdwn format
@@ -1194,8 +1274,9 @@ func (f *SlackFormatter) FormatMessage(markdown string) string {
 }
 
 // MaxMessageLength returns Slack's message length limit
+// Using 3000 to fit within section block text limit
 func (f *SlackFormatter) MaxMessageLength() int {
-	return 4000
+	return 3000
 }
 
 // SplitLongMessage splits a message into chunks within Slack's limit

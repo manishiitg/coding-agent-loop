@@ -4,6 +4,7 @@ import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationReques
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
 import { llmConfigService } from '../services/llm-config-api'
+import { agentApi } from '../services/api'
 
 interface LLMState extends StoreActions {
   // Primary LLM configuration (unified from sidebar and chat input)
@@ -306,6 +307,40 @@ export const useLLMStore = create<LLMState>()(
 
         setDelegationTierConfig: (config) => {
           set({ delegationTierConfig: config })
+          // Fire-and-forget sync to server so bot sessions can use it
+          if (config) {
+            // Collect API keys for each tier's provider so the server can use them
+            const state = get()
+            const providerKeys: Record<string, string> = {}
+            const providerConfigs: Record<string, { api_key?: string }> = {
+              openrouter: state.openrouterConfig,
+              openai: state.openaiConfig,
+              anthropic: state.anthropicConfig,
+              vertex: state.vertexConfig,
+              bedrock: state.bedrockConfig,
+              azure: state.azureConfig,
+            }
+            const tierConfig = config as Record<string, { provider?: string }>
+            for (const tier of ['high', 'medium', 'low']) {
+              const provider = tierConfig[tier]?.provider
+              if (provider && providerConfigs[provider]?.api_key && !providerKeys[provider]) {
+                providerKeys[provider] = providerConfigs[provider].api_key!
+              }
+            }
+            // Also collect keys from custom tiers
+            if (config.custom) {
+              for (const slug of Object.keys(config.custom)) {
+                const provider = config.custom[slug]?.provider
+                if (provider && providerConfigs[provider]?.api_key && !providerKeys[provider]) {
+                  providerKeys[provider] = providerConfigs[provider].api_key!
+                }
+              }
+            }
+            agentApi.saveDelegationTierConfig(
+              config as Record<string, unknown>,
+              Object.keys(providerKeys).length > 0 ? providerKeys : undefined
+            ).catch(() => {})
+          }
         },
 
         loadDelegationTierDefaults: async () => {

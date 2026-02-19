@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/gorilla/mux"
 )
 
 // globalSecretEntry holds a single env-based global secret (name + plaintext value)
@@ -198,4 +200,114 @@ func (api *StreamingAPI) handleDecryptSecret(w http.ResponseWriter, r *http.Requ
 	json.NewEncoder(w).Encode(secretDecryptResponse{
 		Value: string(plaintext),
 	})
+}
+
+// decryptSecretValue decrypts an AES-256-GCM encrypted base64 value using userID as AAD.
+// Extracted from handleDecryptSecret for reuse by the bot secrets loader.
+func decryptSecretValue(encryptedBase64 string, userID string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(encryptedBase64)
+	if err != nil {
+		return "", fmt.Errorf("invalid base64: %w", err)
+	}
+
+	key := deriveSecretsKey()
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("cipher error: %w", err)
+	}
+
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("GCM error: %w", err)
+	}
+
+	nonceSize := aesGCM.NonceSize()
+	if len(data) < nonceSize {
+		return "", fmt.Errorf("encrypted data too short")
+	}
+
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	aad := []byte(userID)
+	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, aad)
+	if err != nil {
+		return "", fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return string(plaintext), nil
+}
+
+// storeSecretRequest is the request body for storing a user secret server-side
+type storeSecretRequest struct {
+	Name           string `json:"name"`
+	EncryptedValue string `json:"encrypted_value"`
+}
+
+// handleStoreUserSecret upserts a user secret in the database
+// PUT /api/secrets/store
+func (api *StreamingAPI) handleStoreUserSecret(w http.ResponseWriter, r *http.Request) {
+	var req storeSecretRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.EncryptedValue == "" {
+		http.Error(w, "name and encrypted_value are required", http.StatusBadRequest)
+		return
+	}
+
+	userID := GetUserIDFromContext(r.Context())
+
+	if err := api.chatDB.UpsertUserSecret(r.Context(), userID, req.Name, req.EncryptedValue); err != nil {
+		log.Printf("[SECRETS] Failed to store user secret: %v", err)
+		http.Error(w, "Failed to store secret", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleDeleteUserSecret deletes a user secret from the database
+// DELETE /api/secrets/store/{name}
+func (api *StreamingAPI) handleDeleteUserSecret(w http.ResponseWriter, r *http.Request) {
+	name := mux.Vars(r)["name"]
+	if name == "" {
+		http.Error(w, "Secret name is required", http.StatusBadRequest)
+		return
+	}
+
+	userID := GetUserIDFromContext(r.Context())
+
+	if err := api.chatDB.DeleteUserSecret(r.Context(), userID, name); err != nil {
+		log.Printf("[SECRETS] Failed to delete user secret: %v", err)
+		http.Error(w, "Failed to delete secret", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"success": true})
+}
+
+// handleListStoredSecrets returns secret names stored server-side (no values exposed)
+// GET /api/secrets/stored
+func (api *StreamingAPI) handleListStoredSecrets(w http.ResponseWriter, r *http.Request) {
+	userID := GetUserIDFromContext(r.Context())
+
+	secrets, err := api.chatDB.ListUserSecrets(r.Context(), userID)
+	if err != nil {
+		log.Printf("[SECRETS] Failed to list stored secrets: %v", err)
+		http.Error(w, "Failed to list secrets", http.StatusInternalServerError)
+		return
+	}
+
+	type entry struct {
+		Name string `json:"name"`
+	}
+	result := make([]entry, len(secrets))
+	for i, s := range secrets {
+		result[i] = entry{Name: s.Name}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }

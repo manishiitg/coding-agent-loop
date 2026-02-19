@@ -540,13 +540,22 @@ type UpdateWorkflowRequest struct {
 	SelectedOptions *WorkflowSelectedOptions `json:"selected_options,omitempty"`
 }
 
+// UserSecret represents a user-owned secret stored server-side for bot session access
+type UserSecret struct {
+	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"`
+	Name           string    `json:"name"`
+	EncryptedValue string    `json:"encrypted_value"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 // Bot session status constants
 const (
-	BotSessionStatusAnalyzing           = "analyzing"
-	BotSessionStatusAwaitingConfirmation = "awaiting_confirmation"
-	BotSessionStatusRunning             = "running"
-	BotSessionStatusCompleted           = "completed"
-	BotSessionStatusFailed              = "failed"
+	BotSessionStatusAwaitingPlanApproval = "awaiting_plan_approval"
+	BotSessionStatusRunning              = "running"
+	BotSessionStatusCompleted            = "completed"
+	BotSessionStatusFailed               = "failed"
 )
 
 // BotConnectorConfig represents configuration for a bot connector platform
@@ -573,7 +582,6 @@ type BotSession struct {
 	UserName      string     `json:"user_name" db:"user_name"`
 	Query         string     `json:"query" db:"query"`
 	Status        string     `json:"status" db:"status"`
-	AnalysisJSON  string     `json:"analysis_json" db:"analysis_json"`
 	PresetID      string     `json:"preset_id" db:"preset_id"`
 	ConfigJSON    string     `json:"config_json" db:"config_json"`       // final QueryRequest config
 	ThreadContext string     `json:"thread_context" db:"thread_context"` // JSON of thread history
@@ -619,8 +627,7 @@ type CreateBotSessionRequest struct {
 type UpdateBotSessionRequest struct {
 	SessionID    string `json:"session_id,omitempty"`
 	Status       string `json:"status,omitempty"`
-	AnalysisJSON string `json:"analysis_json,omitempty"`
-	PresetID     string `json:"preset_id,omitempty"`
+	PresetID   string `json:"preset_id,omitempty"`
 	ConfigJSON   string `json:"config_json,omitempty"`
 }
 

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/manishiitg/mcpagent/events"
 
 	_ "github.com/lib/pq"
@@ -696,6 +697,53 @@ func (s *SupabaseDB) GetEventsBySession(ctx context.Context, sessionID string, l
 	rows, err := s.db.QueryContext(ctx, query, internalID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events by session: %w", err)
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var event Event
+		var eventDataJSON string
+		err := rows.Scan(
+			&event.ID, &event.SessionID, &event.ChatSessionID, &event.EventType, &event.Timestamp, &eventDataJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+
+		err = json.Unmarshal([]byte(eventDataJSON), &event.EventData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event data: %w", err)
+		}
+
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
+// GetEventsByCorrelationID retrieves events for a session filtered by correlation_id (stored in event_data JSON)
+func (s *SupabaseDB) GetEventsByCorrelationID(ctx context.Context, sessionID string, correlationID string, limit, offset int) ([]Event, error) {
+	var internalID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM chat_sessions WHERE session_id = $1`, sessionID,
+	).Scan(&internalID)
+	if err != nil {
+		internalID = sessionID
+	}
+
+	query := `
+		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+		FROM events
+		WHERE chat_session_id = $1
+		  AND event_data->>'correlation_id' = $2
+		ORDER BY timestamp ASC
+		LIMIT $3 OFFSET $4
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, internalID, correlationID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events by correlation_id: %w", err)
 	}
 	defer rows.Close()
 
@@ -1919,16 +1967,16 @@ func (s *SupabaseDB) CreateBotSession(ctx context.Context, req *CreateBotSession
 func (s *SupabaseDB) GetBotSession(ctx context.Context, id string) (*BotSession, error) {
 	query := `
 		SELECT id, platform, channel_id, thread_ts, session_id, user_id, user_name, query, status,
-		       analysis_json, preset_id, config_json, thread_context, created_at, updated_at, completed_at
+		       preset_id, config_json, thread_context, created_at, updated_at, completed_at
 		FROM bot_sessions WHERE id = $1
 	`
 
 	var bs BotSession
-	var sessionID, userName, analysisJSON, presetID, configJSON, threadContext sql.NullString
+	var sessionID, userName, presetID, configJSON, threadContext sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&bs.ID, &bs.Platform, &bs.ChannelID, &bs.ThreadTS,
 		&sessionID, &bs.UserID, &userName, &bs.Query, &bs.Status,
-		&analysisJSON, &presetID, &configJSON, &threadContext,
+		&presetID, &configJSON, &threadContext,
 		&bs.CreatedAt, &bs.UpdatedAt, &bs.CompletedAt,
 	)
 	if err != nil {
@@ -1943,9 +1991,6 @@ func (s *SupabaseDB) GetBotSession(ctx context.Context, id string) (*BotSession,
 	}
 	if userName.Valid {
 		bs.UserName = userName.String
-	}
-	if analysisJSON.Valid {
-		bs.AnalysisJSON = analysisJSON.String
 	}
 	if presetID.Valid {
 		bs.PresetID = presetID.String
@@ -2007,11 +2052,6 @@ func (s *SupabaseDB) UpdateBotSession(ctx context.Context, id string, req *Updat
 	if req.Status != "" {
 		updateFields = append(updateFields, fmt.Sprintf("status = $%d", paramIdx))
 		args = append(args, req.Status)
-		paramIdx++
-	}
-	if req.AnalysisJSON != "" {
-		updateFields = append(updateFields, fmt.Sprintf("analysis_json = $%d", paramIdx))
-		args = append(args, req.AnalysisJSON)
 		paramIdx++
 	}
 	if req.PresetID != "" {
@@ -2082,7 +2122,7 @@ func (s *SupabaseDB) ListBotSessions(ctx context.Context, limit, offset int, sta
 
 	query := fmt.Sprintf(`
 		SELECT id, platform, channel_id, thread_ts, session_id, user_id, user_name, query, status,
-		       analysis_json, preset_id, config_json, thread_context, created_at, updated_at, completed_at
+		       preset_id, config_json, thread_context, created_at, updated_at, completed_at
 		FROM bot_sessions%s
 		ORDER BY created_at DESC LIMIT $%d OFFSET $%d
 	`, whereClause, paramIdx, paramIdx+1)
@@ -2097,11 +2137,11 @@ func (s *SupabaseDB) ListBotSessions(ctx context.Context, limit, offset int, sta
 	sessions := make([]BotSession, 0)
 	for rows.Next() {
 		var bs BotSession
-		var sessionID, userName, analysisJSON, presetID, configJSON, threadContext sql.NullString
+		var sessionID, userName, presetID, configJSON, threadContext sql.NullString
 		err := rows.Scan(
 			&bs.ID, &bs.Platform, &bs.ChannelID, &bs.ThreadTS,
 			&sessionID, &bs.UserID, &userName, &bs.Query, &bs.Status,
-			&analysisJSON, &presetID, &configJSON, &threadContext,
+			&presetID, &configJSON, &threadContext,
 			&bs.CreatedAt, &bs.UpdatedAt, &bs.CompletedAt,
 		)
 		if err != nil {
@@ -2112,9 +2152,6 @@ func (s *SupabaseDB) ListBotSessions(ctx context.Context, limit, offset int, sta
 		}
 		if userName.Valid {
 			bs.UserName = userName.String
-		}
-		if analysisJSON.Valid {
-			bs.AnalysisJSON = analysisJSON.String
 		}
 		if presetID.Valid {
 			bs.PresetID = presetID.String
@@ -2207,4 +2244,50 @@ func (s *SupabaseDB) ListBotMessages(ctx context.Context, botSessionID string, l
 	}
 
 	return messages, total, nil
+}
+
+// --- User Secrets CRUD ---
+
+func (s *SupabaseDB) UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error {
+	id := uuid.New().String()
+	query := `
+		INSERT INTO user_secrets (id, user_id, name, encrypted_value, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT(user_id, name) DO UPDATE SET
+			encrypted_value = EXCLUDED.encrypted_value,
+			updated_at = NOW()
+	`
+	_, err := s.db.ExecContext(ctx, query, id, userID, name, encryptedValue)
+	if err != nil {
+		return fmt.Errorf("failed to upsert user secret: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) DeleteUserSecret(ctx context.Context, userID, name string) error {
+	query := `DELETE FROM user_secrets WHERE user_id = $1 AND name = $2`
+	_, err := s.db.ExecContext(ctx, query, userID, name)
+	if err != nil {
+		return fmt.Errorf("failed to delete user secret: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) ListUserSecrets(ctx context.Context, userID string) ([]UserSecret, error) {
+	query := `SELECT id, user_id, name, encrypted_value, created_at, updated_at FROM user_secrets WHERE user_id = $1 ORDER BY name`
+	rows, err := s.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user secrets: %w", err)
+	}
+	defer rows.Close()
+
+	var secrets []UserSecret
+	for rows.Next() {
+		var secret UserSecret
+		if err := rows.Scan(&secret.ID, &secret.UserID, &secret.Name, &secret.EncryptedValue, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user secret: %w", err)
+		}
+		secrets = append(secrets, secret)
+	}
+	return secrets, nil
 }

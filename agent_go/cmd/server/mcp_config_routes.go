@@ -347,6 +347,7 @@ func (api *StreamingAPI) triggerMCPDiscovery() {
 	// Clear the failed servers list so that config changes (e.g., adding OAuth tokens)
 	// allow previously failed servers to be retried
 	api.discoveryFailedServers = make(map[string]string)
+	api.deleteDiscoveryFailedServersFile()
 	api.logger.Info("🔄 Cleared failed servers list — all servers eligible for discovery")
 
 	// Use existing tool cache initialization

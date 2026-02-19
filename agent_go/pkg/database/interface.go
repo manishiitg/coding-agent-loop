@@ -26,6 +26,7 @@ type Database interface {
 	StoreEvent(ctx context.Context, sessionID string, event *events.AgentEvent) error
 	GetEvents(ctx context.Context, req *GetChatHistoryRequest) (*GetEventsResponse, error)
 	GetEventsBySession(ctx context.Context, sessionID string, limit, offset int) ([]Event, error)
+	GetEventsByCorrelationID(ctx context.Context, sessionID string, correlationID string, limit, offset int) ([]Event, error)
 	CountEventsBySession(ctx context.Context, sessionID string) (int, error)
 
 	// Preset query management
@@ -61,6 +62,11 @@ type Database interface {
 	// Bot message management
 	CreateBotMessage(ctx context.Context, req *CreateBotMessageRequest) (*BotMessage, error)
 	ListBotMessages(ctx context.Context, botSessionID string, limit, offset int) ([]BotMessage, int, error)
+
+	// User secrets management
+	UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error
+	DeleteUserSecret(ctx context.Context, userID, name string) error
+	ListUserSecrets(ctx context.Context, userID string) ([]UserSecret, error)
 
 	// Health check
 	Ping(ctx context.Context) error

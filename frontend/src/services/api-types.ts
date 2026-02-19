@@ -264,6 +264,7 @@ export interface SlackConfig {
   bot_token?: string  // Masked in GET response
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
   channel_id?: string
+  bot_mode?: boolean  // Enable @mention bot mode
 }
 
 export interface SlackConfigRequest {
@@ -271,6 +272,7 @@ export interface SlackConfigRequest {
   bot_token: string  // Bot User OAuth Token (xoxb-...)
   app_token: string  // App-level token (xapp-...) for Socket Mode
   channel_id: string
+  bot_mode: boolean  // Enable @mention bot mode
 }
 
 export interface SlackConfigResponse {
@@ -278,6 +280,7 @@ export interface SlackConfigResponse {
   bot_token?: string  // Masked in GET
   app_token?: string  // Masked in GET
   channel_id?: string
+  bot_mode?: boolean
 }
 
 export interface SlackTestResponse {
@@ -1427,4 +1430,122 @@ export interface SessionCostDetail {
   total_input_tokens: number;
   total_output_tokens: number;
   total_llm_calls: number;
+}
+
+// ============================================================================
+// Delegation Logs Types (Multi-Agent Mode)
+// ============================================================================
+
+export interface DelegationLogEntry {
+  delegation_id: string;
+  session_id?: string;
+  instruction: string;
+  reasoning_level?: string;
+  model_id?: string;
+  tool_mode?: string;
+  servers?: string[];
+  background_agent_id?: string;
+  depth: number;
+  status: 'running' | 'completed' | 'failed';
+  start_time: string;
+  end_time?: string;
+  duration?: string;
+  result?: string;
+  error?: string;
+  input_tokens: number;
+  output_tokens: number;
+  tool_calls: number;
+  token_usage?: Record<string, ChatModelUsage>;
+  total_cost_usd: number;
+}
+
+export interface DelegationLogsResponse {
+  delegations: DelegationLogEntry[];
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_llm_calls: number;
+  by_model: Record<string, ChatModelUsage>;
+}
+
+export interface AgentCostSummary {
+  name: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_cost_usd: number;
+  llm_calls: number;
+  by_model: Record<string, ChatModelUsage>;
+}
+
+export interface SessionDelegationLogs {
+  session_id: string;
+  title: string;
+  created_at: string;
+  status: string;
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_llm_calls: number;
+  main_agent: AgentCostSummary;
+  delegations: DelegationLogEntry[];
+  by_model: Record<string, ChatModelUsage>;
+}
+
+export interface AllDelegationLogsResponse {
+  sessions: SessionDelegationLogs[];
+  total_cost_usd: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_llm_calls: number;
+  by_model: Record<string, ChatModelUsage>;
+}
+
+// ============================================================================
+// Bot Simulator Types
+// ============================================================================
+
+export interface SimulatorMessageBlock {
+  type: string;
+  text?: string;
+  buttons?: SimulatorMessageButton[];
+}
+
+export interface SimulatorMessageButton {
+  text: string;
+  value: string;
+  style?: string;
+  action_id: string;
+}
+
+export interface SimulatorMessage {
+  id: string;
+  text: string;
+  blocks?: SimulatorMessageBlock[];
+  is_bot: boolean;
+  timestamp: string;
+}
+
+export interface SimulatorThreadInfo {
+  thread_id: string
+  preview: string
+  created_at: string
+  message_count: number
+}
+
+export interface SimulatorSendResponse {
+  type: 'conversation' | 'follow_up';
+  response?: string;          // text reply for conversation
+  thread_id: string;
+  session_id?: string;        // internal chat session ID (for follow_up)
+  bot_session_id?: string;    // set when awaiting user confirmation
+  thread_offset?: number;     // current thread message count (for polling init)
+}
+
+export interface SimulatorMessagesResponse {
+  messages: SimulatorMessage[];
+  total: number;
+}
+
+export interface SimulatorInteractResponse {
+  success: boolean;
 }

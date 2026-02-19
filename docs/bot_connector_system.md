@@ -1,11 +1,11 @@
 # Bot Connector System
 
-A platform-agnostic bot framework that allows users to interact with the agent system from messaging platforms (Slack, Discord, Telegram, WhatsApp). Users @mention the bot, it analyzes the request, gets confirmation, starts a session, and streams results back to the conversation thread.
+A platform-agnostic bot framework that allows users to interact with the agent system from messaging platforms (Slack, Discord, Telegram, WhatsApp) and the built-in web simulator. Users @mention the bot (or type in the simulator), the system starts a multi-agent session with the user's pre-configured MCP servers, skills, and tool search mode, and streams progress back to the thread.
 
 ## Architecture Overview
 
 ```
-Slack / Discord / Telegram / WhatsApp
+Slack / Discord / Web Simulator / ...
         |
         v
   BotConnector interface (per-platform)
@@ -13,24 +13,24 @@ Slack / Discord / Telegram / WhatsApp
         v
   BotConversationManager (platform-agnostic orchestrator)
         |
-        +-> Analysis LLM call (determine needed servers/skills/sub-agents)
-        +-> Confirmation message (buttons in thread)
-        +-> startSessionInternal() (reuses handleQuery core logic)
-        +-> Event subscriber -> filtered updates back to thread
-        +-> Human feedback -> routed to thread (no 2-min delay)
+        +-> buildQueryRequest() (uses user-configured servers/skills from DB)
+        +-> startSessionInternal() (reuses handleQuery)
+        +-> BotEventFilter -> streams progress, plan approval, human feedback to thread
+        +-> User responds to blocking events via text in thread
 ```
 
 ### Key Components
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `BotConnector` | `services/bot_connector.go` | Per-platform interface (Slack, Discord, etc.) |
+| `BotConnector` | `services/bot_connector.go` | Per-platform interface |
 | `BotConversationManager` | `services/bot_connector.go` | Platform-agnostic orchestrator |
-| `BotAnalyzer` | `services/bot_analysis.go` | Lightweight LLM call to determine capabilities |
-| `BotEventFilter` | `services/bot_event_filter.go` | 3-tier event filter for thread updates |
-| `BotEventSubscriberAdapter` | `bot_event_adapter.go` | Bridges EventStore to BotEventSubscriber interface |
+| `BotEventFilter` | `services/bot_event_filter.go` | Event filter for thread updates + lifecycle |
+| `BotEventSubscriberAdapter` | `bot_event_adapter.go` | Bridges EventStore to BotEventSubscriber |
+| `WebSimulatorConnector` | `services/web_simulator_connector.go` | In-memory connector for web testing |
 | `startSessionInternal` | `bot_session_starter.go` | Starts agent sessions programmatically |
 | Bot routes | `bot_routes.go` | REST API for config, sessions, history |
+| Simulator routes | `bot_simulator_routes.go` | REST API for the web simulator |
 
 ---
 
@@ -40,6 +40,7 @@ Slack / Discord / Telegram / WhatsApp
 type BotConnector interface {
     NotificationConnector // embeds: Name(), IsEnabled(), SendNotification()
 
+    SupportsThreads() bool // true for Slack, false for WhatsApp/Telegram/web_simulator
     StartListening(ctx context.Context) error
     StopListening()
     SendThreadMessage(ctx context.Context, threadID ThreadID, message string) (string, error)
@@ -52,223 +53,314 @@ type BotConnector interface {
 }
 ```
 
-Each platform implements this interface. The manager calls these methods without knowing the platform details.
+Each platform implements this interface. The `WebSimulatorConnector` stores messages in-memory for the frontend to poll.
 
-### ThreadID
+---
 
-Uniquely identifies a conversation thread across platforms:
+## Session Start (Direct — No Analysis)
 
-```go
-type ThreadID struct {
-    Platform  string // "slack", "discord", "telegram", "whatsapp"
-    ChannelID string
-    ThreadTS  string // platform-specific thread root ID
-}
-```
+When a user sends a message, the system starts a multi-agent session directly using the user's pre-configured capabilities. There is no intermediate analysis LLM step.
 
-### MessageFormatter
+`buildQueryRequest()` constructs the session from the `_global` bot connector config stored in the DB:
 
-Converts standard Markdown to platform-specific formatting:
-
-```go
-type MessageFormatter interface {
-    FormatMessage(markdown string) string
-    MaxMessageLength() int
-    SplitLongMessage(text string) []string
-}
-```
-
-| Platform | Bold | Code Block | Links | Max Length |
-|----------|------|-----------|-------|-----------|
-| Slack | `*text*` | ` ```code``` ` | `<url\|text>` | 4000 |
-| Discord | `**text**` | ` ```lang\ncode``` ` | `[text](url)` | 2000 |
-| Telegram | `*text*` / `<b>` | `<pre>code</pre>` | `<a href>` | 4096 |
-| WhatsApp | `*text*` | ` ```code``` ` | Plain URL | 65536 |
+- **MCP Servers**: from `default_servers` in the `_global` config
+- **Skills**: from `default_skills`, falling back to all discovered skills
+- **Tool search mode**: enabled automatically when >2 servers are configured
+- **Delegation mode**: always `"plan"` (multi-agent chat)
+- **Workspace access**: always enabled
+- **Provider/model**: high tier from `delegation_tier_config` (DB → env → defaults)
+- **API keys**: from `provider_api_keys` in the `_global` config
+- **User secrets**: loaded from server-side encrypted storage
 
 ---
 
 ## End-to-End Flows
 
-### Flow 1: New @mention in a channel
+### Flow 1: Web Simulator
 
 ```
-1. User types "@agent research competitor pricing" in #general
-2. SlackService receives AppMentionEvent
-   -> Strips @mention -> text = "research competitor pricing"
-   -> ThreadTS = message timestamp (new thread root)
-   -> Calls BotConversationManager.HandleIncomingMessage()
-3. BotConversationManager:
-   a) Creates BotSession (status: "analyzing")
-   b) Posts to thread: "Analyzing your request..."
-   c) Calls analyzer.Analyze() with user text + capabilities
-4. Analysis LLM returns structured JSON:
-   {
-     summary: "Research competitor pricing using browser",
-     required_servers: ["browser"],
-     delegation_mode: "plan",
-     needs_browser: true,
-     confidence: 0.85
-   }
-5. Posts confirmation with buttons:
-   "Here's what I'll set up:
-    Mode: Multi-Agent Chat
-    MCP Servers: browser
-    Browser access: Yes
-    [Confirm] [Cancel]"
-6. User clicks [Confirm]
-7. confirmAndStart():
-   a) Builds QueryRequest from AnalysisResult
-   b) Calls startSessionInternal()
-   c) Starts BotEventFilter for streaming updates
-   d) Status: "running"
-8. Filtered events stream to thread:
-   "Started session..."
-   "Running: browser_navigate..." (batched every 12s)
-9. Session completes:
-   "Session completed."
-   Status: "completed"
+1. User types "list my google sheets" in simulator
+2. HandleMessageSync():
+   a) No active session → buildQueryRequest(query)
+   b) Create bot_session (status: "running")
+   c) Start multi-agent session in background
+   d) Return: { type: "follow_up", thread_offset: N }
+3. Frontend polls for messages, sees progress:
+   "[Sub-agent] Planning task..."
+   "**Plan ready for review:** ..."
+4. User types "approve"
+5. HandleMessageSync():
+   a) Session running, awaitingUserInput = true, blockingEventType = "plan_approval"
+   b) isPlanApprovalResponse("approve") → true
+   c) Inject follow-up: "Approved. Execute the plan."
+6. Plan executes, sub-agents run, progress streams to thread
+7. Session completes: "Session completed."
 ```
 
-### Flow 2: @mention in an existing thread (with context)
+### Flow 2: Slack @mention
 
 ```
-1. User is in a thread discussing pricing with colleagues
-   User types "@agent can you summarize this and create action items"
-2. No existing BotSession for this thread
-   -> GetThreadHistory(channelID, threadTS)
-   -> Returns full thread messages
-3. Analysis LLM receives:
-   - User request + thread context (all messages)
-   - Available MCP servers, skills, sub-agents
-4. Analysis incorporates thread context into rewritten_query:
-   {
-     summary: "Summarize pricing discussion and create action items",
-     required_servers: ["workspace"],
-     delegation_mode: "off",
-     rewritten_query: "Summarize this discussion and create action items:
-       [thread content incorporated]"
-   }
-5. Confirmation -> Run -> Results in SAME thread
+1. User @mentions bot in #general
+2. HandleIncomingMessage() → startNewSessionDirect()
+3. Posts "Starting session... (tag me to follow up in this thread)" to thread
+4. buildQueryRequest() → startSessionInternal()
+5. Events stream to thread via BotEventFilter
+6. Blocking events (plan approval, human feedback) shown in thread
+7. User @mentions bot in thread → follow-up injected
+8. Session completes → removed from active sessions map
+9. User @mentions bot again → starts a fresh session (with thread history for context)
 ```
 
-### Flow 3: Follow-up in running session
+### @Mention Requirement
+
+The bot **only responds to @mentions** — plain thread replies are ignored unless the session is in a blocking state (plan approval, human feedback). This prevents:
+- Other users chatting in the thread from accidentally triggering the bot
+- Duplicate message processing (Slack sends both a `MessageEvent` and `AppMentionEvent` for @mentions in threads)
+
+`handleSocketModeMessage` skips messages containing the bot's `<@BOT_ID>` to avoid double-processing with `handleAppMentionEvent`. The `IsMention` flag on `BotIncomingMessage` controls whether `handleExistingSession` allows follow-up injection.
+
+### Follow-Up Architecture
+
+Each user message (initial or follow-up) creates a **new agent** via `handleQuery` — the same pattern as the regular chat UI. Conversation history from the DB provides continuity between turns.
+
+Follow-ups use `buildQueryRequest(query)` to construct the full config, ensuring identical settings (servers, skills, delegation mode, API keys, secrets) as the initial session. The `SessionFollowUpFunc` accepts the complete `reqMap` and `sendFollowUpInternal` simply marshals and forwards it to `handleQuery`.
+
+### Session Cleanup
+
+When `runSession` completes (event filter signals done or context cancelled), the session is:
+1. Marked as `completed` in DB
+2. **Removed from the in-memory `m.sessions` map**
+
+This ensures subsequent messages don't find a stale entry with a dead event filter. Instead, the next @mention triggers a DB lookup, finds the completed session, and starts a fresh session via `startNewSessionDirect` — which creates a new event filter that properly forwards responses to the thread.
+
+### Flow 3: Blocking Events (Generic)
+
+All blocking events follow the same pattern:
 
 ```
-1. User @mentions bot in a thread with an active session
-2. BotConversationManager finds existing session (status: "running")
-3. Message forwarded as follow-up to the ongoing session
-4. Agent receives it and adjusts accordingly
+Agent emits blocking event → BotEventFilter:
+  1. Format event as thread message
+  2. Set active.awaitingUserInput = true
+  3. Set active.blockingEventType = event type
+
+User responds in thread → HandleMessageSync / handleExistingSession:
+  1. Check blockingEventType
+  2. For plan_approval: translate "approve" → "Approved. Execute the plan."
+  3. For human_feedback/questions: forward user's text as follow-up
+  4. buildQueryRequest(response) → sendFollowUpInternal(reqMap)
+  5. Clear awaitingUserInput
 ```
 
-### Flow 4: Human feedback during bot session
-
-```
-1. Agent needs user input during a bot session
-2. HumanFeedbackStore checks BotSessionChecker
-   -> Returns true (this is a bot session)
-   -> Skips 2-minute delay, sends immediately to thread
-3. User replies in thread
-4. Reply routed through BotConversationManager to feedback store
-5. Agent continues processing
-```
-
-### Smart Thread Routing
-
-```
-User @mentions bot in a thread
-  -> Lookup threadKey in sessions map + DB
-     |
-    EXISTS?                  DOESN'T EXIST?
-     |                            |
-  Check status:                New analysis
-  - "running" -> forward       -> confirmation
-  - "awaiting_confirmation"    -> new session
-    -> parse reply
-  - "completed"/"failed"
-    -> start fresh
-```
+| Blocking Event | Thread Message | User Response |
+|---|---|---|
+| `plan_approval` | Plan markdown + "Reply **approve** or **reject**" | "approve" / "reject" / feedback text |
+| `blocking_human_feedback` | Question/prompt from agent | Free text answer |
+| `blocking_human_questions` | Numbered list of questions | Free text answers |
 
 ---
 
-## Analysis LLM
+## SyncMessageResult (Web Simulator)
 
-**File**: `services/bot_analysis.go`
-
-The analysis LLM is a fast, cheap call (Haiku by default) that determines what capabilities are needed.
-
-### Input
-
-The analysis prompt receives:
-1. Available MCP servers (from MCP config file)
-2. Available skills (from `skills.DiscoverSkills()`)
-3. Available sub-agent templates (from `subagents.DiscoverSubAgents()`)
-4. Available presets (TODO: integration point)
-5. Thread context (if tagged in existing thread)
-6. The user's message
-
-### Output
+The `HandleMessageSync` method returns a synchronous result for the web simulator:
 
 ```go
-type AnalysisResult struct {
-    Summary           string   // "I'll research competitor pricing using browser"
-    RequiredServers   []string // ["browser", "slack"]
-    RequiredSkills    []string // ["market-research"]
-    RequiredSubAgents []string // ["research-agent"]
-    RequiredSecrets   []string // ["SLACK_TOKEN"]
-    DelegationMode    string   // "plan" or "off"
-    NeedsWorkspace    bool
-    NeedsBrowser      bool
-    MatchedPresetID   string   // if a preset closely matches
-    MatchedPresetName string
-    RewrittenQuery    string   // cleaned query with thread context
-    Confidence        float64  // 0.0-1.0
+type SyncMessageResult struct {
+    Type         string `json:"type"`                     // "conversation" or "follow_up"
+    Response     string `json:"response,omitempty"`       // text reply (conversation only)
+    ThreadID     string `json:"thread_id"`
+    SessionID    string `json:"session_id,omitempty"`     // internal chat session ID
+    BotSessionID string `json:"bot_session_id,omitempty"` // set when awaiting confirmation
+    ThreadOffset int    `json:"thread_offset,omitempty"`  // message count for polling init
 }
 ```
 
-### Configuration
-
-| Env Variable | Default | Description |
-|---|---|---|
-| `BOT_ANALYSIS_PROVIDER` | `anthropic` | LLM provider for analysis |
-| `BOT_ANALYSIS_MODEL` | `claude-haiku-4-5-20251001` | Model for analysis (fast/cheap) |
-
-The analysis LLM composes configs freely from available capabilities. It is NOT limited to matching presets -- presets serve as hints/shortcuts, but the LLM can pick any combination.
+- **`follow_up`**: Session is running. Frontend polls `/api/simulator/messages?thread_id=X&since_index=N` for updates.
 
 ---
 
-## Event Filtering Tiers
+## Event Filter
 
 **File**: `services/bot_event_filter.go`
 
-To avoid flooding rate-limited platforms (Slack: ~1 msg/sec), events are classified into 3 tiers:
+The event filter subscribes to session events and forwards filtered updates to the thread. It also manages session lifecycle by tracking blocking events and delegations.
 
-### Tier 1 -- Send Immediately
+### Events Handled
 
-| Event Type | Message |
+| Event Type | Action |
 |---|---|
-| `agent_start` | "Agent started processing..." |
-| `agent_end` | "Agent completed." |
-| `agent_error` | "Agent encountered an error." |
-| `delegation_start` | "Sub-agent started..." |
-| `delegation_end` | "Sub-agent completed." |
-| `blocking_human_feedback` | "Waiting for your input (see above)." |
-| `blocking_human_questions` | "Waiting for your answers (see above)." |
-| `conversation_error` | "An error occurred during processing." |
+| `delegation_start` | Track sub-agent name, increment pending count, send "**Starting:** Sub-agent (model)" to thread |
+| `delegation_end` | Decrement pending delegation count, check if session is done |
+| `llm_generation_end` | Show main agent text responses (HierarchyLevel 0 only, skips sub-agents and pure tool-call turns) |
+| `unified_completion` | Format with sub-agent name + result + turns/duration stats (main-level triggers session done check) |
+| `plan_approval` | Show plan content + approval instructions, set blocking state |
+| `blocking_human_feedback` | Show feedback question, set blocking state |
+| `blocking_human_questions` | Show numbered questions, set blocking state |
+| `agent_error` / `conversation_error` | Show error message |
 
-### Tier 2 -- Batched (every 12 seconds)
+### Sub-Agent Name Tracking
 
-| Event Type | Format |
+`trackDelegationName()` extracts the instruction from `delegation_start` events and stores a short name (first line, capped at 60 characters) keyed by `correlation_id`. This name is used later in `unified_completion` formatting to label sub-agent results instead of showing the full instruction text.
+
+### Session Lifecycle
+
+The event filter tracks:
+- **Pending delegations**: increment on `delegation_start`, decrement on `delegation_end`
+- **Blocking state**: set on any blocking event, cleared when user responds
+- **Completion received**: set when a main-level (HierarchyLevel 0) `unified_completion`, `agent_end`, or `conversation_end` arrives
+
+The session is "done" when all three conditions are met: completion received, no pending delegations, and no blocking state. The `sessionDone` flag ensures the callback fires at most once. This triggers "Session completed." and DB status update.
+
+### Message Formatting
+
+```
+delegation_start:
+  "**Starting:** Sub-agent (model-name)"
+
+llm_generation_end (main agent only, level 0):
+  "**Agent:** {full LLM text content}"
+
+unified_completion — Main agent (HierarchyLevel 0):
+  "**Result:**
+   {full final_result}
+   _N turns, Xs_"
+
+unified_completion — Sub-agent (HierarchyLevel > 0):
+  "**[{short name from trackDelegationName}]**
+   {full final_result}
+   _N turns, Xs_"
+```
+
+Note: Full response text is shown without truncation. Meta stats (turns/duration) are only shown when they have meaningful values.
+
+### Workspace Path → Shareable URL
+
+The event filter automatically converts workspace file paths in outgoing messages to clickable shareable URLs. This works in two passes:
+
+1. **Markdown links**: `[Report](Plans/xxx/report.md)` → `[Report](https://app.example.com/file?path=<base64>&uid=default)`
+2. **Bare paths**: `Plans/xxx/report.md` → `[Plans/xxx/report.md](https://app.example.com/file?path=<base64>&uid=default)`
+
+Matches paths starting with `Plans/` or `Downloads/` that contain at least one subfolder and a file extension.
+
+**Requires**: `PUBLIC_URL` environment variable set to the app's public base URL. Without it, paths are left as-is.
+
+---
+
+## Bot Session Status Flow
+
+```
+running ←→ awaiting_user_input → completed
+  |                                   |
+  +→ failed ←————————————————————————+
+```
+
+| Status | Description |
 |---|---|
-| `tool_call_start` | "Running: {tool_name}" |
-| `tool_call_end` | "Completed: {tool_name}" |
-| `unified_llm_completion` | First 200 chars of assistant text |
-| `conversation_turn` | (included in batch) |
+| `awaiting_plan_approval` | Plan created, waiting for user to approve/reject |
+| `running` | Agent session actively processing |
+| `completed` | Session finished successfully |
+| `failed` | Session failed or was cancelled |
 
-Batched items are deduplicated and limited to the last 5 unique entries.
+---
 
-### Tier 3 -- Skip
+## Bot Configuration (Global)
 
-Everything else: streaming chunks, system prompts, cache events, performance events, debug data.
+**Files**: `frontend/src/components/settings/BotConfigModal.tsx`, `frontend/src/components/sidebar/HumanFeedbackConnectorsSection.tsx`
+
+Bot capabilities (MCP servers and skills) are configured globally via a standalone **Bot Configuration** modal, accessible from the sidebar's Human Feedback Connectors section. This configuration applies to **all bot interfaces** (Slack, Web Simulator, etc.), not just the simulator.
+
+### UI
+
+- **Sidebar**: Top-level "Bot Configuration" card with a "Configure" button — separate from individual connector cards
+- **Modal**: Reuses the same `ServerSelectionDropdown` and `SkillSelectionDropdown` components used in the chat input area
+- **Tier display**: Read-only bar showing delegation tier models (fetched from DB config, falls back to LLM store)
+- **Save**: Persists selected servers/skills to DB via `POST /api/bot/simulate/config` (`default_servers`, `default_skills`)
+
+### Data Flow
+
+1. On open: fetches saved config from `GET /api/bot/simulate/config`, available servers from `useMCPStore`
+2. User selects servers/skills using the standard dropdowns
+3. On save: `POST /api/bot/simulate/config` with `{ default_servers, default_skills }`
+4. When any bot session starts, `buildQueryRequest()` uses `default_servers`/`default_skills` from the `_global` config
+5. Tool search mode is auto-enabled when >2 servers are configured
+
+---
+
+## Web Simulator
+
+**Files**: `services/web_simulator_connector.go`, `bot_simulator_routes.go`, `frontend/src/components/settings/BotSimulatorModal.tsx`
+
+The web simulator provides a chat-like UI for testing the bot flow without a Slack workspace. It uses the global bot configuration for server/skill selection.
+
+### Architecture
+
+- `WebSimulatorConnector` implements `BotConnector` with in-memory thread storage
+- Messages stored per-thread in `[]SimulatorMessage`
+- Frontend polls `/api/simulator/messages` for new messages using a `setTimeout` chain (not `setInterval`) to prevent overlapping polls when API calls are slow
+- Message ID deduplication in the frontend prevents duplicate messages from race conditions
+- `threadOffsetRef` tracks where polling starts to avoid re-fetching
+
+### REST API
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/simulator/send` | Send user message, returns `SyncMessageResult` |
+| `GET` | `/api/simulator/messages` | Poll for messages (`?thread_id=&since_index=`) |
+| `GET` | `/api/simulator/threads` | List all threads |
+| `POST` | `/api/simulator/reset` | Clear all threads and sessions |
+| `GET` | `/api/simulator/mode` | Get current thread mode |
+| `POST` | `/api/simulator/mode` | Set thread mode (threaded/non-threaded) |
+
+### Delegation Tier Config Sync
+
+On modal open, the frontend syncs its `delegationTierConfig` (from `useLLMStore`) to the DB via `PUT /api/bot/connectors/_global`. This includes:
+- `delegation_tier_config`: high/medium/low tier provider/model
+- `provider_api_keys`: API keys per provider
+
+The agent session uses the high tier as the main provider.
+
+---
+
+## Session Configuration
+
+### Query Request Building
+
+`buildQueryRequest()` constructs the session config from the `_global` bot connector config:
+
+| Field | Source |
+|---|---|
+| `query` | Original user message |
+| `provider` / `model_id` | High tier from delegation config (DB → env → defaults) |
+| `servers` | `default_servers` from `_global` config |
+| `selected_skills` | `default_skills` from `_global` config (falls back to all discovered) |
+| `use_tool_search_mode` | `true` when >2 servers configured |
+| `delegation_mode` | Always `"plan"` |
+| `enable_workspace_access` | Always `true` |
+| `delegation_tier_config` | From DB `_global` config or env vars |
+| `llm_config.primary` | Same as `provider`/`model_id` (ensures follow-ups recover correct model) |
+| `llm_config.api_keys` | From DB `provider_api_keys` |
+| `decrypted_secrets` | Loaded from server-side encrypted storage |
+
+### User Secrets
+
+Bot sessions load server-side stored secrets via `UserSecretsLoaderFunc`. These are encrypted in the DB and decrypted at session start, injected as `decrypted_secrets` in the query request.
+
+---
+
+## Text-Based Response Detection
+
+### Plan Approval Responses
+
+```go
+// Approve: approve, approved, execute, go, yes, y, ok, proceed, do it, run it, start, lgtm
+// Reject: reject, rejected, no, n, cancel, stop, nope, nah, abort
+// Other text: forwarded as feedback to the agent
+```
+
+### Session End Commands (thread-less platforms)
+
+```go
+// End: done, end, stop, reset, new session, quit, exit
+```
 
 ---
 
@@ -278,180 +370,74 @@ Everything else: streaming chunks, system prompts, cache events, performance eve
 
 ### bot_connector_config
 
-Stores per-platform configuration.
-
 | Column | Type | Description |
 |---|---|---|
-| `id` | TEXT PK | Platform name ("slack", "discord", etc.) |
+| `id` | TEXT PK | Platform name or `"_global"` for shared config |
 | `enabled` | BOOLEAN | Whether the connector is enabled |
 | `bot_mode` | BOOLEAN | Full bot vs notification-only |
-| `config_json` | TEXT | Platform-specific tokens/settings |
-| `default_preset_id` | TEXT | Fallback preset when no match |
+| `config_json` | TEXT | Platform-specific config + shared config (tier, API keys) |
 | `auto_confirm` | BOOLEAN | Skip confirmation step |
 | `allowed_channels` | TEXT | JSON array of allowed channel IDs |
-| `created_at` | DATETIME | |
-| `updated_at` | DATETIME | |
 
 ### bot_sessions
-
-One row per bot conversation thread.
 
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | UUID |
-| `platform` | TEXT | "slack", "discord", etc. |
+| `platform` | TEXT | "slack", "web_simulator", etc. |
 | `channel_id` | TEXT | Platform channel ID |
 | `thread_ts` | TEXT | Thread root timestamp |
-| `session_id` | TEXT | Internal chat session ID (set after confirmation) |
+| `session_id` | TEXT | Internal chat session ID |
 | `user_id` | TEXT | Platform user ID |
-| `user_name` | TEXT | |
 | `query` | TEXT | Original user query |
-| `status` | TEXT | analyzing / awaiting_confirmation / running / completed / failed |
-| `analysis_json` | TEXT | AnalysisResult JSON |
-| `preset_id` | TEXT | Matched preset ID |
-| `config_json` | TEXT | Final QueryRequest config / thread context |
-| `thread_context` | TEXT | Thread history JSON |
-| `created_at` | DATETIME | |
-| `updated_at` | DATETIME | |
-| `completed_at` | DATETIME | |
-
-Unique constraint: `(platform, channel_id, thread_ts)`
+| `status` | TEXT | See status flow above |
+| `config_json` | TEXT | Thread context JSON |
 
 ### bot_messages
-
-All messages sent/received in a bot session.
 
 | Column | Type | Description |
 |---|---|---|
 | `id` | TEXT PK | UUID |
 | `bot_session_id` | TEXT FK | References bot_sessions(id) |
 | `direction` | TEXT | "incoming" / "outgoing" |
-| `message_type` | TEXT | user_request / analysis / confirmation / progress / result / human_feedback |
+| `message_type` | TEXT | progress / conversation / confirmation |
 | `content` | TEXT | Message content |
 | `platform_message_id` | TEXT | For message updates |
-| `created_at` | DATETIME | |
-
----
-
-## REST API
-
-**File**: `bot_routes.go`
-
-### Connector Management
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/bot/connectors` | List all connectors + status |
-| `GET` | `/api/bot/connectors/{platform}` | Get config for a platform |
-| `POST` | `/api/bot/connectors/{platform}` | Save/update connector config |
-| `POST` | `/api/bot/connectors/{platform}/test` | Test connection |
-
-### Session Management
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/bot/sessions` | List bot sessions (paginated, `?limit=&offset=&status=&platform=`) |
-| `GET` | `/api/bot/sessions/{id}` | Get session details |
-| `POST` | `/api/bot/sessions/{id}/stop` | Stop a running session |
-| `GET` | `/api/bot/sessions/{id}/messages` | Get session messages |
-
----
-
-## Slack App Setup
-
-### Required Scopes
-
-Add these OAuth scopes to your Slack app (in addition to existing ones):
-
-- `app_mentions:read` -- receive @mention events
-- `channels:history` -- read thread history (usually already present)
-- `chat:write` -- send messages (usually already present)
-
-### Event Subscriptions
-
-Add to your Slack app's Event Subscriptions:
-
-- `app_mention` -- triggered when bot is @mentioned
-
-This is in addition to the existing `message.channels` subscription used for notification replies.
-
-### Socket Mode
-
-No changes needed -- the existing Socket Mode connection handles both notification replies and @mention events. The `SlackService` routes events to the appropriate handler based on type.
-
-### Enable Bot Mode
-
-Set `bot_mode: true` for the Slack connector config via the API or DB:
-
-```bash
-curl -X POST http://localhost:8080/api/bot/connectors/slack \
-  -H "Content-Type: application/json" \
-  -d '{"bot_mode": true, "auto_confirm": false}'
-```
-
-Or update the `bot_connector_config` table:
-```sql
-INSERT INTO bot_connector_config (id, enabled, bot_mode, auto_confirm)
-VALUES ('slack', 1, 1, 0)
-ON CONFLICT(id) DO UPDATE SET bot_mode = 1, enabled = 1;
-```
-
----
-
-## Human Feedback Integration
-
-When a bot session triggers a human feedback request:
-
-1. `HumanFeedbackStore.CreateRequestWithSlack()` checks `BotSessionCheckerFunc`
-2. If the session is a bot session -> skips the 2-minute delay
-3. The feedback question is sent immediately to the platform thread
-4. The user replies in the thread
-5. The reply is routed through `BotConversationManager` to the feedback store
-6. The agent continues processing
-
-This is seamless -- the user never leaves the thread.
 
 ---
 
 ## Import Cycle Avoidance
 
-The `services` package cannot import `internal/events` (the EventStore). This is solved with two abstractions:
+The `services` package cannot import `internal/events`. Solved with:
 
-1. **`BotEventSubscriber` interface** (in `services/bot_connector.go`): abstracts event subscription with `SubscribeBot(sessionID) -> (chan, unsubscribe)`
+1. **`BotEventSubscriber` interface** (`services/bot_connector.go`): abstracts `SubscribeBot(sessionID) -> (chan, unsubscribe)`
+2. **`BotEventSubscriberAdapter`** (`bot_event_adapter.go`): bridges `EventStore` to `BotEventSubscriber`
+3. **`SessionStartFunc`**: callback for starting new agent sessions
+4. **`SessionFollowUpFunc`**: callback for injecting follow-ups — accepts full `reqMap map[string]interface{}` (built by `buildQueryRequest()`) so follow-ups get identical config (servers, skills, delegation mode, API keys, secrets) as initial sessions
+5. **`UserSecretsLoaderFunc`**: callback for loading decrypted user secrets
 
-2. **`BotEventSubscriberAdapter`** (in `bot_event_adapter.go`): bridges `EventStore` to `BotEventSubscriber`, converting `Event` to `BotEventData` in a goroutine
-
-3. **`SessionStartFunc`** (in `services/bot_connector.go`): callback type for starting sessions, injected by server layer
-
-These are wired in `server.go` during startup.
+All wired in `server.go` during startup.
 
 ---
 
 ## Adding a New Platform
 
-To add support for Discord, Telegram, or WhatsApp:
-
-1. **Create `services/{platform}_bot_service.go`** implementing `BotConnector`:
-   - `StartListening()` -- connect to platform API (WebSocket, polling, webhook)
-   - `SendThreadMessage()` -- send a message in a thread
-   - `GetThreadHistory()` -- fetch messages from a thread
-   - `GetFormatter()` -- return a `MessageFormatter` for the platform
-
-2. **Implement `MessageFormatter`** for the platform's markup syntax
-
-3. **Add a `bot_connector_config` row** for the platform:
-   ```sql
-   INSERT INTO bot_connector_config (id, enabled, bot_mode) VALUES ('{platform}', 1, 1);
-   ```
-
-4. **Register in `server.go`** startup:
+1. **Create `services/{platform}_connector.go`** implementing `BotConnector`
+2. **Implement `MessageFormatter`** for the platform's markup
+3. **Register in `server.go`**:
    ```go
-   if platformBotEnabled {
-       platformService := services.NewPlatformBotService(...)
-       botManager.RegisterConnector(platformService)
-   }
+   botManager.RegisterConnector(platformService)
    ```
+4. **Add `bot_connector_config` row** for the platform
 
-5. **Add routes** if platform-specific config is needed (the generic `/api/bot/connectors/{platform}` routes already work)
+The `BotConversationManager` handles session management, event filtering, and blocking event routing identically across all platforms.
 
-The `BotConversationManager` handles the rest -- analysis, confirmation, session management, event filtering -- identically across all platforms.
+---
+
+## Access Control
+
+### allowed_emails
+
+The `_global` bot connector config supports an `allowed_emails` array. When set, only users whose email matches (case-insensitive) can use the bot. Rejected users receive a message: "Sorry, you don't have access to use this bot. Please contact your administrator to get access."
+
+Email resolution is platform-specific (e.g., Slack's `users.info` API via `resolveUserEmail`).

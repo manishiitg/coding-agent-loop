@@ -205,14 +205,14 @@ func shouldSkipAuth(path string) bool {
 		"/api/auth/login",
 		"/api/auth/register",
 		"/api/auth/mode",
-		"/api/auth/start",       // OAuth flow initiation (must be public)
-		"/api/auth/callback",    // Multi-provider auth callback
-		"/api/auth/providers",   // Get available auth providers
+		"/api/auth/start",     // OAuth flow initiation (must be public)
+		"/api/auth/callback",  // Multi-provider auth callback
+		"/api/auth/providers", // Get available auth providers
 		"/api/health",
 		"/api/capabilities",
-		"/api/shared/",          // Shared session links are public
-		"/api/oauth/callback",   // OAuth callback comes from external provider without our JWT
-		"/api/downloads/",       // Chrome CDP launcher zip (macOS)
+		"/api/shared/",        // Shared session links are public
+		"/api/oauth/callback", // OAuth callback comes from external provider without our JWT
+		"/api/downloads/",     // Chrome CDP launcher zip (macOS)
 	}
 
 	for _, p := range publicPaths {

@@ -10,19 +10,26 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	unifiedevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/events"
+
+	internalevents "mcp-agent-builder-go/agent_go/internal/events"
 )
 
 // startSessionInternal starts an agent session programmatically (used by bot connector).
 // It constructs a QueryRequest from the provided map and invokes handleQuery internally.
-// This blocks until the session completes.
+// This blocks until the session completes (first turn only — the event filter manages lifecycle).
 func (api *StreamingAPI) startSessionInternal(
 	ctx context.Context,
 	reqMap map[string]interface{},
 	sessionID string,
 	userID string,
-	eventCallback func(event *unifiedevents.AgentEvent),
+	eventCallback func(event *events.AgentEvent),
 ) error {
+	// Subscribe to events BEFORE starting the session to avoid race conditions
+	// where the session errors out before the subscription is set up.
+	sub := api.eventStore.Subscribe(sessionID, "advanced")
+	defer api.eventStore.Unsubscribe(sessionID, sub)
+
 	// Marshal the request map to JSON
 	body, err := json.Marshal(reqMap)
 	if err != nil {
@@ -63,16 +70,57 @@ func (api *StreamingAPI) startSessionInternal(
 
 	log.Printf("[BOT_SESSION] Internal session started: sessionID=%s queryID=%s", sessionID, queryResp.QueryID)
 
-	// Now wait for the session to complete by polling the event store
-	return api.waitForSessionCompletion(ctx, sessionID)
+	// Now wait for the session to complete using the already-active subscription
+	return waitForEvents(ctx, sub)
 }
 
-// waitForSessionCompletion blocks until the session status changes to completed/error
-func (api *StreamingAPI) waitForSessionCompletion(ctx context.Context, sessionID string) error {
-	// Subscribe to events for this session
-	sub := api.eventStore.Subscribe(sessionID, "advanced")
-	defer api.eventStore.Unsubscribe(sessionID, sub)
+// sendFollowUpInternal injects a follow-up message into an existing session.
+// It reuses the handleQuery path with the same session ID but does NOT block on completion.
+// Events flow via EventStore → BotEventFilter → thread automatically.
+//
+// The reqMap is built by BotConversationManager.buildQueryRequest() so the follow-up agent
+// gets the exact same config (servers, skills, delegation mode, API keys, etc.) as the initial session.
+func (api *StreamingAPI) sendFollowUpInternal(
+	ctx context.Context,
+	reqMap map[string]interface{},
+	sessionID string,
+	userID string,
+) error {
+	body, err := json.Marshal(reqMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal follow-up request: %w", err)
+	}
 
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", "/api/query", io.NopCloser(bytes.NewReader(body)))
+	if err != nil {
+		return fmt.Errorf("failed to create follow-up request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Session-ID", sessionID)
+	if userID != "" {
+		httpReq.Header.Set("X-User-ID", userID)
+	}
+
+	recorder := httptest.NewRecorder()
+	api.handleQuery(recorder, httpReq)
+
+	resp := recorder.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("follow-up failed: status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	log.Printf("[BOT_SESSION] Follow-up injected into session %s", sessionID)
+	return nil
+}
+
+// waitForEvents blocks until a completion/error event is received on the subscription.
+// This returns after the first completion — the event filter manages extended lifecycle
+// (blocking events, plan approval, follow-ups).
+func waitForEvents(ctx context.Context, sub *internalevents.Subscriber) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -83,7 +131,6 @@ func (api *StreamingAPI) waitForSessionCompletion(ctx context.Context, sessionID
 				return nil // channel closed
 			}
 
-			// Check for completion events
 			switch evt.Type {
 			case "agent_end", "conversation_end":
 				return nil
@@ -93,6 +140,22 @@ func (api *StreamingAPI) waitForSessionCompletion(ctx context.Context, sessionID
 					errMsg = evt.Error
 				}
 				return fmt.Errorf("%s", errMsg)
+			case "unified_completion":
+				if evt.Data != nil && evt.Data.Data != nil {
+					if uc, ok := evt.Data.Data.(*events.UnifiedCompletionEvent); ok {
+						if uc.Status == "error" {
+							errMsg := "session failed"
+							if uc.Error != "" {
+								errMsg = uc.Error
+							}
+							return fmt.Errorf("%s", errMsg)
+						}
+					}
+				}
+				if evt.Error != "" {
+					return fmt.Errorf("%s", evt.Error)
+				}
+				return nil
 			}
 		}
 	}

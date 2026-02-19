@@ -1,6 +1,8 @@
 package server
 
 import (
+	"log"
+
 	"mcp-agent-builder-go/agent_go/cmd/server/services"
 	"mcp-agent-builder-go/agent_go/internal/events"
 )
@@ -18,6 +20,7 @@ func NewBotEventSubscriberAdapter(es *events.EventStore) *BotEventSubscriberAdap
 
 // SubscribeBot subscribes to events for a session and returns a channel + unsubscribe func
 func (a *BotEventSubscriberAdapter) SubscribeBot(sessionID string) (<-chan services.BotEventData, func()) {
+	log.Printf("[BOT_EVENT_ADAPTER] SubscribeBot called for session %s", sessionID)
 	sub := a.eventStore.Subscribe(sessionID, "advanced")
 
 	out := make(chan services.BotEventData, 256)
@@ -25,7 +28,10 @@ func (a *BotEventSubscriberAdapter) SubscribeBot(sessionID string) (<-chan servi
 	// Goroutine to convert Event -> BotEventData
 	go func() {
 		defer close(out)
+		count := 0
 		for evt := range sub.Ch {
+			count++
+			log.Printf("[BOT_EVENT_ADAPTER] Event %d from EventStore: type=%s session=%s", count, evt.Type, sessionID)
 			bed := services.BotEventData{
 				Type:      evt.Type,
 				Timestamp: evt.Timestamp,
@@ -35,9 +41,11 @@ func (a *BotEventSubscriberAdapter) SubscribeBot(sessionID string) (<-chan servi
 			}
 			out <- bed
 		}
+		log.Printf("[BOT_EVENT_ADAPTER] EventStore channel closed for session %s after %d events", sessionID, count)
 	}()
 
 	unsubscribe := func() {
+		log.Printf("[BOT_EVENT_ADAPTER] Unsubscribing from session %s", sessionID)
 		a.eventStore.Unsubscribe(sessionID, sub)
 	}
 

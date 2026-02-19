@@ -14,8 +14,8 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.3.0
-	github.com/manishiitg/multi-llm-provider-go v0.3.4
+	github.com/manishiitg/mcpagent v1.2.9
+	github.com/manishiitg/multi-llm-provider-go v0.3.6
 	github.com/mark3labs/mcp-go v0.44.0-beta.1
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8
@@ -28,8 +28,6 @@ require (
 )
 
 replace github.com/manishiitg/mcp-agent-builder-go/workspace => ../workspace
-
-replace github.com/manishiitg/mcpagent => /Users/mipl/ai-work/mcpagent
 
 require (
 	cloud.google.com/go v0.123.0 // indirect

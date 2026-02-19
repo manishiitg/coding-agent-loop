@@ -220,7 +220,7 @@ func stopBotSessionHandler(api *StreamingAPI, db database.Database) http.Handler
 			return
 		}
 
-		if session.Status != database.BotSessionStatusRunning && session.Status != database.BotSessionStatusAnalyzing && session.Status != database.BotSessionStatusAwaitingConfirmation {
+		if session.Status != database.BotSessionStatusRunning && session.Status != database.BotSessionStatusAwaitingPlanApproval {
 			http.Error(w, "Session is not active", http.StatusBadRequest)
 			return
 		}

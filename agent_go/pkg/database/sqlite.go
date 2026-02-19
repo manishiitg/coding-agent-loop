@@ -847,6 +847,54 @@ func (s *SQLiteDB) GetEventsBySession(ctx context.Context, sessionID string, lim
 	return events, nil
 }
 
+// GetEventsByCorrelationID retrieves events for a session filtered by correlation_id (stored in event_data JSON)
+func (s *SQLiteDB) GetEventsByCorrelationID(ctx context.Context, sessionID string, correlationID string, limit, offset int) ([]Event, error) {
+	// Resolve session_id UUID → internal hex id
+	var internalID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM chat_sessions WHERE session_id = ?`, sessionID,
+	).Scan(&internalID)
+	if err != nil {
+		internalID = sessionID
+	}
+
+	query := `
+		SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+		FROM events
+		WHERE chat_session_id = ?
+		  AND json_extract(event_data, '$.correlation_id') = ?
+		ORDER BY timestamp ASC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, internalID, correlationID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events by correlation_id: %w", err)
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var event Event
+		var eventDataJSON string
+		err := rows.Scan(
+			&event.ID, &event.SessionID, &event.ChatSessionID, &event.EventType, &event.Timestamp, &eventDataJSON,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event: %w", err)
+		}
+
+		err = json.Unmarshal([]byte(eventDataJSON), &event.EventData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal event data: %w", err)
+		}
+
+		events = append(events, event)
+	}
+
+	return events, nil
+}
+
 // CountEventsBySession returns the total number of events for a session (O(1) with index)
 func (s *SQLiteDB) CountEventsBySession(ctx context.Context, sessionID string) (int, error) {
 	var internalID string
@@ -2073,16 +2121,16 @@ func (s *SQLiteDB) CreateBotSession(ctx context.Context, req *CreateBotSessionRe
 func (s *SQLiteDB) GetBotSession(ctx context.Context, id string) (*BotSession, error) {
 	query := `
 		SELECT id, platform, channel_id, thread_ts, session_id, user_id, user_name, query, status,
-		       analysis_json, preset_id, config_json, thread_context, created_at, updated_at, completed_at
+		       preset_id, config_json, thread_context, created_at, updated_at, completed_at
 		FROM bot_sessions WHERE id = ?
 	`
 
 	var bs BotSession
-	var sessionID, userName, analysisJSON, presetID, configJSON, threadContext sql.NullString
+	var sessionID, userName, presetID, configJSON, threadContext sql.NullString
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&bs.ID, &bs.Platform, &bs.ChannelID, &bs.ThreadTS,
 		&sessionID, &bs.UserID, &userName, &bs.Query, &bs.Status,
-		&analysisJSON, &presetID, &configJSON, &threadContext,
+		&presetID, &configJSON, &threadContext,
 		&bs.CreatedAt, &bs.UpdatedAt, &bs.CompletedAt,
 	)
 	if err != nil {
@@ -2097,9 +2145,6 @@ func (s *SQLiteDB) GetBotSession(ctx context.Context, id string) (*BotSession, e
 	}
 	if userName.Valid {
 		bs.UserName = userName.String
-	}
-	if analysisJSON.Valid {
-		bs.AnalysisJSON = analysisJSON.String
 	}
 	if presetID.Valid {
 		bs.PresetID = presetID.String
@@ -2159,10 +2204,6 @@ func (s *SQLiteDB) UpdateBotSession(ctx context.Context, id string, req *UpdateB
 	if req.Status != "" {
 		updateFields = append(updateFields, "status = ?")
 		args = append(args, req.Status)
-	}
-	if req.AnalysisJSON != "" {
-		updateFields = append(updateFields, "analysis_json = ?")
-		args = append(args, req.AnalysisJSON)
 	}
 	if req.PresetID != "" {
 		updateFields = append(updateFields, "preset_id = ?")
@@ -2228,7 +2269,7 @@ func (s *SQLiteDB) ListBotSessions(ctx context.Context, limit, offset int, statu
 
 	query := `
 		SELECT id, platform, channel_id, thread_ts, session_id, user_id, user_name, query, status,
-		       analysis_json, preset_id, config_json, thread_context, created_at, updated_at, completed_at
+		       preset_id, config_json, thread_context, created_at, updated_at, completed_at
 		FROM bot_sessions` + whereClause + `
 		ORDER BY created_at DESC LIMIT ? OFFSET ?
 	`
@@ -2243,11 +2284,11 @@ func (s *SQLiteDB) ListBotSessions(ctx context.Context, limit, offset int, statu
 	sessions := make([]BotSession, 0)
 	for rows.Next() {
 		var bs BotSession
-		var sessionID, userName, analysisJSON, presetID, configJSON, threadContext sql.NullString
+		var sessionID, userName, presetID, configJSON, threadContext sql.NullString
 		err := rows.Scan(
 			&bs.ID, &bs.Platform, &bs.ChannelID, &bs.ThreadTS,
 			&sessionID, &bs.UserID, &userName, &bs.Query, &bs.Status,
-			&analysisJSON, &presetID, &configJSON, &threadContext,
+			&presetID, &configJSON, &threadContext,
 			&bs.CreatedAt, &bs.UpdatedAt, &bs.CompletedAt,
 		)
 		if err != nil {
@@ -2258,9 +2299,6 @@ func (s *SQLiteDB) ListBotSessions(ctx context.Context, limit, offset int, statu
 		}
 		if userName.Valid {
 			bs.UserName = userName.String
-		}
-		if analysisJSON.Valid {
-			bs.AnalysisJSON = analysisJSON.String
 		}
 		if presetID.Valid {
 			bs.PresetID = presetID.String
@@ -2435,4 +2473,50 @@ func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset 
 	}
 
 	return presets, total, nil
+}
+
+// --- User Secrets CRUD ---
+
+func (s *SQLiteDB) UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error {
+	id := uuid.New().String()
+	query := `
+		INSERT INTO user_secrets (id, user_id, name, encrypted_value, created_at, updated_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id, name) DO UPDATE SET
+			encrypted_value = excluded.encrypted_value,
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := s.db.ExecContext(ctx, query, id, userID, name, encryptedValue)
+	if err != nil {
+		return fmt.Errorf("failed to upsert user secret: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteDB) DeleteUserSecret(ctx context.Context, userID, name string) error {
+	query := `DELETE FROM user_secrets WHERE user_id = ? AND name = ?`
+	_, err := s.db.ExecContext(ctx, query, userID, name)
+	if err != nil {
+		return fmt.Errorf("failed to delete user secret: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteDB) ListUserSecrets(ctx context.Context, userID string) ([]UserSecret, error) {
+	query := `SELECT id, user_id, name, encrypted_value, created_at, updated_at FROM user_secrets WHERE user_id = ? ORDER BY name`
+	rows, err := s.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user secrets: %w", err)
+	}
+	defer rows.Close()
+
+	var secrets []UserSecret
+	for rows.Next() {
+		var secret UserSecret
+		if err := rows.Scan(&secret.ID, &secret.UserID, &secret.Name, &secret.EncryptedValue, &secret.CreatedAt, &secret.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user secret: %w", err)
+		}
+		secrets = append(secrets, secret)
+	}
+	return secrets, nil
 }

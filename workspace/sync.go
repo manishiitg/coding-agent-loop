@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"workspace/utils"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"

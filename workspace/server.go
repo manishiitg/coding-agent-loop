@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"workspace/handlers"
-	"workspace/utils"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/handlers"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"

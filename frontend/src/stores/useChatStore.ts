@@ -126,6 +126,7 @@ export interface ChatTab {
     mode?: 'chat' | 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
     isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
+    isViewOnly?: boolean // True when tab is in view-only mode (e.g. shared session)
   }
 }
 

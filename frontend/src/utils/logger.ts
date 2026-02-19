@@ -26,6 +26,7 @@ export type LogCategory =
   | 'Polling'
   | 'Reconnection'
   | 'Memory'
+  | 'SSE'
   | 'General'
 
 interface LoggerConfig {

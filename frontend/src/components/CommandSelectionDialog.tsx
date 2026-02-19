@@ -1,72 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Terminal, FileText, Lightbulb, Download, Server, Cpu, History, GitBranch, Bot, Layers } from 'lucide-react'
+import { Terminal, Plus, Pencil, Trash2 } from 'lucide-react'
 import type { ModeCategory } from '../stores/useModeStore'
-
-interface Command {
-  command: string
-  description: string
-  icon: React.ReactNode
-  modes?: ModeCategory[] // If set, only show in these modes. If omitted, show in all modes.
-}
-
-const AVAILABLE_COMMANDS: Command[] = [
-  {
-    command: 'summarize',
-    description: 'Summarize conversation history',
-    icon: <FileText className="w-4 h-4" />
-  },
-  {
-    command: 'build-skill',
-    description: 'Build a new skill using the skill-creator',
-    icon: <Lightbulb className="w-4 h-4" />
-  },
-  {
-    command: 'build-subagent',
-    description: 'Build a new sub-agent template',
-    icon: <Bot className="w-4 h-4" />
-  },
-  {
-    command: 'add-skill',
-    description: 'Import a skill from GitHub',
-    icon: <Download className="w-4 h-4" />
-  },
-  {
-    command: 'mcp',
-    description: 'View MCP server details and tools',
-    icon: <Server className="w-4 h-4" />
-  },
-  {
-    command: 'mcp-add',
-    description: 'Add or edit MCP server configuration',
-    icon: <Server className="w-4 h-4" />
-  },
-  {
-    command: 'models',
-    description: 'Open LLM model configuration',
-    icon: <Cpu className="w-4 h-4" />
-  },
-  {
-    command: 'resume',
-    description: 'Resume a previous conversation',
-    icon: <History className="w-4 h-4" />
-  },
-  {
-    command: 'spawn',
-    description: 'Enable simple sub-agent delegation (fire-and-forget)',
-    icon: <GitBranch className="w-4 h-4" />
-  },
-  {
-    command: 'nospawn',
-    description: 'Disable all sub-agent delegation',
-    icon: <GitBranch className="w-4 h-4" />
-  },
-  {
-    command: 'workflow-builder',
-    description: 'Build a workflow from existing plans',
-    icon: <Layers className="w-4 h-4" />,
-    modes: ['multi-agent']
-  }
-]
+import { getCommands, type CommandDefinition } from '../commands'
+import { loadAndRegisterUserCommands } from '../commands'
 
 interface CommandSelectionDialogProps {
   isOpen: boolean
@@ -75,6 +11,9 @@ interface CommandSelectionDialogProps {
   searchQuery: string
   position: { bottom: number; left: number }
   modeCategory?: ModeCategory
+  onManageCommands?: () => void
+  onEditCommand?: (command: CommandDefinition) => void
+  onDeleteCommand?: (command: CommandDefinition) => void
 }
 
 export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
@@ -83,12 +22,22 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
   onSelectCommand,
   searchQuery,
   position,
-  modeCategory
+  modeCategory,
+  onManageCommands,
+  onEditCommand,
+  onDeleteCommand
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [filteredCommands, setFilteredCommands] = useState<Command[]>([])
+  const [filteredCommands, setFilteredCommands] = useState<CommandDefinition[]>([])
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  // Load user commands when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      loadAndRegisterUserCommands().catch(() => {})
+    }
+  }, [isOpen])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -118,37 +67,34 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 
   // Filter commands based on search query and current mode
   useEffect(() => {
-    // First filter by mode
-    const modeFiltered = AVAILABLE_COMMANDS.filter(cmd =>
-      !cmd.modes || cmd.modes.includes(modeCategory ?? null)
-    )
+    const allCommands = getCommands(modeCategory)
 
     if (!searchQuery.trim()) {
-      setFilteredCommands(modeFiltered)
+      setFilteredCommands(allCommands)
       return
     }
 
     const query = searchQuery.toLowerCase().trim()
-    const filtered = modeFiltered.filter(cmd =>
+    const filtered = allCommands.filter(cmd =>
       cmd.command.toLowerCase().includes(query) ||
       cmd.description.toLowerCase().includes(query)
     )
-    
+
     // Sort by relevance: exact match first, then partial match
     filtered.sort((a, b) => {
       const aExact = a.command.toLowerCase() === query
       const bExact = b.command.toLowerCase() === query
       if (aExact && !bExact) return -1
       if (!aExact && bExact) return 1
-      
+
       const aStarts = a.command.toLowerCase().startsWith(query)
       const bStarts = b.command.toLowerCase().startsWith(query)
       if (aStarts && !bStarts) return -1
       if (!aStarts && bStarts) return 1
-      
+
       return a.command.localeCompare(b.command)
     })
-    
+
     setFilteredCommands(filtered)
     setSelectedIndex(0) // Reset selection when filtering
   }, [searchQuery, modeCategory])
@@ -183,7 +129,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       </div>
 
       {/* Command List */}
-      <div 
+      <div
         ref={listRef}
         className="overflow-y-auto max-h-96"
       >
@@ -195,7 +141,7 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
           filteredCommands.map((cmd, index) => (
             <div
               key={cmd.command}
-              className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
+              className={`group px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
                 index === selectedIndex
                   ? 'bg-primary/10 text-primary border-l-2 border-primary'
                   : 'hover:bg-secondary'
@@ -211,6 +157,28 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
                   {cmd.description}
                 </div>
               </div>
+              {cmd.source === 'user' && (
+                <div className="hidden group-hover:flex items-center gap-1">
+                  {onEditCommand && (
+                    <button
+                      className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+                      onClick={(e) => { e.stopPropagation(); onEditCommand(cmd) }}
+                      title="Edit command"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                  {onDeleteCommand && (
+                    <button
+                      className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"
+                      onClick={(e) => { e.stopPropagation(); onDeleteCommand(cmd) }}
+                      title="Delete command"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))
         )}
@@ -220,7 +188,19 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
         <div className="flex items-center justify-between">
           <span>↑↓ to navigate</span>
-          <span>Enter to select • Esc to close</span>
+          <div className="flex items-center gap-2">
+            <span>Enter to select</span>
+            {onManageCommands && (
+              <button
+                className="flex items-center gap-1 hover:text-primary transition-colors"
+                onClick={(e) => { e.stopPropagation(); onManageCommands() }}
+                title="Create custom command"
+              >
+                <Plus className="w-3 h-3" />
+                <span>New</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -228,4 +208,3 @@ export const CommandSelectionDialog: React.FC<CommandSelectionDialogProps> = ({
 }
 
 export default CommandSelectionDialog
-

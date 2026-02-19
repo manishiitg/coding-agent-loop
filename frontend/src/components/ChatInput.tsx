@@ -14,6 +14,9 @@ import SubAgentSelectionDropdown from './subagents/SubAgentSelectionDropdown'
 import LLMSelectionDropdown from './LLMSelectionDropdown'
 import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
+import { CommandEditorDialog } from './commands/CommandEditorDialog'
+import { findCommand, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
+import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
@@ -608,6 +611,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [commandSearchQuery, setCommandSearchQuery] = useState('')
   const [slashPosition, setSlashPosition] = useState(-1) // Position of / in text
 
+  // Command editor dialog state
+  const [showCommandEditor, setShowCommandEditor] = useState(false)
+  const [editingUserCommand, setEditingUserCommand] = useState<{ folder_name: string; frontmatter: { name: string; description: string; icon?: string; modes?: string[] }; content: string } | null>(null)
+
   // Workflow selection dialog state (# trigger)
   const [showWorkflowDialog, setShowWorkflowDialog] = useState(false)
   const [workflowDialogPosition, setWorkflowDialogPosition] = useState({ bottom: 0, left: 0 })
@@ -661,8 +668,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   useEffect(() => {
     // Check if autoRun is enabled and we have input text and a session
     if (tabConfig?.autoRun && inputText?.trim() && tabSessionId && !isStreaming) {
-      console.log('[ChatInput] Auto-running chat with prompt:', inputText)
-      
       // 1. First disable autoRun to prevent loops
       // 2. Clear input text as we're submitting it
       if (activeTabId) {
@@ -953,7 +958,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setIsSummarizing(true) // Reuse the same loading state
     try {
       const response = await agentApi.compactContext(tabSessionId)
-      console.log('[CONTEXT_EDITING] Success:', response)
       addToast(`Compacted ${response.compacted_count} responses, saved ${response.total_tokens_saved?.toLocaleString() || 0} tokens`, 'success')
       
       // If there's a message to send after compaction, send it now
@@ -1351,114 +1355,82 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
     setTabConfig(activeTabId, { inputText: '' })
 
-    // Execute commands directly
-    switch (command) {
-      case 'summarize':
-        if (tabSessionId && !isSummarizing && !isStreaming) {
-          handleSummarize(beforeSlash || undefined)
-        }
-        break
-      case 'compact':
-        if (tabSessionId && !isSummarizing && !isStreaming) {
-          handleCompact(beforeSlash || undefined)
-        }
-        break
-      case 'build-skill': {
-        // Auto-add skill-creator to current tab's selectedSkills
-        const currentSkills = tabConfig?.selectedSkills || []
-        if (!currentSkills.includes('skill-creator')) {
-          setTabConfig(activeTabId, { selectedSkills: [...currentSkills, 'skill-creator'] })
-        }
-        // Expand skills folders in workspace
-        const wsStore = useWorkspaceStore.getState()
-        const expanded = new Set(wsStore.expandedFolders)
-        expanded.add('skills')
-        expanded.add('skills/custom')
-        wsStore.setExpandedFolders(expanded)
-        // Submit with skill context
-        const skillContext = 'Refer to the skill-creator skill at skills/custom/skill-creator/SKILL.md for instructions on how to build skills.'
-        const message = beforeSlash
-          ? `${beforeSlash}\n\n${skillContext}`
-          : `I want to build a skill based on our conversation. ${skillContext}`
-        onSubmit(message)
-        break
+    // Look up and execute the command from the registry
+    const cmd = findCommand(command)
+    if (cmd) {
+      const ctx: CommandContext = {
+        beforeSlash,
+        activeTabId,
+        tabSessionId,
+        tabConfig,
+        isSummarizing,
+        isStreaming,
+        onSubmit,
+        openDialog,
+        setTabConfig,
+        addToast,
+        handleSummarize,
+        handleCompact,
+        getAppStore: () => useAppStore.getState(),
+        getWorkspaceStore: () => useWorkspaceStore.getState()
       }
-      case 'build-subagent': {
-        // Auto-add subagent-creator to current tab's selectedSkills
-        const currentSkills2 = tabConfig?.selectedSkills || []
-        if (!currentSkills2.includes('subagent-creator') && !currentSkills2.includes('custom/subagent-creator')) {
-          setTabConfig(activeTabId, { selectedSkills: [...currentSkills2, 'custom/subagent-creator'] })
-        }
-        // Expand subagents folders in workspace
-        const wsStore2 = useWorkspaceStore.getState()
-        const expanded2 = new Set(wsStore2.expandedFolders)
-        expanded2.add('subagents')
-        expanded2.add('subagents/custom')
-        wsStore2.setExpandedFolders(expanded2)
-        // Submit with sub-agent builder context
-        const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode, skills, servers) and markdown instructions.'
-        const saMessage = beforeSlash
-          ? `${beforeSlash}\n\n${saContext}`
-          : `I want to build a sub-agent template. ${saContext}`
-        onSubmit(saMessage)
-        break
+      cmd.execute(ctx)
+    } else {
+      // For unknown commands, insert into text (fallback)
+      if (textareaRef.current) {
+        const afterSearch = inputText.substring((slashPosition >= 0 ? slashPosition : 0) + 1 + commandSearchQuery.length)
+        const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
+        setLocalInputText(newQuery)
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus()
+            const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
+            textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
+          }
+        }, 0)
       }
-      case 'add-skill':
-        openDialog('skillImport')
-        break
-      case 'mcp-add':
-        useAppStore.getState().setWorkspaceMinimized(true)
-        openDialog('mcpConfig')
-        break
-      case 'mcp':
-        useAppStore.getState().setWorkspaceMinimized(true)
-        openDialog('mcpDetails')
-        break
-      case 'models':
-        useAppStore.getState().setWorkspaceMinimized(true)
-        openDialog('models')
-        break
-      case 'resume':
-        openDialog('resume')
-        break
-      case 'spawn': {
-        useAppStore.getState().setDelegationMode('spawn')
-        addToast(
-          'Simple delegation enabled - Agent can delegate tasks to sub-agents',
-          'success'
-        )
-        break
-      }
-      case 'nospawn': {
-        useAppStore.getState().setDelegationMode('off')
-        addToast(
-          'Sub-agent delegation disabled',
-          'success'
-        )
-        break
-      }
-      case 'workflow-builder':
-        openDialog('workflowBuilder')
-        break
-      default:
-        // For unknown commands, insert into text (fallback)
-        if (textareaRef.current) {
-          const afterSearch = inputText.substring((slashPosition >= 0 ? slashPosition : 0) + 1 + commandSearchQuery.length)
-          const newQuery = beforeSlash + '/' + command + ' ' + afterSearch
-          setLocalInputText(newQuery)
-          setTimeout(() => {
-            if (textareaRef.current) {
-              textareaRef.current.focus()
-              const cursorPosition = beforeSlash.length + '/'.length + command.length + ' '.length
-              textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
-            }
-          }, 0)
-        }
     }
 
     // Focus back to textarea
     setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig?.selectedSkills, setTabConfig, onSubmit, openDialog, addToast])
+  }, [inputText, slashPosition, commandSearchQuery, activeTabId, tabSessionId, isSummarizing, isStreaming, handleSummarize, handleCompact, tabConfig, setTabConfig, onSubmit, openDialog, addToast])
+
+  // Command management callbacks
+  const handleManageCommands = useCallback(() => {
+    setShowCommandDialog(false)
+    setEditingUserCommand(null)
+    setShowCommandEditor(true)
+  }, [])
+
+  const handleEditCommand = useCallback((cmd: CommandDefinition) => {
+    setShowCommandDialog(false)
+    // Fetch full command data from API to populate editor
+    commandsApi.getCommand(cmd.command).then(uc => {
+      setEditingUserCommand({
+        folder_name: uc.folder_name,
+        frontmatter: uc.frontmatter,
+        content: uc.content
+      })
+      setShowCommandEditor(true)
+    }).catch(() => {
+      addToast('Failed to load command for editing', 'error')
+    })
+  }, [addToast])
+
+  const handleDeleteCommand = useCallback(async (cmd: CommandDefinition) => {
+    try {
+      await commandsApi.deleteCommand(cmd.command)
+      await loadAndRegisterUserCommands()
+      addToast(`Command /${cmd.command} deleted`, 'success')
+    } catch {
+      addToast('Failed to delete command', 'error')
+    }
+  }, [addToast])
+
+  const handleCommandEditorClose = useCallback(() => {
+    setShowCommandEditor(false)
+    setEditingUserCommand(null)
+  }, [])
 
   const handleFileSelect = useCallback((file: PlannerFile) => {
     if (!textareaRef.current || atPosition === -1 || !activeTabId) return
@@ -2253,8 +2225,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         searchQuery={commandSearchQuery}
         position={commandDialogPosition}
         modeCategory={selectedModeCategory}
+        onManageCommands={handleManageCommands}
+        onEditCommand={handleEditCommand}
+        onDeleteCommand={handleDeleteCommand}
       />
-      
+
+      {/* Command Editor Dialog */}
+      <CommandEditorDialog
+        isOpen={showCommandEditor}
+        onClose={handleCommandEditorClose}
+        editingCommand={editingUserCommand}
+      />
+
       {/* File Selection Dialog */}
       <FileSelectionDialog
         isOpen={showFileDialog}

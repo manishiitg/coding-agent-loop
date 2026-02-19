@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"workspace/models"
-	"workspace/utils"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/models"
+	"github.com/manishiitg/mcp-agent-builder-go/workspace/utils"
 
 	"github.com/gin-gonic/gin"
 	// "github.com/sergi/go-diff/diffmatchpatch" // Available for future use

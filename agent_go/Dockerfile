@@ -19,14 +19,13 @@ WORKDIR /app
 # Copy all module definitions first for dependency caching
 COPY workspace/go.mod workspace/go.sum ./workspace/
 COPY agent_go/go.mod agent_go/go.sum ./agent_go/
-COPY mcpagent/go.mod mcpagent/go.sum ./mcpagent/
-COPY multi-llm-provider-go/go.mod multi-llm-provider-go/go.sum ./multi-llm-provider-go/
 
-# go.work so all local modules resolve (must exist before go mod download)
-RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n\t./mcpagent\n\t./multi-llm-provider-go\n)\n' > /app/go.work
+# go.work so workspace module resolves locally (agent_go depends on workspace)
+RUN printf 'go 1.24.4\nuse (\n\t./agent_go\n\t./workspace\n)\n' > /app/go.work
 ENV GOWORK=/app/go.work
 
 # Download dependencies (retry up to 3 times — proxy.golang.org can be flaky)
+# mcpagent and multi-llm-provider-go come from GitHub via go.mod tags
 WORKDIR /app/agent_go
 RUN for i in 1 2 3; do go mod download && break || echo "Retry $i..."; sleep 5; done
 
@@ -34,8 +33,6 @@ RUN for i in 1 2 3; do go mod download && break || echo "Retry $i..."; sleep 5; 
 WORKDIR /app
 COPY workspace/ ./workspace/
 COPY agent_go/ ./agent_go/
-COPY mcpagent/ ./mcpagent/
-COPY multi-llm-provider-go/ ./multi-llm-provider-go/
 # Build from /app so go.work is found; output binary to agent_go dir (glibc-linked for Debian runtime)
 RUN cd /app && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
 

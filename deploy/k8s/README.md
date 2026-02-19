@@ -190,22 +190,16 @@ On startup, the agent runs **background tool discovery** — connecting to each 
 
 ## Build Architecture
 
-### Local Go Modules
+### Go Module Dependencies
 
-The agent Docker image uses **local source** for `mcpagent` and `multi-llm-provider-go` (sibling repos), not their published GitHub versions. The deploy script handles this automatically:
+The agent Docker image pulls `mcpagent` and `multi-llm-provider-go` from GitHub via `go.mod` tags (e.g. `github.com/manishiitg/mcpagent v1.2.9`). The `workspace` module is local (lives in this repo) and resolved via `go.work`.
 
-1. `deploy-k8s.sh` runs `rsync` to copy `../mcpagent/` and `../multi-llm-provider-go/` into the build context
-2. The Dockerfile creates a `go.work` with all 4 modules: `agent_go`, `workspace`, `mcpagent`, `multi-llm-provider-go`
-3. After the Docker build, the copied directories are cleaned up
-
-This means changes to `mcpagent/` or `multi-llm-provider-go/` are included immediately on the next `--build agent` deploy — no need to push to GitHub or update `go.mod` versions.
-
-**Required directory layout:**
-```
-ai-work/
-├── mcp-agent-builder-go/   # This repo (build context)
-├── mcpagent/                # Go module: agent core, MCP client, session registry
-└── multi-llm-provider-go/   # Go module: LLM provider abstraction
+To update these dependencies, tag a new release on their GitHub repos and run `go get` in `agent_go/`:
+```bash
+cd agent_go
+go get github.com/manishiitg/mcpagent@v1.2.10
+go get github.com/manishiitg/multi-llm-provider-go@v0.3.7
+go mod tidy
 ```
 
 ### MCP Connection Sharing

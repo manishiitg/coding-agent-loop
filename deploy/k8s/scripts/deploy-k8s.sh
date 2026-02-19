@@ -161,29 +161,6 @@ if [ "$BUILD" = true ]; then
     fi
 fi
 
-# Function to sync local Go modules into build context for Docker builds.
-# The Dockerfile needs mcpagent/ and multi-llm-provider-go/ alongside agent_go/ and workspace/.
-# These live as sibling repos outside mcp-agent-builder-go/, so we rsync them in before building.
-sync_local_modules() {
-    echo -e "${BLUE}Syncing local Go modules into build context...${NC}"
-    for mod in mcpagent multi-llm-provider-go; do
-        local src="$PROJECT_ROOT/../$mod"
-        local dst="$PROJECT_ROOT/$mod"
-        if [ -d "$src" ]; then
-            rsync -a --delete --exclude='.git' "$src/" "$dst/"
-            echo -e "${GREEN}✓ Synced $mod${NC}"
-        else
-            echo -e "${RED}✗ Local module $src not found${NC}"
-            return 1
-        fi
-    done
-}
-
-cleanup_local_modules() {
-    for mod in mcpagent multi-llm-provider-go; do
-        rm -rf "$PROJECT_ROOT/$mod"
-    done
-}
 
 # Function to build and push Docker image
 build_and_push_image() {
@@ -194,11 +171,6 @@ build_and_push_image() {
     local full_image="${ECR_REGISTRY}/${image_name}:${IMAGE_TAG}"
 
     echo -e "${BLUE}Building ${image_name}...${NC}"
-
-    # For agent builds, sync local Go modules into the build context
-    if [ "$image_name" = "mcpagent-agent" ]; then
-        sync_local_modules || return 1
-    fi
 
     cd "$PROJECT_ROOT/$build_context"
 
@@ -236,11 +208,9 @@ build_and_push_image() {
 
     if ! eval $build_cmd; then
         echo -e "${RED}✗ Docker build failed for ${image_name}${NC}"
-        [ "$image_name" = "mcpagent-agent" ] && cleanup_local_modules
         return 1
     fi
 
-    [ "$image_name" = "mcpagent-agent" ] && cleanup_local_modules
     echo -e "${GREEN}✓ ${image_name} built and pushed to ECR (linux/amd64)${NC}\n"
 }
 

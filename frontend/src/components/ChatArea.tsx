@@ -439,6 +439,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Deprecated: totalEventsRef removed
   const previousEventCountRef = useRef<number>(0)
 
+  // Track whether workspace-modifying events occurred during the current run
+  const hadWorkspaceActivityRef = useRef<boolean>(false)
+
   // Ref to track if we're currently performing programmatic scrolling
   const isProgrammaticScrollRef = useRef<boolean>(false)
   const programmaticScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -914,10 +917,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
       }
 
+      // Track workspace-modifying events for refresh-on-completion
+      if (event.type === 'workspace_file_operation') {
+        hadWorkspaceActivityRef.current = true
+      }
+      if (event.type === 'tool_execution') {
+        const toolName = innerData?.tool_name ?? agentEvent?.tool_name
+        if (toolName === 'execute_shell_command') {
+          hadWorkspaceActivityRef.current = true
+        }
+      }
+
       const { processWorkspaceEvent } = useWorkspaceStore.getState()
       processWorkspaceEvent(event)
 
       newEvents.push(event)
+    }
+
+    // Refresh workspace sidebar when a completion event arrives and files were modified
+    const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
+    if (isCompletionLike && hadWorkspaceActivityRef.current) {
+      hadWorkspaceActivityRef.current = false
+      useWorkspaceStore.getState().fetchFiles()
     }
 
     // Defer streaming text clear

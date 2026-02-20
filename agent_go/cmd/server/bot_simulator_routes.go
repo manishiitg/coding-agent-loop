@@ -88,17 +88,21 @@ func simulatorSendHandler(api *StreamingAPI) http.HandlerFunc {
 			ThreadTS:  threadTS,
 		}
 
-		log.Printf("[SIM_SEND] Calling HandleMessageSync for thread %s", threadID.Key())
+		// Extract authenticated user from HTTP context for per-user secrets
+		userID := GetUserIDFromContext(r.Context())
+
+		log.Printf("[SIM_SEND] Calling HandleMessageSync for thread %s (userID=%s)", threadID.Key(), userID)
 		startTime := time.Now()
 
 		result, err := api.botManager.HandleMessageSync(context.Background(), slackservice.BotIncomingMessage{
-			Platform:  "web_simulator",
-			UserID:    "simulator_user",
-			UserName:  "Simulator User",
-			ChannelID: "simulator",
-			ThreadTS:  threadTS,
-			Text:      req.Message,
-			Timestamp: time.Now(),
+			Platform:        "web_simulator",
+			UserID:          userID,
+			WorkspaceUserID: userID,
+			UserName:        "Simulator User",
+			ChannelID:       "simulator",
+			ThreadTS:        threadTS,
+			Text:            req.Message,
+			Timestamp:       time.Now(),
 		}, threadID)
 		if err != nil {
 			log.Printf("[SIM_SEND] ERROR: HandleMessageSync failed after %v: %v", time.Since(startTime), err)

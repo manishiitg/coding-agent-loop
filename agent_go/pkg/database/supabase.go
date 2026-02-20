@@ -2246,6 +2246,38 @@ func (s *SupabaseDB) ListBotMessages(ctx context.Context, botSessionID string, l
 	return messages, total, nil
 }
 
+// --- App Users CRUD ---
+
+func (s *SupabaseDB) UpsertAppUser(ctx context.Context, userID, email, username, provider string) error {
+	query := `
+		INSERT INTO app_users (user_id, email, username, provider, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT(user_id) DO UPDATE SET
+			email = EXCLUDED.email,
+			username = EXCLUDED.username,
+			provider = EXCLUDED.provider,
+			updated_at = NOW()
+	`
+	_, err := s.db.ExecContext(ctx, query, userID, email, username, provider)
+	if err != nil {
+		return fmt.Errorf("failed to upsert app user: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) GetAppUserByEmail(ctx context.Context, email string) (*AppUser, error) {
+	query := `SELECT user_id, email, username, provider, created_at, updated_at FROM app_users WHERE email = $1`
+	row := s.db.QueryRowContext(ctx, query, email)
+	var user AppUser
+	if err := row.Scan(&user.UserID, &user.Email, &user.Username, &user.Provider, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get app user by email: %w", err)
+	}
+	return &user, nil
+}
+
 // --- User Secrets CRUD ---
 
 func (s *SupabaseDB) UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error {

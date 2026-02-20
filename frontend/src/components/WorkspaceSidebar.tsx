@@ -234,10 +234,12 @@ export default function WorkspaceSidebar({
               </div>
             )}
 
-            {/* Human Feedback Connectors */}
-            <HumanFeedbackConnectorsSection
-              minimized={minimized}
-            />
+            {/* Human Feedback Connectors - visible if not multi-user mode or if user is a bot manager */}
+            {(!isMultiUserMode || user?.is_bot_manager) && (
+              <HumanFeedbackConnectorsSection
+                minimized={minimized}
+              />
+            )}
 
             {/* MCP Servers */}
             <MCPServersSection />
@@ -395,10 +397,12 @@ export default function WorkspaceSidebar({
             minimized={true}
           />
 
-          {/* Human Feedback Connectors Icon */}
-          <HumanFeedbackConnectorsSection
-            minimized={true}
-          />
+          {/* Human Feedback Connectors Icon - visible if not multi-user mode or if user is a bot manager */}
+          {(!isMultiUserMode || user?.is_bot_manager) && (
+            <HumanFeedbackConnectorsSection
+              minimized={true}
+            />
+          )}
 
           {/* MCP Servers Icon */}
           <button

@@ -1199,6 +1199,7 @@ export interface AuthUser {
   username: string
   email?: string
   provider?: string
+  is_bot_manager?: boolean
 }
 
 export interface AuthResponse {

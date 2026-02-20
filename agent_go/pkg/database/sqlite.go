@@ -2475,6 +2475,38 @@ func (s *SQLiteDB) ListPresetQueriesWithUser(ctx context.Context, limit, offset 
 	return presets, total, nil
 }
 
+// --- App Users CRUD ---
+
+func (s *SQLiteDB) UpsertAppUser(ctx context.Context, userID, email, username, provider string) error {
+	query := `
+		INSERT INTO app_users (user_id, email, username, provider, created_at, updated_at)
+		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		ON CONFLICT(user_id) DO UPDATE SET
+			email = excluded.email,
+			username = excluded.username,
+			provider = excluded.provider,
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := s.db.ExecContext(ctx, query, userID, email, username, provider)
+	if err != nil {
+		return fmt.Errorf("failed to upsert app user: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLiteDB) GetAppUserByEmail(ctx context.Context, email string) (*AppUser, error) {
+	query := `SELECT user_id, email, username, provider, created_at, updated_at FROM app_users WHERE email = ?`
+	row := s.db.QueryRowContext(ctx, query, email)
+	var user AppUser
+	if err := row.Scan(&user.UserID, &user.Email, &user.Username, &user.Provider, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get app user by email: %w", err)
+	}
+	return &user, nil
+}
+
 // --- User Secrets CRUD ---
 
 func (s *SQLiteDB) UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error {

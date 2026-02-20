@@ -45,6 +45,17 @@ data:
   # When set, registration is disabled and only these users can login
   # AUTH_USERS: "admin:changeme,user1:secret123"
 
+  # Bot access control — comma-separated emails allowed to use the bot
+  # Merged with allowed_emails from DB (_global config). If both empty, all users are allowed.
+  # BOT_ALLOWED_EMAILS: "user1@example.com,user2@example.com"
+
+  # Public URL for shareable workspace file links in bot messages
+  PUBLIC_URL: "https://analytics-agent.citymall.live"
+
+  # Bot manager emails — comma-separated emails that can see Human Feedback Connectors in the sidebar.
+  # If empty/unset, all users can see them (backwards compatible).
+  BOT_MANAGER_EMAILS: "manish.prakash@citymall.live"
+
   # --- Multi-Provider Authentication ---
   # Enabled auth providers (comma-separated): simple, cognito, supabase
   AUTH_PROVIDERS: "cognito"

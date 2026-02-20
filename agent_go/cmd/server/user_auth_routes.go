@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -197,6 +199,13 @@ func (api *StreamingAPI) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Upsert app_users for email→userID lookup (used by bot sessions)
+	if extUser.Email != "" {
+		if err := api.chatDB.UpsertAppUser(r.Context(), userID, extUser.Email, extUser.Username, extUser.Provider); err != nil {
+			log.Printf("[AUTH] Failed to upsert app user: %v", err)
+		}
+	}
+
 	log.Printf("[AUTH] User %s logged in successfully via provider %s", extUser.Username, extUser.Provider)
 	json.NewEncoder(w).Encode(AuthResponse{
 		Token: token,
@@ -330,6 +339,13 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Upsert app_users for email→userID lookup (used by bot sessions)
+	if extUser.Email != "" {
+		if err := api.chatDB.UpsertAppUser(r.Context(), userID, extUser.Email, extUser.Username, extUser.Provider); err != nil {
+			log.Printf("[AUTH] Failed to upsert app user: %v", err)
+		}
+	}
+
 	log.Printf("[AUTH] User %s authenticated via OAuth provider %s", extUser.Username, extUser.Provider)
 	json.NewEncoder(w).Encode(AuthResponse{
 		Token: token,
@@ -352,6 +368,22 @@ func (api *StreamingAPI) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// isBotManager checks if the given email is in the BOT_MANAGER_EMAILS list.
+// If the env var is empty/unset, everyone is considered a bot manager (backwards compatible).
+func isBotManager(email string) bool {
+	envVal := os.Getenv("BOT_MANAGER_EMAILS")
+	if envVal == "" {
+		return true // No restriction — everyone is a bot manager
+	}
+	emails := strings.Split(envVal, ",")
+	for _, e := range emails {
+		if strings.TrimSpace(e) == email {
+			return true
+		}
+	}
+	return false
+}
+
 // handleGetCurrentUser returns the current authenticated user's info
 func (api *StreamingAPI) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
@@ -361,11 +393,12 @@ func (api *StreamingAPI) handleGetCurrentUser(w http.ResponseWriter, r *http.Req
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(UserInfo{
-		ID:       user.UserID,
-		Username: user.Username,
-		Email:    user.Email,
-		Provider: user.Provider,
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":             user.UserID,
+		"username":       user.Username,
+		"email":          user.Email,
+		"provider":       user.Provider,
+		"is_bot_manager": isBotManager(user.Email),
 	})
 }
 

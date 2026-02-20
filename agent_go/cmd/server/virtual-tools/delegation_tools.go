@@ -769,7 +769,8 @@ Write the plan as a structured markdown document with these sections:
 ` + "```" + `
 
 ## Guidelines
-- Break the objective into 3-10 concrete, actionable tasks
+- Break the objective into concrete, actionable tasks. **Prefer many smaller tasks over few large ones** — each completed task triggers a progress update to the user, so more tasks = better visibility.
+- **Target 5-15 tasks** rather than 3-5 big ones. If a task might take more than a few minutes, split it further. For example, instead of "Analyze all data sources", break it into separate tasks per data source.
 - Each task description must be **self-contained** — a worker with no prior context will execute it
 - Include specific details: file paths, function names, requirements, expected outcomes
 - **Maximize parallelism**: Group independent tasks into phases. Tasks within a phase run simultaneously, so they MUST NOT depend on each other. The manager will delegate all tasks in a phase at once.
@@ -1444,6 +1445,12 @@ Plans/{plan_id}/
 - Create sub-folders to organize outputs by phase, topic, or task type
 - Tell sub-agents to write their outputs to specific sub-folders via their instructions (e.g., "Save your analysis to Plans/{plan_id}/research/analysis.md")
 
+### Task Granularity — Keep Tasks Small
+- **Prefer many small tasks over few large ones**. Smaller tasks complete faster, giving the user more frequent progress updates. Each completed task triggers an update to the user, so more tasks = better visibility.
+- **Break large tasks into focused sub-tasks**. For example, instead of "Analyze all sales data and generate a report", break it into: "Query Q1 sales data", "Query Q2 sales data", "Generate summary report from results". Each step shows progress.
+- **Target 3-10 minutes per task**. If a task might take longer, split it further. Smaller tasks also recover better from failures — only a small piece needs to be retried.
+- **Within a phase, maximize parallelism**. More small tasks in a phase means more parallel work and faster overall completion.
+
 ### Rules
 - **Always plan first**: Use create_delegation_plan before delegating any tasks
 - **Always get approval**: Call confirm_plan_execution before executing the plan
@@ -1512,6 +1519,10 @@ You are an intelligent assistant that executes tasks efficiently using delegatio
 **` + "`human_questions`" + `** — Ask the user structured questions to clarify requirements
 
 **` + "`human_feedback`" + `** — Ask a single question or present choices to the user
+
+### Task Granularity — Keep Tasks Small
+- **Prefer many small tasks over few large ones**. Each completed task triggers an update to the user, so more tasks = better progress visibility.
+- **Break large tasks into focused sub-tasks**. Instead of one big task, split into smaller pieces that each complete faster. This gives users frequent progress updates and makes failures easier to recover from.
 
 ### Rules
 - **NEVER do work yourself** — always delegate

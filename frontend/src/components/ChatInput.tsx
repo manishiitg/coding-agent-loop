@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download, Bot, Server } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -18,6 +18,8 @@ import { CommandEditorDialog } from './commands/CommandEditorDialog'
 import { findCommand, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
+import InlineSelectionPopup from './InlineSelectionPopup'
+import type { InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
@@ -34,6 +36,10 @@ import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi, getApiBaseUrl } from '../services/api'
+import { skillsApi } from '../api/skills'
+import { subagentsApi } from '../api/subagents'
+import type { Skill } from '../types/skills'
+import type { SubAgent } from '../types/subagents'
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -621,6 +627,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [workflowSearchQuery, setWorkflowSearchQuery] = useState('')
   const [hashPosition, setHashPosition] = useState(-1) // Position of # in text
 
+  // ! skill inline popup state
+  const [showSkillPopup, setShowSkillPopup] = useState(false)
+  const [skillPopupPosition, setSkillPopupPosition] = useState({ bottom: 0, left: 0 })
+  const [skillPopupSearchQuery, setSkillPopupSearchQuery] = useState('')
+  const [exclamationPosition, setExclamationPosition] = useState(-1)
+
+  // $ server inline popup state
+  const [showServerPopup, setShowServerPopup] = useState(false)
+  const [serverPopupPosition, setServerPopupPosition] = useState({ bottom: 0, left: 0 })
+  const [serverPopupSearchQuery, setServerPopupSearchQuery] = useState('')
+  const [dollarPosition, setDollarPosition] = useState(-1)
+
+  // ^ sub-agent inline popup state
+  const [showSubAgentPopup, setShowSubAgentPopup] = useState(false)
+  const [subAgentPopupPosition, setSubAgentPopupPosition] = useState({ bottom: 0, left: 0 })
+  const [subAgentPopupSearchQuery, setSubAgentPopupSearchQuery] = useState('')
+  const [caretPosition, setCaretPosition] = useState(-1)
+
+  // Lazy-loaded data for inline popups
+  const [allSkills, setAllSkills] = useState<Skill[]>([])
+  const [allSubAgents, setAllSubAgents] = useState<SubAgent[]>([])
+  const [skillsLoading, setSkillsLoading] = useState(false)
+  const [subAgentsLoading, setSubAgentsLoading] = useState(false)
+
   // Tier config modal state (for plan mode chip)
   const [showTierModal, setShowTierModal] = useState(false)
 
@@ -714,6 +744,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [enableWorkspaceAccess, setWorkspaceMinimized, showFileDialog])
 
+  // Lazy-load skills when ! popup opens (always re-fetch to pick up new skills)
+  useEffect(() => {
+    if (showSkillPopup) {
+      setSkillsLoading(true)
+      skillsApi.listSkills()
+        .then(res => setAllSkills(res.skills || []))
+        .catch(() => {})
+        .finally(() => setSkillsLoading(false))
+    }
+  }, [showSkillPopup])
+
+  // Lazy-load sub-agents when ^ popup opens (always re-fetch to pick up new custom sub-agents)
+  useEffect(() => {
+    if (showSubAgentPopup) {
+      setSubAgentsLoading(true)
+      subagentsApi.listSubAgents()
+        .then(res => setAllSubAgents(res.subagents || []))
+        .catch(() => {})
+        .finally(() => setSubAgentsLoading(false))
+    }
+  }, [showSubAgentPopup])
+
   // Consolidated query selection logic
   const queryToSubmit = useMemo(() => {
     return inputText
@@ -764,6 +816,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
     const lastAtIndex = textBeforeCursor.lastIndexOf('@')
     const lastHashIndex = textBeforeCursor.lastIndexOf('#')
+    const lastExclamationIndex = textBeforeCursor.lastIndexOf('!')
+    const lastDollarIndex = textBeforeCursor.lastIndexOf('$')
+    const lastCaretIndex = textBeforeCursor.lastIndexOf('^')
 
     // If @ appears before the current /, the / is part of a path (e.g. "@ workflow /") — stay in file dialog
     const slashIsPartOfAtPath = lastAtIndex >= 0 && lastSlashIndex > lastAtIndex
@@ -771,6 +826,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const slashDistance = lastSlashIndex >= 0 ? cursorPosition - lastSlashIndex : Infinity
     const atDistance = lastAtIndex >= 0 ? cursorPosition - lastAtIndex : Infinity
     const hashDistance = lastHashIndex >= 0 ? cursorPosition - lastHashIndex : Infinity
+    const exclamationDistance = lastExclamationIndex >= 0 ? cursorPosition - lastExclamationIndex : Infinity
+    const dollarDistance = lastDollarIndex >= 0 ? cursorPosition - lastDollarIndex : Infinity
+    const caretDistance = lastCaretIndex >= 0 ? cursorPosition - lastCaretIndex : Infinity
 
     // Check if # is a markdown heading (at line start AND followed by a space) — don't trigger dialog for headings
     // e.g. "# Heading" is a heading, but "#workflow" is a workflow trigger
@@ -779,7 +837,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const hashIsHeading = hashIsAtLineStart && charAfterHash === ' '
 
     // Find the closest trigger to cursor
-    const closestTrigger = Math.min(slashDistance, atDistance, hashDistance)
+    const closestTrigger = Math.min(slashDistance, atDistance, hashDistance, exclamationDistance, dollarDistance, caretDistance)
 
     // Check for / command (only when / is not part of an @ path)
     if (!slashIsPartOfAtPath && lastSlashIndex >= 0 && closestTrigger === slashDistance) {
@@ -833,6 +891,87 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         setWorkflowSearchQuery('')
       }
     }
+    // Check for ! skill trigger
+    else if (lastExclamationIndex >= 0 && closestTrigger === exclamationDistance) {
+      const textAfterExcl = textBeforeCursor.substring(lastExclamationIndex + 1)
+      const hasValidExcl = textAfterExcl === '' || textAfterExcl.match(/^[a-zA-Z0-9_-]*$/)
+
+      if (hasValidExcl) {
+        setExclamationPosition(lastExclamationIndex)
+        setSkillPopupSearchQuery(textAfterExcl)
+        setShowSkillPopup(true)
+        setShowCommandDialog(false)
+        setShowFileDialog(false)
+        setShowWorkflowDialog(false)
+        setShowServerPopup(false)
+        setShowSubAgentPopup(false)
+
+        const textarea = e.target
+        const rect = textarea.getBoundingClientRect()
+        setSkillPopupPosition({
+          bottom: window.innerHeight - rect.top + 8,
+          left: rect.left + window.scrollX
+        })
+      } else {
+        setShowSkillPopup(false)
+        setExclamationPosition(-1)
+        setSkillPopupSearchQuery('')
+      }
+    }
+    // Check for $ server trigger
+    else if (lastDollarIndex >= 0 && closestTrigger === dollarDistance) {
+      const textAfterDollar = textBeforeCursor.substring(lastDollarIndex + 1)
+      const hasValidDollar = textAfterDollar === '' || textAfterDollar.match(/^[a-zA-Z0-9_-]*$/)
+
+      if (hasValidDollar) {
+        setDollarPosition(lastDollarIndex)
+        setServerPopupSearchQuery(textAfterDollar)
+        setShowServerPopup(true)
+        setShowCommandDialog(false)
+        setShowFileDialog(false)
+        setShowWorkflowDialog(false)
+        setShowSkillPopup(false)
+        setShowSubAgentPopup(false)
+
+        const textarea = e.target
+        const rect = textarea.getBoundingClientRect()
+        setServerPopupPosition({
+          bottom: window.innerHeight - rect.top + 8,
+          left: rect.left + window.scrollX
+        })
+      } else {
+        setShowServerPopup(false)
+        setDollarPosition(-1)
+        setServerPopupSearchQuery('')
+      }
+    }
+    // Check for ^ sub-agent trigger
+    else if (lastCaretIndex >= 0 && closestTrigger === caretDistance) {
+      const textAfterCaret = textBeforeCursor.substring(lastCaretIndex + 1)
+      const hasValidCaret = textAfterCaret === '' || textAfterCaret.match(/^[a-zA-Z0-9_-]*$/)
+
+      if (hasValidCaret) {
+        setCaretPosition(lastCaretIndex)
+        setSubAgentPopupSearchQuery(textAfterCaret)
+        setShowSubAgentPopup(true)
+        setShowCommandDialog(false)
+        setShowFileDialog(false)
+        setShowWorkflowDialog(false)
+        setShowSkillPopup(false)
+        setShowServerPopup(false)
+
+        const textarea = e.target
+        const rect = textarea.getBoundingClientRect()
+        setSubAgentPopupPosition({
+          bottom: window.innerHeight - rect.top + 8,
+          left: rect.left + window.scrollX
+        })
+      } else {
+        setShowSubAgentPopup(false)
+        setCaretPosition(-1)
+        setSubAgentPopupSearchQuery('')
+      }
+    }
     // Check for @ symbol and update file dialog state (only if no other dialog active and workspace access is enabled)
     else if (lastAtIndex >= 0 && !showCommandDialog && !showWorkflowDialog && enableWorkspaceAccess) {
       const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
@@ -875,6 +1014,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setShowWorkflowDialog(false)
       setHashPosition(-1)
       setWorkflowSearchQuery('')
+      setShowSkillPopup(false)
+      setExclamationPosition(-1)
+      setSkillPopupSearchQuery('')
+      setShowServerPopup(false)
+      setDollarPosition(-1)
+      setServerPopupSearchQuery('')
+      setShowSubAgentPopup(false)
+      setCaretPosition(-1)
+      setSubAgentPopupSearchQuery('')
     }
 
     // Debounce file reference removal check (500ms delay)
@@ -978,7 +1126,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
-    if (showCommandDialog || showFileDialog || showWorkflowDialog) {
+    if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup || showSubAgentPopup) {
       // Don't prevent default for arrow keys, enter, escape - let dialog handle them
       if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
         return
@@ -1251,7 +1399,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -1532,6 +1680,111 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     textareaRef.current?.focus()
   }, [])
 
+  // Inline skill popup: toggle skill (stays open for multi-select)
+  const handleSkillPopupToggle = useCallback((skillFolderName: string) => {
+    onSkillToggle(skillFolderName)
+  }, [onSkillToggle])
+
+  // Close skill popup: remove trigger text and close
+  const handleSkillPopupClose = useCallback(() => {
+    if (exclamationPosition >= 0) {
+      const before = inputText.substring(0, exclamationPosition)
+      const after = inputText.substring(exclamationPosition + 1 + skillPopupSearchQuery.length)
+      const newText = (before + after).replace(/  +/g, ' ')
+      setLocalInputText(newText)
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+        syncToStoreTimeoutRef.current = null
+      }
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: newText })
+      }
+    }
+    setShowSkillPopup(false)
+    setExclamationPosition(-1)
+    setSkillPopupSearchQuery('')
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [exclamationPosition, inputText, skillPopupSearchQuery, activeTabId, setTabConfig])
+
+  // Inline server popup: toggle server (stays open for multi-select)
+  const handleServerPopupToggle = useCallback((serverName: string) => {
+    onManualServerToggle(serverName)
+  }, [onManualServerToggle])
+
+  // Close server popup: remove trigger text and close
+  const handleServerPopupClose = useCallback(() => {
+    if (dollarPosition >= 0) {
+      const before = inputText.substring(0, dollarPosition)
+      const after = inputText.substring(dollarPosition + 1 + serverPopupSearchQuery.length)
+      const newText = (before + after).replace(/  +/g, ' ')
+      setLocalInputText(newText)
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+        syncToStoreTimeoutRef.current = null
+      }
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: newText })
+      }
+    }
+    setShowServerPopup(false)
+    setDollarPosition(-1)
+    setServerPopupSearchQuery('')
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [dollarPosition, inputText, serverPopupSearchQuery, activeTabId, setTabConfig])
+
+  // Inline sub-agent popup: toggle sub-agent (stays open for multi-select)
+  const handleSubAgentPopupToggle = useCallback((folderName: string) => {
+    onSubAgentToggle(folderName)
+  }, [onSubAgentToggle])
+
+  // Close sub-agent popup: remove trigger text and close
+  const handleSubAgentPopupClose = useCallback(() => {
+    if (caretPosition >= 0) {
+      const before = inputText.substring(0, caretPosition)
+      const after = inputText.substring(caretPosition + 1 + subAgentPopupSearchQuery.length)
+      const newText = (before + after).replace(/  +/g, ' ')
+      setLocalInputText(newText)
+      if (syncToStoreTimeoutRef.current) {
+        clearTimeout(syncToStoreTimeoutRef.current)
+        syncToStoreTimeoutRef.current = null
+      }
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: newText })
+      }
+    }
+    setShowSubAgentPopup(false)
+    setCaretPosition(-1)
+    setSubAgentPopupSearchQuery('')
+    setTimeout(() => textareaRef.current?.focus(), 0)
+  }, [caretPosition, inputText, subAgentPopupSearchQuery, activeTabId, setTabConfig])
+
+  // Memoized items arrays for inline popups
+  const skillPopupItems: InlineSelectionItem[] = useMemo(() =>
+    allSkills.map(s => ({
+      id: s.folder_name,
+      name: s.frontmatter.name,
+      description: s.frontmatter.description,
+      isSelected: selectedSkills.includes(s.folder_name)
+    }))
+  , [allSkills, selectedSkills])
+
+  const serverPopupItems: InlineSelectionItem[] = useMemo(() =>
+    availableServers.map(name => ({
+      id: name,
+      name,
+      isSelected: manualSelectedServers.includes(name)
+    }))
+  , [availableServers, manualSelectedServers])
+
+  const subAgentPopupItems: InlineSelectionItem[] = useMemo(() =>
+    allSubAgents.map(sa => ({
+      id: sa.folder_name,
+      name: sa.frontmatter.name,
+      description: sa.frontmatter.description,
+      isSelected: selectedSubAgents.includes(sa.folder_name)
+    }))
+  , [allSubAgents, selectedSubAgents])
+
   // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
   const handleNavigateIntoFolder = useCallback((folderPath: string) => {
     if (atPosition === -1 || !activeTabId) return
@@ -1555,7 +1808,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoized placeholder
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
-    return "Ask anything... (@ files, / commands, # workflows)"
+    return "Ask anything... (@ files, / commands, # workflows, ! skills, $ servers, ^ agents)"
   }, [isViewOnly])
 
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
@@ -2254,6 +2507,47 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         onSelectWorkflow={handleWorkflowSelect}
         searchQuery={workflowSearchQuery}
         position={workflowDialogPosition}
+      />
+
+      {/* Inline Skill Selection Popup */}
+      <InlineSelectionPopup
+        isOpen={showSkillPopup}
+        onClose={handleSkillPopupClose}
+        onToggleItem={handleSkillPopupToggle}
+        items={skillPopupItems}
+        searchQuery={skillPopupSearchQuery}
+        position={skillPopupPosition}
+        title="Skills"
+        icon={<Sparkles className="w-4 h-4 text-muted-foreground" />}
+        emptyMessage="No skills available"
+        isLoading={skillsLoading}
+      />
+
+      {/* Inline Server Selection Popup */}
+      <InlineSelectionPopup
+        isOpen={showServerPopup}
+        onClose={handleServerPopupClose}
+        onToggleItem={handleServerPopupToggle}
+        items={serverPopupItems}
+        searchQuery={serverPopupSearchQuery}
+        position={serverPopupPosition}
+        title="MCP Servers"
+        icon={<Server className="w-4 h-4 text-muted-foreground" />}
+        emptyMessage="No MCP servers available"
+      />
+
+      {/* Inline Sub-Agent Selection Popup */}
+      <InlineSelectionPopup
+        isOpen={showSubAgentPopup}
+        onClose={handleSubAgentPopupClose}
+        onToggleItem={handleSubAgentPopupToggle}
+        items={subAgentPopupItems}
+        searchQuery={subAgentPopupSearchQuery}
+        position={subAgentPopupPosition}
+        title="Sub-Agents"
+        icon={<Bot className="w-4 h-4 text-muted-foreground" />}
+        emptyMessage="No sub-agent templates available"
+        isLoading={subAgentsLoading}
       />
 
       {/* Slash command dialogs */}

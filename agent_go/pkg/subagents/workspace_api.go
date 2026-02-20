@@ -72,6 +72,27 @@ func (c *WorkspaceAPIClient) ListFiles(folderPath string) ([]DocumentEntry, erro
 		return nil, fmt.Errorf("API returned error: %s", result.Message)
 	}
 
+	// The workspace API wraps the folder listing: data=[{filepath:"subagents", type:"folder", children:[...]}]
+	// We need to unwrap and return the children of the requested folder.
+	// If the response is a single root entry matching our requested folder, return its children.
+	if len(result.Data) == 1 && result.Data[0].Type == "folder" && result.Data[0].Filepath == folderPath {
+		return result.Data[0].Children, nil
+	}
+
+	// Also handle the case where the root entry's children contain folders with nested children —
+	// flatten one level so discovery works with the workspace API's nested response format.
+	var flattened []DocumentEntry
+	for _, entry := range result.Data {
+		if entry.Type == "folder" && len(entry.Children) > 0 && entry.Filepath == folderPath {
+			flattened = append(flattened, entry.Children...)
+		} else {
+			flattened = append(flattened, entry)
+		}
+	}
+	if len(flattened) > 0 {
+		return flattened, nil
+	}
+
 	return result.Data, nil
 }
 

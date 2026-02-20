@@ -63,6 +63,10 @@ type Database interface {
 	CreateBotMessage(ctx context.Context, req *CreateBotMessageRequest) (*BotMessage, error)
 	ListBotMessages(ctx context.Context, botSessionID string, limit, offset int) ([]BotMessage, int, error)
 
+	// App user management (email→userID lookup for bot sessions)
+	UpsertAppUser(ctx context.Context, userID, email, username, provider string) error
+	GetAppUserByEmail(ctx context.Context, email string) (*AppUser, error)
+
 	// User secrets management
 	UpsertUserSecret(ctx context.Context, userID, name, encryptedValue string) error
 	DeleteUserSecret(ctx context.Context, userID, name string) error

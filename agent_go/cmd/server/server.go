@@ -3674,6 +3674,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
@@ -3953,6 +3954,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						bgDelegateFunc = func(bgCtx context.Context, name, instruction string) (string, error) {
 							return api.executeBackgroundDelegatedTask(bgCtx, req, sessionID, name, instruction)
 						}
+						memoryBgDelegate = bgDelegateFunc
 						bgQuerier = &bgAgentQuerierImpl{registry: api.bgAgentRegistry}
 					}
 
@@ -4145,6 +4147,67 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
+			// Register memory tools in all chat modes.
+			// In plan mode, memory tools can spawn background memory agents.
+			memoryTools := virtualtools.CreateMemoryTools()
+			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
+			memoryCategory := virtualtools.GetDelegationToolCategory()
+			memoryWorkspaceClient := workspace.NewClient(
+				getWorkspaceAPIURL(),
+				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
+					Enabled:      true,
+					WritePaths:   []string{"Plans"},
+					BlockedPaths: []string{"_users"},
+				}),
+				workspace.WithUserID(currentUserID),
+			)
+
+			registeredMemoryCount := 0
+			for _, tool := range memoryTools {
+				if tool.Function == nil {
+					continue
+				}
+				toolName := tool.Function.Name
+				exec, exists := memoryExecutors[toolName]
+				if !exists {
+					continue
+				}
+
+				var params map[string]interface{}
+				if tool.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(tool.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+				}
+				if params == nil {
+					params = make(map[string]interface{})
+				}
+
+				wrappedMemoryExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
+					ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, memoryWorkspaceClient)
+					if memoryBgDelegate != nil {
+						ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, memoryBgDelegate)
+					}
+					return exec(ctx, args)
+				}
+
+				if err := underlyingAgent.RegisterCustomToolWithTimeout(
+					toolName,
+					tool.Function.Description,
+					params,
+					wrappedMemoryExecutor,
+					0, // Memory operations may involve background delegation; do not enforce timeout.
+					memoryCategory,
+				); err != nil {
+					log.Printf("[MEMORY TOOLS ERROR] Failed to register tool %s: %v", toolName, err)
+					continue
+				}
+				registeredMemoryCount++
+				log.Printf("[MEMORY TOOLS] Registered memory tool: %s (category: %s)", toolName, memoryCategory)
+			}
+			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
+
 			// Update code execution registry to rebuild system prompt with newly registered tools
 			// This ensures human_feedback and workspace tools appear in the system prompt
 			if err := underlyingAgent.UpdateCodeExecutionRegistry(); err != nil {
@@ -4215,6 +4278,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				log.Printf("[DELEGATION] Added delegation instructions to system prompt (mode: spawn)")
 			}
+
+			// Memory tools are available in all chat modes.
+			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
 		}
 
 		// Add event observer immediately after agent creation to capture all events
@@ -7122,7 +7188,6 @@ func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	api.sessionBusy[sessionID] = busy
 	api.sessionBusyMu.Unlock()
 }
-
 
 // queuePendingCompletion adds a completed agent ID to the pending queue
 func (api *StreamingAPI) queuePendingCompletion(sessionID, agentID string) {

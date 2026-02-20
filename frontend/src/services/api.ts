@@ -46,6 +46,7 @@ import type {
   SessionCostDetail,
   DelegationLogsResponse,
   AllDelegationLogsResponse,
+  PollingEvent,
   SimulatorMessage,
   SimulatorSendResponse,
   SimulatorThreadInfo,
@@ -881,7 +882,7 @@ export const agentApi = {
     return response.data
   },
 
-  getDelegationEvents: async (sessionId: string, delegationId: string, limit = 500, offset = 0): Promise<{ events: unknown[]; total: number }> => {
+  getDelegationEvents: async (sessionId: string, delegationId: string, limit = 500, offset = 0): Promise<{ events: PollingEvent[]; total: number }> => {
     const response = await api.get(`/api/chat-history/sessions/${sessionId}/delegation-logs/${delegationId}/events`, {
       params: { limit, offset }
     })
@@ -1198,6 +1199,7 @@ export interface AuthUser {
   username: string
   email?: string
   provider?: string
+  is_bot_manager?: boolean
 }
 
 export interface AuthResponse {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Settings, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, MessageSquare } from 'lucide-react'
+import { X, Settings, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, MessageSquare, AlertTriangle } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
 import { agentApi } from '../../services/api'
@@ -246,6 +246,33 @@ export default function SlackFeedbackConfig({ isOpen, onClose }: SlackFeedbackCo
                       />
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
                     </label>
+                  </div>
+                </Card>
+              )}
+
+              {/* Critical Setup Reminder */}
+              {config.enabled && (
+                <Card className="p-4 bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                        Required: Event Subscriptions
+                      </p>
+                      <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                        Your Slack App <strong>must</strong> have Event Subscriptions enabled or the bot won't receive any messages. Go to{' '}
+                        <a href="https://api.slack.com/apps" target="_blank" rel="noopener noreferrer" className="underline font-medium">api.slack.com/apps</a>
+                        {' '}→ your app → <strong>Event Subscriptions</strong> → Enable Events → Subscribe to bot events:
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <code className="bg-amber-100 dark:bg-amber-800/40 px-1.5 py-0.5 rounded text-xs font-mono text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700">app_mention</code>
+                        <code className="bg-amber-100 dark:bg-amber-800/40 px-1.5 py-0.5 rounded text-xs font-mono text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700">message.channels</code>
+                        <code className="bg-amber-100 dark:bg-amber-800/40 px-1.5 py-0.5 rounded text-xs font-mono text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700">message.groups</code>
+                      </div>
+                      <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
+                        After adding events, <strong>reinstall the app</strong> to your workspace. Also invite the bot to the channel: <code className="bg-amber-100 dark:bg-amber-800/40 px-1 py-0.5 rounded font-mono text-amber-900 dark:text-amber-200">/invite @YourBotName</code>
+                      </p>
+                    </div>
                   </div>
                 </Card>
               )}

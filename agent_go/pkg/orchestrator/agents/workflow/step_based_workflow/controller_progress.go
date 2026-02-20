@@ -588,6 +588,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 	subAgentFoldersDeleted := 0
 	subAgentFoldersFound := []string{}
 
+	// Also delete all generic-agent step folders for this step (e.g., step-2-generic-agent-0, step-2-generic-agent-1, etc.)
+	// These are created by todo_task steps for ad-hoc tasks via call_generic_agent
+	genericAgentStepPrefix := fmt.Sprintf("step-%d-generic-agent-", stepNumber)
+	genericAgentFoldersDeleted := 0
+	genericAgentFoldersFound := []string{}
+
 	// List all files/folders in the execution directory
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)
 	if err != nil {
@@ -685,11 +691,39 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 				if err := hcpo.archiveLogsFolder(ctx, subAgentLogsFolderPath, file); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive sub-agent step logs folder %s: %v", file, err))
 				}
+			} else if strings.HasPrefix(file, genericAgentStepPrefix) {
+				// Check if this is a generic-agent step folder for the current step
+				// Pattern: step-{N}-generic-agent-{index} (created by todo_task steps via call_generic_agent)
+				genericAgentFoldersFound = append(genericAgentFoldersFound, file)
+				genericAgentFolderPath := fmt.Sprintf("%s/%s", executionWorkspacePath, file)
+				hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Deleting generic-agent step folder: %s", file))
+				if err := hcpo.CleanupDirectory(ctx, genericAgentFolderPath, fmt.Sprintf("execution/%s", file)); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete generic-agent step folder %s: %v", file, err))
+				} else {
+					if err := hcpo.DeleteWorkspaceFile(ctx, genericAgentFolderPath); err != nil {
+						errStr := err.Error()
+						if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
+							hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Generic-agent step folder %s already deleted or doesn't exist", genericAgentFolderPath))
+						} else if strings.Contains(errStr, "directory not empty") {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Generic-agent step folder %s not empty after cleanup - may have remaining files", genericAgentFolderPath))
+						} else {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to delete generic-agent step folder %s: %v", genericAgentFolderPath, err))
+						}
+					} else {
+						genericAgentFoldersDeleted++
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Successfully deleted generic-agent step folder: %s", file))
+					}
+				}
+				// Also archive corresponding generic-agent step logs folder
+				genericAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
+				if err := hcpo.archiveLogsFolder(ctx, genericAgentLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive generic-agent step logs folder %s: %v", file, err))
+				}
 			}
 		}
 
-		if len(branchFoldersFound) == 0 && decisionFoldersDeleted == 0 && len(subAgentFoldersFound) == 0 {
-			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No branch step, decision step, or sub-agent step folders found for step %d", stepNumber))
+		if len(branchFoldersFound) == 0 && decisionFoldersDeleted == 0 && len(subAgentFoldersFound) == 0 && len(genericAgentFoldersFound) == 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ No branch step, decision step, sub-agent step, or generic-agent step folders found for step %d", stepNumber))
 		}
 	}
 
@@ -701,6 +735,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) deleteStepExecutionFolder(ctx context
 	}
 	if subAgentFoldersDeleted > 0 {
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted %d/%d sub-agent step folder(s) for step %d: %v", subAgentFoldersDeleted, len(subAgentFoldersFound), stepNumber, subAgentFoldersFound))
+	}
+	if genericAgentFoldersDeleted > 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted %d/%d generic-agent step folder(s) for step %d: %v", genericAgentFoldersDeleted, len(genericAgentFoldersFound), stepNumber, genericAgentFoldersFound))
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Deleted execution folder for step %d", stepNumber))
@@ -781,6 +818,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx contex
 	branchStepPrefix := fmt.Sprintf("step-%d-if-", stepNumber)
 	decisionStepFolder := fmt.Sprintf("step-%d-decision", stepNumber)
 	subAgentStepPrefix := fmt.Sprintf("step-%d-sub-agent-", stepNumber)
+	genericAgentStepPrefix := fmt.Sprintf("step-%d-generic-agent-", stepNumber)
 
 	// List all files/folders in the execution directory
 	files, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, executionWorkspacePath)
@@ -811,6 +849,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) archiveStepExecutionFolder(ctx contex
 				subAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
 				if err := hcpo.archiveLogsFolder(ctx, subAgentLogsFolderPath, file); err != nil {
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive sub-agent step logs folder %s: %v", file, err))
+				}
+			} else if strings.HasPrefix(file, genericAgentStepPrefix) {
+				// Archive generic-agent step folder (created by todo_task steps via call_generic_agent)
+				archiveFolder(file)
+				// Also archive corresponding generic-agent step logs folder
+				genericAgentLogsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, file)
+				if err := hcpo.archiveLogsFolder(ctx, genericAgentLogsFolderPath, file); err != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive generic-agent step logs folder %s: %v", file, err))
 				}
 			}
 		}

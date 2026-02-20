@@ -540,6 +540,16 @@ type UpdateWorkflowRequest struct {
 	SelectedOptions *WorkflowSelectedOptions `json:"selected_options,omitempty"`
 }
 
+// AppUser represents a workspace user (populated on login for email→userID lookup)
+type AppUser struct {
+	UserID    string    `json:"user_id" db:"user_id"`
+	Email     string    `json:"email" db:"email"`
+	Username  string    `json:"username" db:"username"`
+	Provider  string    `json:"provider" db:"provider"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
 // UserSecret represents a user-owned secret stored server-side for bot session access
 type UserSecret struct {
 	ID             string    `json:"id"`

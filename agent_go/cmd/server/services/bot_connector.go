@@ -32,17 +32,18 @@ func (t ThreadID) Key() string {
 
 // BotIncomingMessage represents a message received from a platform
 type BotIncomingMessage struct {
-	Platform      string
-	UserID        string
-	UserName      string
-	UserEmail     string // resolved by platform connector (e.g. Slack users.info)
-	ChannelID     string
-	ThreadTS      string // empty = new conversation, set = existing thread
-	Text          string // @mention stripped
-	Timestamp     time.Time
-	IsThreadReply bool
-	IsMention     bool             // true when the bot was @mentioned (vs plain thread reply)
-	ThreadHistory []ThreadMessage // populated when tagged in existing thread
+	Platform        string
+	UserID          string
+	UserName        string
+	UserEmail       string // resolved by platform connector (e.g. Slack users.info)
+	WorkspaceUserID string // pre-resolved workspace user ID (set by simulator from HTTP auth)
+	ChannelID       string
+	ThreadTS        string // empty = new conversation, set = existing thread
+	Text            string // @mention stripped
+	Timestamp       time.Time
+	IsThreadReply   bool
+	IsMention       bool            // true when the bot was @mentioned (vs plain thread reply)
+	ThreadHistory   []ThreadMessage // populated when tagged in existing thread
 }
 
 // ThreadMessage represents a single message in a thread's history
@@ -154,6 +155,7 @@ type activeBotSession struct {
 	mu                sync.Mutex
 	BotSessionID      string
 	SessionID         string // internal chat session ID
+	UserID            string // workspace user ID for secrets loading
 	Status            string
 	Platform          string
 	ThreadID          ThreadID
@@ -235,38 +237,89 @@ func (m *BotConversationManager) LoadAvailableCapabilities() (servers []string, 
 	return
 }
 
+// resolveWorkspaceUserID maps a bot message to a workspace user ID for per-user secrets loading.
+// Priority: 1) pre-resolved (web simulator sets from HTTP auth), 2) email lookup via app_users, 3) fallback to "default".
+func (m *BotConversationManager) resolveWorkspaceUserID(msg BotIncomingMessage) string {
+	if msg.WorkspaceUserID != "" {
+		return msg.WorkspaceUserID
+	}
+	if msg.UserEmail != "" {
+		user, err := m.db.GetAppUserByEmail(context.Background(), msg.UserEmail)
+		if err == nil && user != nil {
+			log.Printf("[BOT_MANAGER] Resolved workspace user ID %s for email %s", user.UserID, msg.UserEmail)
+			return user.UserID
+		}
+	}
+	return "default"
+}
+
 // HandleIncomingMessage processes a message from any platform (async path)
 func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
-	// Check allowed_emails filter — if set, only listed emails can use the bot
+	// Non-mention messages should only be processed if there's an active session in the thread.
+	// Skip access checks and don't reply with "no access" for messages that didn't tag the bot.
+	if !msg.IsMention {
+		// Quick check: is there even an active session for this thread?
+		threadKey := msg.ChannelID + ":" + msg.ThreadTS
+		if msg.ThreadTS == "" {
+			threadKey = msg.ChannelID + ":" + msg.ChannelID
+		}
+		m.mu.Lock()
+		_, hasSession := m.sessions[threadKey]
+		m.mu.Unlock()
+		if !hasSession {
+			// No active session and not a mention — silently ignore
+			return
+		}
+	}
+
+	// Check allowed_emails filter — merge DB config with BOT_ALLOWED_EMAILS env var
+	// Only send rejection message for @mentions (non-mentions are silently ignored above)
 	if msg.UserEmail != "" {
+		var allowedEmails []string
+
+		// 1. Load from DB (_global config)
 		globalCfg, _ := m.db.GetBotConnectorConfig(context.Background(), "_global")
 		if globalCfg != nil && globalCfg.ConfigJSON != "" {
 			var cfgData map[string]json.RawMessage
 			if err := json.Unmarshal([]byte(globalCfg.ConfigJSON), &cfgData); err == nil {
 				if raw, ok := cfgData["allowed_emails"]; ok {
-					var allowedEmails []string
-					if err := json.Unmarshal(raw, &allowedEmails); err == nil && len(allowedEmails) > 0 {
-						allowed := false
-						for _, email := range allowedEmails {
-							if strings.EqualFold(email, msg.UserEmail) {
-								allowed = true
-								break
-							}
+					json.Unmarshal(raw, &allowedEmails)
+				}
+			}
+		}
+
+		// 2. Merge with BOT_ALLOWED_EMAILS env var (comma-separated)
+		if envEmails := os.Getenv("BOT_ALLOWED_EMAILS"); envEmails != "" {
+			for _, e := range strings.Split(envEmails, ",") {
+				e = strings.TrimSpace(e)
+				if e != "" {
+					allowedEmails = append(allowedEmails, e)
+				}
+			}
+		}
+
+		// 3. If any allowed emails are configured, enforce the filter
+		if len(allowedEmails) > 0 {
+			allowed := false
+			for _, email := range allowedEmails {
+				if strings.EqualFold(email, msg.UserEmail) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				log.Printf("[BOT_MANAGER] Rejected message from %s (%s) — not in allowed_emails", msg.UserID, msg.UserEmail)
+				// Only reply with rejection for direct @mentions
+				if msg.IsMention {
+					if connector := m.GetConnector(msg.Platform); connector != nil {
+						threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
+						if threadID.ThreadTS == "" {
+							threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
 						}
-						if !allowed {
-							log.Printf("[BOT_MANAGER] Rejected message from %s (%s) — not in allowed_emails", msg.UserID, msg.UserEmail)
-							// Send rejection message to user
-							if connector := m.GetConnector(msg.Platform); connector != nil {
-								threadID := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.ThreadTS}
-								if threadID.ThreadTS == "" {
-									threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
-								}
-								connector.SendThreadMessage(context.Background(), threadID, "Sorry, you don't have access to use this bot. Please contact your administrator to get access.")
-							}
-							return
-						}
+						connector.SendThreadMessage(context.Background(), threadID, "Sorry, you don't have access to use this bot. Please contact your administrator to get access.")
 					}
 				}
+				return
 			}
 		}
 	}
@@ -383,13 +436,14 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// Inject follow-up message into the running session
 		active.mu.Lock()
 		sid := active.SessionID
+		uid := active.UserID
 		active.mu.Unlock()
 		if m.followUpSession != nil && sid != "" {
 			log.Printf("[BOT_MANAGER] Sending follow-up to session %s: %s", sid, botTruncate(msg.Text, 80))
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text), sid, "default")
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 				}
@@ -410,6 +464,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 	active.mu.Lock()
 	blockingEvt := active.blockingEventType
 	sid := active.SessionID
+	uid := active.UserID
 	active.mu.Unlock()
 
 	switch blockingEvt {
@@ -421,7 +476,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 				go func() {
 					followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 					defer followCancel()
-					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan."), sid, "default")
+					err := m.followUpSession(followCtx, m.buildQueryRequest("Approved. Execute the plan.", uid), sid, uid)
 					if err != nil {
 						log.Printf("[BOT_MANAGER] Plan approval follow-up failed: %v", err)
 					}
@@ -439,7 +494,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text), sid, "default")
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Plan feedback follow-up failed: %v", err)
 				}
@@ -454,7 +509,7 @@ func (m *BotConversationManager) handleBlockingResponse(active *activeBotSession
 			go func() {
 				followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer followCancel()
-				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text), sid, "default")
+				err := m.followUpSession(followCtx, m.buildQueryRequest(msg.Text, uid), sid, uid)
 				if err != nil {
 					log.Printf("[BOT_MANAGER] Blocking response follow-up failed: %v", err)
 				}
@@ -470,6 +525,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 	active.mu.Lock()
 	blockingEvt := active.blockingEventType
 	sid := active.SessionID
+	uid := active.UserID
 	active.mu.Unlock()
 
 	switch blockingEvt {
@@ -478,7 +534,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 			log.Printf("[BOT_MANAGER] HandleMessageSync: plan approved for session %s", sid)
 			m.clearBlockingState(active)
 			if m.followUpSession != nil {
-				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan."), sid, "default")
+				err := m.followUpSession(ctx, m.buildQueryRequest("Approved. Execute the plan.", uid), sid, uid)
 				if err != nil {
 					return nil, fmt.Errorf("plan approval follow-up failed: %w", err)
 				}
@@ -502,7 +558,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		}
 		// Not a clear approve/reject — send as feedback
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text), sid, "default")
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("plan feedback follow-up failed: %w", err)
 			}
@@ -519,7 +575,7 @@ func (m *BotConversationManager) handleBlockingResponseSync(ctx context.Context,
 		log.Printf("[BOT_MANAGER] HandleMessageSync: responding to %s for session %s", blockingEvt, sid)
 		m.clearBlockingState(active)
 		if m.followUpSession != nil {
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text), sid, "default")
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid), sid, uid)
 			if err != nil {
 				return nil, fmt.Errorf("blocking response follow-up failed: %w", err)
 			}
@@ -595,10 +651,13 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 
 	// 2. Running session (not awaiting input) → inject follow-up
 	if exists && status == database.BotSessionStatusRunning && sessionID != "" && !awaitingInput {
+		active.mu.Lock()
+		uid := active.UserID
+		active.mu.Unlock()
 		log.Printf("[BOT_MANAGER] HandleMessageSync: found active session %s (status=%s) for thread %s", sessionID, status, threadID.Key())
 		if m.followUpSession != nil {
 			log.Printf("[BOT_MANAGER] HandleMessageSync: injecting follow-up into session %s: %s", sessionID, botTruncate(msg.Text, 80))
-			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text), sessionID, "default")
+			err := m.followUpSession(ctx, m.buildQueryRequest(msg.Text, uid), sessionID, uid)
 			if err != nil {
 				return nil, fmt.Errorf("follow-up failed: %w", err)
 			}
@@ -613,6 +672,9 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 
 	// 3. No active session (or completed/failed) → start new session immediately
 	log.Printf("[BOT_MANAGER] HandleMessageSync: starting new session for thread %s", threadID.Key())
+
+	// Resolve workspace user ID for per-user secrets
+	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
 	// Use a unique thread TS for DB to avoid constraint violations
 	taskThreadTS := fmt.Sprintf("%s_%d", threadID.ThreadTS, time.Now().UnixNano())
@@ -631,7 +693,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	newSessionID := uuid.New().String()
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID)
 
 	m.db.UpdateBotSession(ctx, botSession.ID, &database.UpdateBotSessionRequest{
 		SessionID: newSessionID,
@@ -643,6 +705,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 	activeTask := &activeBotSession{
 		BotSessionID: botSession.ID,
 		SessionID:    newSessionID,
+		UserID:       workspaceUserID,
 		Status:       database.BotSessionStatusRunning,
 		Platform:     msg.Platform,
 		ThreadID:     threadID,
@@ -665,6 +728,9 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, threadID ThreadID) {
 	ctx := context.Background()
 
+	// Resolve workspace user ID for per-user secrets
+	workspaceUserID := m.resolveWorkspaceUserID(msg)
+
 	// Create bot session in DB — use unique thread TS to avoid constraint violations
 	// when restarting sessions on the same thread (stale session marked failed but row still exists)
 	dbThreadTS := fmt.Sprintf("%s_%d", threadID.ThreadTS, time.Now().UnixNano())
@@ -684,7 +750,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	sessionID := uuid.New().String()
 	// Load thread history for context continuity (e.g., user replies after hours)
 	queryWithHistory := m.buildQueryWithThreadHistory(msg.Text, msg.Platform, threadID)
-	queryReq := m.buildQueryRequest(queryWithHistory)
+	queryReq := m.buildQueryRequest(queryWithHistory, workspaceUserID)
 
 	m.db.UpdateBotSession(ctx, botSession.ID, &database.UpdateBotSessionRequest{
 		SessionID: sessionID,
@@ -696,6 +762,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	active := &activeBotSession{
 		BotSessionID: botSession.ID,
 		SessionID:    sessionID,
+		UserID:       workspaceUserID,
 		Status:       database.BotSessionStatusRunning,
 		Platform:     msg.Platform,
 		ThreadID:     threadID,
@@ -734,8 +801,9 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	sessionCtx, cancel := context.WithCancel(ctx)
 	active.mu.Lock()
 	active.cancel = cancel
-	active.eventFilter = NewBotEventFilter(connector, active.ThreadID, active.BotSessionID, m.db, os.Getenv("PUBLIC_URL"), "default")
+	active.eventFilter = NewBotEventFilter(connector, active.ThreadID, active.BotSessionID, m.db, os.Getenv("PUBLIC_URL"), active.UserID)
 	sessionID := active.SessionID
+	userID := active.UserID
 	active.mu.Unlock()
 
 	// Wire up blocking event callback — any blocking event (plan_approval, human feedback, etc.)
@@ -768,7 +836,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	// Start the actual session in background — don't block on it.
 	if m.startSession != nil {
 		go func() {
-			err := m.startSession(sessionCtx, queryReq, sessionID, "default", func(event *events.AgentEvent) {})
+			err := m.startSession(sessionCtx, queryReq, sessionID, userID, func(event *events.AgentEvent) {})
 			if err != nil && sessionCtx.Err() == nil {
 				log.Printf("[BOT_MANAGER] Session error: %v", err)
 				connector.SendThreadMessage(ctx, active.ThreadID, fmt.Sprintf("Session failed: %v", err))
@@ -905,7 +973,8 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 
 // buildQueryRequest constructs a request map for startSessionInternal.
 // Reads default_servers/default_skills from the _global config, falling back to all available.
-func (m *BotConversationManager) buildQueryRequest(query string) map[string]interface{} {
+// userID is the workspace user ID used for loading per-user secrets.
+func (m *BotConversationManager) buildQueryRequest(query string, userID string) map[string]interface{} {
 	req := map[string]interface{}{
 		"query":                    query,
 		"delegation_mode":          "plan", // default, may be overridden from _global config
@@ -1036,8 +1105,21 @@ func (m *BotConversationManager) buildQueryRequest(query string) map[string]inte
 		}
 	}
 
+	// Fallback: use server-level PROVIDER/MODEL env vars if no tier config resolved a provider
+	if provider == "" {
+		provider = os.Getenv("PROVIDER")
+		if provider == "" {
+			provider = os.Getenv("AGENT_PROVIDER")
+		}
+	}
+	if modelID == "" {
+		modelID = os.Getenv("MODEL")
+		if modelID == "" {
+			modelID = os.Getenv("AGENT_MODEL")
+		}
+	}
 	if provider == "" || modelID == "" {
-		log.Printf("[BOT_MANAGER] WARNING: No delegation tier config found — bot session may use server defaults or fail. Configure delegation tiers in Bot Configuration.")
+		log.Printf("[BOT_MANAGER] WARNING: No provider/model resolved from tier config or env vars — bot session will likely fail.")
 	}
 
 	if provider != "" {
@@ -1067,7 +1149,7 @@ func (m *BotConversationManager) buildQueryRequest(query string) map[string]inte
 
 	// Load server-side user secrets and inject as decrypted_secrets
 	if m.loadUserSecrets != nil {
-		secrets, err := m.loadUserSecrets(context.Background(), "default")
+		secrets, err := m.loadUserSecrets(context.Background(), userID)
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Failed to load user secrets: %v", err)
 		} else if len(secrets) > 0 {

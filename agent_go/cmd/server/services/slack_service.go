@@ -3,9 +3,12 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -61,6 +64,10 @@ type SlackService struct {
 	messageHandler     BotMessageHandler
 	interactionHandler BotInteractionHandler
 	botUserID          string // Bot's own Slack user ID (for stripping @mentions)
+
+	// Message deduplication — prevents processing the same Slack event twice
+	seenMessages   map[string]time.Time
+	seenMessagesMu sync.Mutex
 }
 
 // Name returns the name of this connector
@@ -100,8 +107,9 @@ func InitSlackService(db *sql.DB) (*SlackService, error) {
 	driverName := fmt.Sprintf("%T", db.Driver())
 	isPostgres := strings.Contains(driverName, "postgres") || strings.Contains(driverName, "pq") || strings.Contains(driverName, "pgx")
 	service := &SlackService{
-		db:         db,
-		isPostgres: isPostgres,
+		db:           db,
+		isPostgres:   isPostgres,
+		seenMessages: make(map[string]time.Time),
 	}
 
 	// Load config first
@@ -477,6 +485,49 @@ func (s *SlackService) GetUniqueIDFromThread(
 
 // TestConnectionWithConfig tests Slack connection with provided config (without saving)
 // Returns the test unique ID so the frontend can poll for replies
+// testAppToken validates a Slack app-level token by calling apps.connections.open.
+// This is the same endpoint Socket Mode uses to establish a WebSocket connection.
+func testAppToken(ctx context.Context, appToken string) error {
+	if !strings.HasPrefix(appToken, "xapp-") {
+		return fmt.Errorf("App Token invalid: must start with 'xapp-'. Go to Slack App settings → Basic Information → App-Level Tokens to get the correct token")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://slack.com/api/apps.connections.open", nil)
+	if err != nil {
+		return fmt.Errorf("App Token test failed: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+appToken)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("App Token test failed (network error): %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("App Token test failed: unexpected response")
+	}
+
+	if !result.OK {
+		switch result.Error {
+		case "invalid_auth":
+			return fmt.Errorf("App Token invalid: the token is incorrect or expired. Go to Slack App settings → Basic Information → App-Level Tokens to regenerate it")
+		case "not_allowed_token_type":
+			return fmt.Errorf("App Token wrong type: you may have pasted the Bot Token here. The App-Level Token starts with 'xapp-' and is found under Basic Information → App-Level Tokens")
+		default:
+			return fmt.Errorf("App Token error: %s", result.Error)
+		}
+	}
+
+	return nil
+}
+
 func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *SlackConfig) (string, error) {
 	// Validate config
 	if config == nil {
@@ -492,34 +543,54 @@ func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *Sla
 		return "", fmt.Errorf("slack channel ID is missing in the provided config")
 	}
 
-	// Create temporary client with provided config
+	// Step 1: Validate bot token via auth.test
 	client := slack.New(config.BotToken)
-
-	// Test by getting channel info
-	_, err := client.GetConversationInfo(&slack.GetConversationInfoInput{
-		ChannelID:         config.ChannelID,
-		IncludeLocale:     false,
-		IncludeNumMembers: false,
-	})
-
+	authResp, err := client.AuthTestContext(ctx)
 	if err != nil {
-		// Provide more helpful error messages based on Slack API errors
 		var slackErr slack.SlackErrorResponse
 		if errors.As(err, &slackErr) {
 			switch slackErr.Err {
 			case "invalid_auth":
-				return "", fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
-			case "channel_not_found":
-				return "", fmt.Errorf("channel not found: please check that the channel ID is correct and the bot is a member of the channel")
+				return "", fmt.Errorf("Bot Token invalid: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
 			case "not_authed":
-				return "", fmt.Errorf("authentication failed: the bot token is invalid or expired. Please regenerate it in Slack App settings")
-			case "missing_scope":
-				return "", fmt.Errorf("missing required scope: the bot needs 'channels:read' scope. Please add it in OAuth & Permissions and reinstall the app")
+				return "", fmt.Errorf("Bot Token expired or revoked: please regenerate it in Slack App settings → OAuth & Permissions")
+			case "token_revoked":
+				return "", fmt.Errorf("Bot Token has been revoked: please reinstall the Slack app and get a new token")
 			default:
-				return "", fmt.Errorf("Slack API error: %s", slackErr.Err)
+				return "", fmt.Errorf("Bot Token error: %s", slackErr.Err)
 			}
 		}
-		return "", fmt.Errorf("failed to connect to Slack: %w", err)
+		return "", fmt.Errorf("Bot Token validation failed: %w", err)
+	}
+	log.Printf("[SLACK] Bot token valid — team=%s, bot=%s", authResp.Team, authResp.User)
+
+	// Step 2: Validate channel access
+	_, err = client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
+		ChannelID:         config.ChannelID,
+		IncludeLocale:     false,
+		IncludeNumMembers: false,
+	})
+	if err != nil {
+		var slackErr slack.SlackErrorResponse
+		if errors.As(err, &slackErr) {
+			switch slackErr.Err {
+			case "channel_not_found":
+				return "", fmt.Errorf("Channel not found: please check that the channel ID '%s' is correct and the bot is a member of the channel", config.ChannelID)
+			case "missing_scope":
+				return "", fmt.Errorf("Missing scope: the bot needs 'channels:read' scope. Please add it in OAuth & Permissions and reinstall the app")
+			default:
+				return "", fmt.Errorf("Channel access error: %s", slackErr.Err)
+			}
+		}
+		return "", fmt.Errorf("Channel validation failed: %w", err)
+	}
+
+	// Step 3: Validate app token (Socket Mode) if provided
+	if config.AppToken != "" {
+		if err := testAppToken(ctx, config.AppToken); err != nil {
+			return "", err
+		}
+		log.Printf("[SLACK] App token valid — Socket Mode connection OK")
 	}
 
 	// Send a test message with webhook testing instructions
@@ -714,7 +785,7 @@ func (s *SlackService) StartSocketMode(ctx context.Context) error {
 	// Create Socket Mode client
 	socketClient := socketmode.New(
 		api,
-		socketmode.OptionDebug(false), // Disable debug logging to reduce ping message noise
+		socketmode.OptionDebug(true), // Enable debug to diagnose connection issues
 		socketmode.OptionLog(log.New(os.Stdout, "[SLACK_SOCKET] ", log.Lshortfile|log.LstdFlags)),
 	)
 
@@ -780,10 +851,12 @@ func (s *SlackService) runSocketModeWithReconnect() {
 		}
 
 		// Run Socket Mode (this blocks until connection fails or is stopped)
+		log.Printf("[SLACK_SOCKET] 🚀 Starting Socket Mode Run()...")
 		err := socketClient.Run()
 
 		if err == nil {
 			// Normal exit (shouldn't happen unless stopped)
+			log.Printf("[SLACK_SOCKET] ⚠️  Socket Mode Run() returned nil (clean exit)")
 			return
 		}
 
@@ -875,15 +948,19 @@ func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
+	// Dedup: skip if we've already seen this message timestamp
+	if s.isDuplicateMessage(ev.TimeStamp) {
+		return
+	}
+
 	// Skip messages that contain an @mention of the bot — those are handled by handleAppMentionEvent.
 	// This prevents duplicate processing when a user @mentions the bot in a thread.
 	if s.botUserID != "" && strings.Contains(ev.Text, fmt.Sprintf("<@%s>", s.botUserID)) {
 		return
 	}
 
-	// Only route thread replies to the bot manager if the bot is awaiting user input
-	// (e.g., plan approval, human feedback). For all other cases, require an @mention
-	// so that other users chatting in the thread don't accidentally trigger the bot.
+	// Route thread replies to the bot manager (it will silently ignore if no active session).
+	// Don't add :eyes: reaction here — the bot manager decides whether to process the message.
 	if s.messageHandler != nil {
 		s.messageHandler(BotIncomingMessage{
 			Platform:      "slack",
@@ -1203,10 +1280,40 @@ func (s *SlackService) GetThreadHistory(ctx context.Context, threadID ThreadID) 
 	return history, nil
 }
 
+// isDuplicateMessage checks if a Slack message timestamp has already been processed.
+// Returns true if duplicate. Cleans up entries older than 5 minutes.
+func (s *SlackService) isDuplicateMessage(ts string) bool {
+	if ts == "" {
+		return false
+	}
+	s.seenMessagesMu.Lock()
+	defer s.seenMessagesMu.Unlock()
+
+	if _, seen := s.seenMessages[ts]; seen {
+		log.Printf("[SLACK_DEDUP] Skipping duplicate message ts=%s", ts)
+		return true
+	}
+	s.seenMessages[ts] = time.Now()
+
+	// Cleanup entries older than 5 minutes
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for k, v := range s.seenMessages {
+		if v.Before(cutoff) {
+			delete(s.seenMessages, k)
+		}
+	}
+	return false
+}
+
 // handleAppMentionEvent handles @mention events
 func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 	if s.messageHandler == nil {
 		log.Printf("[SLACK_BOT] AppMention received but no message handler set, ignoring")
+		return
+	}
+
+	// Dedup: skip if we've already seen this message timestamp
+	if s.isDuplicateMessage(ev.TimeStamp) {
 		return
 	}
 
@@ -1222,6 +1329,13 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 	}
 
 	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
+
+	// Immediate ack: add reaction emoji so user sees the bot received the message
+	if s.client != nil {
+		if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: ev.Channel, Timestamp: ev.TimeStamp}); err != nil {
+			log.Printf("[SLACK_BOT] Failed to add ack reaction: %v", err)
+		}
+	}
 
 	s.messageHandler(BotIncomingMessage{
 		Platform:      "slack",

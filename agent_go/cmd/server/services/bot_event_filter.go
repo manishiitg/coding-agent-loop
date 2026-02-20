@@ -622,21 +622,21 @@ func (f *BotEventFilter) buildHeartbeatMessage(activity string, toolCount int, p
 
 	// Progress indicator
 	if pendingDelegations > 0 {
-		parts = append(parts, fmt.Sprintf(":arrows_counterclockwise: _%d sub-agent(s) working_", pendingDelegations))
+		parts = append(parts, fmt.Sprintf("_%d sub-task(s) running_", pendingDelegations))
 	}
 
 	// Current activity
 	if activity != "" {
-		parts = append(parts, fmt.Sprintf(":gear: _%s_", activity))
+		parts = append(parts, fmt.Sprintf("_%s_", activity))
 	}
 
 	// Steps completed gives a sense of progress
 	if toolCount > 0 {
-		parts = append(parts, fmt.Sprintf("_%d steps completed so far_", toolCount))
+		parts = append(parts, fmt.Sprintf("_%d steps completed_", toolCount))
 	}
 
 	if len(parts) == 0 {
-		return ":hourglass_flowing_sand: _Still working on it…_"
+		return "_Still working on it…_"
 	}
 
 	return strings.Join(parts, "  •  ")

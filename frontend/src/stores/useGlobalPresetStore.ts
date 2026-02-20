@@ -186,7 +186,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               useToolSearchMode: preset.use_tool_search_mode,
               preDiscoveredTools,
               enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
-              enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : true,
+              enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
               enableBrowserAccess: preset.enable_browser_access ?? false
             }
           })
@@ -233,7 +233,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 llmConfig,
                 useCodeExecutionMode: preset.use_code_execution_mode,
                 enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
-                enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : true
+                enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false
               }
             })
           

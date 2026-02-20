@@ -3548,8 +3548,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
 					return true
 				}
-				// Default to enabled (true), can be disabled via ENABLE_CONTEXT_EDITING=false
-				return os.Getenv("ENABLE_CONTEXT_EDITING") != "false"
+				// Default to disabled (false), can be enabled via ENABLE_CONTEXT_EDITING=true
+				return os.Getenv("ENABLE_CONTEXT_EDITING") == "true"
 			}(),
 			ContextEditingThreshold: func() int {
 				// Request takes highest priority
@@ -6522,10 +6522,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			if parentReq.EnableContextEditing != nil {
 				return *parentReq.EnableContextEditing
 			}
-			if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "false" {
-				return false
+			if envVal := os.Getenv("ENABLE_CONTEXT_EDITING"); envVal == "true" {
+				return true
 			}
-			return true
+			return false
 		}(),
 		ContextEditingThreshold: func() int {
 			if parentReq.ContextEditingThreshold > 0 {

@@ -747,7 +747,7 @@ export interface PresetLLMConfig {
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
-  enable_context_editing?: boolean       // nil/true = enabled (default), false = disabled
+  enable_context_editing?: boolean       // nil/false = disabled (default), true = enabled
 
   // Tiered LLM allocation mode
   llm_allocation_mode?: 'manual' | 'tiered'

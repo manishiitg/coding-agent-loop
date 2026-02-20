@@ -101,7 +101,7 @@ export default function BulkStepConfigModal({
   // Feature toggles from preset (default to true if not set)
   const enableKnowledgebase = presetLLMConfig?.use_knowledgebase !== false;
   const enableContextSummarization = presetLLMConfig?.enable_context_summarization !== false;
-  const enableContextEditing = presetLLMConfig?.enable_context_editing !== false;
+  const enableContextEditing = presetLLMConfig?.enable_context_editing === true;
 
   // Function to update feature toggles in the preset
   const handleToggleFeature = useCallback(async (

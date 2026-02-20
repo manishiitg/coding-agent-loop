@@ -145,7 +145,7 @@ export SUMMARY_KEEP_LAST_MESSAGES="4"  # Keep last 4 messages when summarizing (
 
 # Context editing configuration (compacts large tool outputs)
 # Note: Higher thresholds preserve cached tokens for cost efficiency
-export ENABLE_CONTEXT_EDITING="false"  # Enable context editing (default: true)
+export ENABLE_CONTEXT_EDITING="false"  # Enable context editing (default: false)
 export CONTEXT_EDITING_THRESHOLD="10000"  # Compact outputs larger than 10k tokens (default: 10000)
 export CONTEXT_EDITING_TURN_THRESHOLD="20"  # Compact outputs older than 20 turns (default: 20)
 

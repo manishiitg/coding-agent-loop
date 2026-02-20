@@ -211,7 +211,7 @@ type PresetLLMConfig struct {
 	// Feature toggles
 	UseKnowledgebase          *bool `json:"use_knowledgebase,omitempty"`           // nil/true = enabled (default), false = disabled - controls knowledgebase folder creation and prompt references
 	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"` // nil/true = enabled (default), false = disabled
-	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`       // nil/true = enabled (default), false = disabled
+	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`       // nil/false = disabled (default), true = enabled
 
 	// Tiered LLM allocation mode
 	LLMAllocationMode string              `json:"llm_allocation_mode,omitempty"` // "manual" (default) or "tiered"

@@ -1,0 +1,857 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-flash",
+  "test_name": "token_usage",
+  "recorded_at": "2025-11-29T13:22:46.689203+05:30",
+  "request_hash": "a5bc44e22e076b16391a028fb973fcd81d465195aaea3f1b562bc6e68bc47cc3",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "The following is a comprehensive guide to software engineering best practices and methodologies:\n\n1. **Version Control Systems**: Always use version control systems like Git for all projects. Commit frequently with meaningful, descriptive commit messages that explain what changed and why. Use branches for features, bug fixes, and experiments. Never commit directly to main/master branch. Use pull requests or merge requests for code review before merging. Tag releases appropriately. Keep commit history clean and organized. Use .gitignore to exclude unnecessary files. Understand branching strategies like Git Flow or GitHub Flow.\n\n2. **Code Review Process**: All code changes should be reviewed by at least one other developer before merging. Code reviews help catch bugs early, improve code quality, share knowledge across the team, and ensure consistency. Reviewers should check for correctness, performance, security, maintainability, and adherence to coding standards. Provide constructive feedback. Respond to review comments promptly. Use automated tools to catch common issues before human review.\n\n3. **Testing Strategies**: Write comprehensive tests for your code. Aim for high test coverage, especially for critical business logic. Use unit tests for individual functions and methods. Use integration tests for component interactions. Use end-to-end tests for complete workflows. Write tests before or alongside code (TDD/BDD). Keep tests fast, independent, and maintainable. Use mocking and stubbing appropriately. Test edge cases and error conditions. Automate test execution in CI/CD pipelines.\n\n4. **Documentation Standards**: Document your code, APIs, architecture decisions, and processes. Good documentation helps new team members onboard quickly and serves as a reference for future work. Write clear comments explaining why, not what. Keep README files up to date. Document API endpoints with examples. Maintain architecture decision records (ADRs). Keep documentation close to code when possible. Use tools like JSDoc, GoDoc, or Sphinx for API documentation.\n\n5. **Error Handling Patterns**: Always handle errors properly and explicitly. Don't ignore errors or use empty catch blocks. Provide meaningful error messages that help with debugging. Log errors with appropriate context. Use structured error types. Return errors early (fail fast). Handle errors at the appropriate level. Don't expose internal errors to users. Use error wrapping to preserve error context. Implement retry logic for transient failures.\n\n6. **Security Best Practices**: Follow security best practices throughout development. Validate and sanitize all user inputs. Use parameterized queries to prevent SQL injection. Keep dependencies updated to patch security vulnerabilities. Use HTTPS for all network communication. Implement proper authentication and authorization. Follow principle of least privilege. Encrypt sensitive data at rest and in transit. Regular security audits and penetration testing. Stay informed about security advisories.\n\n7. **Performance Optimization**: Write efficient code, but don't optimize prematurely. Profile your code to identify actual bottlenecks before optimizing. Use caching appropriately to improve performance. Optimize database queries. Use connection pooling. Implement pagination for large datasets. Use CDNs for static assets. Minimize network round trips. Consider async processing for long-running tasks. Monitor performance metrics in production.\n\n8. **Code Quality Standards**: Follow coding standards and style guides consistently. Use linters and formatters to maintain consistency automatically. Refactor code regularly to keep it maintainable. Remove dead code. Keep functions small and focused (single responsibility). Use meaningful variable and function names. Avoid deep nesting. Keep cyclomatic complexity low. Use design patterns appropriately. Write self-documenting code.\n\n9. **Continuous Integration and Deployment**: Automate your build, test, and deployment processes completely. Use CI/CD pipelines to catch issues early and deploy frequently. Run tests automatically on every commit. Use feature flags for gradual rollouts. Implement blue-green or canary deployments. Monitor deployments closely. Have rollback procedures ready. Automate infrastructure provisioning. Use infrastructure as code (IaC).\n\n10. **Monitoring and Logging**: Implement comprehensive logging and monitoring systems. Log important events, errors, and state changes with appropriate log levels. Use structured logging with consistent formats. Monitor application performance metrics, error rates, and business metrics. Set up alerts for critical issues. Use distributed tracing for microservices. Keep logs searchable and analyzable. Implement log rotation and retention policies. Use monitoring tools like Prometheus, Grafana, or Datadog.\n\nThis comprehensive guide should be followed by all software engineers to ensure high-quality, maintainable, secure, and performant software systems. These practices form the foundation of professional software development and are essential for building reliable applications that can scale and evolve over time.\n\nBased on this guide, what are the key principles for code quality?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-flash",
+    "options": {}
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Based on the comprehensive guide, the key principles for code quality can be summarized as follows:\n\n1.  **Consistency and Adherence to Standards:**\n    *   Follow coding standards and style guides consistently.\n    *   Use linters and"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 50,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2588
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": " formatters for automatic consistency enforcement.\n    *   This is fundamental for team collaboration and code predictability. (From \"Code Quality Standards\" and \"Code Review Process\").\n\n2.  **Maintainability and Readability:**\n    *   "
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 98,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2636
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Refactor code regularly.\n    *   Remove dead code.\n    *   Keep functions small and focused (Single Responsibility Principle).\n    *   Use meaningful variable and function names.\n    *   Avoid deep nesting and keep cyclomatic complexity low"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 149,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2687
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": ".\n    *   Write self-documenting code.\n    *   Good documentation (comments explaining *why*, not *what*) also contributes to readability.\n    *   (Heavily from \"Code Quality Standards\" and \"Documentation"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 199,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2737
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": " Standards\").\n\n3.  **Correctness and Reliability:**\n    *   Write comprehensive tests (unit, integration, end-to-end) for high coverage.\n    *   Handle errors properly and explicitly, with meaningful messages and context"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 248,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2786
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": ".\n    *   This ensures the code functions as expected and gracefully handles unforeseen situations.\n    *   (From \"Testing Strategies\" and \"Error Handling Patterns\").\n\n4.  **Modularity and Single Responsibility:**\n    *"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 296,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2834
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "   Keep functions small and focused, each responsible for a single task.\n    *   Use design patterns appropriately to structure code effectively.\n    *   (From \"Code Quality Standards\").\n\n5.  **Robustness and Error Resilience"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 343,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2881
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": ":**\n    *   Don't ignore errors; handle them explicitly and provide context.\n    *   Implement retry logic for transient failures.\n    *   (From \"Error Handling Patterns\").\n\n6.  **Security:**\n    *"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 393,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2931
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "   Validate and sanitize all user inputs.\n    *   Use parameterized queries.\n    *   Keep dependencies updated.\n    *   Implement proper authentication and authorization.\n    *   Encrypt sensitive data.\n    *   (From \"Security Best"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 443,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 2981
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": " Practices\").\n\n7.  **Performance and Efficiency:**\n    *   Write efficient code, but optimize only after profiling.\n    *   Use caching, optimize queries, and minimize network round trips where appropriate.\n    *   (From \""
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 494,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 3032
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Performance Optimization\").\n\n8.  **Clarity and Understanding (via Documentation):**\n    *   While distinct from code itself, clear comments, READMEs, and API documentation directly contribute to the quality of the codebase by making it easier to understand,"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 545,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 3083
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": " onboard new team members, and maintain over time.\n    *   (From \"Documentation Standards\").\n\nIn essence, code quality revolves around creating code that is **correct, readable, maintainable, testable, robust, secure, perform"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 594,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 3132
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "ant, and consistently adheres to agreed-upon standards.**"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "RaYqafn0CPvSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:44 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=8136"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 605,
+        "promptTokenCount": 943,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 943
+          }
+        ],
+        "thoughtsTokenCount": 1595,
+        "totalTokenCount": 3143
+      }
+    }
+  ],
+  "chunk_count": 13
+}

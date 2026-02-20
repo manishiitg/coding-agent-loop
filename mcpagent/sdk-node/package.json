@@ -1,0 +1,74 @@
+{
+  "name": "@mcpagent/node",
+  "version": "0.1.0",
+  "description": "Node.js SDK for MCPAgent - AI agents with MCP (Model Context Protocol) server support",
+  "main": "dist/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/esm/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "npm run proto:generate && npm run build:cjs && npm run build:esm",
+    "build:cjs": "tsc",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "dev": "tsc --watch",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "proto:generate": "mkdir -p src/generated && protoc --plugin=./node_modules/.bin/protoc-gen-ts_proto --ts_proto_out=./src/generated --ts_proto_opt=outputServices=grpc-js,esModuleInterop=true,env=node,useOptionals=messages,exportCommonSymbols=false --proto_path=../proto ../proto/agent.proto"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent",
+    "ai",
+    "llm",
+    "openai",
+    "anthropic",
+    "claude",
+    "gpt",
+    "bedrock",
+    "tools",
+    "function-calling"
+  ],
+  "author": "MCPAgent Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcpagent/mcpagent.git",
+    "directory": "sdk-node"
+  },
+  "bugs": {
+    "url": "https://github.com/mcpagent/mcpagent/issues"
+  },
+  "homepage": "https://github.com/mcpagent/mcpagent#readme",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-proto": "^1.165.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.0",
+    "dotenv": "^16.3.1",
+    "long": "^5.2.3",
+    "protobufjs": "^7.2.6"
+  },
+  "peerDependencies": {},
+  "publishConfig": {
+    "access": "public"
+  }
+}

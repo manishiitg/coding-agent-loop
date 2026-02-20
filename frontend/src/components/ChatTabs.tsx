@@ -2,7 +2,7 @@ import React, { useEffect, useMemo } from 'react'
 import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
-import { EventModeToggle } from './events'
+import { EventModeToggle, ToolCallToggle } from './events'
 import { shouldShowEventByMode } from './events/eventModeUtils'
 import { logger } from '../utils/logger'
 interface ChatTabsProps {
@@ -228,6 +228,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
               {isActive && !tab.metadata?.isRestored && (
                 <div className="ml-1 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
                   <EventModeToggle />
+                  <ToolCallToggle />
                 </div>
               )}
               

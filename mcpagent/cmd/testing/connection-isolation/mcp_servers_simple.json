@@ -1,0 +1,44 @@
+{
+  "mcpServers": {
+    "context7": {
+      "url": "https://mcp.context7.com/mcp",
+      "protocol": "http"
+    },
+    "sequential-thinking": {
+      "command": "npx",
+      "args": ["--yes", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "tavily-search": {
+      "command": "npx",
+      "args": ["-y", "tavily-mcp"],
+      "env": {
+        "TAVILY_API_KEY": "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"
+      },
+      "description": "Advanced web search for validation and research"
+    },
+    "awslabs.aws-pricing-mcp-server": {
+      "command": "uvx",
+      "args": ["awslabs.aws-pricing-mcp-server"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR",
+        "AWS_PROFILE": "default",
+        "AWS_REGION": "us-east-1"
+      },
+      "disabled": false,
+      "autoApprove": []
+    },
+    "aws-knowledge-mcp-server": {
+      "command": "uvx",
+      "args": [
+        "mcp-proxy",
+        "--transport",
+        "streamablehttp",
+        "https://knowledge-mcp.global.api.aws"
+      ]
+    },
+    "ddg-search": {
+      "command": "uvx",
+      "args": ["duckduckgo-mcp-server"]
+    }
+  }
+}

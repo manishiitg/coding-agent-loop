@@ -1,0 +1,89 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-flash",
+  "test_name": "token_usage",
+  "recorded_at": "2025-11-29T13:22:24.780329+05:30",
+  "request_hash": "4c17ec4f5e0fae311eb0d930554bacab3004ec5c44fb8ac3c98ba36e2d402dc3",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hi"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-flash",
+    "options": {}
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Hi there! How can I help you today?"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "OKYqaf78DoWBjuMPqanj4Ag",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:52:24 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=1319"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 10,
+        "promptTokenCount": 2,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 2
+          }
+        ],
+        "thoughtsTokenCount": 41,
+        "totalTokenCount": 53
+      }
+    }
+  ],
+  "chunk_count": 1
+}

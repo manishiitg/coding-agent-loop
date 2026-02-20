@@ -1,0 +1,97 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-pro",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:53.155679+05:30",
+  "request_hash": "1635f181c9f3fe2bd02d4858e3d109e5ef5c1aae4c2e56069fbac0d5f7ba6db1",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Use the read_file tool to read the contents of the file 'go.mod'. Make sure to provide the 'path' parameter with the value 'go.mod'."
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-pro",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "path": "go.mod"
+                  },
+                  "name": "read_file"
+                },
+                "thoughtSignature": "CiIBcsjafOFqHlFo0M6dVYCK+txetDGSIdBc4wb+WUlcm6KUCmcBcsjafI87Nt6FJgyCpmJ5pz1bnSPWVHy5ce3/Fju2NBLf/eeUbH+3LhlCnCYfi0Cnf9PPwBDCzoWCRI+bAu1yJMvEO//ZssnUsl5VicTNwB8iSpb5lpws7IMEg5g5M3AKXPLn6tW5CngBcsjafBb2NWeXC7jOhja/HqabrR26xd9CBxIyV/LzOwEG8+PVgdlzWiX3aO9CRuH+Kr5pc0jFlWwPAU384rROnwB0p4wAgp/wqIy1rDnwCe0JwSMiH344X20BzGEiI5gPGLLXWEF5jdW4PBDYsjHr3glJcwedg0IKiwEBcsjafFgL58tuNjZnfJ//wzdIZznibCBMCoUCt8aHkZaTWVngilUr9fEEXNjlnUKnMhv6dG9pwMqx8LzXraBGanbd0i8AAb7IhnlAPzG8ayvfXsj1pRG7J4r6i8c3joEqqVJ/v4jHc0sg7SdJ4F5ImUu9OpB0tSfop2vC9cXABvRduaVG4xI9lc3xCokBAXLI2nwwKB35PYP7FKKrCqdKxu/Ju3yx3c/Rt8FauXzB2DAjoePq+pOerqGHC/9hD45pAt4qM1ZHhArUNDfJQJzhEzKUubN3L2F+QoQKypYwiptn+W7kAoAQzjlzMM+yIm7jYlpn/SvZamXpz4j1DeiFIrWAyAGa09aVHoHn7CnJU+Cfnl1GmHoKbgFyyNp8I81TIlJUJkGWkHL/xXjrn+6GW48LUMMp0u5ilAbC8BW/DWrKuTc2rmIYqCu24jp5NqSC8rV2IOYWjw59veJUBXXpMBVlHpUovdb9mRe3ZWlovVStgpwxfEE59Orb96QmJ3MKXZUo1AOCCpABAXLI2nwi4fptsk1pdJ3dsycWWKModeR7h/CZQrSZfM8iPH+xXpm1CSIcW+E7CbxQJPE2BJ841pChBQn9jXuAZuBKwiiTSDCrxwiMeY7BMEndaiXkP1/2LpVkcPxkeTDBHNOcizZD7b4zEYROv033ZUEGNWXTmPT85J3eFMpWv9vC9J5fAq55vx0vwmm70lafCkABcsjafApT7l4RBoJbJxJKB1BMSzRx+T8BZqjw5dZHPqn2eSTue2nMXWTB721iCBq435/YG0fnaOXQQT8On/Ke"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "17kpaYbzK_ulg8UP6ufMsQg",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:53 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=3869"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 17,
+        "promptTokenCount": 76,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 76
+          }
+        ],
+        "thoughtsTokenCount": 153,
+        "totalTokenCount": 246
+      }
+    }
+  ],
+  "chunk_count": 1
+}

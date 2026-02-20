@@ -1,0 +1,302 @@
+{
+  "provider": "bedrock",
+  "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "test_name": "plain_text",
+  "recorded_at": "2025-11-28T21:37:19.994478+05:30",
+  "request_hash": "659f4fbfa3439332ecd4cea70c9b3398028984c364dd8be5fa058cc1e645a0fb",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hello! Can you introduce yourself?"
+          }
+        ]
+      }
+    ],
+    "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "options": {}
+  },
+  "response_data": [
+    {
+      "Value": {
+        "Role": "assistant"
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": "Hello! I'm Claude"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": ", an AI assistant made"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " by Anthropic. I'm here"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " to help you"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " with a"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " wide variety of tasks like"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " answering questions, helping with analysis"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": ", writing"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": ", math"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": ", coding, creative"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " projects"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": ", and much more."
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": "\n\nI aim"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " to be helpful, harmless, an"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": "d honest in our"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " conversations. I can"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " engage"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " in nu"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": "anced discussions, break"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " down complex topics,"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " or"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " simply have"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " a friendly chat"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": ". Feel"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " free to ask me about"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " whatever"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " you're working"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " on or curious about!"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": "\n\nIs"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " there something specific I"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": " can help you with today?"
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0
+      }
+    },
+    {
+      "Value": {
+        "AdditionalModelResponseFields": null,
+        "StopReason": "end_turn"
+      }
+    },
+    {
+      "Value": {
+        "Metrics": {
+          "LatencyMs": 3429
+        },
+        "PerformanceConfig": null,
+        "Trace": null,
+        "Usage": {
+          "InputTokens": 14,
+          "OutputTokens": 115,
+          "TotalTokens": 129
+        }
+      }
+    }
+  ],
+  "chunk_count": 35
+}

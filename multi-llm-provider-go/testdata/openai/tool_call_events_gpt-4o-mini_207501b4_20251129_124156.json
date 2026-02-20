@@ -1,0 +1,87 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-4o-mini",
+  "test_name": "tool_call_events",
+  "recorded_at": "2025-11-29T12:41:56.591684+05:30",
+  "request_hash": "207501b42e84f97cac230426bfd9e3f89bd509567d1f8fe9646b887b404ae5bc",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Read the file at /tmp/test.txt"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-4o-mini",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "custom": {
+                "input": "",
+                "name": ""
+              },
+              "function": {
+                "arguments": "{\"path\":\"/tmp/test.txt\"}",
+                "name": "read_file"
+              },
+              "id": "call_uekE3XNGenB6g6DkjtShdjxz",
+              "type": "function"
+            }
+          ]
+        }
+      }
+    ],
+    "created": 1764400315,
+    "id": "chatcmpl-Ch9PXWB13G8QeOmGOOa9xJi53yz6T",
+    "model": "gpt-4o-mini-2024-07-18",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "fp_eca0ce8298",
+    "usage": {
+      "completion_tokens": 17,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 57,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 74
+    }
+  },
+  "chunk_count": 1
+}

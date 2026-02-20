@@ -1,0 +1,153 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-3-pro-preview",
+  "test_name": "gemini3_thinking",
+  "recorded_at": "2025-11-29T13:23:28.031268+05:30",
+  "request_hash": "c20fc7c086181703efe6eb5edcf1434da4a6d80ab2871fd235edeea83aab879c",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hi"
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-3-pro-preview",
+    "options": {}
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "text": "Hello! How can I help you today?"
+              }
+            ],
+            "role": "model"
+          }
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "d6YqabipMtO2juMPtfvu4AE",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:53:28 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=4114"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 9,
+        "promptTokenCount": 2,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 2
+          }
+        ],
+        "thoughtsTokenCount": 271,
+        "totalTokenCount": 282
+      }
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "thoughtSignature": "EsIJCr8JAXLI2nxdtJy82uoUopqlyoSxpUypmqQZ7gj2C5+kIxNDDDMWLZ8SvbDy9L5LMOS4eYMiBMLI8PPLCQ3xdEsnj4Wn9CC1rO+gElsRv9HmHmeOR6/yfJekpKQswJ6PY+HPoIzhB1OW20uLkY+yvMlILtD6gZQWs8XlVKN2NWLkl8o/KG/dzjnU76W2xLR6YsbeHvjDL4QXhIos2WOL+ODCsQL/BC11rIeQA/UPJIjsi6/m4oVEE/L605rgLfw2JdZzB1a8sKXgFfrz7zPNvXqA+F/bMwVW1AdCB1WrHwJ+aQKxybnBjG08IhmenSTndZ2NfkgI2ahsYvyMvD0vJL+0YODzKKRU4RL3QvG3yZOggEom2mJZoyz88KFHNY9BJDdQhByje+dRj4sF96EQTMS3qZzPldWVvsLAxZi1Zp/NHHTIEWokrgZ1W1U0QwrLVeJC7Lg2yxbeyGCUQ9tdRsBWOyldbjVFJ0WkcS/j8Mdg8SH8w9EEMvoZeG/Qfn1oevsJLWP+GD+JRJ+XQixEFq8HkSWASR3YHmX3PVj+xBIZNahK4B2Rryv4t4vMTI+iXziEzAPi+2OAfWIHl1xh5QHM9ia5ZBwYMYCIjJG+gkKnAAsaS3cEIyjM7VwWGRXqQeL3jLQT1IezhkUiXjjBQkcDSTkEhkcr5jjj+9uGY24bZkpVJvhFQOZL8pi/O0YzXwIT4SVM4b6hLxs7N0V4CHIs9r1tDcYVqnzvc7Hb+EU12id2fHG4vwxIw/nQifnd+/nvGA5bun82GDdNzXV3+tYiX0I3lVytDSBj0a/f71GN7aboTPQHFLgU1h0iBG+MoiIR51EMDg8V437yxR2LH5dgPaW6YnqMct9PtGR0FGN2Dw/iRp2hEPCd7QMLiOfe4PdbZPsB+xxoUPrBfeW7+KonSQgoyk1VDWwdErme361ZymyN8ctKgz/+ORuku220LfHCv258mf37i3uLqjdEn6l8wJzVL7Q7wYdP0iurzRYjBV6oOo0669EDrvSH4Um7mdtgFMOQX4q4m5oknbj4JHkxwpJOwn/jFuXR6neBrD3QeX8KDMHaR1h15dpVww2jbZWPnxuGvotnyUK4vcCp+DSa/rQ0PgqEY4S9TaB6qHMwRUORg/Y0GxKuRpADz26p6c93vniZ16EH1+YrWunbjuLjK3ikzobVStXSpG4x2dAt8mp8H9qVsi0G0vhSGFOFDk2QbxeyKRC0xfDk9Li8p+BQqq+BJ8gaSm6vfmttgdnCsDtUsaplQH4ianzBB9hvVSAOKw+8KNufqJH6eSOw32T65oXjSjnLzAX3LZvYBAPB8SZl/x42zHF/tCgDeB5CN6JXDi12oocH7T4CcTJ2oOLZrorGjJ2AqK7wijtbOo3dXR3lKZ7LUYW6Xj+6trp6cD6Y/Trjt6L1TN9UWnkk7jv03ygF2EJYtJIDO+cbyIAamdqXJtESDWTeyjA1w60PtjX8/bkFg08+IjmMQXfn9BXdfYQ+OnQBr2H8KRi1sEADAsu/72e9UQVLaa5VWMSGxl4wczSwmbSn0WriUqmgBIjM7y0vddEsE3sGHhVgC3ifXFe/CGeYLC9K09gGX5i5CFXfJcjuhk+LhRTKHzQ+dTUR"
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-3-pro-preview",
+      "responseId": "d6YqabipMtO2juMPtfvu4AE",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Sat, 29 Nov 2025 07:53:28 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=4114"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 9,
+        "promptTokenCount": 2,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 2
+          }
+        ],
+        "thoughtsTokenCount": 271,
+        "totalTokenCount": 282
+      }
+    }
+  ],
+  "chunk_count": 2
+}

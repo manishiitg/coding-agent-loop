@@ -1,0 +1,72 @@
+{
+  "provider": "openai",
+  "model_id": "gpt-5.1",
+  "test_name": "plain_text",
+  "recorded_at": "2025-11-28T20:53:05.282706+05:30",
+  "request_hash": "2c9dfb039c4219dcdffe8c58e091331ca145d7b8352642b12985695e27de2e93",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Hello! Can you introduce yourself?"
+          }
+        ]
+      }
+    ],
+    "model_id": "gpt-5.1",
+    "options": {}
+  },
+  "response_data": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "logprobs": {
+          "content": null,
+          "refusal": null
+        },
+        "message": {
+          "annotations": [],
+          "audio": {
+            "data": "",
+            "expires_at": 0,
+            "id": "",
+            "transcript": ""
+          },
+          "content": "I’m ChatGPT, a large language model created by OpenAI. I can help you with:\n\n- Explaining concepts (math, science, programming, etc.)\n- Writing and editing (emails, essays, reports, code comments)\n- Brainstorming ideas (projects, stories, strategies)\n- Analyzing and summarizing text\n- Answering questions using general world knowledge up to late 2024\n\nI don’t browse the live web, and I don’t have personal experiences or feelings. I generate answers based on patterns in the data I was trained on, plus what you tell me in the conversation.\n\nTell me what you’re working on or curious about, and I’ll adapt to that.",
+          "function_call": {
+            "arguments": "",
+            "name": ""
+          },
+          "refusal": "",
+          "role": "assistant",
+          "tool_calls": null
+        }
+      }
+    ],
+    "created": 1764343383,
+    "id": "chatcmpl-CgubHSrEP5YePJARmGWwAX0jzPug6",
+    "model": "gpt-5.1-2025-11-13",
+    "object": "chat.completion",
+    "service_tier": "default",
+    "system_fingerprint": "",
+    "usage": {
+      "completion_tokens": 151,
+      "completion_tokens_details": {
+        "accepted_prediction_tokens": 0,
+        "audio_tokens": 0,
+        "reasoning_tokens": 0,
+        "rejected_prediction_tokens": 0
+      },
+      "prompt_tokens": 13,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cached_tokens": 0
+      },
+      "total_tokens": 164
+    }
+  },
+  "chunk_count": 1
+}

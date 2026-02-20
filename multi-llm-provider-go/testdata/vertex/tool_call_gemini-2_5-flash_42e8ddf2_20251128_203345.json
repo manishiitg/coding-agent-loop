@@ -1,0 +1,105 @@
+{
+  "provider": "vertex",
+  "model_id": "gemini-2.5-flash",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T20:33:45.606639+05:30",
+  "request_hash": "42e8ddf28a1e623f598e4da8742a1ad3aee17ca67e04a226653e4311d10ab65c",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Get the weather in New York and also get the current time in UTC. Do both tasks."
+          }
+        ]
+      }
+    ],
+    "model_id": "gemini-2.5-flash",
+    "options": {
+      "tools_count": 2
+    }
+  },
+  "response_data": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": {
+                  "args": {
+                    "location": "New York"
+                  },
+                  "name": "get_weather"
+                },
+                "thoughtSignature": "CikBcsjafLWYgQ+kzsfnOneTzMHPmnXOWopWTjbITLcC3o9J3oBgjmPRggplAXLI2nzw66MfTlRy0+ZCcPh4HLxsNuGTsNYkvoADcXXKkM2tX3MmM/vR4tKZY4E+njniwT/0hqKh6SkRbsyt0SxQcJoM2VoIGzkqXUj09gtEgITd2/u/WLVQrKS+rAHEVzMU67YKzgEBcsjafIF5yTETqvBEt7BvXlVXWyOONC3dvUwvFfUTuGu8hMk3sRpz9z0gQV39aSpV2r99rrZcdFs87nLaxSIOT3mQ+KvgXhgTcBDId6SvL4DhN4Lp2j3SoEDMKBCxi5q0DODZdtllza0Qw6o7rSktM1kmS1QuWlLamVG61tbHEpDdik0pEYSp+i1od+Cw1vU5OHY1dKCSgUuJPsbz4j8fFLfZ/Ah+RAjsxFlSVhZ7qjD1jFW76n8Y8VQiBHqsyM7efdT8yvDVzCPcUobS9Ao5AXLI2nzAJkByPHeuaX8YaXUb6NrBecIxJMnBL7jn+mdRXV/gdjbJgyDACY5mvMMeW2ApK2J1J6jI"
+              },
+              {
+                "functionCall": {
+                  "args": {
+                    "timezone": "UTC"
+                  },
+                  "name": "get_current_time"
+                }
+              }
+            ],
+            "role": "model"
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-flash",
+      "responseId": "0LkpacKfN_vSqfkPm7GEqAs",
+      "sdkHttpResponse": {
+        "headers": {
+          "Alt-Svc": [
+            "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          ],
+          "Content-Disposition": [
+            "attachment"
+          ],
+          "Content-Type": [
+            "text/event-stream"
+          ],
+          "Date": [
+            "Fri, 28 Nov 2025 15:03:45 GMT"
+          ],
+          "Server": [
+            "scaffolding on HTTPServer2"
+          ],
+          "Server-Timing": [
+            "gfet4t7; dur=1475"
+          ],
+          "Vary": [
+            "Origin",
+            "X-Origin",
+            "Referer"
+          ],
+          "X-Content-Type-Options": [
+            "nosniff"
+          ],
+          "X-Frame-Options": [
+            "SAMEORIGIN"
+          ],
+          "X-Xss-Protection": [
+            "0"
+          ]
+        }
+      },
+      "usageMetadata": {
+        "candidatesTokenCount": 33,
+        "promptTokenCount": 117,
+        "promptTokensDetails": [
+          {
+            "modality": "TEXT",
+            "tokenCount": 117
+          }
+        ],
+        "thoughtsTokenCount": 74,
+        "totalTokenCount": 224
+      }
+    }
+  ],
+  "chunk_count": 1
+}

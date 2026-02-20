@@ -1,0 +1,77 @@
+{
+  "provider": "bedrock",
+  "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+  "test_name": "tool_call",
+  "recorded_at": "2025-11-28T21:49:44.691853+05:30",
+  "request_hash": "207908d8cfe6425bff450be62f135b2042acbc5b74e8f5e5504ffcaa48951d79",
+  "request": {
+    "messages": [
+      {
+        "role": "human",
+        "parts": [
+          {
+            "Text": "Check the server status"
+          }
+        ]
+      }
+    ],
+    "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "options": {
+      "tools_count": 1
+    }
+  },
+  "response_data": [
+    {
+      "Value": {
+        "Role": "assistant"
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Start": {
+          "Value": {
+            "Name": "get_server_status",
+            "ToolUseId": "tooluse_ZTgltE2-QX-GWLZQ7Gtkug"
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0,
+        "Delta": {
+          "Value": {
+            "Input": ""
+          }
+        }
+      }
+    },
+    {
+      "Value": {
+        "ContentBlockIndex": 0
+      }
+    },
+    {
+      "Value": {
+        "AdditionalModelResponseFields": null,
+        "StopReason": "tool_use"
+      }
+    },
+    {
+      "Value": {
+        "Metrics": {
+          "LatencyMs": 1856
+        },
+        "PerformanceConfig": null,
+        "Trace": null,
+        "Usage": {
+          "InputTokens": 548,
+          "OutputTokens": 38,
+          "TotalTokens": 586
+        }
+      }
+    }
+  ],
+  "chunk_count": 6
+}

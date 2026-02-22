@@ -22,7 +22,7 @@ This architecture uses an Azure VM to provide full Linux kernel capabilities (na
 
 ## 1. Provision Infrastructure (Terraform)
 
-Use Terraform to create the Virtual Machine, Network, Public IP, and Security Groups.
+Use Terraform to create the Resource Group, Container Registry, Virtual Machine, Network, Public IP, and Security Groups.
 
 ```bash
 cd deploy/azure/terraform
@@ -31,12 +31,14 @@ cd deploy/azure/terraform
 terraform init
 
 # Apply Configuration (Pass your SSH public key)
+# You can also customize acr_name if the default is taken
 terraform apply -var="ssh_public_key=$(cat ~/.ssh/mcp_azure_key.pub)"
 ```
 
 **Note the Outputs:**
 - `public_ip_address`: The IP of your new VM.
 - `public_fqdn`: The DNS name (e.g., `mcpagent-vm-v2.swedencentral.cloudapp.azure.com`).
+- `acr_name`: The name of your created Azure Container Registry.
 
 ## 2. Deploy Application
 
@@ -44,22 +46,29 @@ Use the unified deployment script to build images, push to ACR, configure the VM
 
 ### Required Environment Variables
 
-Before deploying, you must set `ACR_PASSWORD` so the VM can pull images from ACR:
+Before deploying, you must set `ACR_PASSWORD` so the VM can pull images from ACR.
+The script will try to detect `ACR_NAME` from Terraform, but you can also export it.
 
 ```bash
-# Get ACR password (choose one method):
-# Method 1: From Azure CLI
-export ACR_PASSWORD=$(az acr credential show -n mcpagentacr --query "passwords[0].value" -o tsv)
+# Get ACR name from terraform output (if not already known)
+export ACR_NAME=$(terraform -chdir=terraform output -raw acr_name)
 
-# Method 2: Set manually if you have it saved
-export ACR_PASSWORD="your-acr-password"
+# Get ACR password:
+export ACR_PASSWORD=$(az acr credential show -n $ACR_NAME --query "passwords[0].value" -o tsv)
 ```
 
 ### Run the Deploy Script
 
+**First Time Only:** Build and push the shared base image (used by Agent and Workspace).
+
 ```bash
 cd deploy/azure
+./deploy.sh base --local
+```
 
+**Deploy Application:**
+
+```bash
 # Syntax: ./deploy_vm.sh <VM_IP_OR_HOSTNAME> [service]
 # Deploy everything:
 ./deploy_vm.sh <VM_IP_ADDRESS> all

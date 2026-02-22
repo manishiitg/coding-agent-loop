@@ -1,7 +1,7 @@
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
-  default     = "code-analysis-phase-1"
+  default     = "mcpagent-rg"
 }
 
 variable "location" {
@@ -37,4 +37,10 @@ variable "dns_label" {
   description = "DNS label for the Public IP (must be unique in the region)"
   type        = string
   default     = "mcpagent-vm-v2"
+}
+
+variable "acr_name" {
+  description = "Name of the Azure Container Registry (must be globally unique)"
+  type        = string
+  default     = "mcpagentacr"
 }

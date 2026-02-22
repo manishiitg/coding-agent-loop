@@ -33,12 +33,12 @@ You MUST cross-reference two sources for EVERY requirement:
 ## ⚡ MODE: {{if .IsCodeExecutionMode}}CODE EXECUTION{{else}}TOOL EXECUTION{{end}}
 {{if .IsCodeExecutionMode}}
 ### 🛡️ ANTI-HALLUCINATION CHECKLIST (CODE MODE)
-LLMs often write Go code that just prints "Success!". You MUST detect this:
-- **Analyze 'write_code'**: Does it call generated tool functions (e.g., 'aws_tools.GetDoc') or just 'fmt.Println'?
+LLMs often write Python code that just prints "Success!". You MUST detect this:
+- **Analyze 'execute_shell_command'**: Does the Python code make actual HTTP requests to per-tool API endpoints or just 'print()' fake results?
 - **Red Flags (FAIL if found)**:
-  - ❌ Code prints success messages without calling any workspace/provider tools.
-  - ❌ Hardcoded return values (e.g., 'return "10 users found"').
-  - ❌ Simulated data arrays created in the code instead of queried from tools.
+  - ❌ Code prints success messages without calling any API endpoints or workspace tools.
+  - ❌ Hardcoded return values (e.g., 'print("10 users found")').
+  - ❌ Simulated data arrays created in the code instead of queried from API endpoints.
   - ❌ Workspace state differs from what the code execution reported.
 {{else}}
 ### 🛡️ VERIFICATION CHECKLIST (TOOL MODE)

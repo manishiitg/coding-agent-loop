@@ -484,7 +484,7 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	config := ptom.CreateStandardAgentConfigWithLLM("plan-tool-optimization-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 
 	// Explicitly disable code execution mode and tool search mode for tool optimization agent
-	// This agent only needs file read/write operations, not Go code generation
+	// This agent only needs file read/write operations, not code execution
 	// Phase agents always use simple mode regardless of workflow mode setting
 	config.UseCodeExecutionMode = false
 	config.UseToolSearchMode = false

@@ -65,29 +65,178 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
     </div>
   )
 
-  if (!event.result) {
-    return null
-  }
+  const toolName = event.tool_name || ''
 
   let parsedResult: Record<string, unknown> = {}
-  let resultText = event.result
+  let resultText = event.result || ''
 
-  try {
-    parsedResult = JSON.parse(event.result)
-    // Try to extract text content if it's a structured response
-    if (parsedResult.text) {
-      resultText = parsedResult.text as string
-    } else if (parsedResult.content) {
-      resultText = parsedResult.content as string
-    } else {
-      resultText = JSON.stringify(parsedResult, null, 2)
+  if (event.result) {
+    try {
+      parsedResult = JSON.parse(event.result)
+      // Try to extract text content if it's a structured response
+      if (parsedResult.text) {
+        resultText = parsedResult.text as string
+      } else if (parsedResult.content) {
+        resultText = parsedResult.content as string
+      } else {
+        resultText = JSON.stringify(parsedResult, null, 2)
+      }
+    } catch {
+      // Not JSON, use as-is
+      resultText = event.result
     }
-  } catch {
-    // Not JSON, use as-is
-    resultText = event.result
   }
 
-  const toolName = event.tool_name || ''
+  // Handle get_api_spec tool response
+  if (toolName === 'get_api_spec') {
+    // The result is an OpenAPI spec (YAML/JSON)
+    let serverName = ''
+    let endpointCount = 0
+
+    // Try to extract server name and count endpoints from the spec
+    try {
+      const specText = resultText || event.result || ''
+      // Count endpoint paths (lines like "  /tools/mcp/..." or paths in OpenAPI)
+      const pathMatches = specText.match(/^\s+\/tools\//gm)
+      endpointCount = pathMatches ? pathMatches.length : 0
+      // Try to extract server name from the spec title or info
+      const titleMatch = specText.match(/title:\s*(.+?)(?:\s+API|\s*$)/m)
+      if (titleMatch) {
+        serverName = titleMatch[1].trim()
+      }
+    } catch { /* ignore */ }
+
+    const specLength = (resultText || event.result || '').length
+    const lineCount = (resultText || event.result || '').split('\n').length
+
+    return (
+      <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded p-2">
+        <div className="flex items-center justify-between gap-2 py-0.5">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
+                <span>📋</span> API Spec Retrieved{' '}
+                <span className="text-xs font-normal text-indigo-600 dark:text-indigo-400">
+                  {event.turn && `• Turn: ${event.turn}`}
+                  {(serverName || event.server_name) && ` • Server: ${serverName || event.server_name}`}
+                  {endpointCount > 0 && ` • ${endpointCount} endpoint${endpointCount !== 1 ? 's' : ''}`}
+                  {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
+                </span>
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={3}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {renderHeaderRight()}
+        </div>
+
+        {isOutputExpanded && (
+          <div className="mt-2">
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                  OpenAPI Spec
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {lineCount} line{lineCount !== 1 ? 's' : ''} • {specLength} chars
+                </div>
+              </div>
+              <pre className="text-xs text-gray-800 dark:text-gray-200 font-mono whitespace-pre-wrap overflow-x-auto bg-gray-50 dark:bg-gray-900 p-3 rounded max-h-48 overflow-y-auto">
+                {resultText || event.result}
+              </pre>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Handle execute_shell_command tool response
+  if (toolName === 'execute_shell_command') {
+    const output = resultText || event.result || ''
+
+    // Check for error indicators
+    const isError = output.includes('Traceback') ||
+                    output.includes('Error:') ||
+                    output.includes('error:') ||
+                    output.includes('command not found') ||
+                    output.includes('Permission denied') ||
+                    (output.trim().startsWith('{') && output.includes('"error"'))
+
+    const bgColor = isError
+      ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+      : 'bg-slate-100 dark:bg-slate-800/50 border-slate-300 dark:border-slate-700'
+
+    const textColor = isError
+      ? 'text-red-700 dark:text-red-300'
+      : 'text-slate-700 dark:text-slate-300'
+
+    const secondaryTextColor = isError
+      ? 'text-red-600 dark:text-red-400'
+      : 'text-slate-500 dark:text-slate-400'
+
+    const statusIcon = isError ? '❌' : '✅'
+    const statusText = isError ? 'Command Failed' : 'Command Completed'
+
+    return (
+      <div className={`${bgColor} border rounded p-2`}>
+        <div className="flex items-center justify-between gap-2 py-0.5">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <div className={`text-xs font-medium ${textColor} flex items-center gap-2`}>
+                {statusIcon} {statusText}{' '}
+                <span className={`text-xs font-normal ${secondaryTextColor}`}>
+                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
+                </span>
+                {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
+                  <TooltipProvider>
+                    <CircularProgress
+                      percentage={contextUsagePercent}
+                      size={18}
+                      strokeWidth={3}
+                      tokenUsage={tokenUsageForTooltip}
+                    />
+                  </TooltipProvider>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {renderHeaderRight()}
+        </div>
+
+        {output.trim() && isOutputExpanded && (
+          <div className="mt-2">
+            <div className="bg-gray-900 dark:bg-gray-950 border border-gray-700 rounded-md p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className={`text-xs font-medium ${isError ? 'text-red-400' : 'text-gray-400'}`}>
+                  {isError ? 'Error Output' : 'Shell Output'}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {output.split('\n').length} line{output.split('\n').length !== 1 ? 's' : ''} • {output.length} chars
+                </div>
+              </div>
+              <pre className={`text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto ${
+                isError ? 'text-red-300' : 'text-green-300'
+              }`}>
+                {output}
+              </pre>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // Handle discover_code_structure tool response
   if (toolName === 'discover_code_structure') {

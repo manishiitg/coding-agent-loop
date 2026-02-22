@@ -38,7 +38,7 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
 
   // Check if this is a code execution tool
   const isCodeExecutionTool = (toolName: string): boolean => {
-    return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code'
+    return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code' || toolName === 'get_api_spec' || toolName === 'execute_shell_command'
   }
 
   // Check if this is a tool search tool

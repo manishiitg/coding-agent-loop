@@ -18,6 +18,119 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
     </span>
   ) : null
 
+  // Handle get_api_spec tool
+  if (toolName === 'get_api_spec') {
+    let serverName = ''
+    let specificToolName = ''
+    try {
+      const args = event.tool_params?.arguments ? JSON.parse(event.tool_params.arguments) : {}
+      serverName = args.server_name || ''
+      specificToolName = args.tool_name || ''
+    } catch { /* ignore */ }
+
+    return (
+      <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded p-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-indigo-700 dark:text-indigo-300 flex items-center">
+                <span className="mr-1">📋</span> Get API Spec{parallelBadge}{' '}
+                <span className="text-xs font-normal text-indigo-600 dark:text-indigo-400">
+                  {event.turn && `• Turn: ${event.turn}`}
+                  {serverName && ` • Server: ${serverName}`}
+                  {specificToolName && ` • Tool: ${specificToolName}`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {event.timestamp && (
+            <div className="text-xs text-indigo-600 dark:text-indigo-400 flex-shrink-0">
+              {new Date(event.timestamp).toLocaleTimeString()}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-2">
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md p-2">
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Fetching OpenAPI spec{specificToolName ? ` for ${specificToolName}` : serverName ? ` for ${serverName}` : ''}...
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Handle execute_shell_command tool
+  if (toolName === 'execute_shell_command') {
+    let command = ''
+    try {
+      const args = event.tool_params?.arguments ? JSON.parse(event.tool_params.arguments) : {}
+      command = args.command || ''
+    } catch { /* ignore */ }
+
+    return (
+      <div className="bg-slate-100 dark:bg-slate-800/50 border border-slate-300 dark:border-slate-700 rounded p-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center">
+                <span className="mr-1">▶</span> Execute Shell Command{parallelBadge}{' '}
+                <span className="text-xs font-normal text-slate-500 dark:text-slate-400">
+                  {event.turn && `• Turn: ${event.turn}`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {event.timestamp && (
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                {new Date(event.timestamp).toLocaleTimeString()}
+              </div>
+            )}
+            {command && (
+              <button
+                onClick={toggle}
+                className="p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded text-slate-700 dark:text-slate-300 transition-colors"
+                title={isExpanded ? "Collapse (Alt+Click for all)" : "Expand (Alt+Click for all)"}
+              >
+                {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {command && (
+          <div className={isExpanded ? 'mt-2' : 'mt-1'}>
+            {isExpanded ? (
+              <div className="bg-gray-900 dark:bg-gray-950 border border-gray-700 rounded-md p-2">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-medium text-gray-400">
+                    $ Command
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {command.split('\n').length} line{command.split('\n').length !== 1 ? 's' : ''}
+                  </div>
+                </div>
+                <pre className="text-xs text-green-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto">
+                  {command}
+                </pre>
+              </div>
+            ) : (
+              <div className="bg-gray-900 dark:bg-gray-950 border border-gray-700 rounded-md px-2 py-1">
+                <pre className="text-xs text-green-300 font-mono truncate">
+                  $ {command.split('\n')[0]}{command.split('\n').length > 1 ? ' ...' : ''}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // Handle discover_code_structure tool (no parameters)
   if (toolName === 'discover_code_structure') {
     return (

@@ -14,6 +14,7 @@ type ExecuteShellCommandParams struct {
 	Timeout          *int               `json:"timeout,omitempty"`
 	UseShell         *bool              `json:"use_shell,omitempty"`
 	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
+	ExtraEnv         map[string]string  `json:"extra_env,omitempty"`
 }
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
@@ -49,6 +50,11 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Always use shell execution - removed from tool definition to simplify LLM interface
 	useShell := true
 	params.UseShell = &useShell
+
+	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN)
+	if len(c.ExtraEnv) > 0 && params.ExtraEnv == nil {
+		params.ExtraEnv = c.ExtraEnv
+	}
 
 	path := "/api/execute"
 	respBody, err := c.request(ctx, "POST", path, params)

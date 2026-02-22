@@ -28,7 +28,8 @@ type Client struct {
 	BaseURL     string
 	HTTPClient  *http.Client
 	FolderGuard *FolderGuardConfig
-	UserID      string // User ID for per-user folder isolation
+	UserID      string            // User ID for per-user folder isolation
+	ExtraEnv    map[string]string // Extra env vars to inject into shell commands (e.g., MCP_API_URL, MCP_API_TOKEN)
 }
 
 // ClientOption is a functional option for configuring the Client
@@ -55,6 +56,14 @@ func WithHTTPClient(httpClient *http.Client) ClientOption {
 func WithUserID(userID string) ClientOption {
 	return func(c *Client) {
 		c.UserID = userID
+	}
+}
+
+// WithExtraEnv sets extra environment variables to inject into shell commands.
+// Only MCP_* prefixed vars are forwarded to the shell (enforced server-side).
+func WithExtraEnv(env map[string]string) ClientOption {
+	return func(c *Client) {
+		c.ExtraEnv = env
 	}
 }
 

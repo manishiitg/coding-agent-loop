@@ -1,6 +1,7 @@
 go 1.24.4
 
 use (
+	../mcpagent // local development: use mcpagent from sibling directory
 	./agent_go
 	./workspace
 )

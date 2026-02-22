@@ -74,7 +74,7 @@ The orchestrator operates through distinct phases, each isolated and independent
 8. **Learning Anonymization**: Scans `learnings/` folder, replaces actual values with `{{VARIABLE_NAME}}` placeholders
 9. **Plan-Learnings Alignment**: Checks alignment between `plan.json` and learnings folder structure
 10. **Learning Consolidation**: Consolidates redundant learning files, merges similar patterns
-11. **Code Exec Debugging**: Analyzes execution logs for code execution steps — identifies hardcoded paths, incorrect CLI arguments, workspace tool misuse
+11. **Code Exec Debugging**: Analyzes execution logs for code execution steps — identifies incorrect API calls, missing auth headers, workspace tool misuse
 12. **Execution Debugger**: Read-only analysis agent for answering questions about execution results, logs, and plan state (no file modifications)
 
 ### Step Execution Flow
@@ -208,7 +208,7 @@ func (em *ExecutionManager) CleanupForFreshStart(...) error {
 | **Execution-Only** | Executes with pre-discovered learnings | Step details + learning history | Execution result | Full MCP Tool Access | `execution_llm` |
 | **Validation** | ~~Validates step execution~~ **DISABLED** — all steps auto-approved. Pre-validation (code-based) still runs if `validation_schema` is defined. | — | — | — | — |
 | **Learning** | Captures execution patterns | Execution history | Learning files in `learnings/` | Pattern Extraction | `learning_llm` |
-| **Code Execution Learning** | Captures Go code patterns | Execution history (code execution mode) | Go code patterns, imports | Code Pattern Extraction | `learning_llm` |
+| **Code Execution Learning** | Captures code patterns (Python) | Execution history (code execution mode) | Python code patterns, API call patterns | Code Pattern Extraction | `learning_llm` |
 | **Conditional** | Evaluates branching decisions | Condition question, step output | `ConditionalResponse` (Boolean, Reasoning) | Tool-Based Verification | `execution_llm` |
 | **Anonymization** | Replaces values with placeholders | Workspace path, variables JSON | Anonymized learning files | Fuzzy Matching | `phase_llm` |
 | **Plan Improvement** | Analyzes execution for plan feedback | Workspace path, plan JSON, run path | Updated `plan.json` | `update_regular_step`, `update_todo_task_route`, `human_feedback` | `phase_llm` |
@@ -544,7 +544,7 @@ workspace/
 │   │   ├── learnings.md             # Consolidated learnings
 │   │   ├── learnings_metadata.json  # Success counts, confidence scores
 │   │   ├── scripts/                 # Python scripts (code execution mode)
-│   │   └── code/                    # Go code patterns (code execution mode)
+│   │   └── code/                    # Python code patterns (code execution mode)
 │   └── {step_id}-{true/false}-{Y}/  # Branch step learnings
 ├── evaluation/
 │   ├── evaluation_plan.json         # Evaluation criteria and steps
@@ -762,7 +762,7 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 | **Detail Levels** | `exact`, `general`, `none` | `exact` = actual values, `general` = anonymized |
 | **Toggles** | `disable_learning`, `lock_learnings`, `learning_after_loop_iteration` | Control learning behavior |
 | **lock_learnings** | boolean | Prevents learning agent from running, still uses existing learnings |
-| **Code Execution Mode** | boolean | Forces learning enabled, uses specialized learning agent |
+| **Code Execution Mode** | boolean | Forces learning enabled, uses specialized learning agent for capturing Python code patterns |
 
 ### Validation Configuration
 
@@ -1023,7 +1023,7 @@ type CleanupScope struct {
 ## 📖 Related Documentation
 
 - [Human Feedback System](human_feedback_system.md) - Human-in-the-loop feedback mechanism
-- [Code Execution Mode](code_execution_mode.md) - Workspace path handling and CLI arguments
+- [Code Execution Mode](execution_configuration.md) - OpenAPI-based tool discovery and Python code execution
 - [Conditional Agent Implementation](conditional_agent_implementation.md) - Conditional branching logic
 - [Prerequisite Failure Implementation](prerequisite_failure_implementation.md) - Prerequisite detection and navigation
 - [Temp LLM Cascading Flow](temp_llm_cascading_flow.md) - Temporary LLM override flow details
@@ -1859,11 +1859,11 @@ const ConditionalAgentType AgentType = "conditional"
 
 The conditional agent supports code execution mode:
 
-- **Code Execution Mode**: Overwrites base system prompt with code execution instructions
-- **Non-Code Execution Mode**: Appends to base system prompt (keeps MCP tools available)
+- **Code Execution Mode**: Overwrites base system prompt with code execution instructions (OpenAPI + Python via `execute_shell_command`)
+- **Non-Code Execution Mode**: Appends to base system prompt (keeps MCP tools available as direct tool calls)
 - **Determination**: Inherited from step config (`UseCodeExecutionMode`) or orchestrator default
 
-**Code Execution Instructions**: Includes guidance on using code execution tools to verify conditions.
+**Code Execution Instructions**: Agent discovers MCP tools via `get_api_spec` and writes Python code to call per-tool HTTP endpoints for verification.
 
 ## Usage Flow
 

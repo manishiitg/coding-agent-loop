@@ -637,7 +637,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	// We override it based on step config or preset default
 	config.UseCodeExecutionMode = isCodeExecutionMode
 	if isCodeExecutionMode {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled for execution-only agent - MCP tools will be accessed via generated Go code"))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled for execution-only agent - MCP tools will be accessed via Python code and per-tool HTTP API"))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for execution-only agent - MCP tools will be exposed directly"))
 	}
@@ -1067,7 +1067,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 	if shouldUpdateRegistry {
 		// CRITICAL: Folder guard paths must be set BEFORE registry update
 		// The registry generation uses these paths to create the path validation code
-		// This ensures LLM-generated Go code can only access paths within allowed boundaries
+		// This ensures LLM-generated code can only access paths within allowed boundaries
 		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry for %s: %v", agentName, err))
 			return err

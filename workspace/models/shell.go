@@ -9,6 +9,9 @@ type ExecuteShellRequest struct {
 
 	// Folder guard configuration
 	FolderGuard *FolderGuardConfig `json:"folder_guard,omitempty"`
+
+	// Extra environment variables to inject (only MCP_* prefixed vars are allowed)
+	ExtraEnv map[string]string `json:"extra_env,omitempty"`
 }
 
 type FolderGuardConfig struct {

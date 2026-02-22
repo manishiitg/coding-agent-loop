@@ -20,8 +20,8 @@ var conditionalSystemTemplate = MustRegisterTemplate("conditionalSystem", `## �
 
 {{if .CodeExecution}}
 ## ⚡ CODE EXECUTION
-- Use 'write_code' to verify state if needed.
-- Follow Go safety rules (no destructive ops).
+- Use 'execute_shell_command' with Python to verify state if needed.
+- Follow safety rules (no destructive ops).
 {{end}}
 
 ## 🔍 PROCESS

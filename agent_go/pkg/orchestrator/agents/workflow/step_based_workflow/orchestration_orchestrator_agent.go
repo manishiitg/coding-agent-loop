@@ -44,12 +44,12 @@ Coordinate work between sub-agents. You evaluate the situation, verify success, 
 {{.VariableNames}}
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
 
-**Handling**: Values are already injected in step descriptions. For Go code/tools, use these values directly.
+**Handling**: Values are already injected in step descriptions. For Python code/tools, use these values directly.
 {{if .IsCodeExecutionMode}}
-**Go execution Rules**:
-- **Path**: 'basePath := os.Args[1]'. Use 'filepath.Join(basePath, "relative/path")'.
-- **Args**: Pass '{{.WorkspacePath}}' as the first argument in 'args'.
-- **NEVER** hardcode absolute paths.
+**Code Execution Rules**:
+- **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' for HTTP requests to per-tool endpoints.
+- **File Operations**: Use workspace tools (read_workspace_file, write_workspace_file) for file access.
+- **NEVER** hardcode absolute paths or API tokens.
 {{end}}{{end}}
 
 {{if .LearningHistory}}

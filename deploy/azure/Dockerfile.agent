@@ -2,7 +2,7 @@
 # Azure agent image - uses shared base (Dockerfile.base) so only app layer is pushed.
 # Build context: workspace/, agent_go/, multi-llm-provider-go/, and mcpagent/ (local deps).
 # =============================================================================
-ARG BASE_IMAGE=mcpagentacr.azurecr.io/mcp-agent-base:latest
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS runtime
 
 # Build stage - Debian so the binary links against glibc and runs on the base

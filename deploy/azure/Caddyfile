@@ -3,7 +3,7 @@
 }
 
 # Replace with your domain or IP
-mcpagent-vm-v2.swedencentral.cloudapp.azure.com {
+{DOMAIN_OR_IP} {
     # Reverse proxy for Workspace API
     # Maps /workspace/api/... to workspace-api:8080/api/...
     handle_path /workspace* {

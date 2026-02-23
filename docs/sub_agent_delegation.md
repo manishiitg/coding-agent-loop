@@ -49,9 +49,21 @@ Spawns a sub-agent with a single instruction. Used for both one-off tasks and ex
   "parameters": {
     "instruction": "Clear, detailed instructions for the sub-agent",
     "reasoning_level": "high | medium | low (optional — LLM decides)",
+    "tool_mode": "simple | code_execution | tool_search (optional — default: simple)",
     "plan_folder": "Plans/{planID} (optional — restricts write access)"
   }
 }
+```
+
+#### Tool Mode Options
+
+| Mode | When to Use |
+|------|------------|
+| **`simple`** (default) | Most tasks, including writing Python/Bash scripts via shell tools |
+| **`code_execution`** | Worker writes Python code to call MCP tools via HTTP API. Best for data analysis, batch operations, loops over MCP tool results, or programmatic orchestration of multiple tool calls |
+| **`tool_search`** | When 3+ MCP servers are available and the agent needs to discover tools on-demand |
+
+**Guideline**: Use `code_execution` when the task involves fetching/processing data from MCP servers programmatically (aggregation, filtering, multi-step data pipelines). Use `simple` for file operations, script writing, and general tasks.
 ```
 
 ### 2. `create_delegation_plan` — Create a Plan
@@ -187,6 +199,15 @@ Sub-agents inherit ALL configuration from the parent agent request:
 - **Browser tools**: If enabled in parent session
 - **MCP servers**: Same server connections as parent
 - **Skills**: Selected skills are passed to sub-agent system prompt via `buildSkillPrompt()`
+
+#### Code Execution Mode Sub-Agents
+
+When `tool_mode: "code_execution"` is set on a delegate call, the sub-agent:
+- Gets `get_api_spec` (virtual tool) + `execute_shell_command` (direct tool)
+- MCP tools are **excluded** from direct tool list — accessed via HTTP API instead
+- Custom tools (workspace_advanced, workspace_basic, etc.) remain as direct tools
+- `MCP_API_URL` and `MCP_API_TOKEN` env vars are available in the shell environment
+- Sub-agent writes Python code to call per-tool endpoints: `POST /tools/mcp/{server}/{tool}`
 
 ### Per-Tool Timeouts
 

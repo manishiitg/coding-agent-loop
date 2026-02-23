@@ -1468,8 +1468,11 @@ Plans/{plan_id}/
 - **Save large outputs as workspace files**: For reports, analyses, or any output longer than a few paragraphs, instruct sub-agents to save their work as files in the plan folder (e.g., Plans/{plan_id}/reports/analysis.md). In your final summary to the user, reference the workspace file path so they can access the full document. Example: "The full report is saved at Plans/{plan_id}/reports/quarterly-analysis.md". The system will automatically convert these paths to clickable links.
 
 ### Tool Mode (optional, for delegate):
-- **"simple"** (default): Best for most tasks.
+- **"simple"** (default): Best for most tasks, including writing Python/Bash scripts via shell tools.
+- **"code_execution"**: Worker writes Python code to call MCP tools via HTTP API. Best for data analysis, batch operations, loops over MCP tool results, or tasks that benefit from programmatic orchestration of multiple tool calls.
 - **"tool_search"**: Use when 3+ MCP servers are available.
+
+**Guideline**: Use **"code_execution"** when the task involves fetching/processing data from MCP servers programmatically (e.g., aggregation, filtering, multi-step data pipelines). Use **"simple"** for file operations, script writing, and general tasks.
 `
 }
 
@@ -1532,8 +1535,11 @@ You are an intelligent assistant that executes tasks efficiently using delegatio
 - **You are the quality gate** — review results before reporting to the user
 
 ### Tool Mode (optional, for delegate):
-- **"simple"** (default): Best for most tasks.
+- **"simple"** (default): Best for most tasks, including writing Python/Bash scripts via shell tools.
+- **"code_execution"**: Worker writes Python code to call MCP tools via HTTP API. Best for data analysis, batch operations, loops over MCP tool results, or tasks that benefit from programmatic orchestration of multiple tool calls.
 - **"tool_search"**: Use when 3+ MCP servers are available.
+
+**Guideline**: Use **"code_execution"** when the task involves fetching/processing data from MCP servers programmatically (e.g., aggregation, filtering, multi-step data pipelines). Use **"simple"** for file operations, script writing, and general tasks.
 `
 }
 

@@ -778,14 +778,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 	}
 
 	// Check if code/ subfolder exists (for code execution mode)
-	// This subfolder contains .go code examples/patterns
+	// This subfolder contains Python code examples/patterns
 	codeSubfolderPath := filepath.Join(stepLearningsPath, "code")
 	codeFiles, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, codeSubfolderPath)
 	if err == nil && len(codeFiles) > 0 {
-		// Read all .go files from code/ subfolder
-		goFileCount := 0
+		// Read all .py and .go files from code/ subfolder (Python preferred, Go for legacy)
+		codeFileCount := 0
 		for _, file := range codeFiles {
-			if strings.HasSuffix(file, ".go") {
+			if strings.HasSuffix(file, ".py") || strings.HasSuffix(file, ".go") {
 				filePath := filepath.Join(codeSubfolderPath, file)
 				content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
 				if err != nil {
@@ -794,11 +794,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 				}
 				// Prefix with "code/" to indicate it's from the code subfolder
 				learningFiles[filepath.Join("code", file)] = content
-				goFileCount++
+				codeFileCount++
 			}
 		}
-		if goFileCount > 0 {
-			hcpo.GetLogger().Info(fmt.Sprintf("📁 Read %d .go file(s) from code/ subfolder", goFileCount))
+		if codeFileCount > 0 {
+			hcpo.GetLogger().Info(fmt.Sprintf("📁 Read %d code file(s) from code/ subfolder", codeFileCount))
 		}
 	}
 	// Note: If code/ subfolder doesn't exist or is empty, that's fine - it's optional

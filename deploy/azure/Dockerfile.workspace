@@ -3,7 +3,7 @@
 # Build context: directory containing workspace/ (e.g. mcp-agent-builder-go).
 # =============================================================================
 # ARG before first FROM so it is available to the FROM that uses it
-ARG BASE_IMAGE=mcpagentacr.azurecr.io/mcp-agent-base:latest
+ARG BASE_IMAGE
 
 # Build planner binary (glibc for Debian base)
 FROM golang:1.24-bookworm AS builder

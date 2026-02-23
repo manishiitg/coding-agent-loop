@@ -182,6 +182,14 @@ func ExecuteShellCommand(c *gin.Context) {
 		cmd.Env = security.BuildSafeEnvironment()
 	}
 
+	// Inject whitelisted extra env vars (only MCP_* prefixed)
+	// This applies to both isolated and non-isolated execution paths
+	for k, v := range req.ExtraEnv {
+		if strings.HasPrefix(k, "MCP_") {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+
 	// Capture stdout and stderr separately
 	var stdoutBuf, stderrBuf bytes.Buffer
 	cmd.Stdout = &stdoutBuf

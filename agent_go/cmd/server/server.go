@@ -770,6 +770,9 @@ type StreamingAPI struct {
 
 	// Web simulator connector for testing bot flow without Slack
 	webSimulator *slackservice.WebSimulatorConnector
+
+	// API token for bearer auth on per-tool endpoints (code execution mode)
+	apiToken string
 }
 
 // QueryRequest represents an agent query request
@@ -1141,6 +1144,15 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted: make(map[string]bool),
 	}
 
+	// Generate API token for code execution mode per-tool endpoints
+	api.apiToken = executor.GenerateAPIToken()
+
+	// Set env vars for code execution mode (mcpagent reads these as fallback)
+	// Use GetCodeExecAPIURL() which resolves to host.docker.internal when
+	// workspace API runs in Docker (shell commands execute inside the container)
+	os.Setenv("MCP_API_URL", api.GetCodeExecAPIURL())
+	os.Setenv("MCP_API_TOKEN", api.apiToken)
+
 	// Load global secrets from GLOBAL_SECRET_* environment variables
 	loadGlobalSecrets()
 
@@ -1203,6 +1215,19 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
+
+	// Per-tool endpoints for code execution mode (bearer token auth, bypasses JWT)
+	// LLM-generated code calls these directly, so they use API token auth instead of JWT.
+	toolsRouter := router.PathPrefix("/tools").Subrouter()
+	toolsRouter.Use(executor.AuthMiddleware(api.apiToken))
+	toolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		executorHandlers.HandlePerToolMCPRequest(w, r, vars["server"], vars["tool"])
+	}).Methods("POST", "OPTIONS")
+	toolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		executorHandlers.HandlePerToolCustomRequest(w, r, vars["tool"])
+	}).Methods("POST", "OPTIONS")
 
 	// MCP Config API routes (from mcp_config_routes.go)
 	apiRouter.HandleFunc("/mcp-config", api.handleGetMCPConfig).Methods("GET")
@@ -1443,6 +1468,21 @@ func (api *StreamingAPI) GetAPIURL() string {
 		host = "127.0.0.1"
 	}
 	return fmt.Sprintf("http://%s:%d", host, api.config.Port)
+}
+
+// GetCodeExecAPIURL returns the API URL as seen from inside the workspace container.
+// Shell commands in code execution mode run inside the Docker workspace-api container,
+// so they need host.docker.internal to reach the Go server on the host.
+// Falls back to the normal API URL when workspace is not Dockerized.
+func (api *StreamingAPI) GetCodeExecAPIURL() string {
+	wsURL := getWorkspaceAPIURL()
+	// If workspace API points to localhost (Docker-mapped port), shell commands
+	// run inside Docker and need host.docker.internal to reach the host
+	if strings.Contains(wsURL, "localhost") || strings.Contains(wsURL, "127.0.0.1") {
+		return fmt.Sprintf("http://host.docker.internal:%d", api.config.Port)
+	}
+	// In Docker Compose networking, use the Go server's service name or host
+	return api.GetAPIURL()
 }
 
 // mergeGlobalSecrets prepends global secrets to user-supplied secrets.

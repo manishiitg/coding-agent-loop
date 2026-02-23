@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
@@ -30,6 +31,7 @@ func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context,
 	client := workspace.NewClient(
 		getWorkspaceAPIURL(),
 		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithExtraEnv(getMCPExtraEnv()),
 	)
 	executors := workspace.NewAdvancedExecutor(client)
 	wrapReadImageExecutor(executors)
@@ -45,10 +47,24 @@ func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]fu
 		getWorkspaceAPIURL(),
 		workspace.WithFolderGuard(getDefaultFolderGuard()),
 		workspace.WithUserID(userID),
+		workspace.WithExtraEnv(getMCPExtraEnv()),
 	)
 	executors := workspace.NewAdvancedExecutor(client)
 	wrapReadImageExecutor(executors)
 	return executors
+}
+
+// getMCPExtraEnv returns MCP-related env vars to inject into shell commands.
+// These are set by server.go at startup for code execution mode.
+func getMCPExtraEnv() map[string]string {
+	env := make(map[string]string)
+	if url := os.Getenv("MCP_API_URL"); url != "" {
+		env["MCP_API_URL"] = url
+	}
+	if token := os.Getenv("MCP_API_TOKEN"); token != "" {
+		env["MCP_API_TOKEN"] = token
+	}
+	return env
 }
 
 // wrapReadImageExecutor wraps the read_image executor in the map with LLM analysis.

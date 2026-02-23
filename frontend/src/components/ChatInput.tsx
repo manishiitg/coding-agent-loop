@@ -275,6 +275,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
+  const useCodeExecutionMode = useMemo(() => tabConfig?.useCodeExecutionMode ?? false, [tabConfig?.useCodeExecutionMode])
   const useToolSearchMode = useMemo(() => tabConfig?.useToolSearchMode ?? false, [tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   const enableBrowserAccess = useMemo(() => tabConfig?.enableBrowserAccess ?? false, [tabConfig?.enableBrowserAccess])
@@ -1975,7 +1976,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       disabled={isStreaming || isSummarizing}
                       data-testid="agent-mode-simple"
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        !useToolSearchMode
+                        !useCodeExecutionMode && !useToolSearchMode
                           ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-600 text-purple-600 dark:text-purple-400'
                           : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
                       } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
@@ -1983,6 +1984,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       <Sparkles className="w-4 h-4 flex-shrink-0" />
                       <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
                         Simple
+                      </span>
+                    </button>
+                    {/* Code Execution Mode */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUseCodeExecutionMode(true)
+                        setUseToolSearchMode(false)
+                      }}
+                      disabled={isStreaming || isSummarizing}
+                      data-testid="agent-mode-code-exec"
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        useCodeExecutionMode
+                          ? 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 dark:border-amber-600 text-amber-600 dark:text-amber-400'
+                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <Code2 className="w-4 h-4 flex-shrink-0" />
+                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
+                        Code
                       </span>
                     </button>
                     {/* Tool Search Mode */}

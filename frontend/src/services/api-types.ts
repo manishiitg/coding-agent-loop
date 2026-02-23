@@ -5,7 +5,7 @@ import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching
 
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
   model_id: string
 
   // Auth per model (each model carries its own credentials)
@@ -39,11 +39,11 @@ export interface AgentLLMConfiguration {
 
 // Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
-    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure'
+    provider: 'openai' | 'bedrock' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
     models: string[]
   }
   // API keys for each provider
@@ -79,7 +79,7 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic' | 'azure'
+  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
   model_id?: string
   temperature?: number
   max_turns?: number
@@ -172,7 +172,7 @@ export interface LLMDefaultsResponse {
     anthropic?: string[]
     azure?: string[]
   }
-  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
+  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code')[]
   /** When true, LLM config is locked by admin; do not show editable modal, use server env only */
   llm_config_locked?: boolean
   /** Default published LLMs from server (e.g. one "Gemini" entry); when locked, list is read-only */
@@ -185,7 +185,7 @@ export interface LLMDefaultsResponse {
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure'
+  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
   endpoint?: string // Azure endpoint URL
@@ -729,13 +729,13 @@ export interface UpdateChatSessionRequest {
 
 // Preset LLM Configuration types
 export interface AgentLLMConfig {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
   model_id: string
 }
 
 export interface PresetLLMConfig {
   // Legacy: Single default model (for backward compatibility)
-  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
+  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
   model_id?: string
 
   // New: Agent-specific default models (takes priority over legacy fields)

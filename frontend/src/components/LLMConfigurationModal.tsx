@@ -10,6 +10,7 @@ import { BedrockSection } from './BedrockSection'
 import { OpenAISection } from './OpenAISection'
 import { VertexSection } from './VertexSection'
 import { AzureSection } from './AzureSection'
+import { ClaudeCodeSection } from './ClaudeCodeSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { FallbacksTab } from './llm/FallbacksTab'
 import { LibraryTab } from './llm/LibraryTab'
@@ -20,16 +21,19 @@ interface LLMConfigurationModalProps {
 }
 
 // Provider type for reuse
-type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
+type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
+
+// Providers that use API keys (excludes claude-code which uses local CLI)
+type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
 
 // Tab type for the modal
 type TabType = 'fallbacks' | 'library' | ProviderType
 
 type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 
-type APIKeyStatus = Record<ProviderType, APIKeyStatusValue>
+type APIKeyStatus = Record<APIKeyProviderType, APIKeyStatusValue>
 
-type APIKeyError = Record<ProviderType, string | null>
+type APIKeyError = Record<APIKeyProviderType, string | null>
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
   // Get current mode from app store
@@ -270,13 +274,13 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [modeAgentConfig, modePrimaryConfig.provider, setModeAgentConfig, setModePrimaryConfig])
 
   // Generic handler for provider config updates
-  const handleProviderConfigUpdate = useCallback((provider: ProviderType, config: ExtendedLLMConfiguration) => {
+  const handleProviderConfigUpdate = useCallback((provider: APIKeyProviderType, config: ExtendedLLMConfiguration) => {
     providerConfigMap[provider].setConfig(config)
     syncPrimaryConfig(provider, config)
   }, [providerConfigMap, syncPrimaryConfig])
 
   // Handle setting primary provider (mode-specific)
-  const handleSetPrimaryProvider = useCallback((provider: ProviderType) => {
+  const handleSetPrimaryProvider = useCallback((provider: APIKeyProviderType) => {
     const configToUse = providerConfigMap[provider].config
 
     // Update mode-specific primary config
@@ -306,6 +310,26 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   // Handle library selection
   const handleLibrarySelect = useCallback((llm: SavedLLM) => {
     const provider = llm.provider
+
+    // Claude Code doesn't use provider config map — set primary directly
+    if (provider === 'claude-code') {
+      const newPrimaryConfig: LLMConfiguration = {
+        provider: 'claude-code',
+        model_id: 'claude-code',
+        fallback_models: [],
+        cross_provider_fallback: undefined
+      }
+      setModePrimaryConfig(newPrimaryConfig)
+      if (modeAgentConfig) {
+        setModeAgentConfig({
+          ...modeAgentConfig,
+          primary: { provider: 'claude-code', model_id: 'claude-code' }
+        })
+      }
+      refreshAvailableLLMs()
+      return
+    }
+
     const { setConfig } = providerConfigMap[provider]
 
     setConfig({
@@ -401,7 +425,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 </button>
 
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'] as const)
+                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code'] as const)
                   .filter(provider => isProviderSupported(provider))
                   .map((provider) => (
                   <button
@@ -412,9 +436,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }`}
                   >
                     <div className="flex-1">
-                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider}</div>
+                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider}</div>
                       <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : 'API Key'}
+                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : 'API Key'}
                       </div>
                     </div>
                     {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
@@ -439,7 +463,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {/* Locked provider read-only banner */}
-              {activeTab !== 'fallbacks' && activeTab !== 'library' && isProviderLocked(activeTab) && (
+              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && isProviderLocked(activeTab) && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
                   <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
@@ -519,6 +543,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   apiKeyError={apiKeyErrors.azure}
                   metadata={metadata}
                 />
+              )}
+
+              {activeTab === 'claude-code' && (
+                <ClaudeCodeSection />
               )}
             </div>
           </div>

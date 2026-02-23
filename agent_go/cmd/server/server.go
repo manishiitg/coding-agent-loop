@@ -14,6 +14,7 @@ import (
 	_ "net/http/pprof" // Register pprof handlers
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -1820,7 +1821,7 @@ func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) 
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
-	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure"}
+	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "claude-code"}
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
 	if envValue == "" {
 		return allProviders
@@ -2163,7 +2164,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(response)
 }
 
-// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, and Anthropic
+// handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, Anthropic, and Claude Code
 func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Request) {
 	var req llm.APIKeyValidationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2174,10 +2175,71 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 
 	log.Printf("Received API key validation request for provider: %s", req.Provider)
 
+	// Claude Code uses the local CLI — validate by running a test prompt
+	if req.Provider == "claude-code" {
+		response := validateClaudeCodeCLI()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	response := llm.ValidateAPIKey(req)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// validateClaudeCodeCLI validates the Claude Code CLI by checking it exists and sending a test prompt
+func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
+	log.Printf("[CLAUDE-CODE VALIDATION] Starting CLI validation")
+
+	// Step 1: Check if claude CLI is on PATH
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		log.Printf("[CLAUDE-CODE VALIDATION] CLI not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code",
+		}
+	}
+	log.Printf("[CLAUDE-CODE VALIDATION] CLI found at: %s", claudePath)
+
+	// Step 2: Send a test prompt via the CLI and check for a response
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", "Say hello in one short sentence.")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[CLAUDE-CODE VALIDATION] CLI test timed out")
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Claude Code CLI timed out after 60s. Check that you are authenticated (run 'claude' to log in).",
+			}
+		}
+		log.Printf("[CLAUDE-CODE VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Claude Code CLI error: %s", strings.TrimSpace(errMsg)),
+		}
+	}
+
+	responseText := strings.TrimSpace(string(output))
+	if responseText == "" {
+		log.Printf("[CLAUDE-CODE VALIDATION] CLI returned empty response")
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Claude Code CLI returned an empty response. Check authentication with 'claude'.",
+		}
+	}
+
+	log.Printf("[CLAUDE-CODE VALIDATION SUCCESS] Got response: %s", responseText)
+	return llm.APIKeyValidationResponse{
+		Valid:   true,
+		Message: fmt.Sprintf("Claude Code CLI is working. Response: %s", responseText),
+	}
 }
 
 // Query endpoint - handles POST requests to start agent streaming

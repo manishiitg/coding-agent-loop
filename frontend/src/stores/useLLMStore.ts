@@ -59,7 +59,7 @@ interface LLMState extends StoreActions {
   defaultsLoaded: boolean
 
   // Supported providers (from backend, not persisted)
-  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure')[]
+  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code')[]
   isProviderSupported: (provider: string) => boolean
 
   // Delegation tier configuration
@@ -228,7 +228,7 @@ export const useLLMStore = create<LLMState>()(
         delegationTierConfig: null,
 
         // Supported providers (always load fresh from backend, default to all)
-        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
+        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code'],
         llmConfigLocked: false,
         lockedProviders: [],
         defaultPublishedLLMsLocked: false,
@@ -565,7 +565,7 @@ export const useLLMStore = create<LLMState>()(
               availableVertexModels: defaults.available_models.vertex || [],
               availableAnthropicModels: defaults.available_models.anthropic || [],
               availableAzureModels: defaults.available_models.azure || [],
-              supportedProviders: defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure'],
+              supportedProviders: defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code'],
               llmConfigLocked: locked,
               lockedProviders: defaults.locked_providers || [],
               defaultPublishedLLMsLocked: defaultPublishedLocked,

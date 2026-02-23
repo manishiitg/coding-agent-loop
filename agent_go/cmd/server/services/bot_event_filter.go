@@ -521,32 +521,6 @@ func (f *BotEventFilter) formatBlockingQuestions(event BotEventData) string {
 	return msg
 }
 
-// formatDelegationStart formats a delegation_start event with a short label.
-func (f *BotEventFilter) formatDelegationStart(event BotEventData) string {
-	if event.Data == nil || event.Data.Data == nil {
-		return ""
-	}
-
-	raw, err := json.Marshal(event.Data.Data)
-	if err != nil {
-		return ""
-	}
-	var parsed struct {
-		DelegationID string `json:"delegation_id"`
-		ModelID      string `json:"model_id,omitempty"`
-		Depth        int    `json:"depth"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return ""
-	}
-
-	label := "Sub-agent"
-	if parsed.ModelID != "" {
-		label = fmt.Sprintf("Sub-agent (%s)", parsed.ModelID)
-	}
-
-	return fmt.Sprintf("**Starting:** %s", label)
-}
 
 
 // getDelegationName extracts the sub-agent name from a delegation event (must hold lock or call before lock).

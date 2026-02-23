@@ -15,3 +15,10 @@ service_account.json
 # These files should not be included in go mod tidy or version control
 tool_output_folder/*
 tool_output_folder
+
+# Compiled binaries
+/claude-code-chat
+/cmd/server/server
+
+# Example MCP server configs (may contain credentials/paths)
+examples/claude-code-chat/mcp_servers.json

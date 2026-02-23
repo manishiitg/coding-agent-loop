@@ -1228,6 +1228,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		vars := mux.Vars(r)
 		executorHandlers.HandlePerToolCustomRequest(w, r, vars["tool"])
 	}).Methods("POST", "OPTIONS")
+	toolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		executorHandlers.HandlePerToolVirtualRequest(w, r, vars["tool"])
+	}).Methods("POST", "OPTIONS")
 
 	// MCP Config API routes (from mcp_config_routes.go)
 	apiRouter.HandleFunc("/mcp-config", api.handleGetMCPConfig).Methods("GET")
@@ -2361,13 +2365,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Keep NoServers constant as-is - this will be handled by integration code
 		serverList = mcpclient.NoServers
 	} else {
-		// Default to all servers if none specified
+		// Default to no servers if none specified (user didn't select any)
 		if len(selectedServers) == 0 {
-			selectedServers = []string{"all"}
+			serverList = mcpclient.NoServers
+		} else {
+			// Convert server array to comma-separated string for agent compatibility
+			serverList = strings.Join(selectedServers, ",")
 		}
-
-		// Convert server array to comma-separated string for agent compatibility
-		serverList = strings.Join(selectedServers, ",")
 	}
 
 	// Extract sessionID from header/cookie or fallback to queryID
@@ -2820,6 +2824,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					log.Printf("[WORKFLOW] Added browser tools (enable_browser_access: true)")
+
+					// Auto-add agent-browser skill if not already selected
+					hasAgentBrowserSkill := false
+					for _, skill := range selectedSkills {
+						if skill == "agent-browser" {
+							hasAgentBrowserSkill = true
+							break
+						}
+					}
+					if !hasAgentBrowserSkill {
+						selectedSkills = append(selectedSkills, "agent-browser")
+						log.Printf("[WORKFLOW] Auto-adding agent-browser skill for browser access")
+					}
 				}
 			}
 		}
@@ -2840,6 +2857,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if !useCodeExecutionMode && req.UseCodeExecutionMode {
 			useCodeExecutionMode = req.UseCodeExecutionMode
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
+		}
+
+		// Auto-enable code execution mode for claude-code provider (workflow path).
+		// Claude Code accesses MCP tools via the HTTP bridge, which requires code execution mode.
+		if req.Provider == "claude-code" && !useCodeExecutionMode {
+			useCodeExecutionMode = true
+			log.Printf("[CLAUDE CODE] Auto-enabled code execution mode for MCP tool access via bridge (workflow)")
 		}
 
 		// Use tool search mode from request if preset didn't provide any
@@ -3402,6 +3426,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("[CODE_EXECUTION] Code execution mode disabled (default)")
 			}
+		}
+
+		// Auto-enable code execution mode for claude-code provider.
+		// Claude Code accesses MCP tools via the HTTP bridge (mcpbridge stdio binary),
+		// which requires code execution mode to expose per-tool API endpoints.
+		if req.Provider == "claude-code" && !useCodeExecutionMode {
+			useCodeExecutionMode = true
+			log.Printf("[CLAUDE CODE] Auto-enabled code execution mode for MCP tool access via bridge")
 		}
 
 		// CRITICAL: Always respect request value for tool search mode when explicitly set

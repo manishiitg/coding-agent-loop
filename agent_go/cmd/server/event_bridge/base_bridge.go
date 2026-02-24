@@ -46,7 +46,8 @@ var DB_SKIP_EVENTS = map[string]bool{
 	// Detailed LLM logs (huge content)
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
-	"llm_generation_end":        true, // Final output is usually available in agent_end or tool_call_end
+	// NOTE: llm_generation_end is NOT skipped — it's needed by the frontend to clear "Generating..." state.
+	// If this event is missing from the DB, reconnecting clients stay stuck in "Generating..." forever.
 	"llm_generation_error":      true, // Covered by agent_error/orchestrator_error
 	"llm_messages":              true,
 	"llm_token_usage":           true,
@@ -96,7 +97,7 @@ var DB_SKIP_EVENTS = map[string]bool{
 
 	// Agent lifecycle (hidden in micro/tiny mode on frontend)
 	"agent_start": true,
-	"agent_end":   true,
+	// NOTE: agent_end is NOT skipped — frontend uses it as a completion signal to clear "Generating..." state
 	"agent_error": true,
 
 	// Debug & Performance

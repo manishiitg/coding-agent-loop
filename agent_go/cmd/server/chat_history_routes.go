@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"mcp-agent-builder-go/agent_go/internal/events"
@@ -1013,6 +1014,37 @@ func accumulateUsage(usage *ChatModelUsage, tud *tokenUsageData) {
 	}
 }
 
+// replaceUsage overwrites model usage with the latest cumulative values from a token_usage event.
+// Used for the main agent, which emits CUMULATIVE token_usage events (one per user turn).
+// Each event contains the running total, so we REPLACE to avoid double-counting.
+func replaceUsage(usage *ChatModelUsage, tud *tokenUsageData) {
+	if usage.Provider == "" {
+		usage.Provider = tud.Provider
+	}
+	usage.InputTokens = tud.PromptTokens
+	usage.OutputTokens = tud.CompletionTokens
+	usage.ReasoningTokens = tud.ReasoningTokens
+	usage.CacheReadTokens = tud.cacheReadTokens
+	usage.CacheWriteTokens = tud.cacheWriteTokens
+	usage.LLMCallCount++ // Intentionally increment: counts how many turns/events were processed
+	usage.InputCost = tud.InputCost
+	usage.OutputCost = tud.OutputCost
+	usage.ReasoningCost = tud.ReasoningCost
+	usage.CacheCost = tud.CacheCost
+	usage.TotalCost = tud.TotalCost
+
+	// Keep the latest context window values
+	if tud.ContextWindowUsage > usage.ContextWindowUsage {
+		usage.ContextWindowUsage = tud.ContextWindowUsage
+	}
+	if tud.ModelContextWindow > usage.ModelContextWindow {
+		usage.ModelContextWindow = tud.ModelContextWindow
+	}
+	if tud.ContextUsagePercent > usage.ContextUsagePercent {
+		usage.ContextUsagePercent = tud.ContextUsagePercent
+	}
+}
+
 // mergeUsage merges one ChatModelUsage into another
 func mergeUsage(dst, src *ChatModelUsage) {
 	if dst.Provider == "" {
@@ -1114,39 +1146,74 @@ func getDelegationLogs(db database.Database) gin.HandlerFunc {
 			return
 		}
 
-		// Get all events for this session (high limit to get everything)
-		dbEvents, err := db.GetEventsBySession(c.Request.Context(), sessionID, 10000, 0)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get events: %v", err)})
+		// Collect all session IDs (main + sub-agent sessions) then fetch
+		// only delegation-related events in a single query.
+		sqlDB := db.GetDB()
+		if sqlDB == nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "database connection unavailable"})
 			return
 		}
 
-		// Also fetch sub-agent session events
-		sqlDB := db.GetDB()
-		var subSessionEvents []database.Event
-		if sqlDB != nil {
-			subSessionPrefix := sessionID + "-sub-"
-			rows, err := sqlDB.QueryContext(c.Request.Context(),
-				`SELECT session_id FROM chat_sessions WHERE session_id LIKE ?`,
-				subSessionPrefix+"%",
-			)
-			if err == nil {
-				defer rows.Close()
-				for rows.Next() {
-					var subSessionID string
-					if err := rows.Scan(&subSessionID); err != nil {
-						continue
-					}
-					subEvents, err := db.GetEventsBySession(c.Request.Context(), subSessionID, 10000, 0)
-					if err == nil {
-						subSessionEvents = append(subSessionEvents, subEvents...)
-					}
+		// Resolve main session's internal ID
+		var mainInternalID string
+		err := sqlDB.QueryRowContext(c.Request.Context(),
+			`SELECT id FROM chat_sessions WHERE session_id = ?`, sessionID,
+		).Scan(&mainInternalID)
+		if err != nil {
+			mainInternalID = sessionID
+		}
+
+		// Collect all session IDs: main + sub-agent sessions
+		sessionIDs := []interface{}{mainInternalID}
+		subSessionPrefix := sessionID + "-sub-"
+		subRows, err := sqlDB.QueryContext(c.Request.Context(),
+			`SELECT id, session_id FROM chat_sessions WHERE session_id LIKE ?`,
+			subSessionPrefix+"%",
+		)
+		if err == nil {
+			defer subRows.Close()
+			for subRows.Next() {
+				var subID, subSessionID string
+				if err := subRows.Scan(&subID, &subSessionID); err != nil {
+					continue
 				}
+				sessionIDs = append(sessionIDs, subID)
 			}
 		}
 
-		// Combine all events
-		allEvents := append(dbEvents, subSessionEvents...)
+		// Build a single query with IN clause + event_type filter
+		// This replaces N+1 queries with 1 query, and filters at DB level
+		placeholders := make([]string, len(sessionIDs))
+		for i := range sessionIDs {
+			placeholders[i] = "?"
+		}
+		query := fmt.Sprintf(`
+			SELECT id, session_id, chat_session_id, event_type, timestamp, event_data
+			FROM events
+			WHERE chat_session_id IN (%s)
+			  AND event_type IN ('delegation_start', 'delegation_end', 'token_usage')
+			ORDER BY timestamp ASC
+		`, strings.Join(placeholders, ","))
+
+		rows, err := sqlDB.QueryContext(c.Request.Context(), query, sessionIDs...)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to get delegation events: %v", err)})
+			return
+		}
+		defer rows.Close()
+
+		var allEvents []database.Event
+		for rows.Next() {
+			var event database.Event
+			var eventDataJSON string
+			if err := rows.Scan(&event.ID, &event.SessionID, &event.ChatSessionID, &event.EventType, &event.Timestamp, &eventDataJSON); err != nil {
+				continue
+			}
+			if err := json.Unmarshal([]byte(eventDataJSON), &event.EventData); err != nil {
+				continue
+			}
+			allEvents = append(allEvents, event)
+		}
 
 		// Build delegation entries from start/end events and aggregate token_usage
 		delegationMap := make(map[string]*DelegationLogEntry)
@@ -1206,7 +1273,8 @@ func getDelegationLogs(db database.Database) gin.HandlerFunc {
 					InputTokens  int64  `json:"input_tokens"`
 					OutputTokens int64  `json:"output_tokens"`
 					ToolCalls    int64  `json:"tool_calls"`
-					Duration     string `json:"duration"`
+					Duration     string  `json:"duration"`
+				TotalCostUSD float64 `json:"total_cost_usd"`
 				}
 				if err := json.Unmarshal(wrapper.Data, &endData); err != nil {
 					continue
@@ -1229,6 +1297,10 @@ func getDelegationLogs(db database.Database) gin.HandlerFunc {
 				entry.InputTokens = endData.InputTokens
 				entry.OutputTokens = endData.OutputTokens
 				entry.ToolCalls = endData.ToolCalls
+				// Use cost from delegation_end if token_usage events didn't provide it
+				if endData.TotalCostUSD > 0 {
+					entry.TotalCostUSD += endData.TotalCostUSD
+				}
 
 			case "token_usage":
 				// Aggregate token_usage events per delegation using correlation_id

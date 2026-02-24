@@ -684,16 +684,17 @@ func (d *DelegationStartEventData) GetEventType() events.EventType {
 
 // DelegationEndEventData implements events.EventData for delegation_end
 type DelegationEndEventData struct {
-	DelegationID string `json:"delegation_id"`
-	Depth        int    `json:"depth"`
-	Result       string `json:"result"`
-	Error        string `json:"error,omitempty"`
-	Success      bool   `json:"success"`
-	Timestamp    string `json:"timestamp"`
-	InputTokens  int64  `json:"input_tokens,omitempty"`
-	OutputTokens int64  `json:"output_tokens,omitempty"`
-	ToolCalls    int64  `json:"tool_calls,omitempty"`
-	Duration     string `json:"duration,omitempty"`
+	DelegationID string  `json:"delegation_id"`
+	Depth        int     `json:"depth"`
+	Result       string  `json:"result"`
+	Error        string  `json:"error,omitempty"`
+	Success      bool    `json:"success"`
+	Timestamp    string  `json:"timestamp"`
+	InputTokens  int64   `json:"input_tokens,omitempty"`
+	OutputTokens int64   `json:"output_tokens,omitempty"`
+	ToolCalls    int64   `json:"tool_calls,omitempty"`
+	Duration     string  `json:"duration,omitempty"`
+	TotalCostUSD float64 `json:"total_cost_usd,omitempty"`
 }
 
 func (d *DelegationEndEventData) GetEventType() events.EventType {

@@ -52,12 +52,13 @@ var ADVANCED_MODE_EVENTS = map[string]bool{
 // Tiny mode hides ADVANCED_MODE_EVENTS + these additional lifecycle events
 // Note: user_message is NOT filtered — essential for conversation display on session restore
 // system_prompt is stored in DB but hidden in tiny/micro mode
-// NOTE: llm_generation_end and agent_end are NOT filtered — the frontend needs them to clear
-// the "Generating..." state and streaming text. Without these, the UI stays stuck.
+// NOTE: agent_end is NOT filtered — the frontend needs it to clear
+// the "Generating..." state and streaming text. Without it, the UI stays stuck.
 var TINY_MODE_ADDITIONAL_EVENTS = map[string]bool{
 	"system_prompt":            true,
 	"agent_start":              true,
 	"agent_error":              true,
+	"llm_generation_end":       true,
 	"batch_execution_canceled": true,
 }
 

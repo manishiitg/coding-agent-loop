@@ -745,6 +745,9 @@ type StreamingAPI struct {
 	// Claude Code CLI session IDs for --resume (our sessionID -> CLI session_id)
 	claudeCodeSessionIDs map[string]string
 
+	// Gemini CLI session IDs for --resume (our sessionID -> CLI session_id)
+	geminiSessionIDs map[string]string
+
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
 	completionLoopStartedMu sync.Mutex
@@ -1146,6 +1149,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
 		completionLoopStarted: make(map[string]bool),
 		claudeCodeSessionIDs:  make(map[string]string),
+		geminiSessionIDs:      make(map[string]string),
 	}
 
 	// Generate API token for code execution mode per-tool endpoints
@@ -1870,7 +1874,7 @@ func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) 
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
-	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "claude-code"}
+	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "claude-code", "gemini-cli"}
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
 	if envValue == "" {
 		return allProviders
@@ -2232,6 +2236,14 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Gemini CLI uses the local CLI — validate by checking it exists
+	if req.Provider == "gemini-cli" {
+		response := validateGeminiCLI()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	response := llm.ValidateAPIKey(req)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2288,6 +2300,59 @@ func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 	return llm.APIKeyValidationResponse{
 		Valid:   true,
 		Message: fmt.Sprintf("Claude Code CLI is working. Response: %s", responseText),
+	}
+}
+
+// validateGeminiCLI validates the Gemini CLI by checking it exists and sending a test prompt
+func validateGeminiCLI() llm.APIKeyValidationResponse {
+	log.Printf("[GEMINI-CLI VALIDATION] Starting CLI validation")
+
+	// Step 1: Check if gemini CLI is on PATH
+	geminiPath, err := exec.LookPath("gemini")
+	if err != nil {
+		log.Printf("[GEMINI-CLI VALIDATION] CLI not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Gemini CLI not found. Install it with: npm install -g @anthropic-ai/gemini-cli (see https://github.com/google-gemini/gemini-cli)",
+		}
+	}
+	log.Printf("[GEMINI-CLI VALIDATION] CLI found at: %s", geminiPath)
+
+	// Step 2: Send a test prompt via the CLI and check for a response
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "gemini", "--approval-mode", "yolo", "--prompt", "Say hello in one short sentence.")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[GEMINI-CLI VALIDATION] CLI test timed out")
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Gemini CLI timed out after 60s. Check that you are authenticated (run 'gemini' to log in).",
+			}
+		}
+		log.Printf("[GEMINI-CLI VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Gemini CLI error: %s", strings.TrimSpace(errMsg)),
+		}
+	}
+
+	responseText := strings.TrimSpace(string(output))
+	if responseText == "" {
+		log.Printf("[GEMINI-CLI VALIDATION] CLI returned empty response")
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Gemini CLI returned an empty response. Check authentication with 'gemini'.",
+		}
+	}
+
+	log.Printf("[GEMINI-CLI VALIDATION SUCCESS] Got response: %s", responseText)
+	return llm.APIKeyValidationResponse{
+		Valid:   true,
+		Message: fmt.Sprintf("Gemini CLI is working. Response: %s", responseText),
 	}
 }
 
@@ -2871,6 +2936,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CLAUDE CODE] Auto-enabled code execution mode for MCP tool access via bridge (workflow)")
 		}
 
+		// Auto-enable code execution mode for gemini-cli provider (workflow path).
+		// Gemini CLI accesses MCP tools via the pre-configured bridge, which requires code execution mode.
+		if req.Provider == "gemini-cli" && !useCodeExecutionMode {
+			useCodeExecutionMode = true
+			log.Printf("[GEMINI CLI] Auto-enabled code execution mode for MCP tool access via bridge (workflow)")
+		}
+
 		// Use tool search mode from request if preset didn't provide any
 		if !useToolSearchMode && req.UseToolSearchMode {
 			useToolSearchMode = req.UseToolSearchMode
@@ -3441,6 +3513,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CLAUDE CODE] Auto-enabled code execution mode for MCP tool access via bridge")
 		}
 
+		// Auto-enable code execution mode for gemini-cli provider.
+		// Gemini CLI accesses MCP tools via the pre-configured bridge,
+		// which requires code execution mode to expose per-tool API endpoints.
+		if req.Provider == "gemini-cli" && !useCodeExecutionMode {
+			useCodeExecutionMode = true
+			log.Printf("[GEMINI CLI] Auto-enabled code execution mode for MCP tool access via bridge")
+		}
+
 		// CRITICAL: Always respect request value for tool search mode when explicitly set
 		// The frontend explicitly sends use_tool_search_mode (true or false), so we should use it
 		useToolSearchMode = req.UseToolSearchMode
@@ -3455,7 +3535,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
 		// so the orchestrator can efficiently discover tools for research.
 		if req.DelegationMode == "plan" {
-			if useCodeExecutionMode && req.Provider != "claude-code" {
+			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
@@ -4422,12 +4502,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Memory tools are available in all chat modes.
 			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
 
-			// Add Claude Code-specific human tool override when using claude-code provider.
+			// Add CLI-specific human tool override when using CLI-based providers.
 			// This covers delegation tools, memory tools, and human interaction tools —
 			// all registered under the "human" category and accessible only via HTTP API.
 			if req.Provider == "claude-code" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[CLAUDE CODE] Added human tool HTTP API override instructions")
+			}
+			if req.Provider == "gemini-cli" {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
+				log.Printf("[GEMINI CLI] Added human tool HTTP API override instructions")
 			}
 		}
 
@@ -4583,6 +4667,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Restore Gemini CLI session ID for --resume on subsequent turns
+		if gSID, ok := api.geminiSessionIDs[sessionID]; ok {
+			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+				underlyingAgent.GeminiSessionID = gSID
+			}
+		}
+
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
 		log.Printf("[LATENCY_DEBUG] T+%dms | Starting StreamWithEvents (LLM call) | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
@@ -4678,6 +4769,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if ccSID := underlyingAgent.ClaudeCodeSessionID; ccSID != "" {
 				api.claudeCodeSessionIDs[sessionID] = ccSID
 				log.Printf("[CLAUDE CODE] Saved session ID %s for session %s", ccSID, sessionID)
+			}
+		}
+
+		// Save Gemini CLI session ID for --resume on next turn
+		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			if gSID := underlyingAgent.GeminiSessionID; gSID != "" {
+				api.geminiSessionIDs[sessionID] = gSID
+				log.Printf("[GEMINI CLI] Saved session ID %s for session %s", gSID, sessionID)
 			}
 		}
 
@@ -4864,6 +4963,9 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 
 	// Clear Claude Code CLI session ID
 	delete(api.claudeCodeSessionIDs, sessionID)
+
+	// Clear Gemini CLI session ID
+	delete(api.geminiSessionIDs, sessionID)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))

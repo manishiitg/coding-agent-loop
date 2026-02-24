@@ -184,8 +184,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return null // No events yet — let user choose
   }, [isMultiAgentMode, tabEvents])
 
-  // Effective phase: user override wins, then auto-detected, then default to null (show toggle)
-  const planPhase = isMultiAgentMode ? (planPhaseOverride ?? autoDetectedPlanPhase) : null
+  // Effective phase: user override wins, then auto-detected, then default to 'planning'
+  const planPhase = isMultiAgentMode ? (planPhaseOverride ?? autoDetectedPlanPhase ?? 'planning') : null
 
   // Helper: check if an event is from a sub-agent (delegation)
   const isSubAgentEvent = useCallback((event: PollingEvent): boolean => {

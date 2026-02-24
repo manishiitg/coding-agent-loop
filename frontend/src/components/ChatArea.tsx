@@ -818,12 +818,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           chatStore.setTabCompleted(tab.tabId, true)
           chatStore.setTabStreaming(tab.tabId, false)
         }
+        // Clear streaming text when session ends — safety net in case completion events
+        // (llm_generation_end, agent_end) were filtered or missed
+        chatStore.clearStreamingText(actualSessionId)
       } else if (sessionStatus === 'running') {
         chatStore.setTabCompleted(tab.tabId, false)
         chatStore.setTabStreaming(tab.tabId, true)
       } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
         chatStore.setTabCompleted(tab.tabId, false)
         chatStore.setTabStreaming(tab.tabId, false)
+        chatStore.clearStreamingText(actualSessionId)
       }
       chatStore.setTabHasRunningBgAgents(tab.tabId, hasBgAgents)
     } else if (!tab && sessionStatus) {
@@ -831,12 +835,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         setIsStreaming(false)
         setIsCompleted(true)
         setHasActiveChat(false)
+        chatStore.clearStreamingText(actualSessionId)
       } else if (sessionStatus === 'running') {
         setIsStreaming(true)
         setIsCompleted(false)
       } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
         setIsStreaming(false)
         setIsCompleted(false)
+        chatStore.clearStreamingText(actualSessionId)
       }
     }
 

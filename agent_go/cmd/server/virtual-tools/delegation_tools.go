@@ -1547,21 +1547,43 @@ You are an intelligent assistant that executes tasks efficiently using delegatio
 // that explain how to call "human" category tools via the HTTP API instead of direct function calls.
 func GetClaudeCodeDelegationOverride() string {
 	return `
-## Claude Code — Human Tool Access (CRITICAL)
+## CLI Tool Environment (CRITICAL — Read Carefully)
 
-In this environment, ALL tools in the "human" category are NOT available as direct function calls.
-This includes:
+Your native tools (Bash, Read, Write, etc.) are **disabled**. All tool access goes through the MCP api-bridge. Your available tools are:
+
+| Tool name | Purpose |
+|-----------|---------|
+| ` + "`mcp__api-bridge__execute_shell_command`" + ` | Run any shell command (replaces Bash/Read/Write) |
+| ` + "`mcp__api-bridge__get_api_spec`" + ` | Discover human/custom tools and their API specs |
+| ` + "`mcp__api-bridge__agent_browser`" + ` | Browser automation |
+| ` + "`WebSearch`" + ` | Web search |
+
+### Tool Name Mapping
+Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, call ` + "`mcp__api-bridge__execute_shell_command`" + ` instead. Example:
+- Instructions say: execute_shell_command(command: "ls Plans/", working_directory: ".")
+- You call: mcp__api-bridge__execute_shell_command(command: "ls Plans/", working_directory: ".")
+
+### Calling Human Tools via HTTP API
+The following tools are NOT available as direct function calls — call them via curl through ` + "`mcp__api-bridge__execute_shell_command`" + `:
+
 - **Delegation tools**: delegate, create_delegation_plan, confirm_plan_execution, query_agent, terminate_agent, list_agents
 - **Human interaction tools**: human_feedback, human_questions
 - **Memory tools**: save_memory, recall_memory, compress_memory
 
-These are all accessible via HTTP API.
-
-**How to call any human tool:**
-1. Use ` + "`mcp__api-bridge__get_api_spec(server_name=\"human\", tool_name=\"delegate\")`" + ` to get the full API spec for any tool
+**Pattern for calling any human tool:**
+1. Optionally use ` + "`mcp__api-bridge__get_api_spec(server_name=\"human\", tool_name=\"delegate\")`" + ` to see the full API spec
 2. Call via ` + "`mcp__api-bridge__execute_shell_command`" + ` using curl:
 
-Example — delegate a task:
+` + "```" + `bash
+curl -s -X POST "$MCP_API_URL/tools/custom/{tool_name}" \
+  -H "Authorization: Bearer $MCP_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{...parameters...}'
+` + "```" + `
+
+**Examples:**
+
+delegate a task:
 ` + "```" + `bash
 curl -s -X POST "$MCP_API_URL/tools/custom/delegate" \
   -H "Authorization: Bearer $MCP_API_TOKEN" \
@@ -1569,7 +1591,7 @@ curl -s -X POST "$MCP_API_URL/tools/custom/delegate" \
   -d '{"instruction": "Your task instructions here", "reasoning_level": "medium"}'
 ` + "```" + `
 
-Example — create a delegation plan:
+create a delegation plan:
 ` + "```" + `bash
 curl -s -X POST "$MCP_API_URL/tools/custom/create_delegation_plan" \
   -H "Authorization: Bearer $MCP_API_TOKEN" \
@@ -1577,15 +1599,7 @@ curl -s -X POST "$MCP_API_URL/tools/custom/create_delegation_plan" \
   -d '{"plan_name": "my-plan", "objective": "...", "context": "..."}'
 ` + "```" + `
 
-Example — save a memory:
-` + "```" + `bash
-curl -s -X POST "$MCP_API_URL/tools/custom/save_memory" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"content": "Important finding: ...", "context": "project-name"}'
-` + "```" + `
-
-Example — ask the user questions:
+ask the user questions:
 ` + "```" + `bash
 curl -s -X POST "$MCP_API_URL/tools/custom/human_questions" \
   -H "Authorization: Bearer $MCP_API_TOKEN" \
@@ -1593,10 +1607,9 @@ curl -s -X POST "$MCP_API_URL/tools/custom/human_questions" \
   -d '{"questions": [{"question": "What framework do you prefer?", "context": "For the frontend"}]}'
 ` + "```" + `
 
-All human tools follow the same pattern: POST to /tools/custom/{tool_name} with JSON body.
-MCP_API_URL and MCP_API_TOKEN are available as environment variables.
+$MCP_API_URL and $MCP_API_TOKEN are pre-set environment variables — use them as-is.
 
-**Important:** Whenever the instructions mention calling a tool like ` + "`delegate(instruction: \"...\")`" + `, ` + "`save_memory(content: \"...\")`" + `, or ` + "`human_questions(...)`" + `, translate that to the HTTP API pattern shown above. Do NOT attempt to call these as direct function calls — they will not be found.
+**Important:** Whenever the instructions mention calling a tool like ` + "`delegate(instruction: \"...\")`" + `, ` + "`save_memory(content: \"...\")`" + `, or ` + "`human_questions(...)`" + `, translate that to the curl HTTP API pattern above. Do NOT attempt to call these as direct function calls — they will not be found.
 `
 }
 

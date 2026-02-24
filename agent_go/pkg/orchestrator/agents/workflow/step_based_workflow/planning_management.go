@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -290,11 +291,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 					}
 
 					if toolExecutor, ok := executor.(func(context.Context, map[string]interface{}) (string, error)); ok {
+						// Wrap human tools to inject SessionEventEmitter so blocking feedback events
+						// reach the frontend (same fix as in registerCustomToolsForAgent)
+						finalExec := toolExecutor
+						isHumanTool := false
+						if hcpo.ToolCategories != nil {
+							if cat, catExists := hcpo.ToolCategories[tool.Function.Name]; catExists && cat == virtualtools.GetHumanToolCategory() {
+								isHumanTool = true
+							}
+						}
+						if isHumanTool && hcpo.GetContextAwareBridge() != nil {
+							emitter := &orchestrator.BridgeSessionEventEmitter{Bridge: hcpo.GetContextAwareBridge()}
+							origExec := toolExecutor
+							finalExec = func(ctx context.Context, args map[string]interface{}) (string, error) {
+								ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, emitter)
+								return origExec(ctx, args)
+							}
+						}
 						if err := mcpAgent.RegisterCustomTool(
 							tool.Function.Name,
 							tool.Function.Description,
 							params,
-							toolExecutor,
+							finalExec,
 							"workspace",
 						); err != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to register workspace tool %s: %v", tool.Function.Name, err))

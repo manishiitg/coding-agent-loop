@@ -115,6 +115,16 @@ workspace/workspace
 *.db-shm
 *.db-wal
 
+# Playwright MCP artifacts (custom filenames can bypass --output-dir and land at repo/agent_go root; see docs/playwright_artifacts.md)
+.playwright-mcp/
+agent_go/page-*.png
+agent_go/snapshot*.html
+agent_go/screenshot*.png
+agent_go/screenshot.png
+/page-*.png
+/snapshot*.html
+/screenshot*.png
+
 # Terraform
 **/.terraform/*
 *.tfstate

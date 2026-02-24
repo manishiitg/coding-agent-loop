@@ -302,6 +302,7 @@ interface ChatState extends StoreActions {
       setTabEvents: (sessionId: string, events: PollingEvent[]) => void
       clearTabEvents: (sessionId: string) => void
       cleanupTabEvents: (sessionId: string, keepCount: number) => void
+      cleanupOrphanedTabEvents: () => void
       getTabLastEventIndex: (sessionId: string) => number
       setTabLastEventIndex: (sessionId: string, index: number) => void
       getTabHasMoreOlderEvents: (sessionId: string) => boolean
@@ -692,6 +693,40 @@ export const useChatStore = create<ChatState>()(
             }
           }
         })
+      },
+
+      // Remove tabEvents/tabEventIndices entries for session IDs that no tab references
+      // This prevents memory leaks when tabs are reused with new session IDs
+      cleanupOrphanedTabEvents: () => {
+        const state = get()
+        const activeSessionIds = new Set(
+          Object.values(state.chatTabs)
+            .map(tab => tab.sessionId)
+            .filter(Boolean)
+        )
+
+        let orphanCount = 0
+        const newTabEvents = { ...state.tabEvents }
+        const newTabEventIndices = { ...state.tabEventIndices }
+        const newTabHasMore = { ...state.tabHasMoreOlderEvents }
+
+        for (const sessionId of Object.keys(state.tabEvents)) {
+          if (!activeSessionIds.has(sessionId)) {
+            delete newTabEvents[sessionId]
+            delete newTabEventIndices[sessionId]
+            delete newTabHasMore[sessionId]
+            orphanCount++
+          }
+        }
+
+        if (orphanCount > 0) {
+          logger.debug('ChatStore', `Cleaned up ${orphanCount} orphaned tabEvent entries`)
+          set({
+            tabEvents: newTabEvents,
+            tabEventIndices: newTabEventIndices,
+            tabHasMoreOlderEvents: newTabHasMore
+          })
+        }
       },
 
       getTabLastEventIndex: (sessionId: string) => {
@@ -1329,45 +1364,45 @@ export const useChatStore = create<ChatState>()(
             }
           }
 
-          // Migrate events from old sessionId to new sessionId (if old session had events)
-          // This preserves conversation history for chat/multi-agent when session ID changes
+          // For non-workflow tabs: migrate events from old to new sessionId
+          // For workflow tabs: discard old events (re-runs should start fresh)
           if (oldSessionId && state.tabEvents[oldSessionId]) {
-            const oldEvents = state.tabEvents[oldSessionId]
-            const oldEventIndex = state.tabEventIndices[oldSessionId]
-            const oldHasMore = state.tabHasMoreOlderEvents[oldSessionId]
+            const isWorkflowTab = tab.metadata?.mode === 'workflow'
 
-            // Copy events to new sessionId
-            updates.tabEvents = {
-              ...state.tabEvents,
-              [newSessionId]: oldEvents
-            }
+            if (!isWorkflowTab) {
+              // Migrate events to preserve conversation history for chat/multi-agent
+              const oldEvents = state.tabEvents[oldSessionId]
+              const oldEventIndex = state.tabEventIndices[oldSessionId]
+              const oldHasMore = state.tabHasMoreOlderEvents[oldSessionId]
 
-            // Copy event index
-            if (oldEventIndex !== undefined) {
-              updates.tabEventIndices = {
-                ...state.tabEventIndices,
-                [newSessionId]: oldEventIndex
+              updates.tabEvents = {
+                ...state.tabEvents,
+                [newSessionId]: oldEvents
+              }
+              if (oldEventIndex !== undefined) {
+                updates.tabEventIndices = {
+                  ...state.tabEventIndices,
+                  [newSessionId]: oldEventIndex
+                }
+              }
+              if (oldHasMore !== undefined) {
+                updates.tabHasMoreOlderEvents = {
+                  ...state.tabHasMoreOlderEvents,
+                  [newSessionId]: oldHasMore
+                }
               }
             }
 
-            // Copy hasMoreOlderEvents flag
-            if (oldHasMore !== undefined) {
-              updates.tabHasMoreOlderEvents = {
-                ...state.tabHasMoreOlderEvents,
-                [newSessionId]: oldHasMore
-              }
-            }
-
-            // Clean up old sessionId entries
-            const newTabEvents = { ...updates.tabEvents || state.tabEvents }
+            // Clean up old sessionId entries (always, for both modes)
+            const newTabEvents = { ...(updates.tabEvents || state.tabEvents) }
             delete newTabEvents[oldSessionId]
             updates.tabEvents = newTabEvents
 
-            const newTabEventIndices = { ...updates.tabEventIndices || state.tabEventIndices }
+            const newTabEventIndices = { ...(updates.tabEventIndices || state.tabEventIndices) }
             delete newTabEventIndices[oldSessionId]
             updates.tabEventIndices = newTabEventIndices
 
-            const newTabHasMore = { ...updates.tabHasMoreOlderEvents || state.tabHasMoreOlderEvents }
+            const newTabHasMore = { ...(updates.tabHasMoreOlderEvents || state.tabHasMoreOlderEvents) }
             delete newTabHasMore[oldSessionId]
             updates.tabHasMoreOlderEvents = newTabHasMore
           }
@@ -1850,9 +1885,18 @@ export const useChatStore = create<ChatState>()(
         name: 'chat-store',
         partialize: (state) => ({
           // Persist workflow, multi-agent, and chat tabs (for reconnection)
+          // Only persist tabs created within the last 24 hours to prevent stale tabs
+          // from accumulating in localStorage and causing page hangs on reload
           chatTabs: Object.fromEntries(
             Object.entries(state.chatTabs)
-              .filter(([, tab]) => tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'chat')
+              .filter(([, tab]) => {
+                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'chat'
+                if (!isRelevantMode) return false
+                // Drop tabs older than 24 hours - they won't have active sessions
+                const MAX_TAB_AGE = 24 * 60 * 60 * 1000
+                const age = Date.now() - (tab.createdAt || 0)
+                return age < MAX_TAB_AGE
+              })
               .map(([tabId, tab]) => [
               tabId,
               {
@@ -1887,13 +1931,33 @@ export const useChatStore = create<ChatState>()(
         }),
         onRehydrateStorage: () => (state) => {
           if (!state) return
-          // Auto-select first tab if activeTabId is null but tabs exist
-          if (!state.activeTabId) {
-            const tabs = Object.values(state.chatTabs)
+
+          // Clean up stale tabs that survived partialize (edge case: clock skew, etc.)
+          const MAX_TAB_AGE = 24 * 60 * 60 * 1000
+          const now = Date.now()
+          const freshTabs: Record<string, typeof state.chatTabs[string]> = {}
+          let removedCount = 0
+          for (const [tabId, tab] of Object.entries(state.chatTabs)) {
+            const age = now - (tab.createdAt || 0)
+            if (age < MAX_TAB_AGE) {
+              freshTabs[tabId] = tab
+            } else {
+              removedCount++
+            }
+          }
+          if (removedCount > 0) {
+            logger.debug('ChatStore', `Cleaned up ${removedCount} stale tabs on rehydrate`)
+            useChatStore.setState({ chatTabs: freshTabs })
+          }
+
+          // Auto-select first tab if activeTabId is null or points to a removed tab
+          if (!state.activeTabId || !freshTabs[state.activeTabId]) {
+            const tabs = Object.values(freshTabs)
             if (tabs.length > 0) {
               const sorted = [...tabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
-              // Use setState to trigger re-render (direct mutation won't)
               useChatStore.setState({ activeTabId: sorted[0].tabId })
+            } else {
+              useChatStore.setState({ activeTabId: null })
             }
           }
         }

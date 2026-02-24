@@ -31,10 +31,14 @@ RUN apk add --no-cache ripgrep git patch python3 py3-pip util-linux jq nodejs np
     py3-matplotlib py3-pandas build-base python3-dev curl wget bash
 
 # Install agent-browser globally for browser automation
-RUN npm install -g agent-browser
+# PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents downloading glibc-linked Chromium binaries
+# that crash on Alpine/musl. We use the system-installed chromium-browser instead via
+# AGENT_BROWSER_EXECUTABLE_PATH (read by agent-browser's daemon).
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+RUN npm install -g agent-browser && \
+    rm -rf /root/.cache/ms-playwright /tmp/.cache/ms-playwright
 
-# Set Chromium path for Playwright (used by agent-browser)
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Set Chromium path for agent-browser (system chromium on Alpine)
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Configure pip: allow installs when Python is "externally managed" (PEP 668)

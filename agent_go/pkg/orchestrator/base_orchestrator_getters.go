@@ -238,3 +238,13 @@ func (bo *BaseOrchestrator) GetContextEditingTurnThreshold() int {
 func (bo *BaseOrchestrator) GetLargeOutputThreshold() int {
 	return bo.largeOutputThreshold
 }
+
+// GetBrowserDownloadsPath returns the relative path for browser downloads (e.g., "runs/.../execution/Downloads")
+func (bo *BaseOrchestrator) GetBrowserDownloadsPath() string {
+	return bo.browserDownloadsPath
+}
+
+// SetBrowserDownloadsPath sets the relative path for browser downloads
+func (bo *BaseOrchestrator) SetBrowserDownloadsPath(path string) {
+	bo.browserDownloadsPath = path
+}

@@ -27,7 +27,16 @@ export const SkillSelectionSection: React.FC<SkillSelectionSectionProps> = ({
     setError(null);
     try {
       const response = await skillsApi.listSkills();
-      setSkills(response.skills || []);
+      // Deduplicate by file_path to prevent React duplicate key crashes
+      const raw = response.skills || [];
+      const seen = new Set<string>();
+      const unique = raw.filter(s => {
+        const key = s.file_path || s.folder_name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setSkills(unique);
     } catch (err) {
       console.error('Failed to load skills:', err);
       setError('Failed to load skills');
@@ -137,7 +146,7 @@ export const SkillSelectionSection: React.FC<SkillSelectionSectionProps> = ({
                 const isSelected = selectedSkills.includes(skill.folder_name);
                 return (
                   <div
-                    key={skill.folder_name}
+                    key={skill.file_path || skill.folder_name}
                     className="flex items-start p-3 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-200 dark:border-gray-700 last:border-b-0"
                   >
                     <Checkbox

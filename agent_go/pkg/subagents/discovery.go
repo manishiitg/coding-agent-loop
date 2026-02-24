@@ -16,6 +16,7 @@ func DiscoverSubAgents(workspaceAPIURL string) ([]SubAgent, error) {
 	}
 
 	var subagents []SubAgent
+	seen := make(map[string]bool)
 
 	processFolder := func(entry DocumentEntry, prefix string) {
 		var folderName string
@@ -23,6 +24,11 @@ func DiscoverSubAgents(workspaceAPIURL string) ([]SubAgent, error) {
 			folderName = strings.TrimPrefix(entry.Filepath, SubAgentsBasePath+"/")
 		} else {
 			folderName = path.Base(entry.Filepath)
+		}
+
+		// Deduplicate by folder name
+		if seen[folderName] {
+			return
 		}
 
 		filePath := path.Join(entry.Filepath, SubAgentFileName)
@@ -36,6 +42,7 @@ func DiscoverSubAgents(workspaceAPIURL string) ([]SubAgent, error) {
 			return
 		}
 
+		seen[folderName] = true
 		subagents = append(subagents, *sa)
 	}
 
@@ -48,11 +55,12 @@ func DiscoverSubAgents(workspaceAPIURL string) ([]SubAgent, error) {
 
 		if folderName == "custom" {
 			customEntries, err := client.ListFiles(entry.Filepath)
-			if err == nil {
-				for _, customEntry := range customEntries {
-					if customEntry.Type == "folder" {
-						processFolder(customEntry, "custom")
-					}
+			if err != nil {
+				continue
+			}
+			for _, customEntry := range customEntries {
+				if customEntry.Type == "folder" {
+					processFolder(customEntry, "custom")
 				}
 			}
 			continue

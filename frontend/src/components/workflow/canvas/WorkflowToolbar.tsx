@@ -1879,10 +1879,42 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           </div>
                                         )}
                                       </div>
-                                    ) : null}
-                                    
+                                    ) : (
+                                      /* Top-level iteration folder without groups - render as clickable item */
+                                      (() => {
+                                        const iterItem = groups[0] // The single item with groupId: null
+                                        const progress = iterItem?.progress
+                                        const completedCount = progress?.completed_step_indices?.length || 0
+                                        const totalSteps = progress?.total_steps || 0
+                                        const hasProgress = progress && completedCount > 0
+                                        const isSelected = selectedRunFolder === iteration
+                                        return (
+                                          <>
+                                            <button
+                                              onClick={() => handleSelectRunFolder(iteration)}
+                                              className={`
+                                                w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                                ${isSelected
+                                                  ? 'bg-primary/10 text-primary'
+                                                  : 'hover:bg-accent text-foreground'
+                                                }
+                                              `}
+                                            >
+                                              <FolderOpen className="w-4 h-4" />
+                                              <span className="flex-1 text-xs font-mono">{iteration}</span>
+                                              {hasProgress && (
+                                                <span className="text-[10px] text-muted-foreground">
+                                                  {completedCount}/{totalSteps}
+                                                </span>
+                                              )}
+                                            </button>
+                                          </>
+                                        )
+                                      })()
+                                    )}
+
                                     {/* Only show groups when iteration is expanded */}
-                                    {isExpanded && (
+                                    {isExpanded && hasGroups && (
                                       <>
                                         {/* Groups under this iteration - show ALL groups from manifest, not just ones with folders */}
                                         {/* Filter out iteration folders (groupId === null) since we already show the iteration header */}
@@ -2028,6 +2060,42 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                   </div>
                                 )
                               })
+                            ) : folders.length > 0 && !variablesManifest?.groups?.length ? (
+                              // Iterations exist but no variable groups defined
+                              <>
+                                {folders.map((folder: RunFolder) => {
+                                  const progress = folder.progress
+                                  const folderCompletedCount = progress?.completed_step_indices?.length || 0
+                                  const folderTotalSteps = progress?.total_steps || 0
+                                  const hasProgress = progress && folderCompletedCount > 0
+                                  const isSelected = selectedRunFolder === folder.name
+
+                                  return (
+                                    <button
+                                      key={folder.name}
+                                      onClick={() => handleSelectRunFolder(folder.name)}
+                                      className={`
+                                        w-full text-left px-3 py-2 rounded-md text-sm flex items-center gap-2
+                                        ${isSelected
+                                          ? 'bg-primary/10 text-primary'
+                                          : 'hover:bg-accent text-foreground'
+                                        }
+                                      `}
+                                    >
+                                      <FolderOpen className="w-4 h-4" />
+                                      <span className="flex-1 text-xs font-mono">{folder.name}</span>
+                                      {hasProgress && (
+                                        <span className="text-[10px] text-muted-foreground">
+                                          {folderCompletedCount}/{folderTotalSteps}
+                                        </span>
+                                      )}
+                                    </button>
+                                  )
+                                })}
+                                <div className="border-t border-border mt-1 pt-1 px-3 py-2 text-[10px] text-amber-600 dark:text-amber-400">
+                                  No variable groups defined. Add groups in Variables to run per-group iterations.
+                                </div>
+                              </>
                             ) : (
                               // Fallback: show flat list if no groups (backward compatibility)
                               folders.map((folder: RunFolder) => {

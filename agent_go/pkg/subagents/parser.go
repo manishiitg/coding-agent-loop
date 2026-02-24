@@ -51,11 +51,24 @@ func SerializeSubAgentFile(frontmatter *SubAgentFrontmatter, body string) (strin
 	return result.String(), nil
 }
 
-// ParseSubAgentFromContent parses a complete SubAgent from SUBAGENT.md content
+// ParseSubAgentFromContent parses a complete SubAgent from SUBAGENT.md content.
+// If the file has no YAML frontmatter, the folder name is used as the name
+// and the entire content is treated as the body.
 func ParseSubAgentFromContent(content, folderName, filePath string) (*SubAgent, error) {
 	frontmatter, body, err := ParseSubAgentFile(content)
 	if err != nil {
-		return nil, err
+		// If frontmatter parsing fails, treat entire content as body
+		// and derive name from folder name
+		name := folderName
+		if strings.Contains(name, "/") {
+			parts := strings.Split(name, "/")
+			name = parts[len(parts)-1]
+		}
+		frontmatter = &SubAgentFrontmatter{
+			Name:        name,
+			Description: "",
+		}
+		body = strings.TrimSpace(content)
 	}
 
 	return &SubAgent{

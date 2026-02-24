@@ -1,6 +1,6 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../generated/event-types'
-import { WorkspaceToolCallDisplay, HumanFeedbackToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay } from './ToolCallSpecialRender'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
 
@@ -31,9 +31,9 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return isWorkspace
   }
 
-  // Check if this is a human feedback tool
-  const isHumanFeedbackTool = (toolName: string): boolean => {
-    return toolName === 'human_feedback'
+  // Check if this is a human tool (feedback or questions)
+  const isHumanTool = (toolName: string): boolean => {
+    return toolName === 'human_feedback' || toolName === 'human_questions'
   }
 
   // Check if this is a code execution tool
@@ -56,9 +56,11 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
     return <WorkspaceToolCallDisplay event={event} />
   }
 
-  // If it's a human feedback tool, use the specialized component
-  if (event.tool_name && isHumanFeedbackTool(event.tool_name)) {
-    return <HumanFeedbackToolCallDisplay event={event} />
+  // Human tools: don't render here — blocking_human_feedback / blocking_human_questions
+  // events (emitted inside the tool handlers) render the interactive UI via their
+  // dedicated display components, so rendering here would show the question twice.
+  if (event.tool_name && isHumanTool(event.tool_name)) {
+    return null
   }
 
   // If it's a code execution tool, use the specialized component

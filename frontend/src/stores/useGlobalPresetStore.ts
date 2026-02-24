@@ -9,6 +9,7 @@ import { useWorkspaceStore } from './useWorkspaceStore'
 import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
 import { useWorkflowStore } from './useWorkflowStore'
+import { useSecretsStore } from './useSecretsStore'
 
 export interface PresetApplicationResult {
   success: boolean
@@ -37,7 +38,7 @@ interface GlobalPresetState {
   refreshPresets: () => Promise<void>
   addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
   updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -87,6 +88,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         try {
           const response = await agentApi.getPresetQueries()
           
+          // Import secrets store for resolving secret names to IDs
+          // useSecretsStore imported at top level
+          const secretsState = useSecretsStore.getState()
+
           // Filter custom and predefined presets from the same response
           const customPresets: CustomPreset[] = response.presets
             .filter(preset => !preset.is_predefined)
@@ -171,6 +176,38 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               console.error('[PRESET] Error parsing pre-discovered tools:', error)
             }
             
+            // Parse selected_secrets (stored as names in DB, resolve to local IDs)
+            let selectedSecrets: string[] = []
+            try {
+              if (preset.selected_secrets) {
+                const secretNames: string[] = typeof preset.selected_secrets === 'string'
+                  ? JSON.parse(preset.selected_secrets)
+                  : preset.selected_secrets
+                if (secretNames && secretNames.length > 0) {
+                  selectedSecrets = secretNames
+                    .map(name => secretsState.getSecretByName(name)?.id)
+                    .filter((id): id is string => !!id)
+                }
+              }
+            } catch (error) {
+              console.error('[PRESET] Error parsing selected secrets:', error)
+            }
+
+            // Parse selected_global_secret_names (null in DB = all selected)
+            let selectedGlobalSecretNames: string[] | null = null
+            try {
+              if (preset.selected_global_secret_names) {
+                const parsed = typeof preset.selected_global_secret_names === 'string'
+                  ? JSON.parse(preset.selected_global_secret_names)
+                  : preset.selected_global_secret_names
+                if (Array.isArray(parsed)) {
+                  selectedGlobalSecretNames = parsed
+                }
+              }
+            } catch (error) {
+              console.error('[PRESET] Error parsing selected global secret names:', error)
+            }
+
             return {
               id: preset.id,
               label: preset.label,
@@ -179,6 +216,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedServers,
               selectedTools, // NEW
               selectedSkills, // Skill folder names
+              selectedSecrets, // Secret IDs resolved from backend names
+              selectedGlobalSecretNames, // Per-preset global secret selection (null=all)
               agentMode: preset.agent_mode as 'simple' | 'workflow' | undefined,
               selectedFolder,
               llmConfig,
@@ -339,7 +378,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             selectedServers,
             selectedTools, // Keep original selection for UI
             selectedSkills, // Skill folder names
-            selectedSecrets, // Secret IDs (browser-local only)
+            selectedSecrets, // Secret IDs (persisted to DB as names)
             agentMode,
             selectedFolder,
             llmConfig,
@@ -483,7 +522,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                     selectedServers,
                     selectedTools, // Keep original UI selection
                     selectedSkills, // Skill folder names
-                    selectedSecrets, // Secret IDs (browser-local only)
+                    selectedSecrets, // Secret IDs (persisted to DB as names)
                     agentMode,
                     selectedFolder,
                     llmConfig,
@@ -503,26 +542,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets) => {
-        // CRITICAL: Log ALL arguments to trace parameter flow
-        console.error('[code_execution] [PRESET_STORE] ========== savePreset CALLED ==========')
-        console.error('[code_execution] [PRESET_STORE] Arguments received:', {
-          'arg1-label': label,
-          'arg2-query': query?.substring(0, 30),
-          'arg3-selectedServers': selectedServers,
-          'arg4-selectedTools': selectedTools,
-          'arg5-selectedSkills': selectedSkills,
-          'arg6-agentMode': agentMode,
-          'arg7-selectedFolder': selectedFolder ? 'defined' : 'undefined',
-          'arg8-llmConfig': llmConfig ? 'defined' : 'undefined',
-          'arg9-useCodeExecutionMode': useCodeExecutionMode,
-          'arg9-type': typeof useCodeExecutionMode,
-          'arg10-id': id,
-          'arg11-enableContextSummarization': enableContextSummarization,
-          'arg12-useToolSearchMode': useToolSearchMode,
-          'operation': id ? 'UPDATE' : 'CREATE'
-        })
-        
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames) => {
         // Apply workflow-specific default for tool search mode
         // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
         const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
@@ -543,10 +563,14 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           toolsForBackend = []
         }
 
+        // Convert secret IDs to names for backend persistence (names are device-independent)
+        // useSecretsStore imported at top level
+        const secretNamesForBackend = selectedSecrets
+          ?.map(secretId => useSecretsStore.getState().getSecret(secretId)?.name)
+          .filter((n): n is string => !!n) || []
+
         if (id) {
           // Update existing preset
-          console.log('[code_execution] [PRESET_STORE] Updating existing preset:', id)
-
           try {
             const request: UpdatePresetQueryRequest = {
               label,
@@ -554,6 +578,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selected_servers: selectedServers,
               selected_tools: toolsForBackend,
               selected_skills: selectedSkills, // Skill folder names for workflow
+              selected_secrets: secretNamesForBackend, // Secret names for backend persistence
+              selected_global_secret_names: selectedGlobalSecretNames ?? undefined, // null=all (omit), []=none
               agent_mode: agentMode,
               selected_folder: selectedFolder?.filepath,
               use_tool_search_mode: effectiveToolSearchMode,
@@ -586,11 +612,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               request.enable_context_editing = enableContextEditing
             }
 
-            console.log('[code_execution] [PRESET_STORE] Updating preset with request:', {
-              ...request,
-              use_code_execution_mode: request.use_code_execution_mode
-            })
-
             await agentApi.updatePresetQuery(id, request)
 
             set(state => ({
@@ -603,7 +624,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       selectedServers,
                       selectedTools, // Keep original UI selection
                       selectedSkills, // Skill folder names
-                      selectedSecrets, // Secret IDs (browser-local only)
+                      selectedSecrets, // Secret IDs (persisted to DB as names)
+                      selectedGlobalSecretNames, // Per-preset global secret selection
                       agentMode,
                       selectedFolder,
                       llmConfig,
@@ -618,6 +640,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               )
             }))
 
+            // Sync global secret selection to secrets store if this is the active preset
+            const activeWorkflowId = get().activePresetIds.workflow
+            const activeChatId = get().activePresetIds.chat
+            if (id === activeWorkflowId || id === activeChatId) {
+              useSecretsStore.getState().setSelectedGlobalSecretNames(selectedGlobalSecretNames ?? null)
+            }
+
             // Return the updated preset
             const updatedPreset = get().customPresets.find(p => p.id === id)
             return updatedPreset || null
@@ -627,8 +656,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           }
         } else {
           // Create new preset
-          console.log('[code_execution] [PRESET_STORE] Creating new preset')
-
           try {
             const request: CreatePresetQueryRequest = {
               label,
@@ -636,6 +663,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selected_servers: selectedServers,
               selected_tools: toolsForBackend,
               selected_skills: selectedSkills, // Skill folder names for workflow
+              selected_secrets: secretNamesForBackend, // Secret names for backend persistence
+              selected_global_secret_names: selectedGlobalSecretNames ?? undefined, // null=all (omit), []=none
               agent_mode: agentMode,
               selected_folder: selectedFolder?.filepath,
               use_tool_search_mode: effectiveToolSearchMode,
@@ -683,7 +712,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               selectedServers,
               selectedTools, // Keep original UI selection
               selectedSkills, // Skill folder names
-              selectedSecrets, // Secret IDs (browser-local only)
+              selectedSecrets, // Secret IDs (persisted to DB as names)
+              selectedGlobalSecretNames, // Per-preset global secret selection
               agentMode,
               selectedFolder,
               llmConfig,
@@ -874,7 +904,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             undefined, // useToolSearchMode
             undefined, // enableBrowserAccess
             undefined, // enableContextEditing
-            originalPreset.selectedSecrets // Copy secret selections
+            originalPreset.selectedSecrets, // Copy secret selections
+            originalPreset.selectedGlobalSecretNames // Copy global secret selection
           )
           
           // If original preset had a workflow, create a new workflow for the duplicated preset
@@ -1027,6 +1058,13 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             setPrimaryConfig(updatedConfig)
           }
           
+          // Sync per-preset global secret selection to secrets store
+          // This ensures the SecretSelectionDropdown reflects the preset's setting
+          if ('selectedGlobalSecretNames' in preset) {
+            const presetGlobalSecrets = (preset as CustomPreset).selectedGlobalSecretNames
+            useSecretsStore.getState().setSelectedGlobalSecretNames(presetGlobalSecrets ?? null)
+          }
+
           // Handle workspace folder selection
           if (folderPath) {
             // Clear any previously selected file in workspace

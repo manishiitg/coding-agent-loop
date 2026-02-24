@@ -187,11 +187,37 @@ func run(ctx context.Context, log loggerv2.Logger) error {
 	defer agent.Close()
 	defer configCleanup()
 
-	// Step 11: Register custom tools (shell + browser)
+	// Step 11: Register custom tools (shell + browser + dummy human tool for testing)
 	if err := registerTools(agent, wrappedShell, browserExec, log); err != nil {
 		return err
 	}
 	log.Info("Tools registered")
+
+	// Register a dummy "human" category tool to test that custom tools appear
+	// in the tool index when UseCodeExecutionMode is true.
+	if err := agent.RegisterCustomTool(
+		"human_feedback",
+		"Request feedback from a human operator",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"question": map[string]interface{}{
+					"type":        "string",
+					"description": "The question to ask the human",
+				},
+			},
+			"required": []string{"question"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			question, _ := args["question"].(string)
+			fmt.Fprintf(os.Stderr, "\n>>> HUMAN_FEEDBACK TOOL CALLED! question=%q <<<\n", question)
+			return fmt.Sprintf(`{"status":"ok","feedback":"This is a dummy human feedback response to: %s"}`, question), nil
+		},
+		"human",
+	); err != nil {
+		return fmt.Errorf("register human_feedback tool: %w", err)
+	}
+	log.Info("Registered dummy human_feedback tool (category: human)")
 
 	// Step 12: Register CLI event listener (shows tool calls in terminal)
 	agent.AddEventListener(&cliEventListener{})
@@ -200,6 +226,18 @@ func run(ctx context.Context, log loggerv2.Logger) error {
 	if err := verifyBridge(agent, log); err != nil {
 		return err
 	}
+
+	// Print tool index at startup so we can verify custom tools are included
+	fmt.Fprintf(os.Stderr, "\n=== Tool Index (UseCodeExecutionMode=%v) ===\n", agent.UseCodeExecutionMode)
+	if sp := agent.SystemPrompt; sp != "" {
+		if start := strings.Index(sp, "```json\n"); start != -1 {
+			jsonStart := start + 8
+			if end := strings.Index(sp[jsonStart:], "\n```"); end != -1 {
+				fmt.Fprintf(os.Stderr, "%s\n", sp[jsonStart:jsonStart+end])
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "=== End Tool Index ===\n\n")
 
 	fmt.Println("Claude Code Chat — type /help for commands, /exit to quit")
 	fmt.Println()
@@ -621,7 +659,7 @@ func runChat(ctx context.Context, agent *mcpagent.Agent) error {
 			continue
 		}
 
-		if handled, exit := handleCommand(input, &history); handled {
+		if handled, exit := handleCommand(input, &history, agent); handled {
 			if exit {
 				return nil
 			}
@@ -647,6 +685,9 @@ func runChat(ctx context.Context, agent *mcpagent.Agent) error {
 
 		history = updated
 		fmt.Printf("\nassistant> %s\n\n", answer)
+
+		// Show per-turn usage summary
+		printUsageSummary(agent)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -655,24 +696,99 @@ func runChat(ctx context.Context, agent *mcpagent.Agent) error {
 	return nil
 }
 
+func printUsageSummary(agent *mcpagent.Agent) {
+	promptTokens, completionTokens, totalTokens, cacheTokens, _, llmCalls, _ := agent.GetTokenUsage()
+
+	// Show session ID if captured
+	sessionTag := ""
+	if agent.ClaudeCodeSessionID != "" {
+		sid := agent.ClaudeCodeSessionID
+		if len(sid) > 12 {
+			sid = sid[:12] + "..."
+		}
+		sessionTag = fmt.Sprintf("  session=%s", sid)
+	}
+
+	// Show cache hit ratio if cache tokens exist
+	cacheInfo := ""
+	if cacheTokens > 0 && promptTokens > 0 {
+		pct := float64(cacheTokens) / float64(promptTokens) * 100
+		cacheInfo = fmt.Sprintf(" (%.0f%% cached)", pct)
+	}
+
+	fmt.Fprintf(os.Stderr, "  [usage] %d in / %d out / %d total%s | calls: %d%s\n",
+		promptTokens, completionTokens, totalTokens, cacheInfo, llmCalls, sessionTag)
+}
+
 // handleCommand processes slash commands. Returns (handled, shouldExit).
-func handleCommand(input string, history *[]llm.MessageContent) (bool, bool) {
+func handleCommand(input string, history *[]llm.MessageContent, agent *mcpagent.Agent) (bool, bool) {
 	switch strings.ToLower(input) {
 	case "/exit", "/quit":
 		fmt.Println("Goodbye!")
 		return true, true
 	case "/clear":
 		*history = (*history)[:0]
+		agent.ClaudeCodeSessionID = "" // Reset session so next turn starts fresh
 		fmt.Println("Conversation cleared.")
 		return true, false
 	case "/history":
 		fmt.Printf("Messages in history: %d\n", len(*history))
 		return true, false
+	case "/usage":
+		promptTokens, completionTokens, totalTokens, cacheTokens, reasoningTokens, llmCalls, _ := agent.GetTokenUsage()
+		fmt.Printf("Token Usage (cumulative):\n")
+		fmt.Printf("  Input tokens:     %d", promptTokens)
+		if cacheTokens > 0 {
+			fmt.Printf(" (%d cached, %d new)", cacheTokens, promptTokens-cacheTokens)
+		}
+		fmt.Printf("\n")
+		fmt.Printf("  Output tokens:    %d\n", completionTokens)
+		if reasoningTokens > 0 {
+			fmt.Printf("  Reasoning tokens: %d\n", reasoningTokens)
+		}
+		fmt.Printf("  Total tokens:     %d\n", totalTokens)
+		fmt.Printf("  LLM calls:        %d\n", llmCalls)
+		if agent.ClaudeCodeSessionID != "" {
+			fmt.Printf("  Session ID:       %s\n", agent.ClaudeCodeSessionID)
+		}
+		return true, false
+	case "/index":
+		// Extract and print the tool index JSON from the system prompt.
+		// The tool index is embedded inside <available_tools>...</available_tools>
+		// with a ```json code block containing the actual JSON.
+		sp := agent.SystemPrompt
+		start := strings.Index(sp, "<available_tools>")
+		end := strings.Index(sp, "</available_tools>")
+		if start == -1 || end == -1 {
+			fmt.Println("No <available_tools> section found in system prompt.")
+			fmt.Printf("System prompt length: %d chars\n", len(sp))
+			fmt.Printf("UseCodeExecutionMode: %v\n", agent.UseCodeExecutionMode)
+		} else {
+			block := sp[start : end+len("</available_tools>")]
+			// Try to extract just the JSON from the ```json ... ``` block
+			jsonStart := strings.Index(block, "```json\n")
+			jsonEnd := strings.Index(block[jsonStart+8:], "\n```")
+			if jsonStart != -1 && jsonEnd != -1 {
+				jsonStr := block[jsonStart+8 : jsonStart+8+jsonEnd]
+				var parsed interface{}
+				if err := json.Unmarshal([]byte(jsonStr), &parsed); err == nil {
+					pretty, _ := json.MarshalIndent(parsed, "", "  ")
+					fmt.Printf("Tool Index:\n%s\n", string(pretty))
+				} else {
+					fmt.Printf("Tool index (raw JSON):\n%s\n", jsonStr)
+				}
+			} else {
+				fmt.Printf("Available tools section:\n%s\n", block)
+			}
+		}
+		return true, false
 	case "/help":
 		fmt.Println("Commands:")
 		fmt.Println("  /exit, /quit  — exit the chat")
-		fmt.Println("  /clear        — reset conversation history")
+		fmt.Println("  /clear        — reset conversation history + session")
 		fmt.Println("  /history      — show message count")
+		fmt.Println("  /usage        — show cumulative token usage")
+		fmt.Println("  /index        — show tool index from system prompt")
 		fmt.Println("  /help         — show this help")
 		return true, false
 	}

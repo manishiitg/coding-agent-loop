@@ -834,12 +834,6 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 		agentMode = AgentModeSimple
 	}
 
-	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
-	`
-
 	var preset PresetQuery
 	var selectedServersStr string
 	var selectedToolsStr string
@@ -866,6 +860,34 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 		selectedSkillsJSON = string(skillsJSON)
 	}
 
+	selectedSecretsJSON := "[]"
+	if len(req.SelectedSecrets) > 0 {
+		secretsJSON, err := json.Marshal(req.SelectedSecrets)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected secrets: %w", err)
+		}
+		selectedSecretsJSON = string(secretsJSON)
+	}
+
+	var selectedGlobalSecretNamesParam interface{}
+	if req.SelectedGlobalSecretNames != nil {
+		gsJSON, err := json.Marshal(*req.SelectedGlobalSecretNames)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected global secret names: %w", err)
+		}
+		selectedGlobalSecretNamesParam = string(gsJSON)
+	} else {
+		selectedGlobalSecretNamesParam = nil
+	}
+
+	query := `
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
+	`
+
+	var selectedSecretsStr sql.NullString
+	var selectedGlobalSecretNamesStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query,
 		req.Label,
 		req.Query,
@@ -878,11 +900,13 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 		req.UseToolSearchMode,
 		preDiscoveredToolsJSON,
 		selectedSkillsJSON,
+		selectedSecretsJSON,
+		selectedGlobalSecretNamesParam,
 		req.EnableBrowserAccess,
 		req.IsPredefined,
 		"user",
 	).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -893,6 +917,14 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 	preset.SelectedFolder = selectedFolderStr
 	preset.PreDiscoveredTools = preDiscoveredToolsStr.String
 	preset.SelectedSkills = selectedSkillsStr.String
+	if selectedSecretsStr.Valid {
+		preset.SelectedSecrets = selectedSecretsStr.String
+	} else {
+		preset.SelectedSecrets = "[]"
+	}
+	if selectedGlobalSecretNamesStr.Valid {
+		preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
+	}
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -905,7 +937,7 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 // GetPresetQuery retrieves a preset query by ID
 func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		WHERE id = $1
 	`
@@ -917,9 +949,11 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	var llmConfigNullStr sql.NullString
 	var preDiscoveredToolsStr sql.NullString
 	var selectedSkillsStr sql.NullString
+	var selectedSecretsStr sql.NullString
+	var selectedGlobalSecretNamesStr sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -933,6 +967,14 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	preset.SelectedFolder = selectedFolderStr
 	preset.PreDiscoveredTools = preDiscoveredToolsStr.String
 	preset.SelectedSkills = selectedSkillsStr.String
+	if selectedSecretsStr.Valid {
+		preset.SelectedSecrets = selectedSecretsStr.String
+	} else {
+		preset.SelectedSecrets = "[]"
+	}
+	if selectedGlobalSecretNamesStr.Valid {
+		preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
+	}
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -1054,6 +1096,30 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 		args = append(args, selectedSkillsJSON)
 	}
 
+	if req.SelectedSecrets != nil {
+		selectedSecretsJSON := "[]"
+		if len(req.SelectedSecrets) > 0 {
+			secretsJSON, err := json.Marshal(req.SelectedSecrets)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal selected secrets: %w", err)
+			}
+			selectedSecretsJSON = string(secretsJSON)
+		}
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_secrets = $%d", argCount))
+		args = append(args, selectedSecretsJSON)
+	}
+
+	if req.SelectedGlobalSecretNames != nil {
+		gsJSON, err := json.Marshal(*req.SelectedGlobalSecretNames)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected global secret names: %w", err)
+		}
+		argCount++
+		updateFields = append(updateFields, fmt.Sprintf("selected_global_secret_names = $%d", argCount))
+		args = append(args, string(gsJSON))
+	}
+
 	if req.EnableBrowserAccess != nil {
 		argCount++
 		updateFields = append(updateFields, fmt.Sprintf("enable_browser_access = $%d", argCount))
@@ -1065,7 +1131,7 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 	}
 
 	updateFields = append(updateFields, "updated_at = CURRENT_TIMESTAMP")
-	
+
 	argCount++
 	args = append(args, id)
 
@@ -1073,7 +1139,7 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 		UPDATE preset_queries
 		SET %s
 		WHERE id = $%d
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
 	`, strings.Join(updateFields, ", "), argCount)
 
 	var preset PresetQuery
@@ -1083,8 +1149,10 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 	var llmConfigNullStr sql.NullString
 	var preDiscoveredToolsStr sql.NullString
 	var selectedSkillsStr sql.NullString
+	var selectedSecretsStr sql.NullString
+	var selectedGlobalSecretNamesStr sql.NullString
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1098,6 +1166,14 @@ func (s *SupabaseDB) UpdatePresetQuery(ctx context.Context, id string, req *Upda
 	preset.SelectedFolder = selectedFolderStr
 	preset.PreDiscoveredTools = preDiscoveredToolsStr.String
 	preset.SelectedSkills = selectedSkillsStr.String
+	if selectedSecretsStr.Valid {
+		preset.SelectedSecrets = selectedSecretsStr.String
+	} else {
+		preset.SelectedSecrets = "[]"
+	}
+	if selectedGlobalSecretNamesStr.Valid {
+		preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
+	}
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -1138,85 +1214,58 @@ func (s *SupabaseDB) ListPresetQueries(ctx context.Context, limit, offset int) (
 	}
 
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`
 
-	
+	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list preset queries: %w", err)
+	}
+	defer rows.Close()
 
-		rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	presets := make([]PresetQuery, 0)
+	for rows.Next() {
+		var preset PresetQuery
+		var selectedServersStr string
+		var selectedToolsStr string
+		var selectedFolderStr sql.NullString
+		var llmConfigNullStr sql.NullString
+		var preDiscoveredToolsStr sql.NullString
+		var selectedSkillsStr sql.NullString
+		var selectedSecretsStr sql.NullString
+		var selectedGlobalSecretNamesStr sql.NullString
 
+		err := rows.Scan(
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		)
 		if err != nil {
-
-			return nil, 0, fmt.Errorf("failed to list preset queries: %w", err)
-
+			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
 		}
 
-		defer rows.Close()
-
-	
-
-		presets := make([]PresetQuery, 0)
-
-		for rows.Next() {
-
-			var preset PresetQuery
-
-			var selectedServersStr string
-
-			var selectedToolsStr string
-
-			var selectedFolderStr sql.NullString
-
-			var llmConfigNullStr sql.NullString
-
-			var preDiscoveredToolsStr sql.NullString
-
-			var selectedSkillsStr sql.NullString
-
-			err := rows.Scan(
-
-				&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
-
-			)
-
-			if err != nil {
-
-				return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
-
-			}
-
-	
-
-			preset.SelectedServers = selectedServersStr
-
-			preset.SelectedTools = selectedToolsStr
-
-			preset.PreDiscoveredTools = preDiscoveredToolsStr.String
-
-			preset.SelectedSkills = selectedSkillsStr.String
-
-	
-
-			if llmConfigNullStr.Valid {
-
-				preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
-
-			} else {
-
-				preset.LLMConfig = json.RawMessage("null")
-
-			}
-
-	
-
-			preset.SelectedFolder = selectedFolderStr
-
-			presets = append(presets, preset)
-
+		preset.SelectedServers = selectedServersStr
+		preset.SelectedTools = selectedToolsStr
+		preset.SelectedFolder = selectedFolderStr
+		preset.PreDiscoveredTools = preDiscoveredToolsStr.String
+		preset.SelectedSkills = selectedSkillsStr.String
+		if selectedSecretsStr.Valid {
+			preset.SelectedSecrets = selectedSecretsStr.String
+		} else {
+			preset.SelectedSecrets = "[]"
 		}
+		if selectedGlobalSecretNamesStr.Valid {
+			preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
+		}
+		if llmConfigNullStr.Valid {
+			preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
+		} else {
+			preset.LLMConfig = json.RawMessage("null")
+		}
+
+		presets = append(presets, preset)
+	}
 
 	return presets, total, nil
 }
@@ -1708,6 +1757,26 @@ func (s *SupabaseDB) CreatePresetQueryWithUser(ctx context.Context, req *CreateP
 		selectedSkillsJSON = string(skillsJSON)
 	}
 
+	selectedSecretsJSON := "[]"
+	if len(req.SelectedSecrets) > 0 {
+		secretsJSON, err := json.Marshal(req.SelectedSecrets)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected secrets: %w", err)
+		}
+		selectedSecretsJSON = string(secretsJSON)
+	}
+
+	var selectedGlobalSecretNamesParam interface{}
+	if req.SelectedGlobalSecretNames != nil {
+		gsJSON, err := json.Marshal(*req.SelectedGlobalSecretNames)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal selected global secret names: %w", err)
+		}
+		selectedGlobalSecretNamesParam = string(gsJSON)
+	} else {
+		selectedGlobalSecretNamesParam = nil
+	}
+
 	var userIDValue interface{}
 	if userID == "" {
 		userIDValue = nil
@@ -1716,9 +1785,9 @@ func (s *SupabaseDB) CreatePresetQueryWithUser(ctx context.Context, req *CreateP
 	}
 
 	query := `
-		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_by, user_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		INSERT INTO preset_queries (label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_by, user_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		RETURNING id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
 	`
 
 	var preset PresetQuery
@@ -1728,8 +1797,10 @@ func (s *SupabaseDB) CreatePresetQueryWithUser(ctx context.Context, req *CreateP
 	var llmConfigNullStr sql.NullString
 	var preDiscoveredToolsStr sql.NullString
 	var selectedSkillsStr sql.NullString
-	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.UseCodeExecutionMode, req.UseToolSearchMode, preDiscoveredToolsJSON, selectedSkillsJSON, req.EnableBrowserAccess, req.IsPredefined, "user", userIDValue).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+	var selectedSecretsStr sql.NullString
+	var selectedGlobalSecretNamesStr sql.NullString
+	err := s.db.QueryRowContext(ctx, query, req.Label, req.Query, selectedServersJSON, selectedToolsJSON, req.SelectedFolder, agentMode, llmConfigParam, req.UseCodeExecutionMode, req.UseToolSearchMode, preDiscoveredToolsJSON, selectedSkillsJSON, selectedSecretsJSON, selectedGlobalSecretNamesParam, req.EnableBrowserAccess, req.IsPredefined, "user", userIDValue).Scan(
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preset query: %w", err)
@@ -1738,6 +1809,14 @@ func (s *SupabaseDB) CreatePresetQueryWithUser(ctx context.Context, req *CreateP
 	preset.SelectedServers = selectedServersStr
 	preset.SelectedTools = selectedToolsStr
 	preset.SelectedFolder = selectedFolderStr
+	if selectedSecretsStr.Valid {
+		preset.SelectedSecrets = selectedSecretsStr.String
+	} else {
+		preset.SelectedSecrets = "[]"
+	}
+	if selectedGlobalSecretNamesStr.Valid {
+		preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
+	}
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {
@@ -1777,7 +1856,7 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 	}
 
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
 		FROM preset_queries` + whereClause + fmt.Sprintf(`
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -1800,8 +1879,10 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 		var llmConfigNullStr sql.NullString
 		var preDiscoveredToolsStr sql.NullString
 		var selectedSkillsStr sql.NullString
+		var selectedSecretsStr sql.NullString
+		var selectedGlobalSecretNamesStr sql.NullString
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -1810,6 +1891,14 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 		preset.SelectedServers = selectedServersStr
 		preset.SelectedTools = selectedToolsStr
 		preset.SelectedFolder = selectedFolderStr
+		if selectedSecretsStr.Valid {
+			preset.SelectedSecrets = selectedSecretsStr.String
+		} else {
+			preset.SelectedSecrets = "[]"
+		}
+		if selectedGlobalSecretNamesStr.Valid {
+			preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
+		}
 		if llmConfigNullStr.Valid {
 			preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 		} else {

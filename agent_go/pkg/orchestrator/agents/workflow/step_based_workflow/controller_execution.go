@@ -40,6 +40,7 @@ type PrerequisiteFailureError struct {
 	DependsOnStepID string // Step ID to navigate back to
 	StepIndex       int    // 0-based step index (computed from step ID)
 	Reason          string // Reason for prerequisite failure
+	CleanupDone     bool   // Whether cleanup+archival was already performed (prevents duplicate cleanup)
 }
 
 func (e *PrerequisiteFailureError) Error() string {
@@ -1666,6 +1667,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								})
 								hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted prerequisite_navigation event: step %d (ID: %s) → step %d (ID: %s) (%s)", stepIndex+1, currentStepID, targetStepIndex+1, targetStepID, retryReason))
 							}
+
+							// Mark cleanup as done so the main loop doesn't duplicate it
+							prereqErr.CleanupDone = true
 
 							// Return navigation error to restart from target step
 							// Wrap the PrerequisiteFailureError to preserve type information
@@ -3880,32 +3884,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 						} else {
 							hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite navigation: restarting execution from step %d (ID: %s, reason: %s)", targetStepIndex+1, prereqErr.DependsOnStepID, prereqErr.Reason))
 
-							// Clean up progress from target step onward to ensure it gets re-executed
-							// This removes the target step and all subsequent steps from the completed list
-							if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
+							// Only perform cleanup+archival if not already done by the inner execution function
+							if prereqErr.CleanupDone {
+								hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleanup+archival already done by inner execution function, skipping duplicate"))
 							} else {
-								hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
-							}
-
-							// Archive execution folders for target step and all subsequent steps
-							// This preserves execution artifacts for debugging while allowing clean re-execution
-							runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-							archivedCount := 0
-							for archiveIdx := targetStepIndex; archiveIdx <= i; archiveIdx++ {
-								stepNum := archiveIdx + 1 // archiveStepExecutionFolder uses 1-based step numbers
-								if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d during prerequisite navigation: %v (continuing)", stepNum, err))
+								// Clean up progress from target step onward to ensure it gets re-executed
+								// This removes the target step and all subsequent steps from the completed list
+								if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
 								} else {
-									archivedCount++
+									hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
 								}
-							}
-							if archivedCount > 0 {
-								hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folders for %d steps (step-%d to step-%d) to run-%d during prerequisite navigation", archivedCount, targetStepIndex+1, i+1, runNumber))
-							}
-							// Save updated archival counts
-							if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
+
+								// Archive execution folders for target step and all subsequent steps
+								// This preserves execution artifacts for debugging while allowing clean re-execution
+								runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
+								archivedCount := 0
+								for archiveIdx := targetStepIndex; archiveIdx <= i; archiveIdx++ {
+									stepNum := archiveIdx + 1 // archiveStepExecutionFolder uses 1-based step numbers
+									if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d during prerequisite navigation: %v (continuing)", stepNum, err))
+									} else {
+										archivedCount++
+									}
+								}
+								if archivedCount > 0 {
+									hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folders for %d steps (step-%d to step-%d) to run-%d during prerequisite navigation", archivedCount, targetStepIndex+1, i+1, runNumber))
+								}
+								// Save updated archival counts
+								if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
+								}
 							}
 
 							// Reset execution results to only include steps up to target step

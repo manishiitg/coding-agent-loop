@@ -79,20 +79,29 @@ func (bo *BaseOrchestrator) ReadWorkspaceFile(ctx context.Context, filePath stri
 // CheckWorkspaceFileExists checks if a file exists in the workspace
 // Uses ReadWorkspaceFile internally but returns a boolean instead of content
 func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePath string) (bool, error) {
-	// Removed verbose logging
-
 	_, err := bo.ReadWorkspaceFile(ctx, filePath)
 	if err != nil {
-		// Check if it's a "file not found" error vs other errors
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no such file") {
-			// Removed verbose logging
+		errStr := err.Error()
+		// Check if it's a "file not found" error
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") {
 			return false, nil
 		}
-		// Other errors should be returned
-		return false, err
+		// For any other error (e.g. "is a directory", HTTP 500, parse errors),
+		// fall back to ListWorkspaceFiles which handles both files and folders.
+		// This is critical because ReadWorkspaceFile fails on directories.
+		_, listErr := bo.ListWorkspaceFiles(ctx, filePath)
+		if listErr != nil {
+			// ListWorkspaceFiles returns error for non-existent folders
+			if strings.Contains(listErr.Error(), "does not exist") {
+				return false, nil
+			}
+			// Both methods failed - return original error
+			return false, err
+		}
+		// ListWorkspaceFiles succeeded (folder exists, even if empty)
+		return true, nil
 	}
 
-	// Removed verbose logging
 	return true, nil
 }
 
@@ -296,6 +305,10 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 			return nil
 		}
 	}
+
+	// Flatten nested workspace API response: the API returns a tree structure
+	// but CleanupDirectory needs a flat list of all files and folders at all depths
+	filesList = flattenWorkspaceFiles(filesList)
 
 	if len(filesList) == 0 {
 		bo.GetLogger().Info(fmt.Sprintf("ℹ️ No files found in %s directory (may be empty)", dirName))
@@ -657,6 +670,12 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 		}
 	}
 
+	// Unwrap nested workspace API response: if the response is a single root entry
+	// matching the requested folder with children, return the children instead.
+	// The workspace API returns {data: [{filepath: "folder", type: "folder", children: [...]}]}
+	// and we need the children, not the wrapper entry.
+	filesList = unwrapWorkspaceFilesList(filesList, dirPath)
+
 	// Extract file and directory names (last part of path)
 	var names []string
 	for _, fileInfo := range filesList {
@@ -686,5 +705,45 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 	duration := time.Since(startTime)
 	bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) completed: found %d files/directories (took %v)", dirPath, len(names), duration))
 	return names, nil
+}
+
+// unwrapWorkspaceFilesList handles the nested workspace API response format.
+// The workspace API returns data like [{filepath: "folder", type: "folder", children: [...]}]
+// where the root entry is a wrapper around the actual children. This function unwraps
+// the children so callers get the actual folder contents.
+func unwrapWorkspaceFilesList(filesList []virtualtools.WorkspaceFile, dirPath string) []virtualtools.WorkspaceFile {
+	// If the response is a single root entry matching the requested folder with children, return children
+	if len(filesList) == 1 && filesList[0].Type == "folder" && filesList[0].FilePath == dirPath && len(filesList[0].Children) > 0 {
+		return filesList[0].Children
+	}
+
+	// Also handle multi-entry responses where some entries are wrappers
+	var flattened []virtualtools.WorkspaceFile
+	for _, entry := range filesList {
+		if entry.Type == "folder" && entry.FilePath == dirPath && len(entry.Children) > 0 {
+			flattened = append(flattened, entry.Children...)
+		} else {
+			flattened = append(flattened, entry)
+		}
+	}
+	if len(flattened) > 0 {
+		return flattened
+	}
+
+	return filesList
+}
+
+// flattenWorkspaceFiles recursively flattens a nested tree of WorkspaceFile entries
+// into a flat list. The workspace API returns nested trees with Children fields,
+// but callers like CleanupDirectory need a flat list of all files and folders.
+func flattenWorkspaceFiles(files []virtualtools.WorkspaceFile) []virtualtools.WorkspaceFile {
+	var result []virtualtools.WorkspaceFile
+	for _, f := range files {
+		result = append(result, f)
+		if len(f.Children) > 0 {
+			result = append(result, flattenWorkspaceFiles(f.Children)...)
+		}
+	}
+	return result
 }
 

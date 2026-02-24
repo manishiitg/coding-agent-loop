@@ -17,9 +17,10 @@ export const RunningWorkflowsIndicator: React.FC<RunningWorkflowsIndicatorProps>
   const runningWorkflows = useRunningWorkflows()
 
   const chatTabs = useChatStore(state => state.chatTabs)
+  const tabSessionStatus = useChatStore(state => state.tabSessionStatus)
   const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
 
-  // Count running workflows (tracked + active streaming tabs)
+  // Count running workflows (tracked + active tabs by streaming OR session status)
   const { running, hasWorkflows } = useMemo(() => {
     const seenSessionIds = new Set<string>()
     let runningCount = 0
@@ -36,16 +37,19 @@ export const RunningWorkflowsIndicator: React.FC<RunningWorkflowsIndicatorProps>
       if (tab.metadata?.mode !== 'workflow') return
       if (tab.sessionId && seenSessionIds.has(tab.sessionId)) return
       if (!tab.metadata?.presetQueryId) return
+      if (tab.isCompleted) return
 
       anyWorkflows = true
       const isStreaming = getTabStreamingStatus(tab.tabId)
-      if (isStreaming) {
+      const sessionStatus = tabSessionStatus[tab.tabId]?.status
+      const isRunningSession = sessionStatus === 'running' || sessionStatus === 'active'
+      if (isStreaming || isRunningSession) {
         runningCount++
       }
     })
 
     return { running: runningCount, hasWorkflows: anyWorkflows }
-  }, [runningWorkflows, chatTabs, getTabStreamingStatus])
+  }, [runningWorkflows, chatTabs, tabSessionStatus, getTabStreamingStatus])
 
   const hasRunning = running > 0
   const tooltipText = hasRunning ? `${running} running workflows` : "Workflows"

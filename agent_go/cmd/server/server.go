@@ -742,6 +742,9 @@ type StreamingAPI struct {
 	sessionAgents    map[string]*agent.LLMAgentWrapper
 	sessionAgentsMux sync.RWMutex
 
+	// Claude Code CLI session IDs for --resume (our sessionID -> CLI session_id)
+	claudeCodeSessionIDs map[string]string
+
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
 	completionLoopStartedMu sync.Mutex
@@ -1142,15 +1145,17 @@ func runServer(cmd *cobra.Command, args []string) {
 		lastQueryRequests:     make(map[string]QueryRequest),
 		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
 		completionLoopStarted: make(map[string]bool),
+		claudeCodeSessionIDs:  make(map[string]string),
 	}
 
 	// Generate API token for code execution mode per-tool endpoints
 	api.apiToken = executor.GenerateAPIToken()
 
 	// Set env vars for code execution mode (mcpagent reads these as fallback)
-	// Use GetCodeExecAPIURL() which resolves to host.docker.internal when
-	// workspace API runs in Docker (shell commands execute inside the container)
+	// MCP_API_URL = Docker-reachable URL (for shell commands inside Docker + OpenAPI spec base URLs)
+	// MCP_BRIDGE_API_URL = host-reachable URL (for mcpbridge binary running on the host)
 	os.Setenv("MCP_API_URL", api.GetCodeExecAPIURL())
+	os.Setenv("MCP_BRIDGE_API_URL", api.GetAPIURL())
 	os.Setenv("MCP_API_TOKEN", api.apiToken)
 
 	// Load global secrets from GLOBAL_SECRET_* environment variables
@@ -3443,13 +3448,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
 		}
 
-		// In plan delegation mode, the orchestrator should NEVER use code execution mode.
+		// In plan delegation mode, the orchestrator should NEVER use code execution mode
+		// UNLESS the provider is claude-code (which requires it for MCP bridge tool access).
 		// The orchestrator only researches, plans, and delegates — it should not write/execute code itself.
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
 		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
 		// so the orchestrator can efficiently discover tools for research.
 		if req.DelegationMode == "plan" {
-			if useCodeExecutionMode {
+			if useCodeExecutionMode && req.Provider != "claude-code" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
@@ -4562,6 +4568,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Restore Claude Code CLI session ID for --resume on subsequent turns
+		if ccSID, ok := api.claudeCodeSessionIDs[sessionID]; ok {
+			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+				underlyingAgent.ClaudeCodeSessionID = ccSID
+			}
+		}
+
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
 		log.Printf("[LATENCY_DEBUG] T+%dms | Starting StreamWithEvents (LLM call) | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
@@ -4651,6 +4664,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.conversationHistory[sessionID] = llmAgent.GetHistory()
 		api.conversationMux.Unlock()
 		log.Printf("[CONVERSATION DEBUG] Final save: %d messages to conversation history for session %s", len(llmAgent.GetHistory()), sessionID)
+
+		// Save Claude Code CLI session ID for --resume on next turn
+		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+			if ccSID := underlyingAgent.ClaudeCodeSessionID; ccSID != "" {
+				api.claudeCodeSessionIDs[sessionID] = ccSID
+				log.Printf("[CLAUDE CODE] Saved session ID %s for session %s", ccSID, sessionID)
+			}
+		}
 
 		// Store agent for reuse by synthetic turns (plan mode only)
 		// The stored agent retains all tools, prompts, observers, and conversation history
@@ -4832,6 +4853,9 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 		log.Printf("[SESSION DEBUG] Cleared workflow objective for session %s", sessionID)
 	}
 	api.workflowObjectiveMux.Unlock()
+
+	// Clear Claude Code CLI session ID
+	delete(api.claudeCodeSessionIDs, sessionID)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))

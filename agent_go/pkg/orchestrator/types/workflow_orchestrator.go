@@ -615,6 +615,11 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
 
+	// Propagate selected skills to child orchestrator
+	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
+		todoPlannerAgent.SetSelectedSkills(skills)
+	}
+
 	// Run only planning
 	result, err := todoPlannerAgent.CreatePlanOnly(ctx, objective, wo.GetWorkspacePath())
 	if err != nil {
@@ -743,6 +748,11 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+
+	// Propagate selected skills to child orchestrator
+	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
+		todoPlannerAgent.SetSelectedSkills(skills)
+	}
 
 	// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
@@ -959,6 +969,11 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+
+	// Propagate selected skills to child orchestrator
+	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
+		todoPlannerAgent.SetSelectedSkills(skills)
+	}
 
 	// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {

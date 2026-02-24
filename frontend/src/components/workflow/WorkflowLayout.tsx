@@ -37,6 +37,10 @@ import { type ExecutionOptions, type PollingEvent } from '../../services/api-typ
 import { getTypedEventData, getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
 import { findOrCreateWorkflowTab } from '../../utils/chatSubmitHelpers'
+// hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
+
+// Stable empty array for Zustand selector (must be module-level to avoid referential instability)
+const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 
 /**
  * Helper function to restore workflow state from loaded events
@@ -48,7 +52,7 @@ import { findOrCreateWorkflowTab } from '../../utils/chatSubmitHelpers'
  */
 async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> {
   try {
-    const { setTabEvents, setTabLastEventIndex } = useChatStore.getState()
+    const { addTabEvents, setTabLastEventIndex, getTabLastEventIndex } = useChatStore.getState()
     const workflowStore = useWorkflowStore.getState()
 
     // Skip if batch progress is already active (avoid overwriting live state)
@@ -59,19 +63,23 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
 
     // Load events for this session
     const eventMode = 'micro'
-    const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
+    const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
     const events = response.events as PollingEvent[]
 
     if (events.length === 0) {
       return
     }
 
-    // Store events for the tab (so polling doesn't re-fetch them)
-    setTabEvents(sessionId, events)
+    // Append events with dedup (avoids losing SSE-streamed events in a race)
+    addTabEvents(sessionId, events)
     // CRITICAL: Use last_processed_index from backend (not events.length - 1)
     // Backend tracks the actual event index which may be higher due to filtering/cleanup
     const lastIndex = response.last_processed_index ?? events.length - 1
-    setTabLastEventIndex(sessionId, lastIndex)
+    // Only advance the index if backend is ahead (SSE may have already advanced it)
+    const currentIndex = getTabLastEventIndex(sessionId)
+    if (lastIndex > currentIndex) {
+      setTabLastEventIndex(sessionId, lastIndex)
+    }
 
     // Scan events to find batch context, current step, and step statuses
     let latestBatchContext: {
@@ -227,9 +235,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const { currentWorkflowPhase, setCurrentWorkflowPhase, getTabEvents } = useChatStore()
   // Get events from active tab instead of global events
   const activeTab = useChatStore(state => state.getActiveTab())
+  const activeSessionId = activeTab?.sessionId
+  // Subscribe to tabEvents length so we re-run the memo when new events arrive.
+  // Using a Zustand selector for the full array caused infinite-loop issues because
+  // the inline selector closure captured activeSessionId and was recreated on every render.
+  const tabEventsLength = useChatStore((state) =>
+    activeSessionId ? (state.tabEvents[activeSessionId]?.length ?? 0) : 0
+  )
   const events = React.useMemo(() => {
-    return activeTab?.sessionId ? getTabEvents(activeTab.sessionId) : []
-  }, [activeTab?.sessionId, getTabEvents])
+    // tabEventsLength dependency ensures this re-evaluates when events are added
+    void tabEventsLength
+    return activeSessionId ? getTabEvents(activeSessionId) : EMPTY_WORKFLOW_EVENTS
+  }, [activeSessionId, getTabEvents, tabEventsLength])
 
   // Use workflow store for UI state (single source of truth)
   const activePhase = useWorkflowStore(state => state.activePhase)
@@ -297,7 +314,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const predefinedPresets = useGlobalPresetStore(state => state.predefinedPresets)
 
   const activeWorkflowPreset = useMemo(() => {
-    if (selectedModeCategory === 'workflow' && activePresetId) {
+    if (activePresetId) {
       const customPreset = customPresets.find(p => p.id === activePresetId)
       if (customPreset) return customPreset
 
@@ -305,7 +322,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       if (predefinedPreset) return predefinedPreset
     }
     return null
-  }, [selectedModeCategory, activePresetId, customPresets, predefinedPresets])
+  }, [activePresetId, customPresets, predefinedPresets])
 
   // Get workspace path from active preset
   const workspacePath = useMemo(() => {
@@ -575,10 +592,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)
 
+  // Reset reconnection flag when preset changes so new preset's sessions get reconnected
+  useEffect(() => {
+    hasReconnectedRef.current = false
+  }, [activePresetId])
+
   // Reconnect workflow tabs on page refresh by matching active sessions with same presetQueryId
   useEffect(() => {
-    // Only run in workflow mode and when we have an active preset
-    if (selectedModeCategory !== 'workflow' || !activePresetId) {
+    // Only run when we have an active preset
+    if (!activePresetId) {
       return
     }
 
@@ -616,167 +638,201 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Get all active sessions from cache
         const { getActiveSessions } = useChatStore.getState()
         const activeSessions = await getActiveSessions()
-        
-        if (activeSessions.length === 0) {
-          return
-        }
 
         // Get chat store functions
         const { createChatTab, switchTab } = useChatStore.getState()
         const { getPhaseById } = useWorkflowStore.getState()
 
-        // Check each active session
-        logger.debug('Reconnection', `Checking ${activeSessions.length} active sessions (preset: ${activePresetId})`)
-        for (const activeSession of activeSessions) {
+        // If no active sessions, skip Phase 1 but still run Phase 2 cleanup
+        if (activeSessions.length === 0) {
+          // Close all persisted workflow tabs — none have active sessions
+          const allWorkflowTabs = Object.values(useChatStore.getState().chatTabs)
+            .filter(tab => tab.metadata?.mode === 'workflow' && tab.sessionId)
+          if (allWorkflowTabs.length > 0) {
+            logger.debug('Reconnection', `No active sessions — closing ${allWorkflowTabs.length} stale workflow tabs`)
+            const { closeTab } = useChatStore.getState()
+            for (const tab of allWorkflowTabs) {
+              closeTab(tab.tabId)
+            }
+          }
+          return
+        }
+
+        // Phase 1: Process active sessions in parallel
+        logger.debug('Reconnection', `Phase 1: Checking ${activeSessions.length} active sessions (preset: ${activePresetId})`)
+        const processSession = async (activeSession: typeof activeSessions[number]) => {
+          if (activeSession.agent_mode !== 'workflow') {
+            return
+          }
+
+          // Fetch chat session to get preset_query_id
+          let chatSession
+          let presetQueryId: string | undefined
+          let source = 'unknown'
           try {
-            if (activeSession.agent_mode !== 'workflow') {
-              continue
-            }
+            chatSession = await agentApi.getChatSession(activeSession.session_id)
+            presetQueryId = chatSession.preset_query_id
+            source = 'api'
+          } catch {
+            const existingTabsForSession = Object.values(useChatStore.getState().chatTabs)
+              .filter(tab => tab.sessionId === activeSession.session_id && tab.metadata?.mode === 'workflow')
 
-            // Fetch chat session to get preset_query_id
-            let chatSession
-            let presetQueryId: string | undefined
-            let source = 'unknown'
-            try {
-              chatSession = await agentApi.getChatSession(activeSession.session_id)
-              presetQueryId = chatSession.preset_query_id
-              source = 'api'
-            } catch {
-              const existingTabsForSession = Object.values(useChatStore.getState().chatTabs)
-                .filter(tab => tab.sessionId === activeSession.session_id && tab.metadata?.mode === 'workflow')
-              
-              if (existingTabsForSession.length > 0) {
-                presetQueryId = existingTabsForSession[0].metadata?.presetQueryId
-                source = 'existing-tab'
-              } else {
-                source = 'failed-lookup'
-                continue
+            if (existingTabsForSession.length > 0) {
+              presetQueryId = existingTabsForSession[0].metadata?.presetQueryId
+              source = 'existing-tab'
+            } else {
+              source = 'failed-lookup'
+              return
+            }
+          }
+
+          logger.debug('Reconnection', `Session ${activeSession.session_id}: preset=${presetQueryId} (${source})`)
+
+          // Extract phase ID from query
+          let phaseId: string | null = null
+          if (activeSession.query) {
+            const match = activeSession.query.match(/Execute workflow phase:\s*(\w+)(?:\s|$|\n)/i)
+            if (match && match[1]) {
+              phaseId = match[1]
+            } else {
+              const simpleMatch = activeSession.query.match(/phase:\s*(\w+)/i)
+              if (simpleMatch && simpleMatch[1]) {
+                phaseId = simpleMatch[1]
               }
             }
-            
-            logger.debug('Reconnection', `Session ${activeSession.session_id}: preset=${presetQueryId} (${source})`)
-            
-            // Extract phase ID from query
-            let phaseId: string | null = null
-            if (activeSession.query) {
-              const match = activeSession.query.match(/Execute workflow phase:\s*(\w+)(?:\s|$|\n)/i)
-              if (match && match[1]) {
-                phaseId = match[1]
-              } else {
-                const simpleMatch = activeSession.query.match(/phase:\s*(\w+)/i)
-                if (simpleMatch && simpleMatch[1]) {
-                  phaseId = simpleMatch[1]
-                }
-              }
-            }
+          }
 
-            if (!phaseId) {
-              continue
-            }
+          if (!phaseId) {
+            return
+          }
 
-            // STRICT RESTORATION: Only reconnect if the session explicitly belongs to this preset
-            // OR if the session is an orphan (no preset ID) and we have an active preset (adopt it)
-            const shouldReconnect = presetQueryId === activePresetId || (!presetQueryId && activePresetId)
-            logger.debug('Reconnection', `Session ${activeSession.session_id} reconnect=${shouldReconnect}`)
-            
-            if (!shouldReconnect) {
-              // Log why we skipped this session for debugging
-              // logger.debug('Reconnection', `Skipping session ${activeSession.session_id} (presetQueryId: ${presetQueryId} !== activePresetId: ${activePresetId})`)
-              continue
-            }
+          // STRICT RESTORATION: Only reconnect if the session explicitly belongs to this preset
+          // OR if the session is an orphan (no preset ID) and we have an active preset (adopt it)
+          const shouldReconnect = presetQueryId === activePresetId || (!presetQueryId && activePresetId)
+          logger.debug('Reconnection', `Session ${activeSession.session_id} reconnect=${shouldReconnect}`)
 
-            logger.debug('Reconnection', `Reconnecting session ${activeSession.session_id} (phase: ${phaseId})`)
+          if (!shouldReconnect) {
+            return
+          }
 
-            // Check if we already have a tab for this session
-            const existingTabs = Object.values(useChatStore.getState().chatTabs)
-            
-            // First, check if ANY tab already has this sessionId
-            let existingTab = existingTabs.find(tab => 
-              tab.sessionId === activeSession.session_id &&
-              tab.metadata?.mode === 'workflow'
+          logger.debug('Reconnection', `Reconnecting session ${activeSession.session_id} (phase: ${phaseId})`)
+
+          // Check if we already have a tab for this session
+          const existingTabs = Object.values(useChatStore.getState().chatTabs)
+
+          // First, check if ANY tab already has this sessionId
+          let existingTab = existingTabs.find(tab =>
+            tab.sessionId === activeSession.session_id &&
+            tab.metadata?.mode === 'workflow'
+          )
+
+          if (!existingTab) {
+            // Check by phaseId and presetQueryId
+            const matchingTabs = existingTabs.filter(tab =>
+              tab.metadata?.mode === 'workflow' &&
+              tab.metadata?.phaseId === phaseId &&
+              (tab.metadata?.presetQueryId === activePresetId || (!tab.metadata?.presetQueryId && activePresetId))
             )
 
-            if (!existingTab) {
-              // Check by phaseId and presetQueryId
-              const matchingTabs = existingTabs.filter(tab => 
-                tab.metadata?.mode === 'workflow' &&
-                tab.metadata?.phaseId === phaseId &&
-                (tab.metadata?.presetQueryId === activePresetId || (!tab.metadata?.presetQueryId && activePresetId))
-              )
-              
-              if (matchingTabs.length > 0) {
-                existingTab = matchingTabs[0]
-                if (existingTab.sessionId !== activeSession.session_id) {
-                  logger.debug('Reconnection', `Updating tab ${existingTab.tabId} sessionId to ${activeSession.session_id}`)
-                  const { updateTabSessionId } = useChatStore.getState()
-                  updateTabSessionId(existingTab.tabId, activeSession.session_id)
-                  existingTab = { ...existingTab, sessionId: activeSession.session_id }
-                }
+            if (matchingTabs.length > 0) {
+              existingTab = matchingTabs[0]
+              if (existingTab.sessionId !== activeSession.session_id) {
+                logger.debug('Reconnection', `Updating tab ${existingTab.tabId} sessionId to ${activeSession.session_id}`)
+                const { updateTabSessionId } = useChatStore.getState()
+                updateTabSessionId(existingTab.tabId, activeSession.session_id)
+                existingTab = { ...existingTab, sessionId: activeSession.session_id }
               }
             }
+          }
 
-            if (existingTab) {
-              
-              // Update tab's metadata if presetQueryId is missing
-              if (!existingTab.metadata?.presetQueryId && activePresetId) {
-                const state = useChatStore.getState()
-                const updatedTab = {
-                  ...existingTab,
-                  metadata: {
-                    ...existingTab.metadata,
-                    presetQueryId: activePresetId
-                  }
+          if (existingTab) {
+
+            // Update tab's metadata if presetQueryId is missing
+            if (!existingTab.metadata?.presetQueryId && activePresetId) {
+              const state = useChatStore.getState()
+              const updatedTab = {
+                ...existingTab,
+                metadata: {
+                  ...existingTab.metadata,
+                  presetQueryId: activePresetId
                 }
-                useChatStore.setState({
-                  chatTabs: {
-                    ...state.chatTabs,
-                    [existingTab.tabId]: updatedTab
-                  }
-                })
               }
-              
-              switchTab(existingTab.tabId)
-              setShowChatArea(true)
-
-              // Restore batch progress from events (shows batch box immediately after refresh)
-              await restoreWorkflowStateFromEvents(activeSession.session_id)
-
-              continue
+              useChatStore.setState({
+                chatTabs: {
+                  ...state.chatTabs,
+                  [existingTab.tabId]: updatedTab
+                }
+              })
             }
 
-            // Final safety check
-            const finalCheck = Object.values(useChatStore.getState().chatTabs).find(
-              tab => tab.sessionId === activeSession.session_id &&
-              tab.metadata?.mode === 'workflow'
-            )
-            if (finalCheck) {
-              logger.warn('Reconnection', `Race condition detected: Tab ${finalCheck.tabId} exists with sessionId ${activeSession.session_id}`)
-              switchTab(finalCheck.tabId)
-              setShowChatArea(true)
-              // Restore batch progress from events (shows batch box immediately after refresh)
-              await restoreWorkflowStateFromEvents(activeSession.session_id)
-              continue
-            }
-
-            // Create a new tab
-            const phase = getPhaseById(phaseId)
-            const phaseName = phase?.title || phaseId
-            
-            logger.debug('Reconnection', `Creating tab for phase ${phaseId}, session ${activeSession.session_id}`)
-            const tabId = await createChatTab(phaseName, {
-              mode: 'workflow',
-              phaseId,
-              phaseName,
-              presetQueryId: activePresetId
-            }, activeSession.session_id)
-
-            switchTab(tabId)
+            switchTab(existingTab.tabId)
             setShowChatArea(true)
 
             // Restore batch progress from events (shows batch box immediately after refresh)
             await restoreWorkflowStateFromEvents(activeSession.session_id)
-          } catch (error) {
-            logger.error('Reconnection', `Error reconnecting session ${activeSession.session_id}:`, error)
+            if (activeSession.status === 'running') {
+              useChatStore.getState().setTabStreaming(existingTab.tabId, true)
+            }
+
+            return
+          }
+
+          // Final safety check
+          const finalCheck = Object.values(useChatStore.getState().chatTabs).find(
+            tab => tab.sessionId === activeSession.session_id &&
+            tab.metadata?.mode === 'workflow'
+          )
+          if (finalCheck) {
+            logger.warn('Reconnection', `Race condition detected: Tab ${finalCheck.tabId} exists with sessionId ${activeSession.session_id}`)
+            switchTab(finalCheck.tabId)
+            setShowChatArea(true)
+            // Restore batch progress from events (shows batch box immediately after refresh)
+            await restoreWorkflowStateFromEvents(activeSession.session_id)
+            if (activeSession.status === 'running') {
+              useChatStore.getState().setTabStreaming(finalCheck.tabId, true)
+            }
+            return
+          }
+
+          // Create a new tab
+          const phase = getPhaseById(phaseId)
+          const phaseName = phase?.title || phaseId
+
+          logger.debug('Reconnection', `Creating tab for phase ${phaseId}, session ${activeSession.session_id}`)
+          const tabId = await createChatTab(phaseName, {
+            mode: 'workflow',
+            phaseId,
+            phaseName,
+            presetQueryId: activePresetId
+          }, activeSession.session_id)
+
+          switchTab(tabId)
+          setShowChatArea(true)
+
+          // Restore batch progress from events (shows batch box immediately after refresh)
+          await restoreWorkflowStateFromEvents(activeSession.session_id)
+          if (activeSession.status === 'running') {
+            useChatStore.getState().setTabStreaming(tabId, true)
+          }
+        }
+        await Promise.allSettled(activeSessions.map(processSession))
+
+        // Phase 2: Clean up stale persisted tabs that are not active sessions
+        // Previously this hydrated ALL old tabs (loading events from backend), which caused
+        // the page to hang. Now we just close inactive tabs to free resources.
+        const activeSessionIdSet = new Set(activeSessions.map(s => s.session_id))
+        const staleTabs = Object.values(useChatStore.getState().chatTabs)
+          .filter(tab =>
+            tab.metadata?.mode === 'workflow' &&
+            tab.sessionId &&
+            !activeSessionIdSet.has(tab.sessionId)
+          )
+
+        if (staleTabs.length > 0) {
+          logger.debug('Reconnection', `Phase 2: Closing ${staleTabs.length} inactive workflow tabs (no active session)`)
+          const { closeTab } = useChatStore.getState()
+          for (const tab of staleTabs) {
+            closeTab(tab.tabId)
           }
         }
       } catch (error) {
@@ -787,7 +843,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     // Run reconnection check after a short delay to ensure stores are initialized
     const timeoutId = setTimeout(reconnectWorkflowTabs, 500)
     return () => clearTimeout(timeoutId)
-  }, [selectedModeCategory, activePresetId, setShowChatArea])
+  }, [activePresetId, setShowChatArea])
 
 
   // Auto-minimize workflows when switching to a different preset
@@ -969,7 +1025,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   if (!activeWorkflowPreset) {
     return (
       <div className={`flex flex-col h-full ${className}`}>
-        
+
         <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
         <div className="flex flex-col items-center gap-4 text-center max-w-md">
             <div className="w-20 h-20 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
@@ -980,7 +1036,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               Select a Workflow
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-              Choose a workflow preset from the sidebar to get started. 
+              Choose a workflow preset from the sidebar to get started.
               The workflow canvas will visualize your plan and let you run it step by step.
             </p>
             </div>

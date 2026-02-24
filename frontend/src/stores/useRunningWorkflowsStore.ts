@@ -41,7 +41,25 @@ const loadRunningWorkflowsFromStorage = (): RunningWorkflow[] => {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.RUNNING_WORKFLOWS)
     if (saved) {
-      return JSON.parse(saved) as RunningWorkflow[]
+      const workflows = JSON.parse(saved) as RunningWorkflow[]
+      const now = Date.now()
+      const STALE_THRESHOLD = 3600000 // 1 hour
+
+      const cleaned = workflows
+        .map(wf => {
+          // Mark any "running" workflows that are older than 1 hour as stale
+          if (wf.status === 'running' && (now - wf.lastUpdated) > STALE_THRESHOLD) {
+            return { ...wf, status: 'failed' as const }
+          }
+          return wf
+        })
+        // Remove completed/failed workflows on load - they have no active sessions
+        // and will just trigger unnecessary polling and event hydration
+        .filter(wf => wf.status === 'running')
+
+      // Persist cleaned state back
+      localStorage.setItem(STORAGE_KEYS.RUNNING_WORKFLOWS, JSON.stringify(cleaned))
+      return cleaned
     }
   } catch (error) {
     console.error('[RunningWorkflowsStore] Failed to load from localStorage:', error)
@@ -358,9 +376,9 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
       // Poll events for all running workflows (with optimizations)
       pollRunningWorkflows: async () => {
         const state = get()
-        // Poll 'running', 'completed', and 'failed' workflows - they might become active again after restart
-        const workflowsToPoll = state.runningWorkflows.filter(bg => 
-          bg.status === 'running' || bg.status === 'completed' || bg.status === 'failed'
+        // Only poll running workflows - completed/failed ones are removed on load
+        const workflowsToPoll = state.runningWorkflows.filter(bg =>
+          bg.status === 'running'
         )
 
         if (workflowsToPoll.length === 0) {
@@ -374,9 +392,12 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
         const chatStore = useChatStore.getState()
 
         for (const bg of workflowsToPoll) {
-          // Skip if too many consecutive failures
+          // Mark as failed if too many consecutive poll failures
           if (bg.failedPollCount >= VALIDATION_CONFIG.MAX_POLL_RETRIES) {
-            console.warn(`[RunningWorkflowsStore] Skipping poll for ${bg.id} (too many failures)`)
+            if (bg.status === 'running') {
+              console.warn(`[RunningWorkflowsStore] Marking ${bg.id} as failed (too many poll failures)`)
+              get().updateRunningWorkflowStatus(bg.id, { status: 'failed' })
+            }
             continue
           }
 
@@ -616,6 +637,17 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
       },
     })
 )
+
+// Auto-validate on startup: check all "running" workflows against backend
+// Runs once after store creation with a short delay to let the app initialize
+const initialWorkflows = useRunningWorkflowsStore.getState().runningWorkflows
+if (initialWorkflows.some(wf => wf.status === 'running')) {
+  setTimeout(() => {
+    useRunningWorkflowsStore.getState().validateRunningWorkflows(true).catch(err => {
+      console.warn('[RunningWorkflowsStore] Startup validation failed:', err)
+    })
+  }, 3000) // 3s delay to let backend connection establish
+}
 
 // Selector hooks
 export const useRunningWorkflows = () => useRunningWorkflowsStore(state => state.runningWorkflows)

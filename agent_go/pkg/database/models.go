@@ -245,8 +245,9 @@ type PresetQuery struct {
 	UseToolSearchMode    bool            `json:"use_tool_search_mode" db:"use_tool_search_mode"`       // Tool search mode
 	PreDiscoveredTools   string          `json:"pre_discovered_tools" db:"pre_discovered_tools"`       // JSON array of pre-discovered tools
 	SelectedSkills       string          `json:"selected_skills" db:"selected_skills"`                 // JSON array of skill folder names
-	SelectedSecrets      string          `json:"selected_secrets" db:"selected_secrets"`               // JSON array of secret IDs
-	EnableBrowserAccess  bool            `json:"enable_browser_access" db:"enable_browser_access"`     // Browser automation access
+	SelectedSecrets              string          `json:"selected_secrets" db:"selected_secrets"`                                       // JSON array of secret IDs
+	SelectedGlobalSecretNames    string          `json:"selected_global_secret_names" db:"selected_global_secret_names"`               // JSON array of global secret names (NULL=all)
+	EnableBrowserAccess          bool            `json:"enable_browser_access" db:"enable_browser_access"`                             // Browser automation access
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
@@ -268,8 +269,9 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		UseToolSearchMode    bool            `json:"use_tool_search_mode"`
 		PreDiscoveredTools   string          `json:"pre_discovered_tools"`
 		SelectedSkills       string          `json:"selected_skills"`
-		SelectedSecrets      string          `json:"selected_secrets"`
-		EnableBrowserAccess  bool            `json:"enable_browser_access"`
+		SelectedSecrets           string          `json:"selected_secrets"`
+		SelectedGlobalSecretNames *string         `json:"selected_global_secret_names,omitempty"`
+		EnableBrowserAccess       bool            `json:"enable_browser_access"`
 		IsPredefined         bool            `json:"is_predefined"`
 		CreatedAt            time.Time       `json:"created_at"`
 		UpdatedAt            time.Time       `json:"updated_at"`
@@ -294,6 +296,11 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		CreatedBy:            p.CreatedBy,
 	}
 
+	// Convert SelectedGlobalSecretNames: empty string or "null" means nil (all selected)
+	if p.SelectedGlobalSecretNames != "" && p.SelectedGlobalSecretNames != "null" {
+		result.SelectedGlobalSecretNames = &p.SelectedGlobalSecretNames
+	}
+
 	// Convert sql.NullString to *string
 	if p.SelectedFolder.Valid {
 		result.SelectedFolder = &p.SelectedFolder.String
@@ -315,9 +322,10 @@ type CreatePresetQueryRequest struct {
 	UseToolSearchMode    bool             `json:"use_tool_search_mode,omitempty"`    // Tool search mode
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
-	SelectedSecrets      []string         `json:"selected_secrets,omitempty"`        // Secret IDs for workflow
-	EnableBrowserAccess  bool             `json:"enable_browser_access,omitempty"`   // Browser automation access
-	IsPredefined         bool             `json:"is_predefined,omitempty"`
+	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`                  // Secret IDs for workflow
+	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"`      // Global secret names (nil=all, []=none)
+	EnableBrowserAccess       bool             `json:"enable_browser_access,omitempty"`              // Browser automation access
+	IsPredefined              bool             `json:"is_predefined,omitempty"`
 }
 
 // validatePresetLLMConfig validates a PresetLLMConfig, accepting either legacy Provider+ModelID
@@ -457,7 +465,9 @@ type UpdatePresetQueryRequest struct {
 	UseToolSearchMode    *bool            `json:"use_tool_search_mode,omitempty"`    // Tool search mode (pointer to allow false value)
 	PreDiscoveredTools   []string         `json:"pre_discovered_tools,omitempty"`    // Tools always available without searching
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
-	EnableBrowserAccess  *bool            `json:"enable_browser_access,omitempty"`   // Browser automation access (pointer to allow false value)
+	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`                  // Secret names for workflow
+	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"`      // Global secret names (nil=all, []=none)
+	EnableBrowserAccess       *bool            `json:"enable_browser_access,omitempty"`              // Browser automation access (pointer to allow false value)
 }
 
 // Validate validates the UpdatePresetQueryRequest

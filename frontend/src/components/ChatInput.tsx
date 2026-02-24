@@ -275,8 +275,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
-  const useCodeExecutionMode = useMemo(() => tabConfig?.useCodeExecutionMode ?? false, [tabConfig?.useCodeExecutionMode])
-  const useToolSearchMode = useMemo(() => tabConfig?.useToolSearchMode ?? false, [tabConfig?.useToolSearchMode])
+  const isClaudeCode = useMemo(() => tabConfig?.llmConfig?.provider === 'claude-code', [tabConfig?.llmConfig?.provider])
+  // Claude Code always requires code execution mode
+  const useCodeExecutionMode = useMemo(() => isClaudeCode ? true : (tabConfig?.useCodeExecutionMode ?? false), [isClaudeCode, tabConfig?.useCodeExecutionMode])
+  const useToolSearchMode = useMemo(() => isClaudeCode ? false : (tabConfig?.useToolSearchMode ?? false), [isClaudeCode, tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   const enableBrowserAccess = useMemo(() => tabConfig?.enableBrowserAccess ?? false, [tabConfig?.enableBrowserAccess])
   const useCdp = useMemo(() => tabConfig?.useCdp ?? false, [tabConfig?.useCdp])
@@ -565,14 +567,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         fallback_models: [],
         cross_provider_fallback: undefined
       }
-      
+
       const newConfig = {
         ...currentConfig, // ✅ Preserve all existing configuration
-        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code',
         model_id: llm.model
       }
-      
-      setTabConfig(activeTabId, { llmConfig: newConfig })
+
+      // Claude Code always requires code execution mode
+      if (llm.provider === 'claude-code') {
+        setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true, useToolSearchMode: false })
+      } else {
+        setTabConfig(activeTabId, { llmConfig: newConfig })
+      }
     }
   }, [activeTabId, tabConfig?.llmConfig, setTabConfig])
 
@@ -709,6 +716,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       onSubmit(inputText)
     }
   }, [tabConfig?.autoRun, inputText, tabSessionId, isStreaming, activeTabId, setTabConfig, onSubmit])
+
+  // Process queued messages automatically when agent is available
+  useEffect(() => {
+    if (!isStreaming && !isSummarizing && tabSessionId && activeTabId && queuedMessages.length > 0) {
+      // Get the next message from the queue
+      const nextMessage = queuedMessages[0];
+      
+      // Remove it from the queue
+      const newQueue = queuedMessages.slice(1);
+      setTabConfig(activeTabId, { queuedMessages: newQueue });
+      
+      // Submit the message
+      if (nextMessage && nextMessage.trim()) {
+        onSubmit(nextMessage);
+      }
+    }
+  }, [isStreaming, isSummarizing, tabSessionId, activeTabId, queuedMessages, setTabConfig, onSubmit])
 
   // Set initial height and auto-resize textarea when inputText changes
   useEffect(() => {
@@ -1804,7 +1828,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
-  const submitButtonDisabled = !hasValidQuery || !tabSessionId || isViewOnly
+  // Block submission if CDP is enabled but not connected
+  const isCdpDisconnected = useCdp && enableBrowserAccess && cdpConnected === false
+  const submitButtonDisabled = !hasValidQuery || !tabSessionId || isViewOnly || isCdpDisconnected
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -1962,6 +1988,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipTrigger>
                       <TooltipContent side="top">
                         <p>Plan mode: agent picks tool mode per task (simple, code exec, tool search)</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : isClaudeCode ? (
+                    /* Claude Code always uses code execution mode */
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1 p-1.5 rounded-md border border-amber-400 dark:border-amber-600 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 cursor-default">
+                          <Code2 className="w-4 h-4 flex-shrink-0" />
+                          <span className="text-xs font-medium">Code</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">
+                        <p>Claude Code always uses code execution mode</p>
                       </TooltipContent>
                     </Tooltip>
                   ) : (
@@ -2164,7 +2203,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
                         enableBrowserAccess
                           ? useCdp
-                            ? 'bg-green-900/40 border-green-600 text-green-400'
+                            ? cdpConnected === false
+                              ? 'bg-red-900/40 border-red-600 text-red-400'
+                              : cdpChecking || cdpConnected === null
+                                ? 'bg-yellow-900/40 border-yellow-600 text-yellow-400'
+                                : 'bg-green-900/40 border-green-600 text-green-400'
                             : 'bg-blue-900/40 border-blue-600 text-blue-400'
                           : 'bg-gray-800 border-gray-600 text-gray-500'
                       } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
@@ -2173,7 +2216,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       {enableBrowserAccess ? (
                         <span className={`text-[10px] font-semibold px-1 rounded ${
                           useCdp
-                            ? 'bg-green-800 text-green-200'
+                            ? cdpConnected === false
+                              ? 'bg-red-800 text-red-200'
+                              : cdpChecking || cdpConnected === null
+                                ? 'bg-yellow-800 text-yellow-200'
+                                : 'bg-green-800 text-green-200'
                             : 'bg-blue-800 text-blue-200'
                         }`}>
                           {useCdp ? 'CDP' : 'Headless'}
@@ -2346,10 +2393,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         <button
                           type="button"
                           onClick={() => setShowCdpPopup(false)}
-                          disabled={useCdp && cdpConnected === false}
+                          disabled={useCdp && cdpConnected !== true}
                           className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          {useCdp && cdpConnected === false ? 'Connect Chrome First' : 'Done'}
+                          {useCdp && cdpConnected !== true ? (cdpChecking ? 'Checking...' : 'Connect Chrome First') : 'Done'}
                         </button>
                       </div>
                     </div>
@@ -2474,9 +2521,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 ? 'View only — cannot continue this conversation'
                                 : !inputText?.trim()
                                   ? 'Type a message to send'
-                                  : !tabSessionId
-                                    ? 'Session not ready yet'
-                                    : 'Send message'
+                                  : isCdpDisconnected
+                                    ? 'Chrome CDP not reachable. Check connection.'
+                                    : !tabSessionId
+                                      ? 'Session not ready yet'
+                                      : 'Send message'
                               }
                             </p>
                           </TooltipContent>

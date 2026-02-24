@@ -239,13 +239,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 			playwrightOverride.ArgsReplace = make(map[string]string)
 		}
 		playwrightOverride.ArgsReplace["--output-dir"] = absDownloadsPath
+		playwrightOverride.WorkingDir = absDownloadsPath
 		config.RuntimeOverrides["playwright"] = playwrightOverride
 
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Configured Playwright downloads path to: %s (override will be applied when connection is created)", absDownloadsPath))
-		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Runtime override for playwright: ArgsReplace=%+v", playwrightOverride.ArgsReplace))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Runtime override for playwright: ArgsReplace=%+v, WorkingDir=%s", playwrightOverride.ArgsReplace, playwrightOverride.WorkingDir))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created Downloads folder for agent-browser: %s", absDownloadsPath))
 	}
+
+	// Store the workspace-relative downloads path for agent-browser.
+	// The browser executor reads this from context and passes it as WorkingDirectory
+	// to the workspace API, so it needs to be relative to workspace root (workspacePath + downloadsRelativePath).
+	browserRelPath := filepath.Join(workspacePath, downloadsRelativePath)
+	hcpo.SetBrowserDownloadsPath(browserRelPath)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Set browser downloads path on orchestrator: %s", browserRelPath))
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] Browser tool: %s, Session ID: %s, selectedRunFolder: '%s', absDownloadsPath: '%s'", browserToolType, hcpo.getSessionID(), hcpo.selectedRunFolder, absDownloadsPath))
 }
@@ -1933,6 +1941,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// Note: Folder guard paths are already set on orchestrator by caller, but we need to apply them to the agent
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
 		return nil, fmt.Errorf("failed to apply post-setup to todo task orchestrator agent: %w", err)
+	}
+
+	// Add skill prompt if skills are selected
+	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
+	if len(effectiveSkills) > 0 {
+		baseAgent := agent.GetBaseAgent()
+		if baseAgent != nil {
+			mcpAgent := baseAgent.Agent()
+			if mcpAgent != nil {
+				skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator)
+				if skillPrompt != "" {
+					mcpAgent.AppendSystemPrompt(skillPrompt)
+					hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill prompt to todo task orchestrator agent (%d skills): %v", len(effectiveSkills), effectiveSkills))
+				}
+			}
+		}
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created todo task orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))

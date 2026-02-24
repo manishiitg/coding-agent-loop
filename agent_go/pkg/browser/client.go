@@ -27,8 +27,9 @@ func NewClient(workspaceAPIURL string) *Client {
 
 // ExecuteOptions contains optional configuration for command execution
 type ExecuteOptions struct {
-	Timeout     time.Duration
-	FolderGuard *FolderGuardConfig
+	Timeout          time.Duration
+	FolderGuard      *FolderGuardConfig
+	WorkingDirectory string // Working directory for command execution (relative to workspace root)
 }
 
 // ExecuteCommand executes an agent-browser command via the workspace API
@@ -57,9 +58,13 @@ func (c *Client) ExecuteCommand(ctx context.Context, args []string, opts *Execut
 	}
 
 	// Prepare request body
+	workingDir := "."
+	if opts != nil && opts.WorkingDirectory != "" {
+		workingDir = opts.WorkingDirectory
+	}
 	reqBody := ShellExecuteRequest{
 		Command:          fullCommand,
-		WorkingDirectory: ".",
+		WorkingDirectory: workingDir,
 		Timeout:          int(timeout.Seconds()),
 	}
 

@@ -4,14 +4,97 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchEvents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+// BridgeSessionEventEmitter implements virtualtools.SessionEventEmitter
+// by emitting events through the orchestrator's ContextAwareBridge.
+// This ensures human_feedback/human_questions tools work correctly when
+// called from workflow agents (not just chat API agents).
+type BridgeSessionEventEmitter struct {
+	Bridge mcpagent.AgentEventListener
+}
+
+func (e *BridgeSessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, contextText string, yesNoOnly bool, yesLabel, noLabel string, options ...string) {
+	now := time.Now()
+	eventData := &orchEvents.BlockingHumanFeedbackEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: now,
+		},
+		Question:      question,
+		AllowFeedback: !yesNoOnly && len(options) == 0,
+		Context:       contextText,
+		RequestID:     requestID,
+		YesNoOnly:     yesNoOnly,
+		YesLabel:      yesLabel,
+		NoLabel:       noLabel,
+		Options:       options,
+	}
+	agentEvent := &baseevents.AgentEvent{
+		Type:      orchEvents.BlockingHumanFeedback,
+		Timestamp: now,
+		Data:      eventData,
+	}
+	if err := e.Bridge.HandleEvent(context.Background(), agentEvent); err != nil {
+		// Best-effort emission; the tool will still wait for the response
+	}
+}
+
+func (e *BridgeSessionEventEmitter) EmitBlockingHumanQuestions(requestID string, questions []map[string]string) {
+	now := time.Now()
+	var eventQuestions []orchEvents.BlockingHumanQuestionsQuestion
+	for _, q := range questions {
+		eventQuestions = append(eventQuestions, orchEvents.BlockingHumanQuestionsQuestion{
+			ID:       q["id"],
+			Question: q["question"],
+		})
+	}
+	eventData := &orchEvents.BlockingHumanQuestionsEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: now,
+		},
+		RequestID: requestID,
+		Questions: eventQuestions,
+	}
+	agentEvent := &baseevents.AgentEvent{
+		Type:      orchEvents.BlockingHumanQuestions,
+		Timestamp: now,
+		Data:      eventData,
+	}
+	if err := e.Bridge.HandleEvent(context.Background(), agentEvent); err != nil {
+		// Best-effort emission
+	}
+}
+
+func (e *BridgeSessionEventEmitter) EmitPlanApproval(question, contextText, yesLabel string) {
+	now := time.Now()
+	eventData := &orchEvents.PlanApprovalEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: now,
+		},
+		Question: question,
+		Context:  contextText,
+		YesLabel: yesLabel,
+	}
+	agentEvent := &baseevents.AgentEvent{
+		Type:      orchEvents.PlanApproval,
+		Timestamp: now,
+		Data:      eventData,
+	}
+	if err := e.Bridge.HandleEvent(context.Background(), agentEvent); err != nil {
+		// Best-effort emission
+	}
+}
 
 // CreateStandardAgentConfig creates a standardized agent configuration
 // use CreateAndSetupStandardAgent instead which combines configuration and setup.
@@ -263,11 +346,24 @@ func (bo *BaseOrchestrator) registerCustomToolsForAgent(
 					return fmt.Errorf("tool %s has empty category - category is REQUIRED", tool.Function.Name)
 				}
 
+				// Wrap human tools to inject SessionEventEmitter via the orchestrator's bridge.
+				// Without this, human_feedback/human_questions tools called from workflow agents
+				// would silently skip event emission (no emitter in context) and time out.
+				finalExecutor := toolExecutor
+				if toolCategory == virtualtools.GetHumanToolCategory() && bo.GetContextAwareBridge() != nil {
+					emitter := &BridgeSessionEventEmitter{Bridge: bo.GetContextAwareBridge()}
+					origExec := toolExecutor
+					finalExecutor = func(ctx context.Context, args map[string]interface{}) (string, error) {
+						ctx = context.WithValue(ctx, virtualtools.SessionEventEmitterKey, emitter)
+						return origExec(ctx, args)
+					}
+				}
+
 				if err := mcpAgent.RegisterCustomTool(
 					tool.Function.Name,
 					tool.Function.Description,
 					params,
-					toolExecutor,
+					finalExecutor,
 					toolCategory,
 				); err != nil {
 					return fmt.Errorf("failed to register tool %s: %w", tool.Function.Name, err)

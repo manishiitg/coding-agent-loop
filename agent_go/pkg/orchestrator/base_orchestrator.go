@@ -109,6 +109,11 @@ type BaseOrchestrator struct {
 	// MCP session ID for connection sharing across agents
 	// When set, all agents created by this orchestrator share MCP connections
 	mcpSessionID string
+
+	// Browser downloads path (relative to workspace, e.g., "runs/iteration-2/xspaces/execution/Downloads")
+	// Set by setupBrowserDownloadsPathOverride when agent-browser is detected.
+	// Injected into context via BrowserDownloadsPathKey so the browser executor uses it as working directory.
+	browserDownloadsPath string
 }
 
 // NewBaseOrchestrator creates a new unified base orchestrator

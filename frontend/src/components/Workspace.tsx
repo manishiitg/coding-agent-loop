@@ -296,10 +296,10 @@ export default function Workspace({
       // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, workflowFolderPath)
     } else if (selectedModeCategory === 'chat') {
-      // Chat mode: show only Chats/, skills/ and subagents/ top-level folders
+      // Chat mode: show Chats/, Downloads/, skills/ and subagents/ top-level folders
       result = filesToProcess.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
     }
 
@@ -448,16 +448,16 @@ export default function Workspace({
         result = adjustFilePathsRecursive(result, workflowFolderPath)
       }
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Plans/, Chats/, skills/ and subagents/ folders
+      // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
       result = files.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
     } else if (selectedModeCategory === 'chat') {
-      // Chat mode: show only Chats/, skills/ and subagents/ top-level folders
+      // Chat mode: show Chats/, Downloads/, skills/ and subagents/ top-level folders
       result = files.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
     }
 

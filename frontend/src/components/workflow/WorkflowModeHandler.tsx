@@ -14,7 +14,7 @@ interface Preset {
 interface WorkflowModeHandlerProps {
   // Callbacks and children only
   onPresetSelected: (presetId: string, presetContent: string) => void
-  onPresetCleared: () => void
+  onPresetCleared?: () => void  // No longer used internally; kept for API compat
   children: React.ReactNode
   onWorkflowPhaseChange?: (phase: WorkflowPhase) => void  // Callback to update phase in ChatArea
 }
@@ -26,7 +26,6 @@ export interface WorkflowModeHandlerRef {
 
 export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowModeHandlerProps>(({
   onPresetSelected,
-  onPresetCleared,
   children,
   onWorkflowPhaseChange
 }, ref) => {
@@ -77,16 +76,9 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
     }
   }, [agentMode, hasAttemptedLoad, loadPresets])
 
-  // Reset workflow preset when switching away from workflow mode
-  useEffect(() => {
-    if (agentMode !== 'workflow') {
-      onPresetCleared()
-      setHasAttemptedLoad(false)
-      setAvailablePresets([])
-      const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
-      onWorkflowPhaseChange?.(defaultPhase)
-    }
-  }, [agentMode, onPresetCleared, onWorkflowPhaseChange])
+  // Note: No cleanup effect needed here. This component is conditionally rendered
+  // (only when selectedModeCategory === 'workflow'), so unmounting handles local state cleanup.
+  // Global workflow preset clearing is handled by handleModeSwitchWithPreset in ChatArea.
 
   // Handle preset restoration when switching to workflow mode
   useEffect(() => {

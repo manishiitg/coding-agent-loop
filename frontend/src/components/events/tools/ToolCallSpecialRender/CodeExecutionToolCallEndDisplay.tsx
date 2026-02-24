@@ -244,7 +244,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
     let serverListData: unknown = null
 
     try {
-      const parsed = JSON.parse(event.result)
+      const parsed = JSON.parse(event.result || '')
       if (parsed.servers || parsed.custom_tools || parsed.virtual_tools) {
         serverListData = parsed
       }
@@ -410,7 +410,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
     let serverListData: unknown = null
 
     try {
-      const parsed = JSON.parse(event.result)
+      const parsed = JSON.parse(event.result || '')
       if (parsed.servers || parsed.custom_tools || parsed.virtual_tools) {
         // It's a server list JSON
         isServerList = true

@@ -38,7 +38,16 @@ export default function SkillSelectionDropdown({
     setIsLoading(true);
     try {
       const response = await skillsApi.listSkills();
-      setSkills(response.skills || []);
+      // Deduplicate by file_path to prevent React duplicate key crashes
+      const raw = response.skills || [];
+      const seen = new Set<string>();
+      const unique = raw.filter(s => {
+        const key = s.file_path || s.folder_name;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setSkills(unique);
     } catch (err) {
       console.error('Failed to load skills:', err);
       setSkills([]);
@@ -175,7 +184,7 @@ export default function SkillSelectionDropdown({
                       </div>
                     ) : skills.length > 0 ? (
                       skills.map((skill) => (
-                        <div key={skill.folder_name} className="flex items-start space-x-2 group p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer">
+                        <div key={skill.file_path || skill.folder_name} className="flex items-start space-x-2 group p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer">
                           <Checkbox
                             id={`skill-${skill.folder_name}`}
                             checked={selectedSkills.includes(skill.folder_name)}

@@ -5,7 +5,7 @@ import { useRunningWorkflowsStore, useRunningWorkflows, useShowRunningDrawer, ty
 import { useChatStore } from '../../stores/useChatStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { cn } from '@/lib/utils'
-import { extractWorkflowInfo } from '../../utils/workflowEventProcessor'
+import { extractWorkflowInfo, hasWorkflowCompletion, hasWorkflowError } from '../../utils/workflowEventProcessor'
 import { EventDispatcher } from '../events'
 import type { PollingEvent } from '../../services/api-types'
 
@@ -83,6 +83,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
 
   const chatTabs = useChatStore(state => state.chatTabs)
   const tabEvents = useChatStore(state => state.tabEvents)
+  const tabSessionStatus = useChatStore(state => state.tabSessionStatus)
   const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const { customPresets, predefinedPresets } = useGlobalPresetStore()
@@ -339,13 +340,31 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
         lastEventTime = fromEvents.lastEventTime
       }
 
+      // Derive status from events and session status instead of hardcoding
+      let tabStatus: WorkflowItem['status'] = 'running'
+      if (tab.sessionId) {
+        const events = tabEvents[tab.sessionId] || []
+        if (hasWorkflowError(events)) {
+          tabStatus = 'failed'
+        } else if (hasWorkflowCompletion(events)) {
+          tabStatus = 'completed'
+        } else if (tab.isCompleted) {
+          tabStatus = 'completed'
+        } else {
+          const sessionStatus = tabSessionStatus[tab.tabId]?.status
+          if (sessionStatus === 'stopped') tabStatus = 'paused'
+          else if (sessionStatus === 'error') tabStatus = 'failed'
+          else if (sessionStatus === 'completed') tabStatus = 'completed'
+        }
+      }
+
       items.push({
         id: `tab-${tab.tabId}`,
         presetId: presetId,
         presetName: presetName,
         phaseName: tab.metadata?.phaseName || tab.name,
         sessionId: tab.sessionId || undefined,
-        status: 'running',
+        status: tabStatus,
         progress,
         currentStepTitle: stepTitle,
         currentStepId,
@@ -388,7 +407,7 @@ export const RunningWorkflowsDrawer: React.FC<RunningWorkflowsDrawerProps> = ({
       // Stale workflows go to bottom
       return aIsStale ? 1 : -1
     })
-  }, [showRunningDrawer, runningWorkflows, chatTabs, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress, activeSessionIds, getInfoFromEvents])
+  }, [showRunningDrawer, runningWorkflows, chatTabs, tabEvents, tabSessionStatus, getTabStreamingStatus, customPresets, predefinedPresets, activePresetId, stepProgress, activeSessionIds, getInfoFromEvents])
 
   // Auto-expand latest events by default - update when workflows change
   useEffect(() => {

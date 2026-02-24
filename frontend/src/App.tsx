@@ -9,6 +9,7 @@ import { CsvRenderer } from "./components/ui/CsvRenderer";
 import { XlsxRenderer } from "./components/ui/XlsxRenderer";
 import { DocxRenderer } from "./components/ui/DocxRenderer";
 import { PdfRenderer } from "./components/ui/PdfRenderer";
+import { HtmlRenderer } from "./components/ui/HtmlRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
@@ -532,6 +533,7 @@ function App() {
   }, [hasCompletedInitialSetup, selectedModeCategory])
 
   // Restore active presets after stores are initialized
+  const hasRestoredPresetRef = useRef(false)
   useEffect(() => {
     // Only restore presets if initial setup is completed and we have a mode category
     if (hasCompletedInitialSetup && selectedModeCategory) {
@@ -539,6 +541,7 @@ function App() {
       const timer = setTimeout(() => {
         const activePreset = getActivePreset(selectedModeCategory)
         if (activePreset) {
+          hasRestoredPresetRef.current = true
           const result = applyPreset(activePreset.id, selectedModeCategory)
           if (!result.success) {
             console.error('[APP] Failed to restore preset:', result.error)
@@ -546,14 +549,31 @@ function App() {
         } else if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
           // For chat/multi-agent mode, if there's no active preset, clear any stale preset server state
           // This prevents old preset servers from persisting when no preset is selected
+          hasRestoredPresetRef.current = true
           const { setCurrentPresetServers } = useGlobalPresetStore.getState()
           setCurrentPresetServers([])
         }
+        // For workflow mode with no preset found, don't mark as restored — retry below
       }, 500) // 500ms delay to ensure stores are ready
 
       return () => clearTimeout(timer)
     }
   }, [hasCompletedInitialSetup, selectedModeCategory, getActivePreset, applyPreset])
+
+  // Retry preset restoration for workflow mode after presets finish loading from API
+  // The 500ms timer above may fire before refreshPresets() completes
+  const customPresets = useGlobalPresetStore(state => state.customPresets)
+  useEffect(() => {
+    if (hasRestoredPresetRef.current) return
+    if (!hasCompletedInitialSetup || selectedModeCategory !== 'workflow') return
+    if (customPresets.length === 0) return // Presets not loaded yet
+
+    const activePreset = getActivePreset('workflow')
+    if (activePreset) {
+      hasRestoredPresetRef.current = true
+      applyPreset(activePreset.id, 'workflow')
+    }
+  }, [hasCompletedInitialSetup, selectedModeCategory, customPresets, getActivePreset, applyPreset])
 
 
   // Auto-minimize sidebar when mode is selected or preset is selected
@@ -833,20 +853,21 @@ function App() {
             
             {/* EventModeProvider wraps each tab's content (ChatArea/WorkflowLayout) - per-tab scope */}
             <EventModeProvider>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                {selectedModeCategory === 'workflow' ? (
-                  // Workflow mode - WorkflowLayout renders header, then ChatArea
+              <div className="flex-1 min-h-0 overflow-hidden relative">
+                {/* Both layouts stay mounted to preserve running state across mode switches.
+                    Only the active mode is visible; the other is hidden via CSS. */}
+                <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
                   <WorkflowLayout
                     className="h-full"
                     onNewChat={startNewChat}
                   />
-                ) : (
-                  // Chat mode - ChatArea renders header, then content
+                </div>
+                <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
                   <ChatAreaWithObserverId
                     ref={chatAreaRef}
                     onNewChat={startNewChat}
                   />
-                )}
+                </div>
               </div>
             </EventModeProvider>
 
@@ -1113,7 +1134,7 @@ function App() {
                         />
                       </div>
                     ) : (
-                      <div className={selectedFile?.path?.toLowerCase().endsWith('.pdf') ? "" : "p-6"}>
+                      <div className={(selectedFile?.path?.toLowerCase().endsWith('.pdf') || selectedFile?.path?.toLowerCase().endsWith('.html') || selectedFile?.path?.toLowerCase().endsWith('.htm')) ? "" : "p-6"}>
                         {(() => {
                           const filePath = selectedFile?.path?.toLowerCase() || ''
 
@@ -1137,6 +1158,15 @@ function App() {
                             return (
                               <div className="h-[calc(100vh-120px)] w-full">
                                 <PdfRenderer data={binaryFileData} />
+                              </div>
+                            )
+                          }
+
+                          // HTML files
+                          if (filePath.endsWith('.html') || filePath.endsWith('.htm')) {
+                            return (
+                              <div className="h-[calc(100vh-120px)] w-full">
+                                <HtmlRenderer content={fileContent} />
                               </div>
                             )
                           }

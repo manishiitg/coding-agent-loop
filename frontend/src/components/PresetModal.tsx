@@ -21,7 +21,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[]) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -45,6 +45,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
+  // Per-preset global secret selection (null = all selected, [] = none, [...] = specific)
+  const [selectedGlobalSecrets, setSelectedGlobalSecrets] = useState<string[] | null>(null);
   const [internalAgentMode, setInternalAgentMode] = useState<'simple' | 'workflow'>('simple');
   const [selectedFolder, setSelectedFolder] = useState<PlannerFile | null>(null);
   const [showFolderDialog, setShowFolderDialog] = useState(false);
@@ -153,6 +155,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedTools(editingPreset.selectedTools || []); // NEW
       setSelectedSkills(editingPreset.selectedSkills || []);
       setSelectedSecrets(editingPreset.selectedSecrets || []);
+      setSelectedGlobalSecrets(editingPreset.selectedGlobalSecretNames ?? null);
       setInternalAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
       setSelectedFolder(editingPreset.selectedFolder || null);
       const presetLLM = editingPreset.llmConfig || {
@@ -182,6 +185,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedTools([]); // NEW
       setSelectedSkills([]);
       setSelectedSecrets([]);
+      setSelectedGlobalSecrets(null); // null = all global secrets selected by default
       // Default to workflow mode as chat presets are disabled
       const defaultMode = 'workflow';
       setInternalAgentMode(defaultMode);
@@ -320,8 +324,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       const codeExecutionModeToPass = useCodeExecutionMode === undefined ? false : useCodeExecutionMode
       const toolSearchModeToPass = useToolSearchMode === undefined ? false : useToolSearchMode
       
-      console.log('[code_execution] [PRESET_MODAL] Final onSave call - param8:', codeExecutionModeToPass, 'original:', useCodeExecutionMode)
-      
       onSave(
         label.trim(),
         effectiveAgentMode === 'workflow' ? '' : query.trim(),
@@ -335,11 +337,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         enableContextSummarization,
         toolSearchModeToPass, // Always pass explicit boolean
         enableBrowserAccess, // Browser automation access
-        selectedSecrets // Secret IDs for injection
+        selectedSecrets, // Secret IDs for injection
+        selectedGlobalSecrets // Per-preset global secret selection (null=all)
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -900,6 +903,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   <SecretSelectionSection
                     selectedSecrets={selectedSecrets}
                     onSecretChange={setSelectedSecrets}
+                    selectedGlobalSecrets={selectedGlobalSecrets}
+                    onGlobalSecretChange={setSelectedGlobalSecrets}
                   />
                 )}
 

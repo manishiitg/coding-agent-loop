@@ -772,6 +772,8 @@ export interface PresetQuery {
   use_tool_search_mode?: boolean;
   pre_discovered_tools?: string; // JSON string of tools array
   selected_skills?: string; // JSON string of skill folder names
+  selected_secrets?: string; // JSON string of secret names
+  selected_global_secret_names?: string; // JSON string of global secret names (null=all)
   enable_context_summarization?: boolean; // Enable context summarization
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access
@@ -793,6 +795,8 @@ export interface CreatePresetQueryRequest {
   use_tool_search_mode?: boolean; // Tool search mode
   pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
+  selected_secrets?: string[]; // Secret names for workflow
+  selected_global_secret_names?: string[]; // Global secret names (null=all, []=none)
   enable_context_summarization?: boolean; // Enable context summarization
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access
@@ -811,6 +815,8 @@ export interface UpdatePresetQueryRequest {
   use_tool_search_mode?: boolean; // Tool search mode
   pre_discovered_tools?: string[]; // Tools always available without searching
   selected_skills?: string[]; // Skill folder names for workflow
+  selected_secrets?: string[]; // Secret names for workflow
+  selected_global_secret_names?: string[]; // Global secret names (null=all, []=none)
   enable_context_summarization?: boolean; // Enable context summarization
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access

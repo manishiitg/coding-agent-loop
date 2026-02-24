@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
@@ -10,6 +10,8 @@ import DelegationLogsPopup from './DelegationLogsPopup'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
+import { useRunningWorkflows } from '../stores/useRunningWorkflowsStore'
+import { useChatStore } from '../stores/useChatStore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -36,6 +38,30 @@ const getModeName = (category: string) => {
       return 'Chat Mode'
   }
 }
+
+const MODE_PILLS = [
+  {
+    key: 'chat' as const,
+    label: 'Chat',
+    icon: MessageCircle,
+    activeClasses: 'bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-100 dark:ring-blue-500/40',
+    inactiveClasses: 'text-gray-500 dark:text-gray-400',
+  },
+  {
+    key: 'workflow' as const,
+    label: 'Workflow',
+    icon: Workflow,
+    activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
+    inactiveClasses: 'text-gray-500 dark:text-gray-400',
+  },
+  {
+    key: 'multi-agent' as const,
+    label: 'Multi-Agent',
+    icon: Users,
+    activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
+    inactiveClasses: 'text-gray-500 dark:text-gray-400',
+  },
+] as const
 
 /**
  * Global Mode & Preset Bar - always visible at the top level
@@ -74,12 +100,39 @@ export const ModePresetBar: React.FC = () => {
   // Get presets for current mode
   const presetsForMode = getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
 
-  const [showModeSwitch, setShowModeSwitch] = useState(false)
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
   const [showCostsPopup, setShowCostsPopup] = useState(false)
   const [showDelegationLogs, setShowDelegationLogs] = useState(false)
+
+  const runningWorkflows = useRunningWorkflows()
+  const chatTabsForBadge = useChatStore(state => state.chatTabs)
+  const tabSessionStatusForBadge = useChatStore(state => state.tabSessionStatus)
+  const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
+
+  const runningWorkflowCount = useMemo(() => {
+    const seenSessionIds = new Set<string>()
+    let count = 0
+
+    runningWorkflows.forEach(wf => {
+      if (wf.status === 'running') count++
+      if (wf.sessionId) seenSessionIds.add(wf.sessionId)
+    })
+
+    Object.values(chatTabsForBadge).forEach(tab => {
+      if (tab.metadata?.mode !== 'workflow') return
+      if (tab.sessionId && seenSessionIds.has(tab.sessionId)) return
+      if (!tab.metadata?.presetQueryId) return
+      if (tab.isCompleted) return
+      const isStreaming = getTabStreamingStatus(tab.tabId)
+      const sessionStatus = tabSessionStatusForBadge[tab.tabId]?.status
+      const isRunningSession = sessionStatus === 'running' || sessionStatus === 'active'
+      if (isStreaming || isRunningSession) count++
+    })
+
+    return count
+  }, [runningWorkflows, chatTabsForBadge, tabSessionStatusForBadge, getTabStreamingStatus])
 
   // Listen for external trigger to open preset settings (e.g. from workflow toolbar)
   const showPresetSettings = useCommandDialogStore(s => s.showPresetSettings)
@@ -137,7 +190,8 @@ export const ModePresetBar: React.FC = () => {
     enableContextSummarization?: boolean,
     useToolSearchMode?: boolean,
     enableBrowserAccess?: boolean,
-    selectedSecrets?: string[]
+    selectedSecrets?: string[],
+    selectedGlobalSecretNames?: string[] | null
   ) => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
@@ -156,7 +210,8 @@ export const ModePresetBar: React.FC = () => {
         useToolSearchMode,
         enableBrowserAccess,
         undefined, // enableContextEditing
-        selectedSecrets
+        selectedSecrets,
+        selectedGlobalSecretNames
       )
 
       // Apply the preset immediately if it's a new one
@@ -230,19 +285,15 @@ export const ModePresetBar: React.FC = () => {
   useEffect(() => {
     const onMouseDown = (event: MouseEvent) => {
       const target = event.target as Element
-      if (!target.closest('.mode-switch-dropdown') && !target.closest('.preset-dropdown')) {
-        setShowModeSwitch(false)
+      if (!target.closest('.preset-dropdown')) {
         setShowPresetDropdown(false)
       }
     }
-
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setShowModeSwitch(false)
         setShowPresetDropdown(false)
       }
     }
-
     document.addEventListener('mousedown', onMouseDown)
     document.addEventListener('keydown', onKeyDown)
     return () => {
@@ -257,108 +308,37 @@ export const ModePresetBar: React.FC = () => {
         <div className="flex items-center justify-between">
           {/* Left: Mode Indicator */}
           <div className="flex items-center gap-3">
-            {selectedModeCategory && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowModeSwitch(!showModeSwitch)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                    selectedModeCategory === 'chat'
-                      ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                      : selectedModeCategory === 'multi-agent'
-                        ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800'
-                        : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800'
-                  }`}
-                  title="Click to change mode"
-                  type="button"
-                  aria-haspopup="menu"
-                  aria-expanded={showModeSwitch}
-                  aria-controls="mode-switch-menu"
-                >
-                  {getModeIcon(selectedModeCategory)}
-                  <span>{getModeName(selectedModeCategory)}</span>
-                  <Settings className="w-3 h-3" />
-                </button>
-
-                {/* Direct Mode Selection Dropdown */}
-                {showModeSwitch && (
-                  <div
-                    id="mode-switch-menu"
-                    role="menu"
-                    aria-label="Select mode"
-                    className="mode-switch-dropdown absolute top-full left-0 mt-1 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg shadow-lg z-50"
+            {/* Segmented control — single bordered container, active segment elevated */}
+            <div className="flex items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5" role="tablist" aria-label="Select mode">
+              {MODE_PILLS.map((mode) => {
+                const isActive = selectedModeCategory === mode.key
+                const Icon = mode.icon
+                return (
+                  <button
+                    key={mode.key}
+                    role="tab"
+                    aria-selected={isActive}
+                    aria-label={`Switch to ${mode.label} mode`}
+                    onClick={() => setModeCategory(mode.key)}
+                    className={`relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
+                      isActive ? mode.activeClasses : mode.inactiveClasses
+                    }`}
+                    type="button"
                   >
-                    <div className="p-2 space-y-1">
-                      {/* Chat Mode */}
-                      <button
-                        onClick={() => {
-                          setModeCategory('chat')
-                          setShowModeSwitch(false)
-                        }}
-                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                          selectedModeCategory === 'chat'
-                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
-                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <MessageCircle className="w-4 h-4 text-blue-600" />
-                          <div>
-                            <div className="font-medium">Chat Mode</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Quick conversations and questions
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                      {/* Workflow Mode */}
-                      <button
-                        onClick={() => {
-                          setModeCategory('workflow')
-                          setShowModeSwitch(false)
-                        }}
-                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                          selectedModeCategory === 'workflow'
-                            ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-900 dark:text-purple-100'
-                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Workflow className="w-4 h-4 text-purple-600" />
-                          <div>
-                            <div className="font-medium">Workflow Mode</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Todo-based task execution
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                      {/* Multi Agent Chat Mode */}
-                      <button
-                        onClick={() => {
-                          setModeCategory('multi-agent')
-                          setShowModeSwitch(false)
-                        }}
-                        className={`w-full text-left p-3 rounded-md text-sm transition-colors ${
-                          selectedModeCategory === 'multi-agent'
-                            ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-900 dark:text-indigo-100'
-                            : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Users className="w-4 h-4 text-indigo-600" />
-                          <div>
-                            <div className="font-medium">Multi Agent Chat</div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Plan-driven delegation with sub-agents
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+                    <Icon className="w-3 h-3" />
+                    <span>{mode.label}</span>
+                    {mode.key === 'workflow' && runningWorkflowCount > 0 && (
+                      <span className="relative flex items-center">
+                        <span className="flex items-center justify-center min-w-[16px] h-4 px-1 text-[10px] font-semibold text-white bg-green-500 rounded-full leading-none">
+                          {runningWorkflowCount}
+                        </span>
+                        <span className="absolute inset-0 min-w-[16px] h-4 bg-green-500 rounded-full animate-ping opacity-30" />
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
 
             {/* Center: Preset Information */}
             <div className="flex items-center gap-3">

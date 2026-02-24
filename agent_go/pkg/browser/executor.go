@@ -94,10 +94,17 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 	}
 
+	// Use browser downloads path as working directory if set (for screenshots/downloads in workflows)
+	workingDir := "."
+	if downloadsPath, ok := ctx.Value(common.BrowserDownloadsPathKey).(string); ok && downloadsPath != "" {
+		workingDir = downloadsPath
+	}
+
 	// Execute via client
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, &ExecuteOptions{
-		Timeout:     timeout,
-		FolderGuard: folderGuard,
+		Timeout:         timeout,
+		FolderGuard:     folderGuard,
+		WorkingDirectory: workingDir,
 	})
 	if err != nil {
 		return "", err

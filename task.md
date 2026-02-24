@@ -1,4 +1,4 @@
-4. chain builder?
+4. chain builder? / 34. workspace builder
 
 51. summization in chat mode is not ux friendly
 
@@ -20,6 +20,13 @@
 
 31. read image tool response not visible
 
-32. add anthrpic latest models in multi llm provider and start with cloude code also, and vertex to only support api key?
 
 33. look at comflaux
+
+34. make it very seemless to switch between multi agent chat vs workflow etc..  right now workflow just hangs fully
+
+35. in workflows, we shouldh ave plan versions published? 
+
+36. pdf read password protected
+
+37. todo task agent should save learning via a sub agent when it wants

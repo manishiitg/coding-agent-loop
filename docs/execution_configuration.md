@@ -655,6 +655,10 @@ ArgsReplace: {"--output-dir": "/new/path"}
 Result:   ["--output-dir=/new/path", "--other-flag"]
 ```
 
+#### Playwright: custom filenames and `--output-dir`
+
+The Playwright MCP server has a known behavior: **only auto-generated filenames** (e.g. `page-{timestamp}.png`) respect `--output-dir`. When the tool is called **with a custom filename** (e.g. `screenshot.png`, `snapshot.html`), files can be written to the workspace/process root instead. See [Playwright artifacts](playwright_artifacts.md) for details and mitigations (including `.gitignore` patterns).
+
 ---
 
 ## 5. Folder Guard System & Execution Security

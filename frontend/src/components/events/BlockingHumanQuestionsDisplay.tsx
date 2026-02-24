@@ -1,5 +1,11 @@
 import React, { useState } from 'react'
-import { getSubmittedQuestions, setSubmittedQuestions } from '../../utils/notificationDedup'
+import { playNotificationSound } from '../../utils/sound'
+import {
+  hasBeenNotified,
+  markNotified,
+  getSubmittedQuestions,
+  setSubmittedQuestions,
+} from '../../utils/notificationDedup'
 
 export interface BlockingHumanQuestionsQuestion {
   id: string
@@ -41,6 +47,73 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [hasSubmitted, setHasSubmitted] = useState(!!cachedData)
   const [submittedData, setSubmittedData] = useState<{ answers: Record<string, string>; general_feedback: string } | null>(cachedData || null)
+
+  // Request notification permission on component mount
+  React.useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {})
+    }
+
+    // Set Dock badge if running in Electron
+    if (!hasSubmitted && (window as any).electronAPI) {
+      (window as any).electronAPI.setDockBadge('1')
+    }
+    return () => {
+      if ((window as any).electronAPI) {
+        (window as any).electronAPI.setDockBadge('')
+      }
+    }
+  }, [])
+
+  // Clear dock badge when submitted
+  React.useEffect(() => {
+    if (hasSubmitted && (window as any).electronAPI) {
+      (window as any).electronAPI.setDockBadge('')
+    }
+  }, [hasSubmitted])
+
+  // Show browser notification after 10s delay if user hasn't answered yet
+  React.useEffect(() => {
+    const requestId = event.data.request_id || ''
+    const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
+    if (!enabled || hasSubmitted || (requestId && hasBeenNotified(requestId))) return
+    if (!('Notification' in window) || Notification.permission !== 'granted') return
+
+    let notificationRef: Notification | null = null
+    const timer = setTimeout(() => {
+      if (hasSubmitted) return
+
+      try {
+        playNotificationSound()
+        if (requestId) markNotified(requestId)
+
+        const questionCount = questions.length
+        notificationRef = new Notification('Questions Awaiting Your Response', {
+          body: `${questionCount} question${questionCount !== 1 ? 's' : ''} need your input`,
+          icon: '/favicon.ico',
+          tag: `blocking-questions-${requestId || Date.now()}`,
+          requireInteraction: true,
+          silent: false,
+        })
+
+        notificationRef.onclick = () => {
+          window.focus()
+          notificationRef?.close()
+        }
+
+        setTimeout(() => {
+          notificationRef?.close()
+        }, 30000)
+      } catch (error) {
+        console.error('[BLOCKING_QUESTIONS] Failed to create notification:', error)
+      }
+    }, 10000)
+
+    return () => {
+      clearTimeout(timer)
+      notificationRef?.close()
+    }
+  }, [questions.length, event.data.request_id, hasSubmitted])
 
   const handleAnswerChange = (questionId: string, value: string) => {
     setAnswers(prev => ({ ...prev, [questionId]: value }))

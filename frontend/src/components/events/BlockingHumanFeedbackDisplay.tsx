@@ -90,7 +90,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     }
   }, [hasSubmitted])
 
-  // Show browser notification when component mounts (if not already submitted or notified)
+  // Show browser notification after 10s delay if user hasn't answered yet
   React.useEffect(() => {
     const requestId = event.data.request_id || ''
     const enabled = localStorage.getItem('mcp_notifications_enabled') !== 'false'
@@ -98,37 +98,40 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
     if (!enabled || hasSubmitted || (requestId && hasBeenNotified(requestId))) return
     if (!('Notification' in window) || Notification.permission !== 'granted') return
 
-    try {
-      playNotificationSound()
-      if (requestId) markNotified(requestId)
+    let notificationRef: Notification | null = null
+    const timer = setTimeout(() => {
+      // Re-check submitted state at fire time (user may have answered within 10s)
+      if (hasSubmitted) return
 
-      const notification = new Notification('Action Required', {
-        body: question,
-        icon: '/favicon.ico',
-        tag: `blocking-feedback-${requestId || Date.now()}`,
-        requireInteraction: true,
-        silent: false
-      })
+      try {
+        playNotificationSound()
+        if (requestId) markNotified(requestId)
 
-      notification.onclick = () => {
-        window.focus()
-        notification.close()
+        notificationRef = new Notification('Action Required', {
+          body: question,
+          icon: '/favicon.ico',
+          tag: `blocking-feedback-${requestId || Date.now()}`,
+          requireInteraction: true,
+          silent: false
+        })
+
+        notificationRef.onclick = () => {
+          window.focus()
+          notificationRef?.close()
+        }
+
+        // Auto-close notification after 30 seconds
+        setTimeout(() => {
+          notificationRef?.close()
+        }, 30000)
+      } catch (error) {
+        console.error('[BLOCKING_FEEDBACK] Failed to create notification:', error)
       }
+    }, 10000) // 10 second delay
 
-      notification.onerror = (error) => {
-        console.error('[BLOCKING_FEEDBACK] Notification error:', error)
-      }
-
-      // Auto-close notification after 30 seconds
-      setTimeout(() => {
-        notification.close()
-      }, 30000)
-
-      return () => {
-        notification.close()
-      }
-    } catch (error) {
-      console.error('[BLOCKING_FEEDBACK] Failed to create notification:', error)
+    return () => {
+      clearTimeout(timer)
+      notificationRef?.close()
     }
   }, [question, event.data.request_id, hasSubmitted])
 

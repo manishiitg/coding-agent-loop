@@ -9,7 +9,8 @@ export interface CustomPreset {
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
   selectedSkills?: string[]; // Skill folder names for workflow
-  selectedSecrets?: string[]; // Secret IDs for injection (browser-local only)
+  selectedSecrets?: string[]; // Secret IDs for injection (persisted to DB as names)
+  selectedGlobalSecretNames?: string[] | null; // null=all global secrets, []=none, [...]=specific
   agentMode?: 'simple' | 'workflow';
   selectedFolder?: PlannerFile; // Single folder
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset
@@ -28,6 +29,7 @@ export interface PredefinedPreset {
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings
   selectedSkills?: string[]; // Skill folder names for workflow
+  selectedGlobalSecretNames?: string[] | null; // null=all global secrets, []=none, [...]=specific
   agentMode?: 'simple' | 'workflow';
   selectedFolder?: PlannerFile;
   llmConfig?: PresetLLMConfig; // LLM configuration for this preset

@@ -20,7 +20,16 @@ export default function SkillsSection() {
     setError(null)
     try {
       const response = await skillsApi.listSkills()
-      setSkills(response.skills || [])
+      // Deduplicate by file_path to prevent React duplicate key crashes
+      const raw = response.skills || []
+      const seen = new Set<string>()
+      const unique = raw.filter(s => {
+        const key = s.file_path || s.folder_name
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+      setSkills(unique)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load skills')
       setSkills([])
@@ -182,7 +191,7 @@ export default function SkillsSection() {
                     <div className="grid gap-4">
                       {(skills || []).map((skill) => (
                         <SkillCard
-                          key={skill.folder_name}
+                          key={skill.file_path || skill.folder_name}
                           skill={skill}
                           onDelete={() => handleDelete(skill.folder_name)}
                         />

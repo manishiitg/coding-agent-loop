@@ -92,6 +92,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// All paths include workspace prefix to match shell working_directory parameter
 	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
 	writePaths := []string{stepExecutionPath, knowledgebasePath}
+
+	// Add skill folder paths to read paths (skills are read-only)
+	skillStepConfig := getAgentConfigs(step)
+	effectiveSkills := GetEffectiveSkills(skillStepConfig, hcpo.BaseOrchestrator)
+	if len(effectiveSkills) > 0 {
+		skillReadPaths, _ := BuildSkillFolderGuardPaths(effectiveSkills)
+		readPaths = append(readPaths, skillReadPaths...)
+		hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill folder paths to todo task folder guard: %v", skillReadPaths))
+	}
+
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for todo task orchestrator agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
@@ -607,6 +617,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	// Setup folder guard for generic agent
 	readPaths := []string{executionPath, "execution", filepath.Join("execution", stepPath)}
 	writePaths := []string{executionPath}
+
+	// Add skill folder paths to read paths (skills are read-only)
+	genericStepConfig := getAgentConfigs(genericStep)
+	genericEffectiveSkills := GetEffectiveSkills(genericStepConfig, hcpo.BaseOrchestrator)
+	if len(genericEffectiveSkills) > 0 {
+		skillReadPaths, _ := BuildSkillFolderGuardPaths(genericEffectiveSkills)
+		readPaths = append(readPaths, skillReadPaths...)
+	}
+
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	// Build execution context
@@ -728,6 +747,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	// Setup folder guard for sub-agent
 	readPaths := []string{executionPath, "execution", filepath.Join("execution", stepPath)}
 	writePaths := []string{executionPath}
+
+	// Add skill folder paths to read paths (skills are read-only)
+	subAgentStepConfig := getAgentConfigs(stepToExecute)
+	subAgentEffectiveSkills := GetEffectiveSkills(subAgentStepConfig, hcpo.BaseOrchestrator)
+	if len(subAgentEffectiveSkills) > 0 {
+		skillReadPaths, _ := BuildSkillFolderGuardPaths(subAgentEffectiveSkills)
+		readPaths = append(readPaths, skillReadPaths...)
+	}
+
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	// Build orchestration routes for sub-agent (so it knows about other agents)

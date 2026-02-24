@@ -178,7 +178,10 @@ export const useSecretsStore = create<SecretsState>()(
     }),
     {
       name: 'secrets-store',
-      partialize: (state) => ({ secrets: state.secrets }),
+      partialize: (state) => ({
+        secrets: state.secrets,
+        selectedGlobalSecretNames: state.selectedGlobalSecretNames,
+      }),
     }
   )
 )

@@ -8,6 +8,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // ShouldFilterWriteTool checks if a write tool should be filtered out (not registered)
@@ -311,6 +312,10 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 			// Inject folder guard paths into context for shell execution
 			ctx = context.WithValue(ctx, virtualtools.FolderGuardReadPathsKey, bo.folderGuardReadPaths)
 			ctx = context.WithValue(ctx, virtualtools.FolderGuardWritePathsKey, bo.folderGuardWritePaths)
+			// Inject browser downloads path into context for agent-browser executor
+			if bo.browserDownloadsPath != "" {
+				ctx = context.WithValue(ctx, common.BrowserDownloadsPathKey, bo.browserDownloadsPath)
+			}
 
 			// All validations passed and paths normalized - call original executor
 			return originalExecutor(ctx, args)

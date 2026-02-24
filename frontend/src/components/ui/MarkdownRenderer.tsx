@@ -6,8 +6,8 @@ import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAppStore } from '../../stores/useAppStore'
-import { workspaceApi } from '../../services/api'
-import { agentApi } from '../../services/api'
+import { workspaceApi, agentApi } from '../../services/api'
+import { isTextBasedFile } from '../../utils/fileUtils'
 import mermaid from 'mermaid'
 
 interface MarkdownRendererProps {
@@ -152,13 +152,27 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const setBinaryFileData = useWorkspaceStore(state => state.setBinaryFileData)
   const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
 
-  // Standard file opening logic extracted from Workspace.tsx
+  // Standard file opening logic — mirrors Workspace.tsx handleFileClick
   const handleWorkspaceLink = async (filepath: string) => {
     try {
       // Auto-resolve folder paths to their default file (e.g. Plans/foo -> Plans/foo/plan.md)
       let resolvedPath = filepath
       if (filepath.startsWith('Plans/') && !filepath.includes('.')) {
         resolvedPath = filepath + '/plan.md'
+      }
+
+      const fileName = resolvedPath.split('/').pop() || resolvedPath
+      const ext = fileName.split('.').pop()?.toLowerCase() || ''
+
+      // Check if binary viewable file (xlsx, docx, pdf)
+      const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf'].includes(ext)
+      // Check if image file (workspace API returns base64 data URL for these)
+      const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
+
+      // Reject non-viewable binary files early
+      if (!isTextBasedFile(fileName) && !isImage && !isViewableBinary) {
+        console.warn(`[MarkdownRenderer] Cannot view binary file: ${fileName}`)
+        return
       }
 
       // 1. Ensure workspace is visible
@@ -169,13 +183,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       highlightFile(resolvedPath)
 
       // 3. Select file and start loading content
-      const fileName = resolvedPath.split('/').pop() || resolvedPath
       setSelectedFile({ name: fileName, path: resolvedPath })
       setLoadingFileContent(true)
-      
-      // Check if binary viewable file (simplified check for link handler)
-      const ext = fileName.split('.').pop()?.toLowerCase() || ''
-      const isViewableBinary = ['xls', 'xlsx', 'docx'].includes(ext)
 
       if (isViewableBinary) {
         const response = await workspaceApi.get(
@@ -189,17 +198,27 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         return
       }
 
-      // Normal text file
+      // Text or image file — workspace API returns base64 data URL for images
       setBinaryFileData(null)
       const response = await agentApi.getPlannerFileContent(resolvedPath)
       if (response.success && response.data) {
+        // Guard against undefined/null content (matches Workspace.tsx logic)
+        if (response.data.content === undefined || response.data.content === null) {
+          setFileContent('')
+          setShowFileContent(true)
+          setLoadingFileContent(false)
+          return
+        }
+
         let content = typeof response.data.content === 'string'
           ? response.data.content
           : String(response.data.content)
-        
-        // Basic normalization
-        content = content.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r')
-        
+
+        // Images arrive as base64 data URLs — no processing needed
+        if (!response.data.is_image) {
+          content = content.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r')
+        }
+
         setFileContent(content || '')
         setShowFileContent(true)
       }
@@ -219,14 +238,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     let processed = content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
 
     // 2. Auto-link workspace paths
-    // Regex matches paths starting with specific prefixes: Chats/, Workflow/, Plans/, skills/
+    // Regex matches paths starting with specific prefixes: Chats/, Downloads/, Workflow/, Plans/, skills/
     // Optionally matches surrounding backticks to unwrap them
     // CRITICAL FIX: We must handle paths wrapped in backticks (e.g., `Chats/foo.md`) because LLMs often format them as code.
     // The regex captures:
     // Group 1: Optional opening backtick
     // Group 2: The actual path (starting with allowed prefixes)
     // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
-    const pathRegex = /(`?)\b((?:Chats|Workflow|Plans|skills)\/[\w\-./]+)\1/g
+    const pathRegex = /(`?)\b((?:Chats|Downloads|Workflow|Plans|skills)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
     
     // Replace with custom link protocol "#workspace/" to avoid sanitization issues
     // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.

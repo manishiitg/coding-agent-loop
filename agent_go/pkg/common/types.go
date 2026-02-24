@@ -24,6 +24,9 @@ const (
 	FolderGuardAllowedWriteFolderKey ContextKey = "folder_guard_allowed_write_folder"
 	// UserIDKey is the context key for the user ID (used for per-user workspace isolation)
 	UserIDKey ContextKey = "user_id"
+	// BrowserDownloadsPathKey is the context key for the browser downloads folder path (relative to workspace root)
+	// Used by agent-browser executor to set the working directory for screenshot/download commands
+	BrowserDownloadsPathKey ContextKey = "browser_downloads_path"
 )
 
 // PerUserFolders are folders isolated per-user in the workspace.

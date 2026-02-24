@@ -1803,7 +1803,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         filteredPresetTools,
         hasActivePreset: !!activePreset,
         decryptedSecrets,
-        selectedGlobalSecrets: useSecretsStore.getState().selectedGlobalSecretNames ?? undefined,
+        selectedGlobalSecrets: (activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : useSecretsStore.getState().selectedGlobalSecretNames) ?? undefined,
       })
 
       // Validate execution groups for workflow mode

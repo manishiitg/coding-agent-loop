@@ -91,6 +91,7 @@ const providerMeta: Record<string, { color: string; label: string }> = {
   bedrock: { color: 'bg-orange-500', label: 'BR' },
   vertex: { color: 'bg-sky-500', label: 'Vx' },
   azure: { color: 'bg-blue-500', label: 'Az' },
+  'gemini-cli': { color: 'bg-teal-500', label: 'Gm' },
 }
 const TierProviderDot = ({ provider }: { provider: string }) => {
   const meta = providerMeta[provider]
@@ -570,7 +571,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       const newConfig = {
         ...currentConfig, // ✅ Preserve all existing configuration
-        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code',
+        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli',
         model_id: llm.model
       }
 

@@ -11,6 +11,7 @@ import { OpenAISection } from './OpenAISection'
 import { VertexSection } from './VertexSection'
 import { AzureSection } from './AzureSection'
 import { ClaudeCodeSection } from './ClaudeCodeSection'
+import { GeminiCLISection } from './GeminiCLISection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { FallbacksTab } from './llm/FallbacksTab'
 import { LibraryTab } from './llm/LibraryTab'
@@ -21,7 +22,7 @@ interface LLMConfigurationModalProps {
 }
 
 // Provider type for reuse
-type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code'
+type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli'
 
 // Providers that use API keys (excludes claude-code which uses local CLI)
 type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
@@ -311,11 +312,11 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   const handleLibrarySelect = useCallback((llm: SavedLLM) => {
     const provider = llm.provider
 
-    // Claude Code doesn't use provider config map — set primary directly
-    if (provider === 'claude-code') {
+    // CLI-based providers don't use provider config map — set primary directly
+    if (provider === 'claude-code' || provider === 'gemini-cli') {
       const newPrimaryConfig: LLMConfiguration = {
-        provider: 'claude-code',
-        model_id: 'claude-code',
+        provider,
+        model_id: provider,
         fallback_models: [],
         cross_provider_fallback: undefined
       }
@@ -323,7 +324,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       if (modeAgentConfig) {
         setModeAgentConfig({
           ...modeAgentConfig,
-          primary: { provider: 'claude-code', model_id: 'claude-code' }
+          primary: { provider, model_id: provider }
         })
       }
       refreshAvailableLLMs()
@@ -425,7 +426,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 </button>
 
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code'] as const)
+                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli'] as const)
                   .filter(provider => isProviderSupported(provider))
                   .map((provider) => (
                   <button
@@ -436,9 +437,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }`}
                   >
                     <div className="flex-1">
-                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider}</div>
+                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider === 'gemini-cli' ? 'Gemini CLI' : provider}</div>
                       <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : 'API Key'}
+                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : provider === 'gemini-cli' ? 'Local CLI (no API key)' : 'API Key'}
                       </div>
                     </div>
                     {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
@@ -463,7 +464,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {/* Locked provider read-only banner */}
-              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && isProviderLocked(activeTab) && (
+              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && isProviderLocked(activeTab) && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
                   <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
@@ -547,6 +548,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
               {activeTab === 'claude-code' && (
                 <ClaudeCodeSection />
+              )}
+
+              {activeTab === 'gemini-cli' && (
+                <GeminiCLISection />
               )}
             </div>
           </div>

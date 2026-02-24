@@ -25,6 +25,7 @@ type APIKeys struct {
 	OpenAI     *string     `json:"openai,omitempty"`
 	Anthropic  *string     `json:"anthropic,omitempty"`
 	Vertex     *string     `json:"vertex,omitempty"`
+	GeminiCLI  *string     `json:"gemini_cli,omitempty"`
 	Bedrock    *BedrockKey `json:"bedrock,omitempty"`
 	Azure      *AzureKey   `json:"azure,omitempty"`
 }

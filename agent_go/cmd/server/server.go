@@ -2025,6 +2025,9 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if region := os.Getenv("BEDROCK_REGION"); region != "" {
 		keys.Bedrock = &llm.BedrockConfig{Region: region}
 	}
+	if s := os.Getenv("GEMINI_API_KEY"); s != "" {
+		keys.GeminiCLI = &s
+	}
 	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
 		apiKey := os.Getenv("AZURE_AI_API_KEY")
 		apiVer := os.Getenv("AZURE_AI_API_VERSION")
@@ -2236,9 +2239,9 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Gemini CLI uses the local CLI — validate by checking it exists
+	// Gemini CLI uses the local CLI — validate by checking it exists and sending a test prompt
 	if req.Provider == "gemini-cli" {
-		response := validateGeminiCLI()
+		response := validateGeminiCLI(req.APIKey)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 		return
@@ -2304,7 +2307,7 @@ func validateClaudeCodeCLI() llm.APIKeyValidationResponse {
 }
 
 // validateGeminiCLI validates the Gemini CLI by checking it exists and sending a test prompt
-func validateGeminiCLI() llm.APIKeyValidationResponse {
+func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 	log.Printf("[GEMINI-CLI VALIDATION] Starting CLI validation")
 
 	// Step 1: Check if gemini CLI is on PATH
@@ -2323,6 +2326,13 @@ func validateGeminiCLI() llm.APIKeyValidationResponse {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "gemini", "--approval-mode", "yolo", "--prompt", "Say hello in one short sentence.")
+	// Pass API key as env var if provided (from frontend or server .env)
+	if apiKey == "" {
+		apiKey = os.Getenv("GEMINI_API_KEY")
+	}
+	if apiKey != "" {
+		cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+apiKey)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		errMsg := string(output)
@@ -3631,6 +3641,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					llmKeys.OpenAI = req.LLMConfig.APIKeys.OpenAI
 					llmKeys.Anthropic = req.LLMConfig.APIKeys.Anthropic
 					llmKeys.Vertex = req.LLMConfig.APIKeys.Vertex
+					llmKeys.GeminiCLI = req.LLMConfig.APIKeys.GeminiCLI
 
 					if req.LLMConfig.APIKeys.Bedrock != nil {
 						llmKeys.Bedrock = &llm.BedrockConfig{
@@ -3669,6 +3680,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				if globalLocked || isProviderLocked("azure") {
 					llmKeys.Azure = envKeys.Azure
+				}
+				if globalLocked || isProviderLocked("gemini-cli") {
+					llmKeys.GeminiCLI = envKeys.GeminiCLI
 				}
 
 				return llmKeys
@@ -6602,6 +6616,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		apiKeys.OpenAI = parentReq.LLMConfig.APIKeys.OpenAI
 		apiKeys.Anthropic = parentReq.LLMConfig.APIKeys.Anthropic
 		apiKeys.Vertex = parentReq.LLMConfig.APIKeys.Vertex
+		apiKeys.GeminiCLI = parentReq.LLMConfig.APIKeys.GeminiCLI
 		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{Region: parentReq.LLMConfig.APIKeys.Bedrock.Region}
 		}
@@ -6656,6 +6671,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 		if isProviderLocked("azure") {
 			apiKeys.Azure = envKeys.Azure
+		}
+		if isProviderLocked("gemini-cli") {
+			apiKeys.GeminiCLI = envKeys.GeminiCLI
 		}
 	}
 

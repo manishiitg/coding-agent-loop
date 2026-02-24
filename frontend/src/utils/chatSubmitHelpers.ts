@@ -79,6 +79,10 @@ export function buildLLMConfigWithApiKeys(
       ...(az?.endpoint && az?.api_key
         ? { azure: { endpoint: az.endpoint, api_key: az.api_key, api_version: (az.options?.api_version as string) || undefined, region: az.region || undefined } }
         : {}),
+      ...(() => {
+        const geminiKey = useLLMStore.getState().geminiCliApiKey
+        return geminiKey ? { gemini_cli: geminiKey } : {}
+      })(),
     }
   }
 }

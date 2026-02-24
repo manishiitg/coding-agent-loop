@@ -605,17 +605,24 @@ type AgentMetricsSnapshot struct {
 	InputTokens       int64
 	OutputTokens      int64
 	ToolCallsExecuted int64
+	TotalCostUSD      float64
 }
 
 // GetMetricsSnapshot returns a snapshot of the agent's current metrics
 func (w *LLMAgentWrapper) GetMetricsSnapshot() AgentMetricsSnapshot {
 	w.metrics.mu.RLock()
 	defer w.metrics.mu.RUnlock()
-	return AgentMetricsSnapshot{
+	snapshot := AgentMetricsSnapshot{
 		InputTokens:       w.metrics.InputTokens,
 		OutputTokens:      w.metrics.OutputTokens,
 		ToolCallsExecuted: w.metrics.ToolCallsExecuted,
 	}
+	// Get total cost from the underlying agent (includes provider-reported costs)
+	if w.agent != nil {
+		_, _, _, _, _, _, _, _, _, totalCost, _, _, _ := w.agent.GetTokenUsageWithPricing()
+		snapshot.TotalCostUSD = totalCost
+	}
+	return snapshot
 }
 
 // GetName implements the AgentCapabilities interface

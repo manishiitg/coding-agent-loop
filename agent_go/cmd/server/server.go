@@ -4421,6 +4421,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Memory tools are available in all chat modes.
 			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
+
+			// Add Claude Code-specific human tool override when using claude-code provider.
+			// This covers delegation tools, memory tools, and human interaction tools —
+			// all registered under the "human" category and accessible only via HTTP API.
+			if req.Provider == "claude-code" {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
+				log.Printf("[CLAUDE CODE] Added human tool HTTP API override instructions")
+			}
 		}
 
 		// Add event observer immediately after agent creation to capture all events
@@ -5856,11 +5864,13 @@ func getAllDelegationLogsHandler(db database.Database) http.HandlerFunc {
 					}
 
 					// Main agent token usage (no correlation_id or doesn't match a delegation)
+					// NOTE: Main agent emits CUMULATIVE token_usage events (one per user turn).
+					// Each event contains the running total, so we REPLACE to avoid double-counting.
 					mainModel := getOrCreateModelUsage(sessLog.MainAgent.ByModel, tud.ModelID)
-					accumulateUsage(mainModel, &tud)
-					sessLog.MainAgent.InputTokens += int64(tud.PromptTokens)
-					sessLog.MainAgent.OutputTokens += int64(tud.CompletionTokens)
-					sessLog.MainAgent.TotalCostUSD += tud.TotalCost
+					replaceUsage(mainModel, &tud)
+					sessLog.MainAgent.InputTokens = int64(tud.PromptTokens)
+					sessLog.MainAgent.OutputTokens = int64(tud.CompletionTokens)
+					sessLog.MainAgent.TotalCostUSD = tud.TotalCost
 					sessLog.MainAgent.LLMCalls++
 				}
 			}
@@ -7016,6 +7026,7 @@ Use execute_shell_command or diff_patch_workspace_file to update the file.
 		OutputTokens: metrics.OutputTokens,
 		ToolCalls:    metrics.ToolCallsExecuted,
 		Duration:     duration.String(),
+		TotalCostUSD: metrics.TotalCostUSD,
 	}
 
 	if err != nil {
@@ -7617,6 +7628,7 @@ type delegationEndStats struct {
 	OutputTokens int64
 	ToolCalls    int64
 	Duration     string
+	TotalCostUSD float64
 }
 
 // emitDelegationEndEvent emits an event when delegation ends
@@ -7637,6 +7649,7 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 		eventData.OutputTokens = stats.OutputTokens
 		eventData.ToolCalls = stats.ToolCalls
 		eventData.Duration = stats.Duration
+		eventData.TotalCostUSD = stats.TotalCostUSD
 	}
 	event := events.Event{
 		ID:        fmt.Sprintf("%s_delegation_end_%s", sessionID, delegationID),

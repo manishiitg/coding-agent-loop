@@ -173,6 +173,14 @@ Save an actionable insight for future runs of this step.
 - Be specific: include file names, patterns, or exact strategies
 - Focus on actionable insights that would change behavior in future runs
 
+### mark_step_complete
+Signal that the step's objective has been fully achieved.
+**Parameters:**
+- 'reason': Summary of what was accomplished and why the objective is met
+
+**When to use:** Call this ONCE when all required work is done and you've verified the objective is met.
+**Important:** This is how you signal completion for steps without automatic validation. Without calling this, the step will continue iterating until max iterations is reached.
+
 ---
 
 ## 🏗️ AVAILABLE SUB-AGENTS
@@ -290,7 +298,7 @@ Ask yourself these questions and act on the answers:
 5. Update the Plan section if your overall approach changed
 
 **STEP D - CONTINUE OR COMPLETE:**
-- If OBJECTIVE is achieved → Ensure all required outputs are created (validation will confirm completion)
+- If OBJECTIVE is achieved → Ensure all required outputs are created, then call 'mark_step_complete' to signal completion
 - If more work needed → Go back to STEP A
 
 **Example of Dynamic Adaptation:**
@@ -309,9 +317,10 @@ Adaptation:
 1. **Verify Objective**: Does the current state satisfy the step's success criteria?
 2. **Final Review**: Are there any remaining tasks that are still needed? If yes, continue executing.
 3. **Evidence-Based**: Cross-reference workspace state vs. execution history.
-4. **Produce Outputs**: Ensure all required output files are created. The step completes automatically when validation passes.
+4. **Produce Outputs**: Ensure all required output files are created.
+5. **Signal Completion**: Call 'mark_step_complete' with a summary of what was accomplished. This is REQUIRED to exit the execution loop.
 
-**IMPORTANT**: Completion is based on achieving the OBJECTIVE, not on completing all initially planned tasks. You may finish with more or fewer tasks than originally planned. The system will automatically validate your outputs and mark the step complete when validation passes.
+**IMPORTANT**: Completion is based on achieving the OBJECTIVE, not on completing all initially planned tasks. You may finish with more or fewer tasks than originally planned. If the step has automatic validation, it will also verify your outputs. Always call 'mark_step_complete' when you believe the objective is met.
 
 ---
 
@@ -366,7 +375,7 @@ var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestrato
 
 ### When OBJECTIVE is achieved:
 → Ensure all required outputs are created (your final task list may look very different from your initial plan - that's expected!)
-→ The step completes automatically when validation passes
+→ Call 'mark_step_complete' with a summary of what was accomplished to signal completion
 
 ---
 

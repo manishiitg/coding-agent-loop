@@ -1943,6 +1943,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		}
 	}
 
+	// IMPORTANT: Inject completion tools for step completion signaling
+	// The mark_step_complete tool writes completed.txt so the controller loop can detect completion
+	{
+		completionTools := virtualtools.CreateCompletionTools()
+		completionExecutors := virtualtools.CreateCompletionToolExecutors()
+		completionCategory := virtualtools.GetCompletionToolCategory()
+
+		// Add completion tools to the tools list and register their category
+		for _, tool := range completionTools {
+			toolsToRegister = append(toolsToRegister, tool)
+			if hcpo.ToolCategories != nil {
+				hcpo.ToolCategories[tool.Function.Name] = completionCategory
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added completion tool '%s' to todo task orchestrator (category: %s)", tool.Function.Name, completionCategory))
+		}
+
+		// Wrap completion executors with context injection
+		markStepCompleteFunc := hcpo.createMarkStepCompleteFunc(stepPath)
+		for toolName, executor := range completionExecutors {
+			wrappedExecutor := hcpo.wrapCompletionToolExecutor(executor, markStepCompleteFunc)
+			executorsToUse[toolName] = wrappedExecutor
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped completion tool '%s' with mark complete function injection", toolName))
+		}
+	}
+
 	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
@@ -2034,6 +2059,41 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapLearningToolExecutor(
 	}
 }
 
+// wrapCompletionToolExecutor wraps a completion tool executor to inject the mark step complete function into context
+func (hcpo *StepBasedWorkflowOrchestrator) wrapCompletionToolExecutor(
+	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
+	markStepCompleteFunc virtualtools.MarkStepCompleteFunc,
+) func(ctx context.Context, args map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		ctx = context.WithValue(ctx, virtualtools.MarkStepCompleteKey, markStepCompleteFunc)
+		return originalExecutor(ctx, args)
+	}
+}
+
+// createMarkStepCompleteFunc creates a function that writes completed.txt to signal step completion
+// The file is written to {stepExecutionPath}/completed.txt via the workspace API
+func (hcpo *StepBasedWorkflowOrchestrator) createMarkStepCompleteFunc(stepPath string) virtualtools.MarkStepCompleteFunc {
+	return func(ctx context.Context, reason string) (string, error) {
+		// Build the completed.txt path (relative to workspace)
+		var stepExecutionPath string
+		if hcpo.selectedRunFolder != "" {
+			stepExecutionPath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath)
+		} else {
+			stepExecutionPath = filepath.Join("execution", stepPath)
+		}
+		completedFilePath := filepath.Join(stepExecutionPath, "completed.txt")
+
+		// Write the reason to completed.txt
+		if err := hcpo.WriteWorkspaceFile(ctx, completedFilePath, reason); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write completed.txt: %s: %v", completedFilePath, err))
+			return "", fmt.Errorf("failed to write completion marker: %w", err)
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Step marked as complete via mark_step_complete tool: %s (reason: %s)", completedFilePath, reason))
+		return fmt.Sprintf("Step marked as complete. Reason recorded: %s", reason), nil
+	}
+}
+
 // createSaveLearningFunc creates a function that saves orchestrator learnings to workspace
 // Learnings are appended to learnings/{stepID}/orchestrator_learning.md
 func (hcpo *StepBasedWorkflowOrchestrator) createSaveLearningFunc(stepID string, stepPath string) virtualtools.SaveLearningFunc {
@@ -2053,6 +2113,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createSaveLearningFunc(stepID string,
 		if err != nil || existingContent == "" {
 			// File doesn't exist yet - create with header
 			existingContent = "# Orchestrator Learnings\n\nInsights captured during todo task orchestration.\n\n"
+		}
+
+		// Dedup: skip if the exact insight text already exists in the file
+		if strings.Contains(existingContent, insight) {
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Duplicate orchestrator learning skipped [%s]: already exists in %s", category, learningFilePath))
+			return "Learning already exists - skipped duplicate.", nil
 		}
 
 		// Append the new learning entry

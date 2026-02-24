@@ -38,6 +38,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  // Track session keys the user manually expanded — don't auto-collapse these again
+  const userExpandedSessionsRef = useRef<Set<string>>(new Set());
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
@@ -68,85 +70,75 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const eventMode: 'advanced' | 'micro' = eventModeProp || (activeTab?.eventMode || 'micro') as 'advanced' | 'micro'
   const hideToolCalls = activeTab?.hideToolCalls || false
   
-  // Merge loaded older events with current events
+  // Merge loaded older events with current events — single-pass filter
   const displayEvents = useMemo(() => {
-    let allEvents = [...loadedOlderEvents, ...events];
+    // Avoid spread when loadedOlderEvents is empty (common case)
+    const source = loadedOlderEvents.length > 0
+      ? [...loadedOlderEvents, ...events]
+      : events;
 
-    // Deduplicate events by ID to prevent visual duplicates
+    const HIDDEN_STREAMING = new Set(['streaming_start', 'streaming_chunk', 'streaming_end']);
+    const DELEGATE_TOOL_EVENTS = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error']);
+    const HIDDEN_DELEGATION_TOOLS = new Set(['delegate', 'confirm_plan_execution', 'query_agent', 'terminate_agent', 'list_agents']);
+    const isMicro = eventMode === 'micro';
+
+    // Single-pass: dedup + all filter conditions at once
     const seenIds = new Set<string>();
-    allEvents = allEvents.filter(event => {
-      if (seenIds.has(event.id)) return false;
+    const result: PollingEvent[] = [];
+
+    for (let i = 0; i < source.length; i++) {
+      const event = source[i];
+      const type = event.type || '';
+
+      // Dedup by ID
+      if (seenIds.has(event.id)) continue;
       seenIds.add(event.id);
-      return true;
-    });
 
-    // Filter out events that should never be displayed (e.g. step_progress_updated drives canvas UI only)
-    allEvents = allEvents.filter(event => !NEVER_DISPLAY_EVENTS.has(event.type || ''));
+      // Never-display events
+      if (NEVER_DISPLAY_EVENTS.has(type)) continue;
 
-    // Filter out streaming events in all modes - these are internal events for UI streaming
-    const HIDDEN_STREAMING_EVENTS = ['streaming_start', 'streaming_chunk', 'streaming_end'];
-    allEvents = allEvents.filter(event => !HIDDEN_STREAMING_EVENTS.includes(event.type || ''));
+      // Hidden streaming events
+      if (HIDDEN_STREAMING.has(type)) continue;
 
-    // Filter out tool_call events for delegation tools - we show delegation_start/delegation_end
-    // and blocking_human_feedback instead of raw tool_call events
-    const DELEGATE_TOOL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
-    const HIDDEN_DELEGATION_TOOLS = ['delegate', 'confirm_plan_execution', 'query_agent', 'terminate_agent', 'list_agents'];
-    allEvents = allEvents.filter(event => {
-      if (!DELEGATE_TOOL_EVENTS.includes(event.type || '')) return true;
-      const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
-      const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;
-      return !toolName || !HIDDEN_DELEGATION_TOOLS.includes(toolName);
-    });
+      // Delegation tool events — hide raw tool_call for delegation tools
+      if (DELEGATE_TOOL_EVENTS.has(type)) {
+        const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
+        const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;
+        if (toolName && HIDDEN_DELEGATION_TOOLS.has(toolName)) continue;
+      }
 
-    // Filter out all tool call events when hideToolCalls toggle is on
-    if (hideToolCalls) {
-      const TOOL_CALL_EVENTS = ['tool_call_start', 'tool_call_end', 'tool_call_error'];
-      allEvents = allEvents.filter(event => !TOOL_CALL_EVENTS.includes(event.type || ''));
+      // Hide all tool call events when toggle is on
+      if (hideToolCalls && DELEGATE_TOOL_EVENTS.has(type)) continue;
+
+      // Micro-mode filters
+      if (isMicro) {
+        if (type === 'token_usage') {
+          const agentEvent = event.data as { data?: Record<string, unknown> } | undefined;
+          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined;
+          if (payload?.context === 'conversation_total') continue;
+        }
+        if (type === 'large_tool_output_detected' || type === 'large_tool_output_file_written') continue;
+        if (type === 'orchestrator_agent_end' || type === 'agent_end' || type === 'agent_start') {
+          const agentEvent = event.data as { data?: Record<string, unknown>; agent_type?: string } | undefined;
+          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined;
+          const agentType = (payload as Record<string, unknown> | undefined)?.agent_type || agentEvent?.agent_type;
+          if (agentType === 'simple') continue;
+        }
+      }
+
+      result.push(event);
     }
 
-    // Filter out "Total Token Usage" and "Context Offloading" events in micro mode
-    if (eventMode === 'micro') {
-      allEvents = allEvents.filter(event => {
-        if (event.type === 'token_usage') {
-          // Check if it's a total token usage event
-          // events-bridge structure: event.data.data holds the actual event payload
-          const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
-          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
-
-          if (payload?.context === 'conversation_total') {
-            return false
-          }
-        }
-
-        // Hide Context Offloading events in micro mode
-        if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
-          return false
-        }
-
-        // Hide agent_end, agent_start, and orchestrator_agent_end events with agent_type "simple" in micro mode
-        if (eventMode === 'micro' && (event.type === 'orchestrator_agent_end' || event.type === 'agent_end' || event.type === 'agent_start')) {
-          const agentEvent = event.data as { data?: Record<string, unknown>; agent_type?: string } | undefined
-          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
-          const agentType = (payload as Record<string, unknown> | undefined)?.agent_type || agentEvent?.agent_type
-          if (agentType === 'simple') {
-            return false
-          }
-        }
-
-        return true
-      })
-    }
-
-    const sortedEvents = allEvents.sort((a, b) => {
+    result.sort((a, b) => {
       const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
       const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
       return timeA - timeB;
     });
-    
-    if (sortedEvents.length > MAX_EVENTS_TO_PROCESS) {
-      return sortedEvents.slice(-MAX_EVENTS_TO_PROCESS);
+
+    if (result.length > MAX_EVENTS_TO_PROCESS) {
+      return result.slice(-MAX_EVENTS_TO_PROCESS);
     }
-    return sortedEvents;
+    return result;
   }, [events, loadedOlderEvents, eventMode, hideToolCalls]);
   
   // Reset loaded older events when session or event mode changes
@@ -158,88 +150,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     setHasMoreOlderEvents(hasMore)
   }, [sessionId, eventMode])
   
-  // Compute live delegation stats from sub-agent events (tool calls, token usage, latest tool, completion)
-  const delegationStats = useMemo(() => {
-    const stats = new Map<string, DelegationStats>()
-    for (const event of displayEvents) {
-      if (!event.data || typeof event.data !== 'object') continue
-      const data = event.data as Record<string, unknown>
-      const correlationId = data.correlation_id as string | undefined
-      if (!correlationId) continue
-
-      if (!stats.has(correlationId)) {
-        stats.set(correlationId, { toolCalls: 0, inputTokens: 0, outputTokens: 0 })
-      }
-      const s = stats.get(correlationId)!
-
-      if (event.type === 'tool_call_start') {
-        s.toolCalls++
-        // Track latest tool name
-        const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
-        const toolName = (payload.tool_name as string) || undefined
-        if (toolName) {
-          s.latestToolName = toolName
-        }
-      }
-      // Extract context window data from tool_call_end events (available live, per tool call)
-      // and from token_usage events (emitted at session end with cumulative totals)
-      if (event.type === 'tool_call_end' || event.type === 'token_usage') {
-        const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
-        if (event.type === 'token_usage') {
-          s.inputTokens += (payload.input_tokens as number) || 0
-          s.outputTokens += (payload.output_tokens as number) || 0
-        }
-        // Capture latest context usage (not accumulated - these represent current state)
-        if (typeof payload.context_usage_percent === 'number') {
-          s.contextUsagePercent = payload.context_usage_percent
-        }
-        if (typeof payload.context_window_usage === 'number') {
-          s.contextWindowUsage = payload.context_window_usage
-        }
-        if (typeof payload.model_context_window === 'number') {
-          s.modelContextWindow = payload.model_context_window
-        }
-        if (typeof payload.model_id === 'string') {
-          s.modelId = payload.model_id
-        }
-      }
-    }
-
-    // Check for delegation_end events to mark completed
-    for (const event of displayEvents) {
-      if (event.type !== 'delegation_end') continue
-      if (!event.data || typeof event.data !== 'object') continue
-      const data = event.data as Record<string, unknown>
-      const delegationData = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
-      const delegationId = (delegationData.delegation_id as string) || (data.correlation_id as string)
-      if (delegationId && stats.has(delegationId)) {
-        stats.get(delegationId)!.completed = true
-      }
-    }
-
-    return stats
-  }, [displayEvents])
-
-  // Map background agent IDs to their delegation stats via delegation_start events
-  const backgroundAgentStats = useMemo(() => {
-    const stats = new Map<string, DelegationStats>()
-    for (const event of displayEvents) {
-      if (event.type !== 'delegation_start') continue
-      const data = event.data as Record<string, unknown>
-      const delegationData = (data.data && typeof data.data === 'object')
-        ? data.data as Record<string, unknown> : data
-      const bgAgentId = delegationData?.background_agent_id as string | undefined
-      const delegationId = delegationData?.delegation_id as string | undefined
-      if (bgAgentId && delegationId) {
-        const dStats = delegationStats.get(delegationId)
-        if (dStats) {
-          stats.set(bgAgentId, dStats)
-        }
-      }
-    }
-    return stats
-  }, [displayEvents, delegationStats])
-
   // Helpers to extract hierarchy info
   const getParentId = useCallback((event: PollingEvent): string | undefined => {
     // Check top-level parent_id
@@ -280,29 +190,121 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     return (correlationId && agentType) ? `agent_session:${correlationId}:${agentType}` : null;
   }, []);
 
-  const findEventsBetweenStartEnd = useMemo(() => {
-    const sessionEvents = new Map<string, Set<string>>();
-    const startEvents = new Map<string, { event: PollingEvent; index: number }>();
-    const endEvents = new Map<string, { event: PollingEvent; index: number }>();
+  // Single-pass derivation: delegationStats + backgroundAgentStats + sessionEvents (was 3 separate useMemos)
+  const { delegationStats, backgroundAgentStats, findEventsBetweenStartEnd } = useMemo(() => {
+    const dStats = new Map<string, DelegationStats>()
+    const bgStats = new Map<string, DelegationStats>()
+    const startEvents = new Map<string, { event: PollingEvent; index: number }>()
+    const endEvents = new Map<string, { event: PollingEvent; index: number }>()
 
-    displayEvents.forEach((event, index) => {
-      const sessionKey = getAgentSessionKey(event);
-      if (!sessionKey) return;
-      if (event.type === 'orchestrator_agent_start') startEvents.set(sessionKey, { event, index });
-      else if (event.type === 'orchestrator_agent_end') endEvents.set(sessionKey, { event, index });
-    });
+    // Temp storage for delegation_start events (need dStats populated first for bgStats)
+    const delegationStartEvents: { bgAgentId: string; delegationId: string }[] = []
 
+    for (let i = 0; i < displayEvents.length; i++) {
+      const event = displayEvents[i]
+      const type = event.type
+
+      // --- Session events (was findEventsBetweenStartEnd) ---
+      if (type === 'orchestrator_agent_start' || type === 'orchestrator_agent_end') {
+        const sessionKey = getAgentSessionKey(event)
+        if (sessionKey) {
+          if (type === 'orchestrator_agent_start') startEvents.set(sessionKey, { event, index: i })
+          else endEvents.set(sessionKey, { event, index: i })
+        }
+      }
+
+      if (!event.data || typeof event.data !== 'object') continue
+      const data = event.data as Record<string, unknown>
+
+      // --- Delegation stats ---
+      const correlationId = data.correlation_id as string | undefined
+      if (correlationId) {
+        if (!dStats.has(correlationId)) {
+          dStats.set(correlationId, { toolCalls: 0, inputTokens: 0, outputTokens: 0 })
+        }
+        const s = dStats.get(correlationId)!
+
+        if (type === 'tool_call_start') {
+          s.toolCalls++
+          const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
+          const toolName = (payload.tool_name as string) || undefined
+          if (toolName) s.latestToolName = toolName
+        }
+        if (type === 'tool_call_end' || type === 'token_usage') {
+          const payload = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
+          if (type === 'token_usage') {
+            s.inputTokens += (payload.input_tokens as number) || 0
+            s.outputTokens += (payload.output_tokens as number) || 0
+          }
+          if (typeof payload.context_usage_percent === 'number') s.contextUsagePercent = payload.context_usage_percent
+          if (typeof payload.context_window_usage === 'number') s.contextWindowUsage = payload.context_window_usage
+          if (typeof payload.model_context_window === 'number') s.modelContextWindow = payload.model_context_window
+          if (typeof payload.model_id === 'string') s.modelId = payload.model_id
+        }
+      }
+
+      // Mark completed delegations
+      if (type === 'delegation_end') {
+        const delegationData = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data
+        const delegationId = (delegationData.delegation_id as string) || (data.correlation_id as string)
+        if (delegationId && dStats.has(delegationId)) {
+          dStats.get(delegationId)!.completed = true
+        }
+      }
+
+      // Collect delegation_start for bgStats (resolved after loop)
+      if (type === 'delegation_start') {
+        const delegationData = (data.data && typeof data.data === 'object')
+          ? data.data as Record<string, unknown> : data
+        const bgAgentId = delegationData?.background_agent_id as string | undefined
+        const delegationId = delegationData?.delegation_id as string | undefined
+        if (bgAgentId && delegationId) {
+          delegationStartEvents.push({ bgAgentId, delegationId })
+        }
+      }
+    }
+
+    // Resolve bgStats now that dStats is complete
+    for (const { bgAgentId, delegationId } of delegationStartEvents) {
+      const ds = dStats.get(delegationId)
+      if (ds) bgStats.set(bgAgentId, ds)
+    }
+
+    // Build session events map
+    const sessionEvents = new Map<string, Set<string>>()
     startEvents.forEach((startInfo, sessionKey) => {
-      const endInfo = endEvents.get(sessionKey);
-      if (!endInfo) return;
-      const eventIds = new Set<string>();
-      eventIds.add(startInfo.event.id);
-      for (let i = startInfo.index + 1; i < endInfo.index; i++) eventIds.add(displayEvents[i].id);
-      eventIds.add(endInfo.event.id);
-      sessionEvents.set(sessionKey, eventIds);
-    });
-    return sessionEvents;
+      const endInfo = endEvents.get(sessionKey)
+      if (!endInfo) return
+      const eventIds = new Set<string>()
+      eventIds.add(startInfo.event.id)
+      for (let j = startInfo.index + 1; j < endInfo.index; j++) eventIds.add(displayEvents[j].id)
+      eventIds.add(endInfo.event.id)
+      sessionEvents.set(sessionKey, eventIds)
+    })
+
+    return { delegationStats: dStats, backgroundAgentStats: bgStats, findEventsBetweenStartEnd: sessionEvents }
   }, [displayEvents, getAgentSessionKey]);
+
+  // Fix 5: Auto-collapse completed workflow steps.
+  // When orchestrator_agent_end fires for a session, auto-add it to collapsedSessions
+  // (unless the user manually expanded it).
+  useEffect(() => {
+    const completedKeys: string[] = []
+    for (const event of displayEvents) {
+      if (event.type !== 'orchestrator_agent_end') continue
+      const sessionKey = getAgentSessionKey(event)
+      if (sessionKey && !userExpandedSessionsRef.current.has(sessionKey) && !collapsedSessions.has(sessionKey)) {
+        completedKeys.push(sessionKey)
+      }
+    }
+    if (completedKeys.length > 0) {
+      setCollapsedSessions(prev => {
+        const next = new Set(prev)
+        for (const k of completedKeys) next.add(k)
+        return next
+      })
+    }
+  }, [displayEvents, getAgentSessionKey, collapsedSessions]);
 
   const toggleNode = useCallback((eventId: string) => {
     setExpandedNodes(prev => {
@@ -316,8 +318,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const toggleAgentSession = useCallback((sessionKey: string) => {
     setCollapsedSessions(prevCollapsed => {
       const newCollapsed = new Set(prevCollapsed);
-      if (newCollapsed.has(sessionKey)) newCollapsed.delete(sessionKey);
-      else newCollapsed.add(sessionKey);
+      if (newCollapsed.has(sessionKey)) {
+        newCollapsed.delete(sessionKey);
+        // User is manually expanding — remember so auto-collapse doesn't override
+        userExpandedSessionsRef.current.add(sessionKey);
+      } else {
+        newCollapsed.add(sessionKey);
+        userExpandedSessionsRef.current.delete(sessionKey);
+      }
       return newCollapsed;
     });
   }, []);

@@ -1,16 +1,17 @@
-import React, { useRef, useEffect, useState } from 'react'
-import { 
-  ChevronDown, 
-  ChevronRight, 
-  Wrench, 
-  MessageSquare, 
-  AlertCircle, 
+import React, { useRef, useEffect, useState, useCallback } from 'react'
+import {
+  ChevronDown,
+  ChevronRight,
+  Wrench,
+  MessageSquare,
+  AlertCircle,
   CheckCircle,
   Loader2,
   Eye,
   EyeOff,
   Trash2
 } from 'lucide-react'
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import type { PollingEvent } from '../../services/api-types'
 
 interface EventViewerProps {
@@ -168,25 +169,16 @@ export const EventViewer: React.FC<EventViewerProps> = ({
   onClear,
   className = ''
 }) => {
+  const virtuosoRef = useRef<VirtuosoHandle>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
   const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set())
 
-  // Auto-scroll to bottom when new events arrive
-  useEffect(() => {
-    if (autoScroll && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [events, autoScroll])
-
-  // Handle scroll to detect if user scrolled up
-  const handleScroll = () => {
-    if (!scrollRef.current) return
-    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50
-    setAutoScroll(isAtBottom)
-  }
+  // Auto-scroll via Virtuoso followOutput
+  const atBottomStateChange = useCallback((atBottom: boolean) => {
+    setAutoScroll(atBottom)
+  }, [])
 
   // Toggle event type visibility
   const toggleEventType = (type: string) => {
@@ -210,6 +202,10 @@ export const EventViewer: React.FC<EventViewerProps> = ({
   // Get unique event types for filter
   const eventTypes = Array.from(new Set(events.map(e => e.type || 'unknown')))
 
+  const renderItem = useCallback((_index: number, event: PollingEvent) => (
+    <EventItem event={event} />
+  ), [])
+
   return (
     <div className={`flex flex-col h-full bg-white dark:bg-gray-900 ${className}`}>
       {/* Header */}
@@ -232,8 +228,8 @@ export const EventViewer: React.FC<EventViewerProps> = ({
           <button
             onClick={() => setShowFilters(!showFilters)}
             className={`p-1.5 rounded transition-colors ${
-              showFilters 
-                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100' 
+              showFilters
+                ? 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100'
                 : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400'
             }`}
             title="Filter events"
@@ -265,8 +261,8 @@ export const EventViewer: React.FC<EventViewerProps> = ({
                   key={typeKey}
                   onClick={() => toggleEventType(typeKey)}
                   className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
-                    isHidden 
-                      ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through' 
+                    isHidden
+                      ? 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through'
                       : config.color
                   }`}
                 >
@@ -279,12 +275,8 @@ export const EventViewer: React.FC<EventViewerProps> = ({
         </div>
       )}
 
-      {/* Events list */}
-      <div 
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto relative"
-      >
+      {/* Events list — virtualized */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto relative">
         {filteredEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-4">
             <MessageSquare className="w-8 h-8 text-gray-300 dark:text-gray-600 mb-2" />
@@ -296,19 +288,23 @@ export const EventViewer: React.FC<EventViewerProps> = ({
             </span>
           </div>
         ) : (
-          filteredEvents.map((event, index) => (
-            <EventItem key={event.id || `event-${index}`} event={event} />
-          ))
+          <Virtuoso
+            ref={virtuosoRef}
+            data={filteredEvents}
+            customScrollParent={scrollRef.current || undefined}
+            followOutput="smooth"
+            atBottomStateChange={atBottomStateChange}
+            increaseViewportBy={200}
+            itemContent={renderItem}
+          />
         )}
-        
+
         {/* Auto-scroll indicator */}
         {!autoScroll && events.length > 0 && (
           <button
             onClick={() => {
               setAutoScroll(true)
-              if (scrollRef.current) {
-                scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-              }
+              virtuosoRef.current?.scrollToIndex({ index: filteredEvents.length - 1, behavior: 'smooth' })
             }}
             className="sticky bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs rounded-full shadow-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           >

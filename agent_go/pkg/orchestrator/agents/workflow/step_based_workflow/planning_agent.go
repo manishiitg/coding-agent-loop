@@ -40,7 +40,6 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 - **Regular**: Standard task. 'context_output' is the result file.
 - **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
 - **Conditional**: Inspection-only branch (no execution).
-- **Orchestration**: Iterative routing between sub-agents until success criteria met.
 - **Todo Task**: Manages a dynamic todo list with trackable tasks. Main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning) or generic agent (no learning). Use when: work can be broken into trackable tasks, multiple specialized agents needed, or detailed progress tracking required.
 - **Loop**: Repeat until criteria met (polled progress).
 
@@ -6272,20 +6271,7 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register update_decision_step tool: %w", err)
 	}
 
-	orchestrationUpdateSchema := getUpdateOrchestrationStepSchema()
-	orchestrationUpdateParams, err := parseSchemaForToolParameters(orchestrationUpdateSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update orchestration step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_orchestration_step",
-		"Update an orchestration step in the plan. Provide existing_step_id (required) to identify which orchestration step to update, and only include the fields you want to change (orchestration_step, orchestration_routes, next_step_id). The plan.json file is updated immediately when this tool is called.",
-		orchestrationUpdateParams,
-		createUpdateOrchestrationStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_orchestration_step tool: %w", err)
-	}
+	// NOTE: update_orchestration_step tool removed (deprecated in favor of todo_task).
 
 	humanInputUpdateSchema := getUpdateHumanInputStepSchema()
 	humanInputUpdateParams, err := parseSchemaForToolParameters(humanInputUpdateSchema)
@@ -6363,20 +6349,8 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register add_decision_step tool: %w", err)
 	}
 
-	orchestrationSchema := getAddOrchestrationStepSchema()
-	orchestrationParams, err := parseSchemaForToolParameters(orchestrationSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse orchestration step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"add_orchestration_step",
-		"Add an orchestration step to the plan. Use this when you need an orchestrator that can choose between multiple sub-agents based on conditions. Orchestration steps EXECUTE a main orchestrator step, analyze the situation, and select one of multiple sub-agents to call based on step description and success criteria. The main orchestrator loops until its success criteria are met. Sub-agents are private to the orchestration step and execute without validation. Provide: id, title, orchestration_step (the main orchestrator step), orchestration_routes (array of routes with conditions and sub-agent steps), next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
-		orchestrationParams,
-		createAddOrchestrationStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_orchestration_step tool: %w", err)
-	}
+	// NOTE: add_orchestration_step tool removed (deprecated in favor of todo_task).
+	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
 	loopSchema := getAddLoopStepSchema()
 	loopParams, err := parseSchemaForToolParameters(loopSchema)
@@ -6499,51 +6473,7 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register convert_conditional_to_regular tool: %w", err)
 	}
 
-	// Register orchestration route management tools
-	addOrchestrationRouteSchema := getAddOrchestrationRouteSchema()
-	addOrchestrationRouteParams, err := parseSchemaForToolParameters(addOrchestrationRouteSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse add_orchestration_route schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"add_orchestration_route",
-		"Add a new route (sub-agent) to an orchestration step. Provide parent_step_id and new_route with all required fields (route_id, route_name, condition, sub_agent_step). The plan.json file is updated immediately when this tool is called.",
-		addOrchestrationRouteParams,
-		createAddOrchestrationRouteExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_orchestration_route tool: %w", err)
-	}
-
-	updateOrchestrationRouteSchema := getUpdateOrchestrationRouteSchema()
-	updateOrchestrationRouteParams, err := parseSchemaForToolParameters(updateOrchestrationRouteSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update_orchestration_route schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_orchestration_route",
-		"Update an existing route (sub-agent) within an orchestration step. Provide parent_step_id, existing_route_id, and only include the fields you want to change (route_name, condition, sub_agent_step, context_to_pass). The plan.json file is updated immediately when this tool is called.",
-		updateOrchestrationRouteParams,
-		createUpdateOrchestrationRouteExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_orchestration_route tool: %w", err)
-	}
-
-	deleteOrchestrationRouteSchema := getDeleteOrchestrationRouteSchema()
-	deleteOrchestrationRouteParams, err := parseSchemaForToolParameters(deleteOrchestrationRouteSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse delete_orchestration_route schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"delete_orchestration_route",
-		"Delete a route (sub-agent) from an orchestration step. Provide parent_step_id and deleted_route_id. NOTE: The orchestration step must have at least one route remaining after deletion. The plan.json file is updated immediately when this tool is called.",
-		deleteOrchestrationRouteParams,
-		createDeleteOrchestrationRouteExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register delete_orchestration_route tool: %w", err)
-	}
+	// NOTE: add/update/delete_orchestration_route tools removed (deprecated in favor of todo_task).
 
 	// Register todo task step update tool
 	todoTaskUpdateSchema := getUpdateTodoTaskStepSchema()

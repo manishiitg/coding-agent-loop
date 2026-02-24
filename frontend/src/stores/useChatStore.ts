@@ -20,11 +20,26 @@ const ACTIVE_SESSIONS_CACHE_TTL = 30000
 // Per-mode event counts type - stores last viewed count for each event mode
 export type PerModeEventCounts = Record<EventMode, number>
 
-// Helper to compute per-mode event counts
+// Helper to compute per-mode event counts (full recomputation — use sparingly)
 const computePerModeCounts = (events: PollingEvent[]): PerModeEventCounts => {
   return {
     advanced: events.length, // Advanced shows all events
     micro: events.filter(e => e.type && shouldShowEventByMode(e.type, 'micro')).length,
+  }
+}
+
+// Incremental helper: count only new events and add to existing counts
+const incrementPerModeCounts = (
+  existing: PerModeEventCounts,
+  newEvents: PollingEvent[]
+): PerModeEventCounts => {
+  let microDelta = 0
+  for (const e of newEvents) {
+    if (e.type && shouldShowEventByMode(e.type, 'micro')) microDelta++
+  }
+  return {
+    advanced: existing.advanced + newEvents.length,
+    micro: existing.micro + microDelta,
   }
 }
 // Chat history cache TTL (5 minutes - chat history doesn't change as frequently)
@@ -593,9 +608,11 @@ export const useChatStore = create<ChatState>()(
 
           // Trigger cleanup if threshold exceeded
           let finalEvents = newEvents
+          let didCleanup = false
           if (newEvents.length >= CLEANUP_THRESHOLD) {
             logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${newEvents.length} -> ${MAX_EVENTS}`)
             finalEvents = cleanupOldEvents(newEvents)
+            didCleanup = true
           }
 
           // Update lastViewedEventCounts for the ACTIVE tab if it owns this session.
@@ -610,12 +627,17 @@ export const useChatStore = create<ChatState>()(
 
           const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
           if (activeTab && activeTab.sessionId === sessionId) {
+            // Incremental count: only scan new events instead of the entire array.
+            // Fall back to full recomputation when cleanup discards old events (counts become stale).
+            const newCounts = didCleanup
+              ? computePerModeCounts(finalEvents)
+              : incrementPerModeCounts(activeTab.lastViewedEventCounts, uniqueNewEvents)
             updates.chatTabs = {
               ...state.chatTabs,
               [activeTab.tabId]: {
                 ...activeTab,
                 lastViewedEventCount: finalEvents.length,
-                lastViewedEventCounts: computePerModeCounts(finalEvents)
+                lastViewedEventCounts: newCounts
               }
             }
           }

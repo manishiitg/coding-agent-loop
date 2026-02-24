@@ -122,27 +122,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		maxIterations = *stepConfig.OrchestrationMaxIterations
 	}
 
-	// Load orchestrator learnings (persisted from previous runs)
-	var orchestratorLearningHistory string
+	// Learning config - determine once, reload each iteration
 	isLearningDisabledStep := stepConfig != nil && stepConfig.DisableLearning != nil && *stepConfig.DisableLearning
 	isLearningDetailLevelNone := stepConfig != nil && stepConfig.LearningDetailLevel == "none"
 	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
-
-	if isLearningDisabled {
-		orchestratorLearningHistory = ""
-		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for todo task step %d - skipping orchestrator learning history reading", stepIndex+1))
-	} else {
-		learningFolderPath := getLearningFolderPathByStepID("", stepID, todoTaskStepPath, false)
-		orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
-		orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
-		if err == nil && orchestratorLearnings != "" {
-			orchestratorLearningHistory = fmt.Sprintf("## 📚 ORCHESTRATOR LEARNINGS\n\n%s", orchestratorLearnings)
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Read orchestrator learnings from: %s (length: %d chars)", orchestratorLearningPath, len(orchestratorLearnings)))
-		} else {
-			orchestratorLearningHistory = ""
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No orchestrator learnings found for todo task step %d - learnings folder: %s", stepIndex+1, learningFolderPath))
-		}
-	}
+	learningFolderPath := getLearningFolderPathByStepID("", stepID, todoTaskStepPath, false)
+	orchestratorLearningFilePath := fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
 
 	// Track sub-agent results for context
 	var lastSubAgentResult string
@@ -158,6 +143,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		case <-ctx.Done():
 			return false, "", fmt.Errorf("todo task execution canceled: %w", ctx.Err())
 		default:
+		}
+
+		// Reload orchestrator learnings each iteration (includes learnings saved during this run)
+		var orchestratorLearningHistory string
+		if isLearningDisabled {
+			orchestratorLearningHistory = ""
+		} else {
+			orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
+			if err == nil && orchestratorLearnings != "" {
+				orchestratorLearningHistory = fmt.Sprintf("## 📚 ORCHESTRATOR LEARNINGS\n\n%s", orchestratorLearnings)
+			}
 		}
 
 		// Build template variables for orchestrator
@@ -564,18 +560,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 
 	// Execute with tool-based approach (no structured output)
 	// The agent manages tasks via shell (tasks.md) and delegates via call_sub_agent/call_generic_agent
-	// Completion is detected by checking for completed.txt file
+	// Completion is detected by checking for completed.txt file (written by mark_step_complete tool)
 	_, updatedHistory, err := agent.Execute(ctx, templateVars, conversationHistory)
 	if err != nil {
 		return nil, nil, "", subAgentExecCtx, fmt.Errorf("todo task orchestrator execution failed: %w", err)
 	}
 
-	// Return a default response - actual state is tracked via files (tasks.md, completed.txt)
-	// The controller checks for completed.txt file for completion detection
-	response := &TodoTaskResponse{
-		NextAction:       "continue",
-		AllTasksComplete: false,
-		ProgressSummary:  "Execution completed via tools",
+	// Check for completed.txt (written by mark_step_complete tool)
+	// This is the completion signal for steps WITHOUT a ValidationSchema
+	var stepExecutionPath string
+	if hcpo.selectedRunFolder != "" {
+		stepExecutionPath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath)
+	} else {
+		stepExecutionPath = filepath.Join("execution", stepPath)
+	}
+	completedFilePath := filepath.Join(stepExecutionPath, "completed.txt")
+	completedContent, readErr := hcpo.ReadWorkspaceFile(ctx, completedFilePath)
+
+	response := &TodoTaskResponse{}
+	if readErr == nil && completedContent != "" {
+		response.NextAction = "complete"
+		response.AllTasksComplete = true
+		response.CompletionReason = completedContent
+		response.ProgressSummary = "Step marked as complete by orchestrator"
+	} else {
+		response.NextAction = "continue"
+		response.AllTasksComplete = false
+		response.ProgressSummary = "Execution completed via tools"
 	}
 
 	return response, updatedHistory, executionLLM, subAgentExecCtx, nil

@@ -217,6 +217,8 @@ interface EventDispatcherProps {
  * Internal component to render the hierarchical logs of a sub-agent
  * in a simplified, non-virtualized list within a scrollable area.
  */
+const MAX_SUBAGENT_CHILDREN = 30
+
 const SubAgentHierarchy: React.FC<{
   nodes: EventNode[]
   onToggleNode: (eventId: string) => void
@@ -228,9 +230,24 @@ const SubAgentHierarchy: React.FC<{
   backgroundAgentStats?: Map<string, DelegationStats>
   compact?: boolean
 }> = ({ nodes, onToggleNode, ...props }) => {
+  const [showAll, setShowAll] = React.useState(false)
+
+  // Cap to most recent children to prevent unbounded DOM growth
+  const isCapped = !showAll && nodes.length > MAX_SUBAGENT_CHILDREN
+  const visibleNodes = isCapped ? nodes.slice(-MAX_SUBAGENT_CHILDREN) : nodes
+  const hiddenCount = nodes.length - visibleNodes.length
+
   return (
     <div className="space-y-2">
-      {nodes.map((node) => (
+      {isCapped && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 px-2 py-1"
+        >
+          Show {hiddenCount} older events...
+        </button>
+      )}
+      {visibleNodes.map((node) => (
         <div key={node.event.id} className="relative group/node">
           <div className="flex items-start gap-1">
             {/* Minimal toggle for nested items inside sub-agent logs */}
@@ -252,7 +269,7 @@ const SubAgentHierarchy: React.FC<{
             ) : (
               <div className="w-4 flex-shrink-0" />
             )}
-            
+
             <div className="flex-1 min-w-0">
               <EventDispatcher
                 event={node.event}
@@ -263,7 +280,7 @@ const SubAgentHierarchy: React.FC<{
               />
             </div>
           </div>
-          
+
           {/* Recursion for expanded children (e.g. nested sub-agents) */}
           {/* Skip recursion for delegation_start because it handles its own children via the internal SubAgentHierarchy */}
           {node.isExpanded && node.children.length > 0 && node.event.type !== 'delegation_start' && (

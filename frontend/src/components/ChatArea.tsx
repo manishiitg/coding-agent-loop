@@ -767,7 +767,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     sessionId: string // actualSessionId (may differ from map key)
   }
   const pendingSSEEventsRef = useRef<Map<string, PendingSSEBatch>>(new Map())
-  const flushRAFRef = useRef<number>(0)
+  // Throttle flush to max every 200ms (was requestAnimationFrame = up to 60x/sec).
+  // Streaming text is handled immediately outside this path, so user-visible latency is unaffected.
+  const flushRAFRef = useRef<ReturnType<typeof setTimeout> | 0>(0)
 
   // Removed extractUserMessageContent - no longer needed since we removed duplicate detection
 
@@ -1111,9 +1113,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       })
     }
 
-    // Schedule flush on next animation frame (batches all events arriving within one frame)
+    // Throttle flush to max every 200ms (batches all events arriving within the window).
+    // Streaming text events are handled immediately above, so user-visible latency is unaffected.
     if (!flushRAFRef.current) {
-      flushRAFRef.current = requestAnimationFrame(flushPendingSSEEvents)
+      flushRAFRef.current = setTimeout(flushPendingSSEEvents, 200)
     }
   }, [flushPendingSSEEvents])
 
@@ -1129,7 +1132,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   useEffect(() => {
     return () => {
       if (flushRAFRef.current) {
-        cancelAnimationFrame(flushRAFRef.current)
+        clearTimeout(flushRAFRef.current)
         flushRAFRef.current = 0
       }
     }

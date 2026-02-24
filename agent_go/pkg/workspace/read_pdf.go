@@ -18,6 +18,7 @@ type ReadPDFParams struct {
 	Filepath  string `json:"filepath"`
 	PageRange string `json:"page_range,omitempty"`
 	MaxPages  int    `json:"max_pages,omitempty"`
+	Password  string `json:"password,omitempty"`
 }
 
 // ReadPDF reads and extracts text content from a PDF file
@@ -90,7 +91,7 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 	}
 
 	// Parse and extract text using the PDF library
-	content, totalPages, extractedPages, err := extractPDFText(pdfData, pageRange, maxPages)
+	content, totalPages, extractedPages, err := extractPDFText(pdfData, pageRange, maxPages, params.Password)
 	if err != nil {
 		return "", err
 	}
@@ -126,9 +127,15 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 
 // extractPDFText extracts text from PDF data
 // Note: This is a simplified implementation. For production, consider using a proper PDF library.
-func extractPDFText(pdfData []byte, pageRange string, maxPages int) (string, int, int, error) {
+func extractPDFText(pdfData []byte, pageRange string, maxPages int, password string) (string, int, int, error) {
 	// Try to use the ledongthuc/pdf library
-	pdfReader, err := newPDFReader(bytes.NewReader(pdfData), int64(len(pdfData)))
+	var pdfReader *pdfReaderWrapper
+	var err error
+	if password != "" {
+		pdfReader, err = newPDFReaderWithPassword(bytes.NewReader(pdfData), int64(len(pdfData)), password)
+	} else {
+		pdfReader, err = newPDFReader(bytes.NewReader(pdfData), int64(len(pdfData)))
+	}
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("failed to parse PDF: %w", err)
 	}

@@ -1918,6 +1918,31 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info("🔧 Sub-agent execution context not provided - sub-agent tools will not be available")
 	}
 
+	// IMPORTANT: Inject learning tools for orchestrator self-learning
+	// These tools allow the orchestrator to save insights that persist across runs
+	{
+		learningTools := virtualtools.CreateLearningTools()
+		learningExecutors := virtualtools.CreateLearningToolExecutors()
+		learningCategory := virtualtools.GetLearningToolCategory()
+
+		// Add learning tools to the tools list and register their category
+		for _, tool := range learningTools {
+			toolsToRegister = append(toolsToRegister, tool)
+			if hcpo.ToolCategories != nil {
+				hcpo.ToolCategories[tool.Function.Name] = learningCategory
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added learning tool '%s' to todo task orchestrator (category: %s)", tool.Function.Name, learningCategory))
+		}
+
+		// Wrap learning executors with context injection
+		saveLearningFunc := hcpo.createSaveLearningFunc(stepID, stepPath)
+		for toolName, executor := range learningExecutors {
+			wrappedExecutor := hcpo.wrapLearningToolExecutor(executor, saveLearningFunc)
+			executorsToUse[toolName] = wrappedExecutor
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped learning tool '%s' with save function injection", toolName))
+		}
+	}
+
 	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
@@ -1995,6 +2020,55 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 
 		// Call original executor with enriched context
 		return originalExecutor(ctx, args)
+	}
+}
+
+// wrapLearningToolExecutor wraps a learning tool executor to inject the save learning function into context
+func (hcpo *StepBasedWorkflowOrchestrator) wrapLearningToolExecutor(
+	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
+	saveLearningFunc virtualtools.SaveLearningFunc,
+) func(ctx context.Context, args map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		ctx = context.WithValue(ctx, virtualtools.SaveLearningKey, saveLearningFunc)
+		return originalExecutor(ctx, args)
+	}
+}
+
+// createSaveLearningFunc creates a function that saves orchestrator learnings to workspace
+// Learnings are appended to learnings/{stepID}/orchestrator_learning.md
+func (hcpo *StepBasedWorkflowOrchestrator) createSaveLearningFunc(stepID string, stepPath string) virtualtools.SaveLearningFunc {
+	return func(ctx context.Context, category, insight string) (string, error) {
+		// Build the learning file path (relative to workspace)
+		learningFolderPath := getLearningFolderPathByStepID("", stepID, stepPath, false)
+		learningFilePath := fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
+
+		// Ensure the learnings folder exists
+		if err := hcpo.ensureStepLearningsFolderExists(ctx, learningFolderPath); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure learnings folder exists: %s: %v", learningFolderPath, err))
+			return "", fmt.Errorf("failed to create learnings folder: %w", err)
+		}
+
+		// Read existing content
+		existingContent, err := hcpo.ReadWorkspaceFile(ctx, learningFilePath)
+		if err != nil || existingContent == "" {
+			// File doesn't exist yet - create with header
+			existingContent = "# Orchestrator Learnings\n\nInsights captured during todo task orchestration.\n\n"
+		}
+
+		// Append the new learning entry
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		upperCategory := strings.ToUpper(category)
+		newEntry := fmt.Sprintf("### [%s] %s\n%s\n\n", timestamp, upperCategory, insight)
+		updatedContent := existingContent + newEntry
+
+		// Write back to file
+		if err := hcpo.WriteWorkspaceFile(ctx, learningFilePath, updatedContent); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestrator learning: %s: %v", learningFilePath, err))
+			return "", fmt.Errorf("failed to save learning: %w", err)
+		}
+
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Saved orchestrator learning [%s] to: %s", category, learningFilePath))
+		return fmt.Sprintf("Learning saved successfully. Category: %s, File: %s", category, learningFilePath), nil
 	}
 }
 

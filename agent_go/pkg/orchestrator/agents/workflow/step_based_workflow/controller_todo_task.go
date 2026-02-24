@@ -91,7 +91,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	// WRITE: step execution path + knowledgebase folder
 	// All paths include workspace prefix to match shell working_directory parameter
 	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
-	writePaths := []string{stepExecutionPath, knowledgebasePath}
+	writePaths := []string{stepExecutionPath, knowledgebasePath, stepLearningsPath}
 
 	// Add skill folder paths to read paths (skills are read-only)
 	skillStepConfig := getAgentConfigs(step)
@@ -120,6 +120,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	stepConfig := getAgentConfigs(todoTaskStep)
 	if stepConfig != nil && stepConfig.OrchestrationMaxIterations != nil {
 		maxIterations = *stepConfig.OrchestrationMaxIterations
+	}
+
+	// Load orchestrator learnings (persisted from previous runs)
+	var orchestratorLearningHistory string
+	isLearningDisabledStep := stepConfig != nil && stepConfig.DisableLearning != nil && *stepConfig.DisableLearning
+	isLearningDetailLevelNone := stepConfig != nil && stepConfig.LearningDetailLevel == "none"
+	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
+
+	if isLearningDisabled {
+		orchestratorLearningHistory = ""
+		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learning disabled for todo task step %d - skipping orchestrator learning history reading", stepIndex+1))
+	} else {
+		learningFolderPath := getLearningFolderPathByStepID("", stepID, todoTaskStepPath, false)
+		orchestratorLearningPath := fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
+		orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningPath)
+		if err == nil && orchestratorLearnings != "" {
+			orchestratorLearningHistory = fmt.Sprintf("## 📚 ORCHESTRATOR LEARNINGS\n\n%s", orchestratorLearnings)
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Read orchestrator learnings from: %s (length: %d chars)", orchestratorLearningPath, len(orchestratorLearnings)))
+		} else {
+			orchestratorLearningHistory = ""
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No orchestrator learnings found for todo task step %d - learnings folder: %s", stepIndex+1, learningFolderPath))
+		}
 	}
 
 	// Track sub-agent results for context
@@ -151,6 +173,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			lastSubAgentName,
 			lastTodoID,
 			decisionContext,
+			orchestratorLearningHistory,
 		)
 
 		// Execute TodoTaskOrchestratorAgent
@@ -300,6 +323,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	lastSubAgentName string,
 	lastTodoID string,
 	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step
+	orchestratorLearningHistory string, // Persisted learnings from previous runs
 ) map[string]string {
 	// Build predefined routes description
 	var routesBuilder strings.Builder
@@ -383,6 +407,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	}
 	if variableValues := FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues); variableValues != "" {
 		templateVars["VariableValues"] = variableValues
+	}
+
+	// Add orchestrator learning history if available
+	if orchestratorLearningHistory != "" {
+		templateVars["LearningHistory"] = orchestratorLearningHistory
 	}
 
 	// Add decision context if this step was routed from a decision step

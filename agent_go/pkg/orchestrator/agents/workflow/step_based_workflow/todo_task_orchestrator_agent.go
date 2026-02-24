@@ -155,6 +155,24 @@ Both sub-agent tools accept an optional 'preferred_tier' parameter:
 - Use Tier 3 for: simple file operations, formatting, data extraction
 - If unsure, omit the parameter to let the system auto-select based on task history
 {{end}}
+
+### save_learning
+Save an actionable insight for future runs of this step.
+**Parameters:**
+- 'category': One of routing, task_planning, error_recovery, delegation, optimization, general
+- 'insight': The actionable learning (be specific and include context)
+
+**When to use:**
+- You discovered an effective task breakdown or delegation strategy
+- You found an error pattern and its resolution
+- You identified an optimization (e.g., which tasks can run in parallel)
+- You learned something about the data or environment that future runs should know
+
+**Best practices:**
+- Save learnings as you go, not just at the end
+- Be specific: include file names, patterns, or exact strategies
+- Focus on actionable insights that would change behavior in future runs
+
 ---
 
 ## 🏗️ AVAILABLE SUB-AGENTS
@@ -216,6 +234,12 @@ A powerful execution agent that can handle any task you define.
 - **Knowledgebase**: Use 'knowledgebase/' to store assets that should persist between different execution attempts.{{end}}
 
 ---
+
+{{if .LearningHistory}}
+## 📚 LEARNING HISTORY
+{{.LearningHistory}}
+---
+{{end}}
 
 {{if eq .SkipExecutionCleanup "true"}}
 ## ⚠️ State Verification Required (Skip Cleanup Mode)

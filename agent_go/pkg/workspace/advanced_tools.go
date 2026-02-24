@@ -115,6 +115,10 @@ func pdfToolDef() llmtypes.Tool {
 						"type":        "integer",
 						"description": "Maximum number of pages to extract (default: 50, max: 100). Use to limit large documents.",
 					},
+					"password": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional password to decrypt a password-protected PDF.",
+					},
 				},
 				"required": []string{"filepath"},
 			}),

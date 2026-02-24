@@ -321,30 +321,34 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const targetExecutionPhaseId = workflowMode === 'eval' ? EVAL_EXECUTION_PHASE_ID : EXECUTION_PHASE_ID
   
   // Check if execution phase specifically is running (not just any phase)
-  // Use a selector that only recalculates when chatTabs or pollingInterval actually change
+  // Use a selector that only recalculates when chatTabs, pollingInterval, or sseConnections change
   const isExecutionRunning = useChatStore(state => {
     const chatTabs = state.chatTabs
     const pollingInterval = state.pollingInterval
+    const sseConnections = state.sseConnections
     const allTabs = Object.values(chatTabs)
-    
+
     try {
       // Filter for execution phase tabs
-      const executionTabs = allTabs.filter(tab => 
+      const executionTabs = allTabs.filter(tab =>
         tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === targetExecutionPhaseId
       )
-      
+
       // Check if any execution tab is streaming
       return executionTabs.some(tab => {
         // If tab is completed, it's not streaming
         if (tab.isCompleted) return false
-        
-        // Tab is streaming if polling is active and tab is not manually paused
-        const isPolling = pollingInterval !== null
-        if (isPolling) {
+
+        // Tab is streaming if there's an active connection (SSE or polling) and tab is not manually paused
+        const hasActiveConnection = pollingInterval !== null
+          || (tab.sessionId != null && sseConnections[tab.sessionId] != null)
+        if (hasActiveConnection) {
           return tab.isStreaming !== false // Respect manual pause
         }
-        
-        return false
+
+        // Also show Stop if tab.isStreaming is explicitly true (set immediately on query submit,
+        // before SSE/polling connects)
+        return tab.isStreaming === true
       })
     } catch (error) {
       console.error('[WorkflowToolbar] Error checking execution phase status:', error)

@@ -107,7 +107,7 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("[BOT_FILTER] Start: context cancelled for session %s", sessionID)
+			log.Printf("[BOT_FILTER] Start: context canceled for session %s", sessionID)
 			return
 
 		case <-heartbeat.C:

@@ -651,7 +651,7 @@ func runSingleMessage(ctx context.Context, agent *mcpagent.Agent, message string
 
 	answer, _, err := agent.AskWithHistory(turnCtx, history)
 	if err != nil {
-		return fmt.Errorf("error: %v", err)
+		return fmt.Errorf("error: %w", err)
 	}
 
 	fmt.Printf("\nassistant> %s\n\n", answer)

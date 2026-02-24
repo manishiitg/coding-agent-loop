@@ -388,7 +388,7 @@ func (m *BotConversationManager) HandleInteraction(platform, channelID, threadTS
 
 	switch value {
 	case "cancel":
-		m.cancelSession(active, "Cancelled by user")
+		m.cancelSession(active, "Canceled by user")
 	default:
 		log.Printf("[BOT_MANAGER] Unknown interaction value: %s for thread %s", value, threadKey)
 	}
@@ -849,10 +849,10 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 		}()
 	}
 
-	// Block until event filter signals session is done (or context is cancelled)
+	// Block until event filter signals session is done (or context is canceled)
 	<-sessionCtx.Done()
 
-	// Session completed or was cancelled
+	// Session completed or was canceled
 	active.mu.Lock()
 	alreadyFailed := active.Status == database.BotSessionStatusFailed
 	if !alreadyFailed {

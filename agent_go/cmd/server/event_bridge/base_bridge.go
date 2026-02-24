@@ -88,7 +88,7 @@ var DB_SKIP_EVENTS = map[string]bool{
 	"context_summarization_error":     true,
 	"context_editing_completed":       true,
 	"context_editing_error":           true,
-	"context_cancelled":               true,
+	"context_canceled":                true,
 	"throttling_detected":             true,
 	"token_limit_exceeded":            true,
 	"fallback_model_used":             true,

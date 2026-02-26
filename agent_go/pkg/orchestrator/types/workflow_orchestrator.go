@@ -612,12 +612,22 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
+	// Propagate workspace env ref BEFORE session ID so SetMCPSessionID can update it
+	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
+		todoPlannerAgent.SetWorkspaceEnvRef(envRef)
+	}
+
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
 
 	// Propagate selected skills to child orchestrator
 	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
 		todoPlannerAgent.SetSelectedSkills(skills)
+	}
+
+	// Propagate secrets to child orchestrator
+	if secrets := wo.GetSecrets(); len(secrets) > 0 {
+		todoPlannerAgent.SetSecrets(secrets)
 	}
 
 	// Run only planning
@@ -746,12 +756,22 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
+	// Propagate workspace env ref BEFORE session ID so SetMCPSessionID can update it
+	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
+		todoPlannerAgent.SetWorkspaceEnvRef(envRef)
+	}
+
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
 
 	// Propagate selected skills to child orchestrator
 	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
 		todoPlannerAgent.SetSelectedSkills(skills)
+	}
+
+	// Propagate secrets to child orchestrator
+	if secrets := wo.GetSecrets(); len(secrets) > 0 {
+		todoPlannerAgent.SetSecrets(secrets)
 	}
 
 	// Pass execution options if set
@@ -967,12 +987,22 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
 	}
 
+	// Propagate workspace env ref BEFORE session ID so SetMCPSessionID can update it
+	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
+		todoPlannerAgent.SetWorkspaceEnvRef(envRef)
+	}
+
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
 
 	// Propagate selected skills to child orchestrator
 	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
 		todoPlannerAgent.SetSelectedSkills(skills)
+	}
+
+	// Propagate secrets to child orchestrator
+	if secrets := wo.GetSecrets(); len(secrets) > 0 {
+		todoPlannerAgent.SetSecrets(secrets)
 	}
 
 	// Pass execution options from WorkflowOrchestrator to the todo planner if set

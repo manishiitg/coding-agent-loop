@@ -70,6 +70,42 @@ func validateDecisionStepTyped(step PlanStepInterface, stepIndex int) error {
 	return nil
 }
 
+// validateRoutingStepTyped validates that a routing step has all required fields
+func validateRoutingStepTyped(step PlanStepInterface, stepIndex int) error {
+	if routingStep, ok := step.(*RoutingPlanStep); ok {
+		if routingStep.ID == "" {
+			return fmt.Errorf("routing step at index %d (title: %q) is missing required ID field", stepIndex, step.GetTitle())
+		}
+		if routingStep.RoutingQuestion == "" {
+			return fmt.Errorf("routing step at index %d (title: %q) is missing required routing_question field", stepIndex, step.GetTitle())
+		}
+		if len(routingStep.Routes) < 2 {
+			return fmt.Errorf("routing step at index %d (title: %q) must have at least 2 routes, got %d", stepIndex, step.GetTitle(), len(routingStep.Routes))
+		}
+		routeIDs := make(map[string]bool)
+		for _, route := range routingStep.Routes {
+			if route.RouteID == "" {
+				return fmt.Errorf("routing step at index %d (title: %q) has a route with empty route_id", stepIndex, step.GetTitle())
+			}
+			if route.NextStepID == "" {
+				return fmt.Errorf("routing step at index %d (title: %q) route %q is missing next_step_id", stepIndex, step.GetTitle(), route.RouteID)
+			}
+			if routeIDs[route.RouteID] {
+				return fmt.Errorf("routing step at index %d (title: %q) has duplicate route_id %q", stepIndex, step.GetTitle(), route.RouteID)
+			}
+			routeIDs[route.RouteID] = true
+		}
+		if routingStep.DefaultRouteID != "" && !routeIDs[routingStep.DefaultRouteID] {
+			return fmt.Errorf("routing step at index %d (title: %q) has default_route_id %q that doesn't match any route_id", stepIndex, step.GetTitle(), routingStep.DefaultRouteID)
+		}
+		// If description is set, success_criteria must also be set (execute-then-route mode)
+		if routingStep.Description != "" && routingStep.SuccessCriteria == "" {
+			return fmt.Errorf("routing step at index %d (title: %q) has description but is missing required success_criteria (execute-then-route mode requires both)", stepIndex, step.GetTitle())
+		}
+	}
+	return nil
+}
+
 // validatePlanStepIDs recursively validates that all steps have IDs
 // Throws error if any step is missing an ID
 func validatePlanStepIDs(steps []PlanStepInterface) error {
@@ -80,6 +116,11 @@ func validatePlanStepIDs(steps []PlanStepInterface) error {
 
 		// Validate decision step fields
 		if err := validateDecisionStepTyped(step, i); err != nil {
+			return err
+		}
+
+		// Validate routing step fields
+		if err := validateRoutingStepTyped(step, i); err != nil {
 			return err
 		}
 
@@ -266,15 +307,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 		return nil, nil, fmt.Errorf(fmt.Sprintf("MCP agent is not initialized"), nil)
 	}
 
-	// Register WorkspaceTools (including human_feedback) before plan modification tools
+	// Register minimal workspace tools (shell_command + human) before plan modification tools
+	// Phase agents only need shell_command for file operations and human_feedback for user interaction
 	if hcpo.BaseOrchestrator != nil {
-		toolsToRegister := hcpo.BaseOrchestrator.WorkspaceTools
-		executorsToUse := hcpo.BaseOrchestrator.WorkspaceToolExecutors
+		phaseTools, phaseExecutors := hcpo.BaseOrchestrator.PreparePhaseAgentTools()
 
-		if toolsToRegister != nil && executorsToUse != nil {
-			toolsToRegister, wrappedExecutors := hcpo.BaseOrchestrator.PrepareWorkspaceToolsWithFolderGuard(toolsToRegister, executorsToUse)
+		if phaseTools != nil && phaseExecutors != nil {
+			toolsToRegister, wrappedExecutors := hcpo.BaseOrchestrator.PrepareWorkspaceToolsWithFolderGuard(phaseTools, phaseExecutors)
 
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d workspace tools (including human_feedback) for planning agent", len(toolsToRegister)))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Registering %d workspace tools (shell_command + human) for planning agent", len(toolsToRegister)))
 
 			for _, tool := range toolsToRegister {
 				if executor, exists := wrappedExecutors[tool.Function.Name]; exists {
@@ -455,10 +496,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Conte
 	agentConfig.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM planning agent
 
 	// Code execution mode and tool search mode only apply to execution agents, not planning agents
-	// Phase agents always use simple mode regardless of workflow mode setting
-	agentConfig.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	agentConfig.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
 	agentConfig.UseToolSearchMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for planning agent (phase agents always use simple mode)"))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Planning agent code execution mode: %v (provider requires it: %v)", agentConfig.UseCodeExecutionMode, requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)))
 
 	// Disable large output virtual tools for planning agent
 	disabled := false
@@ -713,6 +754,12 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		step.AgentConfigs = agentConfigs
 		return nil
 
+	case *RoutingPlanStep:
+		// Routing step: similar to decision step - evaluates a question and routes to one of N next steps
+		// Populate runtime field directly on plan step
+		step.AgentConfigs = agentConfigs
+		return nil
+
 	case *TodoTaskPlanStep:
 		// Todo task step: populate inner TodoTaskStep recursively
 		if step.TodoTaskStep != nil {
@@ -804,6 +851,9 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 
 	case *EvaluationStep:
 		// No nested steps for evaluation steps currently
+
+	case *RoutingPlanStep:
+		// Routing step is flattened - no nested steps to populate
 	}
 
 	// Return the step with populated runtime fields
@@ -885,6 +935,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 					s.AgentConfigs = agentConfigs
 				case *EvaluationStep:
 					s.AgentConfigs = agentConfigs
+				case *RoutingPlanStep:
+					s.AgentConfigs = agentConfigs
 				}
 			} else {
 				// Merge configs from step_config.json into existing configs
@@ -915,6 +967,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx contex
 					overrideCopy := *stepOverrides
 					s.AgentConfigs = &overrideCopy
 				case *EvaluationStep:
+					overrideCopy := *stepOverrides
+					s.AgentConfigs = &overrideCopy
+				case *RoutingPlanStep:
 					overrideCopy := *stepOverrides
 					s.AgentConfigs = &overrideCopy
 				}

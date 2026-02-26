@@ -718,22 +718,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [tabConfig?.autoRun, inputText, tabSessionId, isStreaming, activeTabId, setTabConfig, onSubmit])
 
-  // Process queued messages automatically when agent is available
-  useEffect(() => {
-    if (!isStreaming && !isSummarizing && tabSessionId && activeTabId && queuedMessages.length > 0) {
-      // Get the next message from the queue
-      const nextMessage = queuedMessages[0];
-      
-      // Remove it from the queue
-      const newQueue = queuedMessages.slice(1);
-      setTabConfig(activeTabId, { queuedMessages: newQueue });
-      
-      // Submit the message
-      if (nextMessage && nextMessage.trim()) {
-        onSubmit(nextMessage);
-      }
-    }
-  }, [isStreaming, isSummarizing, tabSessionId, activeTabId, queuedMessages, setTabConfig, onSubmit])
 
   // Set initial height and auto-resize textarea when inputText changes
   useEffect(() => {
@@ -2485,7 +2469,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </div>
                       )}
 
-                      {isStreaming && !(activeTab?.hasRunningBgAgents) ? (
+                      {isStreaming ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

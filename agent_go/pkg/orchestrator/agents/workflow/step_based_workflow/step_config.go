@@ -436,6 +436,8 @@ func ApplyStepConfigFromFile(
 			s.AgentConfigs = matchedConfig
 		case *EvaluationStep:
 			s.AgentConfigs = matchedConfig
+		case *RoutingPlanStep:
+			s.AgentConfigs = matchedConfig
 		default:
 			return fmt.Errorf("unknown step type: %T", step)
 		}
@@ -467,6 +469,8 @@ func ApplyStepConfigFromFile(
 			case *HumanInputPlanStep:
 				s.AgentConfigs = overrides
 			case *EvaluationStep:
+				s.AgentConfigs = overrides
+			case *RoutingPlanStep:
 				s.AgentConfigs = overrides
 			}
 		} else {

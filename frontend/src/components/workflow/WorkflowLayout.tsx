@@ -271,14 +271,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
   // Track the previous preset ID for auto-minimize on preset switch
   const previousPresetIdRef = useRef<string | null>(null)
-  // --- Workspace fetch optimization ---
-  // When the workspace panel is minimized, we skip fetchFiles() calls entirely and set a
-  // "stale" flag. When the user reopens the workspace, a single fetchFiles() catches up.
-  // This avoids wasted ~2MB fetches while the panel is hidden.
-  const workspaceStaleRef = useRef(false)
-  // Debounce timer: step_progress_updated events fire rapidly during execution — coalesce
-  // multiple events into a single fetchFiles() call (500ms window)
-  const fetchFilesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // NOTE: During workflow execution, we no longer auto-fetch workspace files (response is 2-3MB).
+  // New files are added incrementally via addFileToTree from workspace_file_operation events.
+  // The Workspace component shows a "Refresh" banner when needsRefresh is set.
 
   // Get selected run folder and workspace functions (defined early for use in useEffect)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
@@ -289,24 +284,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
   // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
-
-  // Debounced fetchFiles: coalesces rapid step_progress_updated events into one fetch
-  const debouncedFetchFiles = useCallback((folder?: string) => {
-    if (fetchFilesTimerRef.current) clearTimeout(fetchFilesTimerRef.current)
-    fetchFilesTimerRef.current = setTimeout(() => {
-      fetchFilesTimerRef.current = null
-      fetchFiles(folder).catch(err =>
-        logger.error('WorkflowLayout', 'Failed to refresh workspace files:', err)
-      )
-    }, 500)
-  }, [fetchFiles])
-
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      if (fetchFilesTimerRef.current) clearTimeout(fetchFilesTimerRef.current)
-    }
-  }, [])
 
   // Get active workflow preset
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -335,10 +312,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
   useEffect(() => {
     if (selectedRunFolder && selectedRunFolder !== 'new' && workspacePath) {
-      // Skip fetch when workspace panel is minimized — no point fetching files the user
-      // can't see. Mark stale so we catch up when they reopen the panel.
+      // Skip fetch when workspace panel is minimized — mark stale for manual refresh
       if (workspaceMinimized) {
-        workspaceStaleRef.current = true
+        useWorkspaceStore.getState().setNeedsRefresh(true)
         return
       }
       // Fetch files first to ensure folder exists, then expand
@@ -562,32 +538,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           // Auto-focus disabled - running step name is now shown in StepLegend instead
           // This prevents the canvas from jumping around during workflow execution
 
-          // Refresh workspace files to show new execution files.
-          // Optimization: skip when workspace is minimized (mark stale for later),
-          // and debounce when visible to avoid N fetches for N rapid events.
-          if (workspaceMinimized) {
-            workspaceStaleRef.current = true
-          } else {
-            debouncedFetchFiles(workspacePath || undefined)
-          }
+          // PERF FIX: Mark workspace stale instead of calling debouncedFetchFiles().
+          //
+          // PROBLEM: Previously called debouncedFetchFiles(workspacePath) on every
+          // step_progress_updated event (500ms debounce). Each fetch is ~2-3MB for large
+          // workspaces. During a 10-step workflow, this triggered 10+ fetches.
+          //
+          // FIX: Set needsRefresh flag. New files are added incrementally via addFileToTree
+          // (from workspace_file_operation events, no network call). The Workspace component
+          // shows a "Files may be out of date" banner for manual refresh.
+          useWorkspaceStore.getState().setNeedsRefresh(true)
           
           lastProcessedStepProgressIndexRef.current = i
         }
       }
     }
-  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, debouncedFetchFiles, updateStepProgressFromEvent, plan, workspaceMinimized])
-
-  // Catch-up fetch: when the user reopens the workspace panel after it was minimized
-  // during active execution, we do a single fetchFiles() to sync up with any files that
-  // were created/modified while the panel was hidden.
-  useEffect(() => {
-    if (!workspaceMinimized && workspaceStaleRef.current) {
-      workspaceStaleRef.current = false
-      fetchFiles(workspacePath || undefined).catch(err =>
-        logger.error('WorkflowLayout', 'Failed to refresh workspace files on reopen:', err)
-      )
-    }
-  }, [workspaceMinimized, fetchFiles, workspacePath])
+  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, updateStepProgressFromEvent, plan])
 
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)

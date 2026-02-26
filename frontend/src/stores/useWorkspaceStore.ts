@@ -129,7 +129,12 @@ interface WorkspaceState {
   
   // Event processing
   processWorkspaceEvent: (event: PollingEvent) => boolean
-  
+
+  // Stale indicator — set when workspace has been modified but not re-fetched
+  // (avoids expensive 2-3MB fetchFiles during active execution)
+  needsRefresh: boolean
+  setNeedsRefresh: (needsRefresh: boolean) => void
+
   // Reset all state
   resetWorkspaceState: () => void
 }
@@ -332,7 +337,8 @@ const initialState = {
   activeFolder: null,
   highlightedFile: null,
   highlightTimeout: null,
-  expandedFolders: new Set<string>()
+  expandedFolders: new Set<string>(),
+  needsRefresh: false
 }
 
 // Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder
@@ -507,6 +513,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // Actions Dropdown
       setShowActionsDropdown: (showActionsDropdown) => set({ showActionsDropdown }),
+
+      // Stale indicator
+      setNeedsRefresh: (needsRefresh: boolean) => {
+        if (get().needsRefresh === needsRefresh) return
+        set({ needsRefresh })
+      },
       
       // File Operations
       addFile: (file) => set((state) => {
@@ -683,7 +695,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               // Process hierarchical structure from API
               const processedFiles = processHierarchicalFiles(allFiles)
               const index = buildFileIndex(processedFiles)
-              set({ files: processedFiles, fileIndex: index })
+              set({ files: processedFiles, fileIndex: index, needsRefresh: false })
 
               // NOTE: Expansion restoration is now handled by the Workspace component
               // which has the necessary context about workflow mode and filtered files
@@ -707,41 +719,29 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // File highlighting
       highlightFile: async (filepath: string) => {
         const state = get()
-        
-        // Defensive: skip if already highlighting this file (prevents scroll/rerender loop from duplicate events)
-        if (state.highlightedFile === filepath) {
-          // Just extend the highlight timeout
-          if (state.highlightTimeout) clearTimeout(state.highlightTimeout)
-          const timeout = setTimeout(() => {
-            get().clearHighlight()
-          }, 5000)
-          set({ highlightTimeout: timeout })
-          return
-        }
-        
+
         // Clear existing timeout
         if (state.highlightTimeout) {
           clearTimeout(state.highlightTimeout)
         }
-        
-        try {
-          // Set the highlight regardless of whether the file exists in the tree yet.
-          // If the file is missing, the next debounced fetchFiles (from WorkflowLayout or
-          // Workspace mount) will bring it in. We do NOT call fetchFiles() here because
-          // calling it without a folder param fetches ALL files from root, which replaces
-          // the workflow-scoped tree and causes duplicate folders in workflow mode.
-          set({ highlightedFile: filepath })
-          
-          // Auto-clear highlight after 5 seconds
+
+        // Defensive: skip if already highlighting this file (prevents scroll/rerender loop)
+        if (state.highlightedFile === filepath) {
+          // Just extend the timeout — single set() instead of two
           const timeout = setTimeout(() => {
             set({ highlightedFile: null, highlightTimeout: null })
           }, 5000)
-          
           set({ highlightTimeout: timeout })
-          
-        } catch (error) {
-          console.error('[WorkspaceStore] Error highlighting file:', error)
+          return
         }
+
+        // PERF FIX: Single set() call instead of two separate ones.
+        // Previously: set({ highlightedFile }) + set({ highlightTimeout }) = 2 re-renders.
+        // Now: set({ highlightedFile, highlightTimeout }) = 1 re-render.
+        const timeout = setTimeout(() => {
+          set({ highlightedFile: null, highlightTimeout: null })
+        }, 5000)
+        set({ highlightedFile: filepath, highlightTimeout: timeout })
       },
       
       // Process workspace events and trigger highlighting or file removal
@@ -805,30 +805,37 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             // highlightFile searches in raw unfiltered files, so full paths work correctly
             // Workspace component handles filtering and path adjustment for display
             
-            if (operation === 'read' || operation === 'update' || operation === 'patch') {
+            if (operation === 'read') {
+              // PERF FIX: Read operations don't modify files — skip highlighting entirely.
+              //
+              // PROBLEM: Every 'read' event triggered highlightFile() → 2 Zustand set() calls
+              // (highlightedFile + highlightTimeout) → 2 re-renders of Workspace sidebar.
+              // A typical workflow step has 20-50 file reads, causing 40-100 unnecessary re-renders.
+              //
+              // FIX: Early return for reads. Only 'update', 'patch', 'delete', 'move' need processing.
+              return true
+            }
+
+            if (operation === 'update' || operation === 'patch') {
               if (!filepath) {
                 return true
               }
-              
+
               // Skip highlighting if should_highlight is false (e.g., for logs/ folder)
               if (!shouldHighlight) {
                 return true
               }
-              
+
               // Use index for O(1) lookup instead of O(n) tree search
               const state = get()
               const normalizedPath = filepath.trim()
-              const fileExists = state.fileIndex.has(normalizedPath) || 
+              const fileExists = state.fileIndex.has(normalizedPath) ||
                                 state.fileIndex.has(normalizedPath.split('/').pop() || '')
-              
-              // Always try to highlight - if file doesn't exist, insert it incrementally.
-              // Previously this called fetchFiles() (full ~2MB re-fetch). Now we use addFileToTree()
-              // to insert the single new file client-side, avoiding the expensive network call.
-              //
+
+              // If file doesn't exist, insert it incrementally (avoids full ~2MB re-fetch).
               // NOTE: We only call highlightFile() here — NOT expandFoldersForFile().
               // Folder expansion is handled by the Workspace component's highlightedFile effect,
-              // which uses the display-adjusted path (correct for workflow mode). Expanding here
-              // with the raw path would open all parent segments redundantly.
+              // which uses the display-adjusted path (correct for workflow mode).
               if (!fileExists) {
                 get().addFileToTree(filepath)
                 // Small delay for Zustand state to propagate before highlighting
@@ -1019,7 +1026,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           ...initialState,
           fileIndex: new Map<string, PlannerFile>(),
           expandedFolders: new Set<string>(),
-          highlightTimeout: null
+          highlightTimeout: null,
+          needsRefresh: false
         })
       }
     })

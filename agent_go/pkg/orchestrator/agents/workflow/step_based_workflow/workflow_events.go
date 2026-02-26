@@ -36,6 +36,39 @@ func (e *DecisionEvaluatedEvent) GetEventType() baseevents.EventType {
 	return events.DecisionEvaluated
 }
 
+// RoutingResponseEvent represents the routing response data for events
+type RoutingResponseEvent struct {
+	SelectedRouteID string `json:"selected_route_id"` // The selected route ID
+	Reasoning       string `json:"reasoning"`         // Reasoning for the selection
+}
+
+// RoutingRouteEvent represents a single route in a routing evaluated event
+type RoutingRouteEvent struct {
+	RouteID    string `json:"route_id"`
+	RouteName  string `json:"route_name"`
+	Condition  string `json:"condition"`
+	NextStepID string `json:"next_step_id"`
+}
+
+// RoutingEvaluatedEvent represents the event when a routing step is evaluated
+type RoutingEvaluatedEvent struct {
+	baseevents.BaseEventData
+	StepID           string                `json:"step_id"`
+	StepIndex        int                   `json:"step_index"`
+	StepTitle        string                `json:"step_title"`
+	StepPath         string                `json:"step_path"`
+	RoutingQuestion  string                `json:"routing_question"`
+	RoutingResponse  RoutingResponseEvent  `json:"routing_response"`
+	Routes           []RoutingRouteEvent   `json:"routes"`
+	RunFolder        string                `json:"run_folder"`
+	WorkspacePath    string                `json:"workspace_path"`
+}
+
+// GetEventType implements baseevents.EventData interface
+func (e *RoutingEvaluatedEvent) GetEventType() baseevents.EventType {
+	return events.RoutingEvaluated
+}
+
 // StepTokenUsageEvent represents token usage summary for a workflow step
 // Note: This is a local type, but uses orchestrator events.StepTokenUsageEvent from the orchestrator/events package
 type StepTokenUsageEvent struct {

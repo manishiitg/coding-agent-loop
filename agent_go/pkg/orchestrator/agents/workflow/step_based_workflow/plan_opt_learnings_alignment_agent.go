@@ -47,7 +47,7 @@ Navigate the workspace to discover all step-specific folders:
 1. **Scan Changelog**: Read 'planning/changelog/changelog-*.json' to identify recently changed steps.
 2. **Audit**: Categorize every file and check for missing learnings per step.
 3. **Report**: Use 'human_feedback' to present findings and recommended moves/deletions.
-4. **Action**: ONLY perform 'move_workspace_file' or 'delete_workspace_file' AFTER user approval.
+4. **Action**: ONLY perform file moves (execute_shell_command with 'mv') or deletions (execute_shell_command with 'rm') AFTER user approval.
 
 *Be precise. No auto-deletion. No guessing.*`)
 
@@ -170,10 +170,8 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 		return nil, fmt.Errorf("no valid LLM configuration found for plan learnings alignment agent: presetPhaseLLM is empty or invalid")
 	}
 
-	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
-	// No need to add human tools separately as they're already combined in WorkspaceTools
-	allTools := plam.WorkspaceTools
-	allExecutors := plam.WorkspaceToolExecutors
+	// Use minimal workspace tools (shell_command + human) for phase agent
+	allTools, allExecutors := plam.BaseOrchestrator.PreparePhaseAgentTools()
 
 	// Create agent config with the selected LLM config
 	config := plam.CreateStandardAgentConfigWithLLM("plan-learnings-alignment-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
@@ -182,10 +180,10 @@ func (plam *PlanLearningsAlignmentManager) createPlanLearningsAlignmentAgent(ctx
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Code execution mode and tool search mode only apply to execution agents, not plan learnings alignment agents
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(plam.presetPhaseLLM)
 	config.UseToolSearchMode = false
-	plam.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for plan learnings alignment agent (phase agents always use simple mode)"))
+	plam.GetLogger().Info(fmt.Sprintf("🔧 Plan learnings alignment agent code execution mode: %v (provider requires it: %v)", config.UseCodeExecutionMode, requiresCodeExecutionForProvider(plam.presetPhaseLLM)))
 
 	// Large output virtual tools are enabled for alignment (agent may generate large reports)
 

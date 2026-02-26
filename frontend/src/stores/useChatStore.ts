@@ -81,7 +81,13 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Workflow execution events
     'step_progress_updated',
     'phase_started',
-    'phase_completed'
+    'phase_completed',
+    // Delegation structural events - must survive for sub-agent cards
+    'delegation_start',
+    'delegation_end',
+    // Orchestrator agent boundaries - must survive for step collapse/expand
+    'orchestrator_agent_start',
+    'orchestrator_agent_end'
   ]
   return importantTypes.includes(event.type)
 }
@@ -599,9 +605,14 @@ export const useChatStore = create<ChatState>()(
             return true
           })
 
-          // Only log if duplicates were found (helps debug)
-          if (uniqueNewEvents.length < events.length) {
-            logger.debug('EventStore', `Deduplicated ${events.length - uniqueNewEvents.length} duplicate events for session ${sessionId}`)
+          // Log dedup stats — helps identify if dedup is doing heavy work
+          const dupCount = events.length - uniqueNewEvents.length
+          console.log(`[Events] addTabEvents: incoming=${events.length} new=${uniqueNewEvents.length} dupes=${dupCount} existing=${currentEvents.length} setSize=${existingEventIds.size} session=${sessionId.slice(0, 8)}`)
+
+          // PERF: Skip state update entirely when no new events — avoids creating a new
+          // array reference which would cascade re-renders through ChatArea → EventHierarchy.
+          if (uniqueNewEvents.length === 0) {
+            return state
           }
 
           const newEvents = [...currentEvents, ...uniqueNewEvents]
@@ -757,6 +768,8 @@ export const useChatStore = create<ChatState>()(
       },
       
       setTabLastEventIndex: (sessionId: string, index: number) => {
+        // PERF: skip state update when index hasn't changed (avoids unnecessary re-renders)
+        if (get().tabEventIndices[sessionId] === index) return
         set((state) => ({
           tabEventIndices: {
             ...state.tabEventIndices,
@@ -771,6 +784,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       setTabHasMoreOlderEvents: (sessionId: string, hasMore: boolean) => {
+        if (get().tabHasMoreOlderEvents[sessionId] === hasMore) return
         set((state) => ({
           tabHasMoreOlderEvents: {
             ...state.tabHasMoreOlderEvents,
@@ -1164,6 +1178,9 @@ export const useChatStore = create<ChatState>()(
           }
 
           const updates: Record<string, ChatTab> = {}
+          let newTabEvents = state.tabEvents
+          let newTabEventIndices = state.tabEventIndices
+          let newTabHasMore = state.tabHasMoreOlderEvents
 
           // Update previous active tab's lastViewedEventCounts before switching
           if (state.activeTabId && state.activeTabId !== tabId) {
@@ -1189,9 +1206,32 @@ export const useChatStore = create<ChatState>()(
             }
           }
 
+          // Clean up orphaned tab events (sessions no longer referenced by any tab)
+          const referencedSessionIds = new Set(
+            Object.values({ ...state.chatTabs, ...updates })
+              .map(tab => tab.sessionId)
+              .filter(Boolean)
+          )
+          for (const sessionId of Object.keys(newTabEvents)) {
+            if (!referencedSessionIds.has(sessionId)) {
+              if (newTabEvents === state.tabEvents) {
+                newTabEvents = { ...newTabEvents }
+                newTabEventIndices = { ...newTabEventIndices }
+                newTabHasMore = { ...newTabHasMore }
+              }
+              delete newTabEvents[sessionId]
+              delete newTabEventIndices[sessionId]
+              delete newTabHasMore[sessionId]
+              logger.debug('TabStore', `Cleaned up orphaned events for session ${sessionId}`)
+            }
+          }
+
           return {
             activeTabId: tabId,
-            chatTabs: { ...state.chatTabs, ...updates }
+            chatTabs: { ...state.chatTabs, ...updates },
+            tabEvents: newTabEvents,
+            tabEventIndices: newTabEventIndices,
+            tabHasMoreOlderEvents: newTabHasMore
           }
         })
       },
@@ -1317,50 +1357,43 @@ export const useChatStore = create<ChatState>()(
       },
       
       setTabStreaming: (tabId: string, isStreaming: boolean) => {
-        const state = get()
-        const tab = state.chatTabs[tabId]
-        if (!tab) return
-        
-        set(() => ({
+        const tab = get().chatTabs[tabId]
+        if (!tab || tab.isStreaming === isStreaming) return
+
+        set((state) => ({
           chatTabs: {
             ...state.chatTabs,
-            [tabId]: {
-              ...tab,
-              isStreaming
-            }
+            [tabId]: { ...state.chatTabs[tabId], isStreaming }
           }
         }))
       },
-      
+
       setTabCompleted: (tabId: string, isCompleted: boolean) => {
-        const state = get()
-        const tab = state.chatTabs[tabId]
+        const tab = get().chatTabs[tabId]
         if (!tab) return
-        
+        const newStreaming = isCompleted ? false : tab.isStreaming
+        if (tab.isCompleted === isCompleted && tab.isStreaming === newStreaming) return
+
         set((state) => ({
           chatTabs: {
             ...state.chatTabs,
             [tabId]: {
-              ...tab,
+              ...state.chatTabs[tabId],
               isCompleted,
-              isStreaming: isCompleted ? false : tab.isStreaming
+              isStreaming: newStreaming
             }
           }
         }))
       },
 
       setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => {
-        const state = get()
-        const tab = state.chatTabs[tabId]
-        if (!tab) return
+        const tab = get().chatTabs[tabId]
+        if (!tab || tab.hasRunningBgAgents === hasRunningBgAgents) return
 
-        set(() => ({
+        set((state) => ({
           chatTabs: {
             ...state.chatTabs,
-            [tabId]: {
-              ...tab,
-              hasRunningBgAgents
-            }
+            [tabId]: { ...state.chatTabs[tabId], hasRunningBgAgents }
           }
         }))
       },

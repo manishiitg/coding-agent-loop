@@ -772,6 +772,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 				subAgentStep.AgentConfigs = &AgentConfigs{}
 			case *OrchestrationPlanStep:
 				subAgentStep.AgentConfigs = &AgentConfigs{}
+			case *RoutingPlanStep:
+				subAgentStep.AgentConfigs = &AgentConfigs{}
 			}
 			subAgentConfigs = getAgentConfigs(subAgentStepPlan)
 		}
@@ -1219,6 +1221,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationOrchestratorStep(
 		config := orchestrationOrchestratorAgent.GetConfig()
 		if config.LLMConfig.Primary.ModelID != "" {
 			executionLLM = fmt.Sprintf("%s/%s", config.LLMConfig.Primary.Provider, config.LLMConfig.Primary.ModelID)
+		}
+	}
+
+	// Override prompt template var for CLI providers: use normal prompt (not code execution prompt)
+	if orchestrationOrchestratorAgent != nil && orchestrationOrchestratorAgent.GetConfig() != nil {
+		provider := orchestrationOrchestratorAgent.GetConfig().LLMConfig.Primary.Provider
+		if isCliProviderForPrompt(provider) {
+			templateVars["IsCodeExecutionMode"] = "false"
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 CLI provider '%s' - using normal prompt (code exec mode still enabled for tool routing)", provider))
 		}
 	}
 

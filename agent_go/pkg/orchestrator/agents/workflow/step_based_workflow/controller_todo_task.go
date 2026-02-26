@@ -105,6 +105,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for todo task orchestrator agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
 
+	// Ensure step execution folder exists before agent starts
+	if err := hcpo.ensureStepExecutionFolderExists(ctx, stepExecutionPath); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure step execution folder exists: %v (continuing - folder will be created when files are written)", err))
+	}
+
 	// Emit step_started event
 	hcpo.emitStepStartedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
 
@@ -557,6 +562,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 		return nil, nil, "", nil, fmt.Errorf("failed to create todo task orchestrator agent: %w", err)
 	}
 	defer agent.Close()
+
+	// Override prompt template var for CLI providers: use normal prompt (not code execution prompt)
+	if agent.GetConfig() != nil {
+		provider := agent.GetConfig().LLMConfig.Primary.Provider
+		if isCliProviderForPrompt(provider) {
+			templateVars["IsCodeExecutionMode"] = "false"
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 CLI provider '%s' - using normal prompt (code exec mode still enabled for tool routing)", provider))
+		}
+	}
 
 	// Execute with tool-based approach (no structured output)
 	// The agent manages tasks via shell (tasks.md) and delegates via call_sub_agent/call_generic_agent

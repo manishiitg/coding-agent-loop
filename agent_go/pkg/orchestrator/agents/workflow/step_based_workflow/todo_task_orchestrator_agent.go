@@ -222,7 +222,7 @@ A powerful execution agent that can handle any task you define.
 {{if .IsCodeExecutionMode}}
 **Code Execution Rules**:
 - **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' for HTTP requests to per-tool endpoints.
-- **File Operations**: Use workspace tools (read_workspace_file, write_workspace_file) for file access.
+- **File Operations**: Use execute_shell_command (cat, ls, echo/redirect) for file access.
 - **NEVER** hardcode absolute paths or API tokens.
 {{end}}{{end}}
 

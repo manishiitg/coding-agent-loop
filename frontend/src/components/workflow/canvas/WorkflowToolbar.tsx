@@ -1386,8 +1386,26 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     }
   }, [deleteDialog.folderName, workspacePath, selectedRunFolder, setSelectedRunFolder, loadRunFolders, loadProgress, fetchFiles])
 
+  // Visual feedback + double-click guard: shows "Starting..." with spinner while
+  // waiting for SSE to connect (can take 20s+). Without this, the button stays as
+  // "Execute" and users click again thinking nothing happened.
+  const [isExecutionStarting, setIsExecutionStarting] = useState(false)
+
+  // Clear "Starting..." state when execution actually starts running
+  useEffect(() => {
+    if (isExecutionRunning && isExecutionStarting) {
+      setIsExecutionStarting(false)
+    }
+  }, [isExecutionRunning, isExecutionStarting])
+
   // Handle execution button click - finds/reuses execution tab
   const handleExecute = useCallback(async () => {
+    // Prevent double-click: block if execution is already being started
+    if (isExecutionStarting) {
+      console.log('[WorkflowToolbar] Execution already starting, ignoring duplicate click')
+      return
+    }
+
     // Determine target execution phase based on mode
     const targetExecutionPhaseId = workflowMode === 'eval' ? EVAL_EXECUTION_PHASE_ID : EXECUTION_PHASE_ID
     const targetPhase = phases.find(p => p.id === targetExecutionPhaseId)
@@ -1400,36 +1418,42 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         console.error('[WorkflowToolbar] Cannot execute: variablesManifest is missing')
         return
       }
-      
+
       // Check if groups are available and if at least one is selected
       const hasGroups = variablesManifest?.groups && variablesManifest.groups.length > 0
       if (hasGroups && selectedGroupIds.length === 0) {
         console.warn('[WorkflowToolbar] Cannot execute: No groups selected')
         return
       }
+
+      // Set guard + show "Starting..." AFTER validation passes (so errors don't lock the button)
+      setIsExecutionStarting(true)
+      // Safety net: auto-clear after 60s in case SSE never connects (can take 20s+)
+      setTimeout(() => { setIsExecutionStarting(false) }, 60000)
+
       // Find existing execution phase tab
       // Get execution tabs from generalized chat store
       const chatStore = useChatStore.getState()
       const allTabs = Object.values(chatStore.chatTabs)
-      const executionTabs = allTabs.filter(tab => 
+      const executionTabs = allTabs.filter(tab =>
         tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === targetExecutionPhaseId
       )
       const existingExecutionTab = executionTabs.length > 0 ? executionTabs[0] : null
-      
+
       if (existingExecutionTab) {
         // Reuse existing execution tab
         console.log(`[WorkflowToolbar] Reusing existing execution tab: ${existingExecutionTab.tabId}`)
-        
+
         // Switch to it if not already active
         if (chatStore.activeTabId !== existingExecutionTab.tabId) {
           chatStore.switchTab(existingExecutionTab.tabId)
         }
-        
+
         // No observer ID syncing needed - sessions are used directly
       } else {
         console.log('[WorkflowToolbar] No existing execution tab, creating new one')
       }
-      
+
       // Build execution options
       const workflowStore = useWorkflowStore.getState()
       console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] Before buildExecutionOptions:', {
@@ -1440,7 +1464,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         allGroupIds: variablesManifest?.groups?.map(g => g.group_id) || []
       })
       const options = buildExecutionOptions()
-      console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] 🚀 Starting execution with options:', JSON.stringify({
+      console.log('[EXECUTION_OPTIONS_DEBUG] [WorkflowToolbar] Starting execution with options:', JSON.stringify({
         execution_strategy: options.execution_strategy,
         resume_from_step: options.resume_from_step,
         resume_from_branch_step: options.resume_from_branch_step,
@@ -1449,11 +1473,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         enabled_group_ids: options.enabled_group_ids,
         enabled_group_ids_length: options.enabled_group_ids?.length || 0
       }, null, 2))
-      
+
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
       onStartPhase(targetExecutionPhaseId, options)
     }
-  }, [isExecutionRunning, phases, workflowMode, buildExecutionOptions, onStartPhase, selectedGroupIds, variablesManifest])
+  }, [isExecutionRunning, isExecutionStarting, phases, workflowMode, buildExecutionOptions, onStartPhase, selectedGroupIds, variablesManifest])
 
   // Determine target execution phase for rendering
   const targetExecutionPhase = phases.find(p => p.id === targetExecutionPhaseId)
@@ -1469,14 +1493,40 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Left side - Phase selector */}
       <div className="flex items-center gap-2">
         {!hasPlan ? (
-          // No plan - show create button
-          <button
-            onClick={onCreatePlan}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted text-foreground rounded-md hover:bg-accent transition-colors font-medium text-xs"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Create Plan'}
-          </button>
+          // No plan - show create button + refresh button
+          <>
+            <button
+              onClick={onCreatePlan}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted text-foreground rounded-md hover:bg-accent transition-colors font-medium text-xs"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Create Plan'}
+            </button>
+            {onRefresh && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await onRefresh()
+                        } catch (err) {
+                          console.error('[WorkflowToolbar] Failed to refresh:', err)
+                        }
+                      }}
+                      className="flex items-center justify-center w-7 h-7 rounded-md transition-all text-xs
+                                 bg-muted text-foreground hover:bg-accent"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Refresh plan, step config, and variables</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </>
         ) : (
           <>
             {/* Mode Toggle */}
@@ -1703,9 +1753,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 {(() => {
                   const hasGroups = variablesManifest?.groups && variablesManifest.groups.length > 0
                   const noGroupsSelected = selectedGroupIds.length === 0
-                  // Only disable if execution is NOT running AND no groups are selected
-                  const isDisabled = !isExecutionRunning && hasGroups && noGroupsSelected
-                  
+                  // Disable when: starting up, or no groups selected (when groups exist)
+                  const isDisabled = isExecutionStarting || (!isExecutionRunning && hasGroups && noGroupsSelected)
+
                   return (
                     <button
                       onClick={isExecutionRunning ? onStop : handleExecute}
@@ -1714,14 +1764,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
                         ${isExecutionRunning
                           ? 'bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 hover:shadow-lg'
+                          : isExecutionStarting
+                          ? 'bg-primary/70 text-primary-foreground shadow-md cursor-wait'
                           : isDisabled
                           ? 'bg-muted text-muted-foreground shadow-md cursor-not-allowed opacity-75'
                           : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
                         }
                       `}
                       title={
-                        isExecutionRunning 
-                          ? 'Stop execution' 
+                        isExecutionRunning
+                          ? 'Stop execution'
+                          : isExecutionStarting
+                          ? 'Starting execution...'
                           : hasGroups && noGroupsSelected
                           ? 'Please select at least one group to execute'
                           : workflowMode === 'eval' ? 'Execute evaluation plan' : 'Execute workflow'
@@ -1731,6 +1785,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         <>
                           <Square className="w-3.5 h-3.5" />
                           <span>Stop</span>
+                        </>
+                      ) : isExecutionStarting ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Starting...</span>
                         </>
                       ) : (
                         <>
@@ -1856,9 +1915,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 e.stopPropagation()
                                                 const allGroupIds = enabledGroups.map(g => g.groupId!).filter(Boolean) as string[]
                                                 setSelectedGroupIds(allGroupIds)
-                                                // When selecting all groups, show the iteration folder in workspace
+                                                // Use the first selected group's folder path so loadProgress can find steps_done.json
                                                 if (allGroupIds.length > 0) {
-                                                  setSelectedRunFolder(iteration)
+                                                  const firstGroup = enabledGroups.find(g => g.groupId)
+                                                  if (firstGroup) {
+                                                    setSelectedRunFolder(firstGroup.id)
+                                                  } else {
+                                                    setSelectedRunFolder(iteration)
+                                                  }
                                                 }
                                               }}
                                               disabled={isRunning}
@@ -1969,8 +2033,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                   // If multiple groups will be selected, show parent iteration folder in workspace
                                                   // Otherwise show the specific group folder
                                                   if (newSelectedCount > 1) {
-                                                    // Multiple groups selected - set to iteration folder
-                                                    setSelectedRunFolder(group.iteration)
+                                                    // Multiple groups selected - use a specific group's folder so loadProgress can find steps_done.json
+                                                    if (willBeSelected) {
+                                                      // Just checked this group - use it for progress loading
+                                                      setSelectedRunFolder(group.id)
+                                                    } else {
+                                                      // Unchecked a group but >1 remain - use the first remaining group
+                                                      const remainingGroupIds = selectedGroupIds.filter(id => id !== group.groupId)
+                                                      const firstRemaining = iterationGroups.items.find(
+                                                        g => g.groupId && remainingGroupIds.includes(g.groupId) && g.iteration === group.iteration
+                                                      )
+                                                      setSelectedRunFolder(firstRemaining ? firstRemaining.id : group.iteration)
+                                                    }
                                                   } else if (newSelectedCount === 1) {
                                                     // Single group will be selected - set to that group's folder
                                                     const selectedGroupId = willBeSelected ? group.groupId : selectedGroupIds.find(id => id !== group.groupId)
@@ -2293,12 +2367,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           <div className="flex items-center gap-1.5 px-2 py-1 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-md text-xs">
             <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
             Waiting for feedback
-          </div>
-        )}
-        {status === 'completed' && (
-          <div className="flex items-center gap-1.5 px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-md text-xs">
-            <div className="w-1.5 h-1.5 bg-green-500 rounded-full" />
-            Completed
           </div>
         )}
         {status === 'failed' && (

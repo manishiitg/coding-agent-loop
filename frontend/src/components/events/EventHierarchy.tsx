@@ -3,9 +3,10 @@ import type { PollingEvent } from '../../services/api-types';
 import { EventDispatcher, type DelegationStats, type EventNode } from './EventDispatcher';
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
-import { MAX_EVENTS_TO_PROCESS } from '../../constants/events';
+import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
 import { NEVER_DISPLAY_EVENTS, shouldShowEventByMode } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { useRenderLogger, useMemoLogger } from '../../utils/renderLogger';
 import './EventHierarchy.css';
 
 interface EventHierarchyProps {
@@ -48,6 +49,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollParent, setScrollParent] = useState<HTMLElement | null>(null);
+  // Track previous flattened item count to avoid auto-scrolling on sub-agent events.
+  // Sub-agent events change displayEvents → eventTree rebuilds → new object refs, but
+  // flattenedItems.length stays the same because delegation_start children aren't flattened.
+  const prevFlattenedCountRef = useRef(0);
   
   // Find the scrollable parent on mount
   useEffect(() => {
@@ -135,10 +140,60 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return timeA - timeB;
     });
 
-    if (result.length > MAX_EVENTS_TO_PROCESS) {
-      return result.slice(-MAX_EVENTS_TO_PROCESS);
+    if (result.length <= MAX_EVENTS_TO_PROCESS) return result;
+
+    // Smart cap: preserve structural events, cap sub-agent children per delegation.
+    // Structural events (delegation_start/end, orchestrator boundaries) are always kept
+    // because dropping them breaks the tree (orphan children, missing cards).
+    // Sub-agent child events are capped per delegation since SubAgentHierarchy only renders 30.
+    const STRUCTURAL_TYPES = new Set([
+      'delegation_start', 'delegation_end',
+      'orchestrator_agent_start', 'orchestrator_agent_end',
+      'workflow_start', 'workflow_end',
+      'orchestrator_start', 'orchestrator_end',
+      'request_human_feedback', 'blocking_human_feedback',
+      'user_message'
+    ]);
+
+    // Count children per delegation (events with a delegation- correlation_id)
+    const delegationChildCounts = new Map<string, number>();
+    const capped: PollingEvent[] = [];
+
+    // Iterate newest-first so we keep the latest children per delegation
+    for (let i = result.length - 1; i >= 0; i--) {
+      const ev = result[i];
+      const type = ev.type || '';
+
+      // Always keep structural events
+      if (STRUCTURAL_TYPES.has(type)) {
+        capped.push(ev);
+        continue;
+      }
+
+      // Check if this is a sub-agent child event (has delegation- correlation_id)
+      let delegationId: string | undefined;
+      if (ev.data && typeof ev.data === 'object') {
+        const data = ev.data as Record<string, unknown>;
+        const cid = data.correlation_id as string | undefined;
+        if (cid && cid.startsWith('delegation-')) {
+          delegationId = cid;
+        }
+      }
+
+      if (delegationId) {
+        const count = delegationChildCounts.get(delegationId) || 0;
+        if (count >= MAX_CHILD_EVENTS_PER_DELEGATION) continue; // Over per-delegation budget
+        delegationChildCounts.set(delegationId, count + 1);
+      }
+
+      capped.push(ev);
+      // Stop once we have enough
+      if (capped.length >= MAX_EVENTS_TO_PROCESS) break;
     }
-    return result;
+
+    // Reverse back to chronological order
+    capped.reverse();
+    return capped;
   }, [events, loadedOlderEvents, eventMode, hideToolCalls]);
   
   // Reset loaded older events when session or event mode changes
@@ -348,11 +403,49 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const filteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
     const filteredEventIds = new Set(filteredEvents.map(e => e.id));
+
+    // Build delegation_id -> delegation_start event ID map for re-parenting orphans.
+    // When an intermediate parent within a delegation is evicted, its children become orphans.
+    // Instead of showing them as root events in the main chat, re-parent them to delegation_start.
+    const delegationIdToEventId = new Map<string, string>();
+    for (const event of filteredEvents) {
+      if (event.type === 'delegation_start' && event.data && typeof event.data === 'object') {
+        const data = event.data as Record<string, unknown>;
+        const delegationData = (data.data && typeof data.data === 'object')
+          ? data.data as Record<string, unknown> : data;
+        const delegationId = delegationData?.delegation_id as string | undefined;
+        if (delegationId) {
+          delegationIdToEventId.set(delegationId, event.id);
+        }
+      }
+    }
+
+    // Helper: extract delegation correlation_id from event
+    const getDelegationCorrelationId = (event: PollingEvent): string | undefined => {
+      if (!event.data || typeof event.data !== 'object') return undefined;
+      const data = event.data as Record<string, unknown>;
+      const cid = data.correlation_id as string | undefined;
+      return (cid && cid.startsWith('delegation-')) ? cid : undefined;
+    };
+
     const childrenMap = new Map<string, PollingEvent[]>();
 
     filteredEvents.forEach(event => {
-      const parentId = getParentId(event);
-      if (parentId) {
+      let parentId = getParentId(event);
+
+      // Re-parent orphaned delegation children: if parent_id is missing from filteredEvents
+      // but event belongs to a delegation, attach it to the delegation_start event.
+      if (parentId && !filteredEventIds.has(parentId)) {
+        const delegCid = getDelegationCorrelationId(event);
+        if (delegCid) {
+          const delegStartId = delegationIdToEventId.get(delegCid);
+          if (delegStartId) {
+            parentId = delegStartId;
+          }
+        }
+      }
+
+      if (parentId && filteredEventIds.has(parentId)) {
         if (!childrenMap.has(parentId)) childrenMap.set(parentId, []);
         childrenMap.get(parentId)!.push(event);
       }
@@ -371,11 +464,29 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     const rootEvents = filteredEvents.filter(event => {
       const parentId = getParentId(event);
-      return !parentId || !filteredEventIds.has(parentId);
+      // Standard root check: no parent or parent not in filtered set
+      const isOrphan = !parentId || !filteredEventIds.has(parentId);
+      if (!isOrphan) return false;
+
+      // Never promote delegation child events to root — they belong inside delegation cards.
+      // If their delegation_start was evicted (shouldn't happen with structural preservation),
+      // hide them rather than polluting the main chat.
+      if (parentId) {
+        const delegCid = getDelegationCorrelationId(event);
+        if (delegCid) {
+          // Check if this event was re-parented to a delegation_start in childrenMap
+          const delegStartId = delegationIdToEventId.get(delegCid);
+          if (delegStartId) return false; // Already re-parented, don't show as root
+          // delegation_start was evicted entirely — suppress orphan
+          return false;
+        }
+      }
+
+      return true;
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]); // Removed getHierarchyLevel dependency
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
@@ -398,6 +509,21 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     eventTree.forEach((node, index) => flatten(node, `${node.event.id}-root-${index}`));
     return list;
   }, [eventTree]);
+
+  // --- Render tracking (filter by [Render] or [Memo] in console) ---
+  useRenderLogger('EventHierarchy', {
+    eventsIn: events.length,
+    displayEvents: displayEvents.length,
+    eventTree: eventTree.length,
+    flattenedItems: flattenedItems.length,
+    expandedNodes: expandedNodes.size,
+    collapsedSessions: collapsedSessions.size,
+    eventMode,
+  })
+  useMemoLogger('EH.displayEvents', displayEvents, displayEvents.length)
+  useMemoLogger('EH.combinedStats', delegationStats, Object.keys(delegationStats).length + ' delegations')
+  useMemoLogger('EH.eventTree', eventTree, eventTree.length)
+  useMemoLogger('EH.flattenedItems', flattenedItems, flattenedItems.length)
 
   const handleLoadMore = useCallback(async () => {
     if (!sessionId || isLoadingOlder) return;
@@ -490,6 +616,16 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     );
   }, [collapsedSessions, findEventsBetweenStartEnd, getAgentSessionKey, toggleAgentSession, toggleNode, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact, flatHierarchy, delegationStats, backgroundAgentStats]);
 
+  // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
+  // Sub-agent events change displayEvents but don't add items to flattenedItems.
+  const handleFollowOutput = useCallback((isAtBottom: boolean): false | 'smooth' => {
+    const current = flattenedItems.length;
+    const prev = prevFlattenedCountRef.current;
+    prevFlattenedCountRef.current = current;
+    if (current > prev && isAtBottom) return 'smooth';
+    return false;
+  }, [flattenedItems.length]);
+
   if (flattenedItems.length === 0) {
     return <div className="text-gray-500 text-center py-4">No hierarchical events to display</div>;
   }
@@ -502,7 +638,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         customScrollParent={scrollParent || undefined}
         useWindowScroll={!scrollParent}
         increaseViewportBy={300}
-        followOutput="smooth"
+        followOutput={handleFollowOutput}
         itemContent={renderItem}
         components={{
           Header: () => hasMoreOlderEvents ? (

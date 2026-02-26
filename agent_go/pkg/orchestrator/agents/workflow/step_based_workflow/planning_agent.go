@@ -42,6 +42,9 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 - **Conditional**: Inspection-only branch (no execution).
 - **Todo Task**: Manages a dynamic todo list with trackable tasks. Main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning) or generic agent (no learning). Use when: work can be broken into trackable tasks, multiple specialized agents needed, or detailed progress tracking required.
 - **Loop**: Repeat until criteria met (polled progress).
+- **Routing**: N-way LLM-based routing. Evaluates a routing_question and selects one of N routes (each with route_id + next_step_id). Two modes: (1) Execute-then-route: has description/success_criteria, executes first then routes; (2) Pure routing: no description, evaluates prior context to pick a route.
+- **Human Input**: Asks a question to the user and blocks until they respond. Supports response types: 'text' (free-form), 'yesno' (approve/reject), 'multiple_choice' (pick from options). Can store response in a variable via 'variable_name'. Routes based on response: 'if_yes_next_step_id'/'if_no_next_step_id' for yesno, 'option_routes' for multiple choice, 'next_step_id' as fallback.
+- **Human + Routing Pattern**: When the user needs to provide input that determines the workflow path, place a 'human_input' step BEFORE a 'routing' step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do NOT use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
 
 {{if eq .UseKnowledgebase "true"}}### 📁 Persistent Storage (Knowledgebase)
 - **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
@@ -358,6 +361,7 @@ const (
 	StepTypeOrchestration StepType = "orchestration"
 	StepTypeHumanInput    StepType = "human_input"
 	StepTypeTodoTask      StepType = "todo_task"
+	StepTypeRouting       StepType = "routing"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -732,6 +736,80 @@ func (d *DecisionPlanStep) unmarshalLegacyFormat(data []byte) error {
 	// Log the migration (note: we don't have access to logger here, so this is silent)
 	// The migration will be visible when the plan is next saved (it will be in the new format)
 
+	return nil
+}
+
+// RoutingRoute represents a single route option in a routing step
+type RoutingRoute struct {
+	RouteID    string `json:"route_id"`
+	RouteName  string `json:"route_name"`
+	Condition  string `json:"condition"`
+	NextStepID string `json:"next_step_id"`
+}
+
+// RoutingResponse represents the structured response from routing evaluation
+type RoutingResponse struct {
+	SelectedRouteID string `json:"selected_route_id"` // The route selected by the LLM
+	Reasoning       string `json:"reasoning"`         // Reasoning for the selection
+}
+
+// RoutingPlanStep represents a routing step that evaluates N-way routing
+// Two modes:
+// - Execute-then-route: Has Description/SuccessCriteria -> executes first, then LLM evaluates output to pick a route
+// - Pure routing: No Description/SuccessCriteria -> LLM evaluates prior context to pick a route (multi-way conditional)
+type RoutingPlanStep struct {
+	Type StepType `json:"type"` // Always "routing" - required for JSON marshaling/unmarshaling
+	CommonStepFields
+	RoutingQuestion string           `json:"routing_question"`           // Question to evaluate for route selection (required)
+	Routes          []RoutingRoute   `json:"routes"`                     // Available routes (min 2, required)
+	DefaultRouteID  string           `json:"default_route_id,omitempty"` // Optional fallback route_id if LLM picks invalid route
+	SelectedRouteID string           `json:"-"`                          // runtime: stores selected route ID
+	RoutingResponse *RoutingResponse `json:"-"`                          // runtime: stores structured routing response
+	AgentConfigs    *AgentConfigs    `json:"-"`                          // runtime: per-agent configuration
+}
+
+// Implement PlanStepInterface for RoutingPlanStep
+func (r *RoutingPlanStep) GetID() string                           { return r.ID }
+func (r *RoutingPlanStep) GetTitle() string                        { return r.Title }
+func (r *RoutingPlanStep) GetDescription() string                  { return r.Description }
+func (r *RoutingPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
+func (r *RoutingPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
+func (r *RoutingPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
+func (r *RoutingPlanStep) GetEnablePrerequisiteDetection() *bool {
+	return nil // Not supported on routing steps
+}
+func (r *RoutingPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on routing steps
+func (r *RoutingPlanStep) GetValidationSchema() *ValidationSchema   { return r.ValidationSchema }
+func (r *RoutingPlanStep) StepType() StepType                       { return StepTypeRouting }
+func (r *RoutingPlanStep) GetCommonFields() CommonStepFields {
+	return CommonStepFields{
+		ID:                          r.ID,
+		Title:                       r.Title,
+		Description:                 r.Description,
+		SuccessCriteria:             r.SuccessCriteria,
+		ContextDependencies:         r.ContextDependencies,
+		ContextOutput:               r.ContextOutput,
+		EnablePrerequisiteDetection: nil,
+		PrerequisiteRules:           nil,
+		ValidationSchema:            r.ValidationSchema,
+	}
+}
+
+// MarshalJSON ensures the type field is always set when marshaling
+func (r *RoutingPlanStep) MarshalJSON() ([]byte, error) {
+	r.Type = StepTypeRouting
+	type Alias RoutingPlanStep
+	return json.Marshal((*Alias)(r))
+}
+
+// UnmarshalJSON implements custom unmarshaling for RoutingPlanStep
+func (r *RoutingPlanStep) UnmarshalJSON(data []byte) error {
+	type Alias RoutingPlanStep
+	var temp Alias
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return fmt.Errorf("failed to unmarshal routing step: %w", err)
+	}
+	*r = RoutingPlanStep(temp)
 	return nil
 }
 
@@ -1161,7 +1239,7 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 		}
 
 		if stepWithType.Type == "" {
-			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, human_input, or todo_task)", i)
+			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", i)
 		}
 
 		// Unmarshal based on type
@@ -1203,8 +1281,14 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 				return fmt.Errorf("failed to parse todo_task step %d: %w", i, err)
 			}
 			typedStep = &step
+		case "routing":
+			var step RoutingPlanStep
+			if err := json.Unmarshal(stepData, &step); err != nil {
+				return fmt.Errorf("failed to parse routing step %d: %w", i, err)
+			}
+			typedStep = &step
 		default:
-			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, orchestration, human_input, or todo_task)", stepWithType.Type, i)
+			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", stepWithType.Type, i)
 		}
 
 		pr.Steps[i] = typedStep
@@ -1266,6 +1350,10 @@ type PartialPlanStep struct {
 	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
 	IfFalseNextStepID string `json:"if_false_next_step_id,omitempty"` // Optional: Updated if_false_next_step_id
 	NextStepID        string `json:"next_step_id,omitempty"`          // Optional: Updated next_step_id (for routing steps)
+	// Routing step fields
+	RoutingQuestion string         `json:"routing_question,omitempty"` // Optional: Updated routing question
+	Routes          []RoutingRoute `json:"routes,omitempty"`           // Optional: Updated routes
+	DefaultRouteID  string         `json:"default_route_id,omitempty"` // Optional: Updated default route ID
 	// Human input step fields
 	Question         string            `json:"question,omitempty"`            // Optional: Updated question
 	VariableName     string            `json:"variable_name,omitempty"`       // Optional: Updated variable name
@@ -1794,7 +1882,7 @@ func getAddConditionalStepSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', or 'orchestration'. Most branch steps are 'regular'."},
+						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
 						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
@@ -1844,14 +1932,14 @@ func getAddConditionalStepSchema() string {
 					},
 					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
 				},
-				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration') and an 'id' field."
+				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing') and an 'id' field."
 			},
 			"if_false_steps": {
 				"type": "array",
 				"items": {
 					"type": "object",
 					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', or 'orchestration'. Most branch steps are 'regular'."},
+						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
 						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
@@ -1901,7 +1989,7 @@ func getAddConditionalStepSchema() string {
 					},
 					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
 				},
-				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration') and an 'id' field."
+				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing') and an 'id' field."
 			},
 			"if_true_next_step_id": {
 				"type": "string",
@@ -2008,6 +2096,138 @@ func getAddDecisionStepSchema() string {
 			}
 		},
 		"required": ["id", "title", "description", "success_criteria", "context_dependencies", "context_output", "validation_schema", "decision_evaluation_question", "if_true_next_step_id", "if_false_next_step_id", "insert_after_step_id"]
+	}`
+}
+
+// getAddRoutingStepSchema returns the JSON schema for add_routing_step tool
+func getAddRoutingStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"id": {
+				"type": "string",
+				"description": "REQUIRED: Stable step ID for this routing step. Generate a unique, URL-friendly ID based on the step title."
+			},
+			"title": {
+				"type": "string",
+				"description": "REQUIRED: Short, clear title for the routing step"
+			},
+			"description": {
+				"type": "string",
+				"description": "OPTIONAL: Description of what the routing step does during execution phase. If provided, the step executes first (execute-then-route mode). If omitted, routing evaluates prior context only (pure routing mode)."
+			},
+			"success_criteria": {
+				"type": "string",
+				"description": "OPTIONAL: How to verify execution completed. REQUIRED if description is provided (execute-then-route mode)."
+			},
+			"context_dependencies": {
+				"type": "array",
+				"items": {"type": "string"},
+				"description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."
+			},
+			"context_output": {
+				"type": "string",
+				"description": "OPTIONAL: Context file this step will create. Only needed for execute-then-route mode."
+			},
+			"routing_question": {
+				"type": "string",
+				"description": "REQUIRED: Question to evaluate for route selection (e.g., 'Based on the classification result, which processing pipeline should handle this input?'). This is asked AFTER execution (if execute-then-route) or evaluated against prior context (if pure routing)."
+			},
+			"routes": {
+				"type": "array",
+				"minItems": 2,
+				"items": {
+					"type": "object",
+					"properties": {
+						"route_id": {
+							"type": "string",
+							"description": "REQUIRED: Unique identifier for this route (e.g., 'route_positive', 'route_negative')"
+						},
+						"route_name": {
+							"type": "string",
+							"description": "REQUIRED: Human-readable name for this route (e.g., 'Positive Sentiment')"
+						},
+						"condition": {
+							"type": "string",
+							"description": "REQUIRED: Description of when this route should be selected (e.g., 'Select when sentiment analysis indicates positive sentiment')"
+						},
+						"next_step_id": {
+							"type": "string",
+							"description": "REQUIRED: ID of step to route to when this route is selected. Use step ID from the plan, or 'end' to terminate workflow."
+						}
+					},
+					"required": ["route_id", "route_name", "condition", "next_step_id"]
+				},
+				"description": "REQUIRED: Array of possible routes (minimum 2). Each route has a route_id, route_name, condition description, and next_step_id."
+			},
+			"default_route_id": {
+				"type": "string",
+				"description": "OPTIONAL: Fallback route_id to use if LLM picks an invalid route. Must match one of the route_ids in routes."
+			},
+			"insert_after_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string to insert at the beginning."
+			}
+		},
+		"required": ["id", "title", "routing_question", "routes", "context_dependencies", "insert_after_step_id"]
+	}`
+}
+
+// getUpdateRoutingStepSchema returns the JSON schema for update_routing_step tool
+func getUpdateRoutingStepSchema() string {
+	return `{
+		"type": "object",
+		"properties": {
+			"existing_step_id": {
+				"type": "string",
+				"description": "REQUIRED: The ID of the routing step to update. Use the step's id field from the plan."
+			},
+			"title": {
+				"type": "string",
+				"description": "OPTIONAL: New title for the step."
+			},
+			"description": {
+				"type": "string",
+				"description": "OPTIONAL: Updated description. Provide to enable execute-then-route mode."
+			},
+			"success_criteria": {
+				"type": "string",
+				"description": "OPTIONAL: Updated success criteria. Required if description is provided."
+			},
+			"context_dependencies": {
+				"type": "array",
+				"items": { "type": "string" },
+				"description": "OPTIONAL: Updated context dependencies."
+			},
+			"context_output": {
+				"type": "string",
+				"description": "OPTIONAL: Updated context output."
+			},
+			"routing_question": {
+				"type": "string",
+				"description": "OPTIONAL: Updated routing question."
+			},
+			"routes": {
+				"type": "array",
+				"minItems": 2,
+				"items": {
+					"type": "object",
+					"properties": {
+						"route_id": {"type": "string"},
+						"route_name": {"type": "string"},
+						"condition": {"type": "string"},
+						"next_step_id": {"type": "string"}
+					},
+					"required": ["route_id", "route_name", "condition", "next_step_id"]
+				},
+				"description": "OPTIONAL: Updated routes array (minimum 2)."
+			},
+			"default_route_id": {
+				"type": "string",
+				"description": "OPTIONAL: Updated default route ID."
+			}
+		},
+		"required": ["existing_step_id"]
 	}`
 }
 
@@ -2515,7 +2735,7 @@ func getAddBranchStepsSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', or 'orchestration'. Most branch steps are 'regular'."},
+						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
 						"id": {
 							"type": "string",
 							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
@@ -2537,7 +2757,7 @@ func getAddBranchStepsSchema() string {
 					},
 					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
 				},
-				"description": "REQUIRED: New steps to add to the specified branch. Provide complete step definitions with IDs. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration')."
+				"description": "REQUIRED: New steps to add to the specified branch. Provide complete step definitions with IDs. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing')."
 			}
 		},
 		"required": ["parent_step_id", "branch_type", "new_steps"]
@@ -2694,7 +2914,7 @@ func getUpdateConditionalStepSchema() string {
 				"items": {
 					"type": "object",
 					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', or 'orchestration'. Most branch steps are 'regular'."},
+						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
 						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
@@ -2713,14 +2933,14 @@ func getUpdateConditionalStepSchema() string {
 					},
 					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
 				},
-				"description": "OPTIONAL: Updated if_true_steps array. Only include if you want to change it. Array of steps to execute if condition is true. Can be empty array [] to clear all steps. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration'). If omitted, the existing if_true_steps are preserved."
+				"description": "OPTIONAL: Updated if_true_steps array. Only include if you want to change it. Array of steps to execute if condition is true. Can be empty array [] to clear all steps. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing'). If omitted, the existing if_true_steps are preserved."
 			},
 			"if_false_steps": {
 				"type": "array",
 				"items": {
 					"type": "object",
 					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', or 'orchestration'. Most branch steps are 'regular'."},
+						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
 						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
 						"title": {"type": "string"},
 						"description": {"type": "string"},
@@ -2739,7 +2959,7 @@ func getUpdateConditionalStepSchema() string {
 					},
 					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
 				},
-				"description": "OPTIONAL: Updated if_false_steps array. Only include if you want to change it. Array of steps to execute if condition is false. Can be empty array [] to clear all steps. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', or 'orchestration'). If omitted, the existing if_false_steps are preserved."
+				"description": "OPTIONAL: Updated if_false_steps array. Only include if you want to change it. Array of steps to execute if condition is false. Can be empty array [] to clear all steps. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing'). If omitted, the existing if_false_steps are preserved."
 			},
 			"if_true_next_step_id": {
 				"type": "string",
@@ -3119,6 +3339,12 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse todo_task step: %w", err)
 		}
 		typedStep = &step
+	case "routing":
+		var step RoutingPlanStep
+		if err := json.Unmarshal(stepJSON, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse routing step: %w", err)
+		}
+		typedStep = &step
 	default:
 		return nil, fmt.Errorf("unknown step type %q", stepType)
 	}
@@ -3189,8 +3415,15 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		}
 		step.Type = StepTypeTodoTask
 		typedStep = &step
+	case "routing":
+		var step RoutingPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse routing step: %w", err)
+		}
+		step.Type = StepTypeRouting
+		typedStep = &step
 	default:
-		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, orchestration, human_input, or todo_task)", stepType)
+		return nil, fmt.Errorf("unknown step type %q (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", stepType)
 	}
 
 	return typedStep, nil
@@ -3429,6 +3662,8 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 		if s.TodoTaskStep != nil {
 			updateValidationSchemaOnStep(s.TodoTaskStep, schema)
 		}
+	case *RoutingPlanStep:
+		s.ValidationSchema = schema
 	}
 }
 
@@ -4132,6 +4367,37 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		if partialUpdate.ValidationSchema != nil && updated.TodoTaskStep != nil {
 			// Update validation schema on the inner TodoTaskStep
 			updateValidationSchemaOnStep(updated.TodoTaskStep, partialUpdate.ValidationSchema)
+		}
+		return &updated
+
+	case *RoutingPlanStep:
+		updated := *step
+		if partialUpdate.Title != "" {
+			updated.Title = partialUpdate.Title
+		}
+		if partialUpdate.Description != "" {
+			updated.Description = partialUpdate.Description
+		}
+		if partialUpdate.SuccessCriteria != "" {
+			updated.SuccessCriteria = partialUpdate.SuccessCriteria
+		}
+		if partialUpdate.ContextDependencies != nil {
+			updated.ContextDependencies = partialUpdate.ContextDependencies
+		}
+		if partialUpdate.ContextOutput != "" {
+			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
+		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
+		}
+		if partialUpdate.RoutingQuestion != "" {
+			updated.RoutingQuestion = partialUpdate.RoutingQuestion
+		}
+		if len(partialUpdate.Routes) > 0 {
+			updated.Routes = partialUpdate.Routes
+		}
+		if partialUpdate.DefaultRouteID != "" {
+			updated.DefaultRouteID = partialUpdate.DefaultRouteID
 		}
 		return &updated
 
@@ -5441,6 +5707,122 @@ func createUpdateTodoTaskStepExecutor(workspacePath string, logger loggerv2.Logg
 	}
 }
 
+// createAddRoutingStepExecutor creates an executor function for add_routing_step tool
+func createAddRoutingStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "routing", unlockLearningsFunc)
+}
+
+// validateRoutingStepFieldsTyped validates that a RoutingPlanStep has all required fields
+func validateRoutingStepFieldsTyped(step *RoutingPlanStep) error {
+	if step.ID == "" {
+		return fmt.Errorf("routing step (title: %q) is missing required ID field", step.Title)
+	}
+	if step.RoutingQuestion == "" {
+		return fmt.Errorf("routing step (title: %q, ID: %s) is missing required routing_question field", step.Title, step.ID)
+	}
+	if len(step.Routes) < 2 {
+		return fmt.Errorf("routing step (title: %q, ID: %s) must have at least 2 routes, got %d", step.Title, step.ID, len(step.Routes))
+	}
+	// Check for duplicate route IDs
+	routeIDs := make(map[string]bool)
+	for _, route := range step.Routes {
+		if route.RouteID == "" {
+			return fmt.Errorf("routing step (title: %q, ID: %s) has a route with empty route_id", step.Title, step.ID)
+		}
+		if route.NextStepID == "" {
+			return fmt.Errorf("routing step (title: %q, ID: %s) route %q is missing required next_step_id", step.Title, step.ID, route.RouteID)
+		}
+		if routeIDs[route.RouteID] {
+			return fmt.Errorf("routing step (title: %q, ID: %s) has duplicate route_id %q", step.Title, step.ID, route.RouteID)
+		}
+		routeIDs[route.RouteID] = true
+	}
+	// If description is set, success_criteria must also be set (execute-then-route mode)
+	if step.Description != "" && step.SuccessCriteria == "" {
+		return fmt.Errorf("routing step (title: %q, ID: %s) has description but is missing required success_criteria (execute-then-route mode requires both)", step.Title, step.ID)
+	}
+	// Validate default_route_id if set
+	if step.DefaultRouteID != "" {
+		if !routeIDs[step.DefaultRouteID] {
+			return fmt.Errorf("routing step (title: %q, ID: %s) has default_route_id %q that doesn't match any route_id", step.Title, step.ID, step.DefaultRouteID)
+		}
+	}
+	return nil
+}
+
+// createUpdateRoutingStepExecutor creates an executor function for update_routing_step tool
+func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		stepJSON, err := json.Marshal(args)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal step: %w", err)
+		}
+
+		var partialUpdate PartialPlanStep
+		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
+			return "", fmt.Errorf("failed to parse step: %w", err)
+		}
+
+		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
+		if err != nil {
+			return "", fmt.Errorf("failed to read plan: %w", err)
+		}
+
+		var existingStep PlanStepInterface
+		for _, step := range plan.Steps {
+			if step.GetID() == partialUpdate.ExistingStepID {
+				existingStep = step
+				break
+			}
+		}
+		if existingStep == nil {
+			availableIDs := make([]string, 0, len(plan.Steps))
+			for _, step := range plan.Steps {
+				availableIDs = append(availableIDs, step.GetID())
+			}
+			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
+		}
+
+		if _, ok := existingStep.(*RoutingPlanStep); !ok {
+			return "", fmt.Errorf("step with ID '%s' is not a routing step", partialUpdate.ExistingStepID)
+		}
+
+		fieldChanges := make([]PlanFieldChange, 0)
+		stepIndex, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
+		if err != nil {
+			return "", err
+		}
+
+		// Validate the updated step
+		updatedStep := plan.Steps[stepIndex]
+		updatedRoutingStep, ok := updatedStep.(*RoutingPlanStep)
+		if !ok {
+			return "", fmt.Errorf("updated step is not a routing step")
+		}
+
+		if err := validateRoutingStepFieldsTyped(updatedRoutingStep); err != nil {
+			return "", fmt.Errorf("validation failed after update: %w", err)
+		}
+
+		if err := validatePlanStepIDs(plan.Steps); err != nil {
+			return "", fmt.Errorf("plan validation failed after update: %w", err)
+		}
+
+		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
+			return "", fmt.Errorf("failed to write plan: %w", err)
+		}
+
+		if unlockLearningsFunc != nil && stepIndex >= 0 {
+			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", partialUpdate.ExistingStepID, err))
+			}
+		}
+
+		logger.Info(fmt.Sprintf("✅ Updated routing step '%s' in plan", partialUpdate.ExistingStepID))
+		return fmt.Sprintf("Successfully updated routing step '%s' in the plan", partialUpdate.ExistingStepID), nil
+	}
+}
+
 // createAddRegularStepExecutor creates an executor function for add_regular_step tool
 func createAddRegularStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "regular", unlockLearningsFunc)
@@ -5610,6 +5992,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		case "todo_task":
 			if todoTaskStep, ok := typedStep.(*TodoTaskPlanStep); ok {
 				if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
+					return "", fmt.Errorf("validation failed: %w", err)
+				}
+			}
+		case "routing":
+			if routingStep, ok := typedStep.(*RoutingPlanStep); ok {
+				if err := validateRoutingStepFieldsTyped(routingStep); err != nil {
 					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}
@@ -5919,6 +6307,36 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register add_todo_task_step tool: %w", err)
+	}
+
+	routingSchema := getAddRoutingStepSchema()
+	routingParams, err := parseSchemaForToolParameters(routingSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse routing step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"add_routing_step",
+		"Add a routing step to the plan. Use this for N-way LLM-based routing where you need to evaluate a question and route to one of multiple possible next steps. Two modes: (1) Execute-then-route: provide description/success_criteria to execute a step first, then route based on output; (2) Pure routing: omit description to evaluate prior context only. Provide: id, title, routing_question, routes (min 2 with route_id/route_name/condition/next_step_id), context_dependencies, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		routingParams,
+		createAddRoutingStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_routing_step tool: %w", err)
+	}
+
+	routingUpdateSchema := getUpdateRoutingStepSchema()
+	routingUpdateParams, err := parseSchemaForToolParameters(routingUpdateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse update routing step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_routing_step",
+		"Update a routing step in the plan. Provide existing_step_id (required) to identify which routing step to update, and only include the fields you want to change (title, description, success_criteria, routing_question, routes, default_route_id, context_dependencies, context_output). The plan.json file is updated immediately when this tool is called.",
+		routingUpdateParams,
+		createUpdateRoutingStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_routing_step tool: %w", err)
 	}
 
 	// Register conditional step tools

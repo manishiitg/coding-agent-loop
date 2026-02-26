@@ -224,8 +224,8 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 
 	// Tools
 	config := edm.CreateStandardAgentConfigWithLLM("evaluation-debugger-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(edm.presetLLM)
 	config.UseToolSearchMode = false
 	
 	// MCP Servers (use preset if available, else none)
@@ -242,6 +242,9 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 		config.ServerNames = []string{mcpclient.NoServers}
 	}
 
+	// Use minimal workspace tools (shell_command + human) for phase agent
+	phaseTools, phaseExecutors := edm.BaseOrchestrator.PreparePhaseAgentTools()
+
 	// Create wrapper
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return NewWorkflowEvaluationDebuggerAgent(cfg, logger, tracer, eventBridge, edm.BaseOrchestrator)
@@ -255,8 +258,8 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 		0, 0,
 		"evaluation-debugger",
 		createAgentFunc,
-		edm.WorkspaceTools,
-		edm.WorkspaceToolExecutors,
+		phaseTools,
+		phaseExecutors,
 		true,
 	)
 	if err != nil {

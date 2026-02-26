@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -19,6 +21,14 @@ type ReadPDFParams struct {
 	PageRange string `json:"page_range,omitempty"`
 	MaxPages  int    `json:"max_pages,omitempty"`
 	Password  string `json:"password,omitempty"`
+}
+
+// pythonPDFResult is the JSON structure returned by extract_pdf_text.py
+type pythonPDFResult struct {
+	TotalPages     int    `json:"total_pages"`
+	ExtractedPages int    `json:"extracted_pages"`
+	Content        string `json:"content"`
+	Error          string `json:"error"`
 }
 
 // ReadPDF reads and extracts text content from a PDF file
@@ -90,11 +100,17 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 		return "", fmt.Errorf("failed to read PDF data: %w", err)
 	}
 
-	// Parse and extract text using the PDF library
-	content, totalPages, extractedPages, err := extractPDFText(pdfData, pageRange, maxPages, params.Password)
+	// Extract text using Python/pypdf subprocess
+	result, err := extractPDFTextPython(ctx, pdfData, pageRange, maxPages, params.Password)
 	if err != nil {
 		return "", err
 	}
+
+	if result.Error != "" {
+		return "", fmt.Errorf("PDF extraction failed: %s", result.Error)
+	}
+
+	content := result.Content
 
 	// Truncate if content is too large (100KB for LLM)
 	const maxContentSize = 100 * 1024
@@ -106,8 +122,8 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 
 	response := map[string]interface{}{
 		"filepath":        params.Filepath,
-		"total_pages":     totalPages,
-		"extracted_pages": extractedPages,
+		"total_pages":     result.TotalPages,
+		"extracted_pages": result.ExtractedPages,
 		"page_range":      pageRange,
 		"content":         content,
 	}
@@ -125,105 +141,65 @@ func (c *Client) ReadPDF(ctx context.Context, params ReadPDFParams) (string, err
 	return string(responseJSON), nil
 }
 
-// extractPDFText extracts text from PDF data
-// Note: This is a simplified implementation. For production, consider using a proper PDF library.
-func extractPDFText(pdfData []byte, pageRange string, maxPages int, password string) (string, int, int, error) {
-	// Try to use the ledongthuc/pdf library
-	var pdfReader *pdfReaderWrapper
-	var err error
+// findPDFScript locates extract_pdf_text.py by checking:
+// 1. /app/scripts/ (Docker container path)
+// 2. Next to the running binary under scripts/
+// 3. scripts/ relative to working directory (local dev — cwd is agent_go/)
+// 4. agent_go/scripts/ relative to working directory (if cwd is repo root)
+func findPDFScript() (string, error) {
+	const scriptName = "extract_pdf_text.py"
+	candidates := []string{filepath.Join("/app", "scripts", scriptName)}
+
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "scripts", scriptName))
+	}
+
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(wd, "scripts", scriptName),
+			filepath.Join(wd, "agent_go", "scripts", scriptName),
+		)
+	}
+
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("extract_pdf_text.py not found (searched: %v)", candidates)
+}
+
+// extractPDFTextPython calls the Python extract_pdf_text.py script via subprocess,
+// piping PDF bytes through stdin and reading JSON from stdout.
+func extractPDFTextPython(ctx context.Context, pdfData []byte, pageRange string, maxPages int, password string) (*pythonPDFResult, error) {
+	scriptPath, err := findPDFScript()
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{scriptPath,
+		"--page-range", pageRange,
+		"--max-pages", strconv.Itoa(maxPages),
+	}
 	if password != "" {
-		pdfReader, err = newPDFReaderWithPassword(bytes.NewReader(pdfData), int64(len(pdfData)), password)
-	} else {
-		pdfReader, err = newPDFReader(bytes.NewReader(pdfData), int64(len(pdfData)))
-	}
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("failed to parse PDF: %w", err)
+		args = append(args, "--password", password)
 	}
 
-	totalPages := pdfReader.NumPage()
-	if totalPages == 0 {
-		return "", 0, 0, fmt.Errorf("PDF has no pages")
+	cmd := exec.CommandContext(ctx, "python3", args...)
+	cmd.Stdin = bytes.NewReader(pdfData)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("python PDF extraction failed: %w (stderr: %s)", err, stderr.String())
 	}
 
-	pagesToExtract, err := parsePageRange(pageRange, totalPages, maxPages)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("invalid page_range: %w", err)
+	var result pythonPDFResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse Python PDF output: %w (stdout: %s)", err, stdout.String())
 	}
 
-	var textContent strings.Builder
-	extractedPages := 0
-
-	for _, pageNum := range pagesToExtract {
-		if pageNum < 1 || pageNum > totalPages {
-			continue
-		}
-
-		pageText := pdfReader.GetPageText(pageNum)
-		if pageText != "" {
-			textContent.WriteString(fmt.Sprintf("\n--- Page %d ---\n", pageNum))
-			textContent.WriteString(pageText)
-			extractedPages++
-		}
-	}
-
-	content := strings.TrimSpace(textContent.String())
-	if content == "" {
-		content = "(No text content could be extracted from this PDF. It may contain only images or scanned content.)"
-	}
-
-	return content, totalPages, extractedPages, nil
-}
-
-// parsePageRange parses a page range string and returns a slice of page numbers
-func parsePageRange(rangeStr string, totalPages, maxPages int) ([]int, error) {
-	rangeStr = strings.TrimSpace(strings.ToLower(rangeStr))
-
-	if rangeStr == "all" || rangeStr == "" {
-		pages := make([]int, 0, min(totalPages, maxPages))
-		for i := 1; i <= totalPages && len(pages) < maxPages; i++ {
-			pages = append(pages, i)
-		}
-		return pages, nil
-	}
-
-	var pages []int
-	parts := strings.Split(rangeStr, ",")
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.Contains(part, "-") {
-			rangeParts := strings.Split(part, "-")
-			if len(rangeParts) != 2 {
-				return nil, fmt.Errorf("invalid range format: %s", part)
-			}
-			start, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
-			if err != nil {
-				return nil, fmt.Errorf("invalid page number: %s", rangeParts[0])
-			}
-			end, err := strconv.Atoi(strings.TrimSpace(rangeParts[1]))
-			if err != nil {
-				return nil, fmt.Errorf("invalid page number: %s", rangeParts[1])
-			}
-			for i := start; i <= end && len(pages) < maxPages; i++ {
-				pages = append(pages, i)
-			}
-		} else {
-			pageNum, err := strconv.Atoi(part)
-			if err != nil {
-				return nil, fmt.Errorf("invalid page number: %s", part)
-			}
-			if len(pages) < maxPages {
-				pages = append(pages, pageNum)
-			}
-		}
-	}
-
-	return pages, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+	return &result, nil
 }

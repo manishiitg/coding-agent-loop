@@ -6,6 +6,7 @@ import { TodoTaskNode } from './TodoTaskNode'
 import { LoopNode } from './LoopNode'
 import { HumanInputNode } from './HumanInputNode'
 import { EvaluationNode } from './EvaluationNode'
+import { RoutingStepNode } from './RoutingStepNode'
 import { StartNode, EndNode } from './StartEndNodes'
 import { VariablesNode } from './VariablesNode'
 import { ExecutionSettingsNode } from './ExecutionSettingsNode'
@@ -18,6 +19,7 @@ export { TodoTaskNode } from './TodoTaskNode'
 export { LoopNode } from './LoopNode'
 export { HumanInputNode } from './HumanInputNode'
 export { EvaluationNode } from './EvaluationNode'
+export { RoutingStepNode } from './RoutingStepNode'
 export { StartNode, EndNode } from './StartEndNodes'
 export { VariablesNode } from './VariablesNode'
 export { ExecutionSettingsNode } from './ExecutionSettingsNode'
@@ -33,6 +35,7 @@ export const nodeTypes = {
   human_input: HumanInputNode,
   loop: LoopNode,
   evaluation: EvaluationNode,
+  routing: RoutingStepNode,
   start: StartNode,
   end: EndNode,
   variables: VariablesNode,

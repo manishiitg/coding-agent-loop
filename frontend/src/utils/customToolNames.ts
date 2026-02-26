@@ -21,12 +21,11 @@ export const WORKSPACE_GIT_TOOLS = [
   'get_workspace_github_status',
 ] as const;
 
-// workspace_advanced: 5 advanced tools (shell, image, web fetch, PDF, diff patch)
+// workspace_advanced: 4 advanced tools (shell, image, PDF, diff patch)
 // Maps to backend "workspace_advanced" category
 export const WORKSPACE_ADVANCED_TOOLS = [
   'execute_shell_command',
   'read_image',
-  'fetch_web_content',
   'read_pdf',
   'diff_patch_workspace_file',
 ] as const;
@@ -58,7 +57,7 @@ export type HumanToolName = typeof HUMAN_TOOLS[number];
 export type CustomToolName = WorkspaceToolName | HumanToolName;
 
 // Helper to get all tools for a category
-// Supports: workspace_tools (all), workspace_basic (8), workspace_git (2), workspace_advanced (5), human_tools
+// Supports: workspace_tools (all), workspace_basic (8), workspace_git (2), workspace_advanced (4), human_tools
 export function getToolsByCategory(category: string, capabilities?: { semantic_search_enabled?: boolean, github_sync_enabled?: boolean }): string[] {
   const isSemanticEnabled = capabilities?.semantic_search_enabled ?? true;
   const isGitEnabled = capabilities?.github_sync_enabled ?? true;
@@ -82,7 +81,7 @@ export function getToolsByCategory(category: string, capabilities?: { semantic_s
       // GitHub sync tools (2 tools)
       return isGitEnabled ? [...WORKSPACE_GIT_TOOLS] : [];
     case 'workspace_advanced':
-      // Advanced tools (5 tools: shell + image + web fetch + PDF + diff patch)
+      // Advanced tools (4 tools: shell + image + PDF + diff patch)
       return [...WORKSPACE_ADVANCED_TOOLS];
     case 'workspace_browser':
       // Browser automation tool (1 tool)

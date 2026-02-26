@@ -1,8 +1,8 @@
 import { useMemo } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
-import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema, RoutingRoute } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep, isTodoTaskStep, isRoutingStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -148,6 +148,24 @@ export interface HumanInputNodeData extends Record<string, unknown> {
   selectedRunFolder?: string  // Selected iteration folder for file opening
 }
 
+export interface RoutingStepNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  routing_question?: string
+  routes?: RoutingRoute[]
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'executing' | 'evaluating' | 'routed'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType
+  onRunFromStep?: OnRunFromStepCallback
+  onOpenSidebar?: OnOpenSidebarCallback
+  isExecuting?: boolean
+  canRun?: boolean
+  workspacePath?: string | null
+  selectedRunFolder?: string
+  validation_schema?: ValidationSchema
+}
+
 export interface ValidationNodeData extends Record<string, unknown> {
   id: string
   parentStepId: string
@@ -192,7 +210,7 @@ export interface EvaluationStepNodeData extends Record<string, unknown> {
   isEvaluationStep: boolean
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData | HumanInputNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -236,6 +254,7 @@ const NODE_DIMENSIONS = {
   step: { width: 280, height: 120 },
   conditional: { width: 240, height: 100 },
   decision: { width: 260, height: 120 },
+  routing: { width: 280, height: 200 },
   orchestrator: { width: 300, height: 120 },
   todo_task: { width: 300, height: 120 },
   human_input: { width: 260, height: 120 },
@@ -302,6 +321,20 @@ function estimateNodeHeight(node: WorkflowNode): number {
     }
     if (todoData.enable_generic_agent) {
       contentHeight += 20
+    }
+  }
+
+  // For routing nodes, add height for routing question + route labels
+  if (node.type === 'routing') {
+    const routingData = data as RoutingStepNodeData
+    if (routingData.routing_question) {
+      contentHeight += 40 // routing question box
+    }
+    contentHeight += 25 // route count badge
+    if (routingData.routes && routingData.routes.length > 0) {
+      // Route labels wrap ~3 per row, each row ~22px
+      const rows = Math.ceil(routingData.routes.length / 3)
+      contentHeight += (rows * 22) + 12
     }
   }
 
@@ -973,6 +1006,20 @@ function stepToNode(
     }
   }
 
+  if (isRoutingStep(step)) {
+    return {
+      id: nodeId,
+      type: 'routing',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        routing_question: step.routing_question,
+        routes: step.routes,
+        validation_schema: step.validation_schema
+      } as RoutingStepNodeData
+    }
+  }
+
   if (isOrchestrationStep(step)) {
     return {
       id: nodeId,
@@ -1545,6 +1592,54 @@ function processSteps(
 
       // Decision steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null
+    }
+
+    // Handle routing step edge routing
+    // Routing steps evaluate a question and route to one of N possible next steps
+    if (isRoutingStep(step)) {
+      const routingEdges: WorkflowEdge[] = []
+      const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
+
+      if (step.routes) {
+        step.routes.forEach((route) => {
+          const targetNodeId = stepIdToNodeIdMap?.get(route.next_step_id)
+
+          if (targetNodeId) {
+            routingEdges.push({
+              id: `${sourceNodeId}-routing-${route.route_id}-to-${targetNodeId}`,
+              source: sourceNodeId,
+              sourceHandle: `route-${route.route_id}`,
+              target: targetNodeId,
+              type: 'smoothstep',
+              label: route.route_name || route.route_id,
+              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 10 },
+              labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+              labelBgPadding: [3, 3] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#14b8a6', strokeWidth: 1.5 },
+              animated: false
+            })
+          } else if (route.next_step_id === 'end') {
+            routingEdges.push({
+              id: `${sourceNodeId}-routing-${route.route_id}-to-end`,
+              source: sourceNodeId,
+              sourceHandle: `route-${route.route_id}`,
+              target: 'end',
+              type: 'smoothstep',
+              label: route.route_name || route.route_id,
+              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 10 },
+              labelBgStyle: { fill: '#ffffff', fillOpacity: 0.9 },
+              labelBgPadding: [3, 3] as [number, number],
+              labelBgBorderRadius: 4,
+              style: { stroke: '#14b8a6', strokeWidth: 1.5 },
+              animated: false
+            })
+          }
+        })
+      }
+
+      edges.push(...routingEdges)
+      lastExitNodeId = null // Routing steps handle their own routing
     }
 
     // Handle human input step edge routing

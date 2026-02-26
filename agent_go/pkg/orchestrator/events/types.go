@@ -49,6 +49,9 @@ const (
 	// Decision step evaluation events
 	DecisionEvaluated events.EventType = "decision_evaluated"
 
+	// Routing step evaluation events
+	RoutingEvaluated events.EventType = "routing_evaluated"
+
 	// Pre-validation events
 	PreValidationCompleted events.EventType = "pre_validation_completed"
 
@@ -71,7 +74,7 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, BlockingHumanQuestions, PlanApproval,
 		LearningSkipped, TempLLMSkipped,
-		DecisionEvaluated, PreValidationCompleted,
+		DecisionEvaluated, RoutingEvaluated, PreValidationCompleted,
 		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:
 		return "orchestrator"
 	default:

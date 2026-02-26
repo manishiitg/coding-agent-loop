@@ -178,15 +178,16 @@ func collectVirtualToolNames(toolSets ...[]llmtypes.Tool) []string {
 }
 
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
-// workflowMode: if true, includes all tools (basic + git + advanced + human) for workflow mode
+// workflowMode: if true, includes advanced + human + todo tools for workflow mode
 //
 //	if false, only workspace_advanced tools for chat mode (shell, image, web fetch, PDF)
 //
 // Returns: tools, executors, and a map of tool names to their categories
-// Tools from CreateWorkspaceBasicTools() get category "workspace_basic"
-// Tools from CreateWorkspaceGitTools() get category "workspace_git"
 // Tools from CreateWorkspaceAdvancedTools() get category "workspace_advanced"
 // All tools from CreateHumanTools() get category "human_tools"
+//
+// Note: workspace_basic and workspace_git tools are deprecated — shell_command covers
+// all file operations and git is handled via shell_command when needed.
 func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
 	var allTools []llmtypes.Tool
 	allExecutors := make(map[string]interface{})
@@ -210,42 +211,16 @@ func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface
 		}
 	}
 
-	// Workflow mode: include workspace_basic, workspace_git, and human tools
+	// Workflow mode: include human + todo tools + workspace_basic executors (for internal Go operations)
 	if workflowMode {
-		// Create workspace basic tools
+		// Add workspace_basic executors ONLY (not tool definitions) — needed for internal
+		// Go operations (ReadWorkspaceFile, WriteWorkspaceFile, ListWorkspaceFiles, etc.)
+		// These are NOT exposed to LLMs as tools; shell_command handles all LLM file operations.
 		workspaceBasicCategory := virtualtools.GetWorkspaceBasicToolCategory()
-		workspaceBasicTools := virtualtools.CreateWorkspaceBasicTools()
 		workspaceBasicExecutors := virtualtools.CreateWorkspaceBasicToolExecutors()
-
-		// Add basic tools
-		allTools = append(allTools, workspaceBasicTools...)
 		for name, executor := range workspaceBasicExecutors {
 			allExecutors[name] = executor
-		}
-
-		// Basic tools get workspace_basic category
-		for _, tool := range workspaceBasicTools {
-			if tool.Function != nil {
-				toolCategories[tool.Function.Name] = workspaceBasicCategory
-			}
-		}
-
-		// Create workspace git tools
-		workspaceGitCategory := virtualtools.GetWorkspaceGitToolCategory()
-		workspaceGitTools := virtualtools.CreateWorkspaceGitTools()
-		workspaceGitExecutors := virtualtools.CreateWorkspaceGitToolExecutors()
-
-		// Add git tools
-		allTools = append(allTools, workspaceGitTools...)
-		for name, executor := range workspaceGitExecutors {
-			allExecutors[name] = executor
-		}
-
-		// Git tools get workspace_git category
-		for _, tool := range workspaceGitTools {
-			if tool.Function != nil {
-				toolCategories[tool.Function.Name] = workspaceGitCategory
-			}
+			toolCategories[name] = workspaceBasicCategory
 		}
 
 		// Add human tools
@@ -297,7 +272,6 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 		"sync_workspace_to_github":    true,
 		"get_workspace_github_status": true,
 		"human_feedback":              true,
-		"fetch_web_content":           true,
 	}
 	if specialTools[toolName] {
 		return originalDescription
@@ -333,7 +307,6 @@ func enhanceToolDescriptionForPlanMode(toolName, originalDescription string) str
 		"sync_workspace_to_github":    true,
 		"get_workspace_github_status": true,
 		"human_feedback":              true,
-		"fetch_web_content":           true,
 	}
 	if specialTools[toolName] {
 		return originalDescription
@@ -1239,6 +1212,29 @@ func runServer(cmd *cobra.Command, args []string) {
 	}).Methods("POST", "OPTIONS")
 	toolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
+		executorHandlers.HandlePerToolVirtualRequest(w, r, vars["tool"])
+	}).Methods("POST", "OPTIONS")
+
+	// Session-scoped per-tool endpoints: /s/{session_id}/tools/...
+	// These routes bake the session_id into the URL path, so the LLM-generated code
+	// doesn't need to explicitly include session_id in request bodies.
+	// The session_id is extracted from the path and injected as X-Session-ID header,
+	// which the per-tool handler reads as a fallback when body session_id is empty.
+	sessionToolsRouter := router.PathPrefix("/s/{session_id}/tools").Subrouter()
+	sessionToolsRouter.Use(executor.AuthMiddleware(api.apiToken))
+	sessionToolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		r.Header.Set("X-Session-ID", vars["session_id"])
+		executorHandlers.HandlePerToolMCPRequest(w, r, vars["server"], vars["tool"])
+	}).Methods("POST", "OPTIONS")
+	sessionToolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		r.Header.Set("X-Session-ID", vars["session_id"])
+		executorHandlers.HandlePerToolCustomRequest(w, r, vars["tool"])
+	}).Methods("POST", "OPTIONS")
+	sessionToolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		r.Header.Set("X-Session-ID", vars["session_id"])
 		executorHandlers.HandlePerToolVirtualRequest(w, r, vars["tool"])
 	}).Methods("POST", "OPTIONS")
 
@@ -2803,6 +2799,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 		allTools, allExecutors, toolCategories := createCustomTools(true) // Workflow mode: all tools (basic + git + advanced + human)
 
+		// NOTE: Workspace executor replacement with session + secrets happens after secrets are merged (see below).
+
 		// Load selected tools, code execution mode, tool search mode, skills, and preset LLM config from preset if available (for workflow agents)
 		var selectedTools []string
 		var useCodeExecutionMode bool
@@ -3003,6 +3001,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workflowOrchestrator.SetSecrets(entries)
 			log.Printf("[SECRETS] Applied %d secrets (%d global + %d user) to workflow orchestrator", len(entries), len(entries)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
 		}
+
+		// Replace workspace advanced executors with session-aware versions that include secrets.
+		// This must happen AFTER secrets are merged so secrets are available as shell env vars.
+		// createCustomTools uses the no-session CreateWorkspaceAdvancedToolExecutors(),
+		// which means MCP_SESSION_ID won't be set and secrets won't be in the shell env.
+		secretEnvVars := make(map[string]string, len(allSecrets))
+		for _, s := range allSecrets {
+			secretEnvVars[s.Name] = s.Value
+		}
+		sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
+		for name, executor := range sessionAwareExecutors {
+			allExecutors[name] = executor
+		}
+		log.Printf("[WORKFLOW] Replaced workspace executors with session-aware versions (userID=%q, sessionID=%q, secrets=%d)", currentUserID, sessionID, len(secretEnvVars))
+
+		// Store workspace env map reference on orchestrator so that when the MCP session ID
+		// changes (e.g., per-group in batch execution), MCP_API_URL in the env is updated
+		// automatically. This prevents session registry misses that cause new browser instances.
+		workflowOrchestrator.SetWorkspaceEnvRef(workspaceEnv)
+		log.Printf("[WORKFLOW] Stored workspace env ref on orchestrator (MCP_API_URL=%s)", workspaceEnv["MCP_API_URL"])
 
 		// Store workflow orchestrator for guidance injection
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
@@ -3980,8 +3998,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-				workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithUserID(currentUserID)
-				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q", currentUserID)
+				workspaceExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
+				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (advanced only)
 
 				// Extract @context file paths for additional write access
@@ -6961,8 +6979,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		if enableWorkspaceAccess {
 			// Sub-agents get advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-			workspaceExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithUserID(subAgentUserID)
-			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q", subAgentUserID)
+			workspaceExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
+			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
 			_, _, toolCategories := createCustomTools(false)
 
 			// Check for skill-creator

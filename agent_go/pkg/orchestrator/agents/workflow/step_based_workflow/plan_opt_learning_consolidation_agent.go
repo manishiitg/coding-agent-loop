@@ -42,7 +42,7 @@ Audit and merge patterns within 'learnings/step-{X}/' folders.
 ## 📋 WORKFLOW
 1. **Analysis**: Discover relative step folders in 'learnings/'. Read all variations of '*_learning.md', '.py', '.go'.
 2. **Proposal**: Use 'human_feedback' to list proposed merges/deletions/updates and impact estimate.
-3. **Action**: ONLY call 'update_workspace_file' or 'delete_workspace_file' AFTER explicit user approval.
+3. **Action**: ONLY perform file updates (execute_shell_command with shell redirects) or deletions (execute_shell_command with 'rm') AFTER explicit user approval.
 
 *No summaries. No auto-modifications. No guessing.*`)
 
@@ -60,7 +60,7 @@ Analyze, merge, and clean up redundant patterns within 'learnings/' step folders
 2. **Retrieve**: Read all '*.md', '.py', '.go' variations in those folders.
 3. **Analyze**: Identify duplicates, similar patterns, and outdated/low-success patterns.
 4. **Report**: Use 'human_feedback' to present a list of proposed merges/updates.
-5. **Action**: ONLY CALL 'update_workspace_file' or 'delete_workspace_file' AFTER user approval.
+5. **Action**: ONLY perform file updates (execute_shell_command with shell redirects) or deletions (execute_shell_command with 'rm') AFTER user approval.
 
 **Final Goal**: Consolidate patterns into existing step files and remove redundant variations.`)
 
@@ -156,10 +156,8 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 		return nil, fmt.Errorf("no valid LLM configuration found for learning consolidation agent: presetPhaseLLM is empty or invalid")
 	}
 
-	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
-	// No need to add human tools separately as they're already combined in WorkspaceTools
-	allTools := lcm.WorkspaceTools
-	allExecutors := lcm.WorkspaceToolExecutors
+	// Use minimal workspace tools (shell_command + human) for phase agent
+	allTools, allExecutors := lcm.BaseOrchestrator.PreparePhaseAgentTools()
 
 	// Create agent config with the selected LLM config
 	config := lcm.CreateStandardAgentConfigWithLLM("learning-consolidation-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
@@ -168,10 +166,10 @@ func (lcm *LearningConsolidationManager) createLearningConsolidationAgent(ctx co
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Code execution mode and tool search mode only apply to execution agents, not learning consolidation agents
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(lcm.presetPhaseLLM)
 	config.UseToolSearchMode = false
-	lcm.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for learning consolidation agent (phase agents always use simple mode)"))
+	lcm.GetLogger().Info(fmt.Sprintf("🔧 Learning consolidation agent code execution mode: %v (provider requires it: %v)", config.UseCodeExecutionMode, requiresCodeExecutionForProvider(lcm.presetPhaseLLM)))
 
 	// Large output virtual tools are enabled for consolidation (agent may generate large reports)
 	enabled := true

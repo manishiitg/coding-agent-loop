@@ -158,16 +158,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// 🔧 DECISION STEP EVALUATION ALWAYS USES SIMPLE AGENT MODE (non-code execution)
 	// This ensures structured output tools (like submit_decision_result) are called directly by the LLM
 	// rather than via code execution, which prevents "tool was called but not found in messages" errors
-	var isCodeExecutionMode bool = false
-	hcpo.GetLogger().Info("🔧 Decision step evaluation always uses simple agent mode (code execution disabled)")
+	// UNLESS the provider requires code execution mode (claude-code, gemini-cli)
+	isCodeExecutionMode := requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Decision step evaluation code execution mode: %v (provider requires it: %v)", isCodeExecutionMode, requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)))
 
-	// Ensure step config has UseCodeExecutionMode set to false
-	// This ensures getConditionalAgentForStep creates a step-specific agent with simple agent mode
+	// Ensure step config has UseCodeExecutionMode set appropriately
+	// This ensures getConditionalAgentForStep creates a step-specific agent with the correct mode
 	if decisionStep.AgentConfigs == nil {
 		decisionStep.AgentConfigs = &AgentConfigs{}
 	}
 	decisionStep.AgentConfigs.UseCodeExecutionMode = &isCodeExecutionMode
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting UseCodeExecutionMode=false in step config for decision evaluation (always simple agent mode)"))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting UseCodeExecutionMode=%v in step config for decision evaluation", isCodeExecutionMode))
 
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)

@@ -863,6 +863,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 	summary.WriteString("## 📋 Previous Steps Context\n\n")
 	summary.WriteString("The following steps have been completed before this step:\n\n")
 
+	// Compute execution workspace path for building full output file paths
+	var executionWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		executionWorkspacePath = fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+	} else {
+		executionWorkspacePath = fmt.Sprintf("%s/execution", hcpo.GetWorkspacePath())
+	}
+
 	stepCount := 0
 	for i := 0; i < currentStepIndex && i < len(allSteps); i++ {
 		step := allSteps[i]
@@ -895,9 +903,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 			description = description[:200] + "..."
 		}
 
+		// Compute the step execution folder path based on step type
+		// Decision steps use step-N-decision, everything else uses step-N
+		stepPath := fmt.Sprintf("step-%d", i+1)
+		if step.StepType() == StepTypeDecision {
+			stepPath = fmt.Sprintf("step-%d-decision", i+1)
+		}
+		stepExecutionPath := getExecutionFolderPath(executionWorkspacePath, stepPath)
+
 		summary.WriteString(fmt.Sprintf("**Step %d: %s**\n", i+1, resolvedTitle))
 		summary.WriteString(fmt.Sprintf("- **Description**: %s\n", description))
-		summary.WriteString(fmt.Sprintf("- **Output File**: %s\n", resolvedOutput))
+		summary.WriteString(fmt.Sprintf("- **Output File**: `%s/%s`\n", stepExecutionPath, resolvedOutput))
 		summary.WriteString("\n")
 
 		stepCount++
@@ -909,36 +925,55 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 
 	summary.WriteString("Use this context to understand the workflow progression and what has been accomplished so far.\n")
 
-	// Add execution output from the immediately previous step only (most recent)
-	previousStepIndex := currentStepIndex - 1
-	if previousStepIndex >= 0 && previousStepIndex < len(previousExecutionResults) && previousExecutionResults[previousStepIndex] != "" {
-		execOutput := previousExecutionResults[previousStepIndex]
-		// Truncate execution output if too long (keep first 2000 characters)
+	// Include ALL human_input step results (regardless of position) as critical context,
+	// plus the most recent non-human-input execution result for general context.
+	// This matches the routing agent's behavior in controller_routing.go.
+	humanFeedbackIncluded := false
+	for idx := 0; idx < currentStepIndex && idx < len(previousExecutionResults); idx++ {
+		if previousExecutionResults[idx] == "" {
+			continue
+		}
+		if idx < len(allSteps) && allSteps[idx].StepType() == StepTypeHumanInput {
+			stepTitle := ResolveVariables(allSteps[idx].GetTitle(), hcpo.variableValues)
+			execOutput := previousExecutionResults[idx]
+			if len(execOutput) > 2000 {
+				execOutput = execOutput[:2000] + "\n... (truncated)"
+			}
+			summary.WriteString(fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n"))
+			summary.WriteString(fmt.Sprintf("The human provided the following feedback/input in **Step %d: %s**.\n", idx+1, stepTitle))
+			summary.WriteString("**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n")
+			summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
+			humanFeedbackIncluded = true
+		}
+	}
+
+	// Include the most recent non-human-input execution result
+	for idx := currentStepIndex - 1; idx >= 0; idx-- {
+		if idx >= len(previousExecutionResults) || previousExecutionResults[idx] == "" {
+			continue
+		}
+		if idx < len(allSteps) && allSteps[idx].StepType() == StepTypeHumanInput {
+			continue // Already included above
+		}
+		execOutput := previousExecutionResults[idx]
 		if len(execOutput) > 2000 {
 			execOutput = execOutput[:2000] + "\n... (truncated)"
 		}
-
-		// Get previous step title for context
-		var previousStepTitle string
-		if previousStepIndex < len(allSteps) {
-			previousStepTitle = ResolveVariables(allSteps[previousStepIndex].GetTitle(), hcpo.variableValues)
+		var stepTitle string
+		if idx < len(allSteps) {
+			stepTitle = ResolveVariables(allSteps[idx].GetTitle(), hcpo.variableValues)
 		} else {
-			previousStepTitle = fmt.Sprintf("Step %d", previousStepIndex+1)
+			stepTitle = fmt.Sprintf("Step %d", idx+1)
 		}
-
-		// Check if previous step was a human_input step - human feedback is critical and needs emphasis
-		isHumanInput := previousStepIndex < len(allSteps) && allSteps[previousStepIndex].StepType() == StepTypeHumanInput
-		if isHumanInput {
-			summary.WriteString(fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n"))
-			summary.WriteString(fmt.Sprintf("The human provided the following feedback/input in **Step %d: %s**.\n", previousStepIndex+1, previousStepTitle))
-			summary.WriteString("**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n")
-			summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
+		if humanFeedbackIncluded {
+			summary.WriteString(fmt.Sprintf("\n## 📤 Most Recent Step Execution Output\n\n"))
 		} else {
 			summary.WriteString(fmt.Sprintf("\n## 📤 Previous Step Execution Output\n\n"))
-			summary.WriteString(fmt.Sprintf("**Step %d: %s** execution result:\n\n", previousStepIndex+1, previousStepTitle))
-			summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
-			summary.WriteString("\nUse this execution output to understand what the immediately previous step accomplished.\n")
 		}
+		summary.WriteString(fmt.Sprintf("**Step %d: %s** execution result:\n\n", idx+1, stepTitle))
+		summary.WriteString(fmt.Sprintf("```\n%s\n```\n", execOutput))
+		summary.WriteString("\nUse this execution output to understand what the immediately previous step accomplished.\n")
+		break
 	}
 
 	return summary.String()
@@ -1064,11 +1099,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),   // Skip cleanup mode flag for state verification prompt
 		}
 
-		// Add context dependencies as a comma-separated string (also resolve variables)
+		// Add context dependencies with full execution paths (so agent knows exact file locations)
 		contextDeps := step.GetContextDependencies()
 		if len(contextDeps) > 0 {
 			resolvedDeps := ResolveVariablesArray(contextDeps, hcpo.variableValues)
-			templateVars["StepContextDependencies"] = strings.Join(resolvedDeps, ", ")
+			// Map each dependency to its full path by finding which previous step produced it
+			fullPathDeps := make([]string, 0, len(resolvedDeps))
+			for _, dep := range resolvedDeps {
+				fullPath := dep // Default to bare filename if no match found
+				for j := 0; j < stepIndex && j < len(allSteps); j++ {
+					prevOutput := ResolveVariables(allSteps[j].GetContextOutput().String(), hcpo.variableValues)
+					if prevOutput == dep {
+						// Found the producing step — construct full path
+						prevStepPath := fmt.Sprintf("step-%d", j+1)
+						if allSteps[j].StepType() == StepTypeDecision {
+							prevStepPath = fmt.Sprintf("step-%d-decision", j+1)
+						}
+						prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, prevStepPath)
+						fullPath = fmt.Sprintf("%s/%s", prevStepExecPath, dep)
+						break
+					}
+				}
+				fullPathDeps = append(fullPathDeps, fullPath)
+			}
+			templateVars["StepContextDependencies"] = strings.Join(fullPathDeps, ", ")
 		} else {
 			templateVars["StepContextDependencies"] = ""
 		}
@@ -1554,6 +1608,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before agent execution for step %d", stepIndex+1))
 					return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
 				default:
+				}
+
+				// Override prompt template var for CLI providers: use normal prompt (not code execution prompt)
+				// Code execution mode stays enabled technically (for HTTP bridge/tool routing), but the prompt
+				// should use normal instructions since CLI providers have their own tool-calling capabilities.
+				if executionAgent != nil && executionAgent.GetConfig() != nil {
+					provider := executionAgent.GetConfig().LLMConfig.Primary.Provider
+					if isCliProviderForPrompt(provider) {
+						templateVars["IsCodeExecutionMode"] = "false"
+						hcpo.GetLogger().Info(fmt.Sprintf("🔧 CLI provider '%s' - using normal prompt (code exec mode still enabled for tool routing)", provider))
+					}
 				}
 
 				// Execute execution-only agent with learning history (reused from learning reading above)
@@ -3000,6 +3065,12 @@ func isTodoTaskStep(step PlanStepInterface) bool {
 	return ok
 }
 
+// isRoutingStep returns true if the step is a routing step (N-way LLM-based routing)
+func isRoutingStep(step PlanStepInterface) bool {
+	_, ok := step.(*RoutingPlanStep)
+	return ok
+}
+
 // hasLoop returns true if the step has loop mode enabled
 func hasLoop(step PlanStepInterface) bool {
 	switch s := step.(type) {
@@ -3026,6 +3097,8 @@ func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	case *HumanInputPlanStep:
 		return s.AgentConfigs
 	case *EvaluationStep:
+		return s.AgentConfigs
+	case *RoutingPlanStep:
 		return s.AgentConfigs
 	default:
 		return nil
@@ -3487,6 +3560,114 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			}
 
 			// Default: continue to next sequential step
+			continue
+		}
+
+		// Check if this is a routing step
+		if isRoutingStep(step) {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔀 Starting routing step execution: %s", step.GetTitle()))
+			selectedRouteID, _, err := hcpo.executeRoutingStep(ctx, step, i, progress, previousContextFiles, iteration, execCtx, breakdownSteps, previousExecutionResults)
+			if err != nil {
+				if strings.Contains(err.Error(), "WORKFLOW_END") {
+					hcpo.GetLogger().Info(fmt.Sprintf("🏁 Routing step %d signaled workflow termination - ending workflow", i+1))
+					hcpo.addCompletedStepIndex(progress, i)
+					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after routing step termination: %v", err))
+					}
+					break
+				}
+				hcpo.GetLogger().Error(fmt.Sprintf("❌ Routing step %d execution failed: %v", i+1, err), nil)
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "routing-step-execution", fmt.Sprintf("Execute routing step: %s", step.GetTitle()), err.Error(), i, iteration)
+				return fmt.Errorf("routing step %d execution failed: %w", i+1, err)
+			}
+
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Routing step %d completed: selected route %s", i+1, selectedRouteID))
+
+			// Mark step as completed
+			hcpo.addCompletedStepIndex(progress, i)
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after routing step: %v", err))
+			}
+
+			// Check single step mode
+			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
+				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
+				hcpo.SetRunSingleStepMode(false, -1)
+				break
+			}
+
+			// Find next step based on selected route
+			var nextStepID string
+			if routingStep, ok := step.(*RoutingPlanStep); ok {
+				for _, route := range routingStep.Routes {
+					if route.RouteID == selectedRouteID {
+						nextStepID = route.NextStepID
+						break
+					}
+				}
+			}
+
+			// Track routing evaluations to prevent infinite loops (reuse DecisionEvaluationCounts)
+			if progress.DecisionEvaluationCounts == nil {
+				progress.DecisionEvaluationCounts = make(DecisionEvaluationCount)
+			}
+			routingKey := fmt.Sprintf("%s:%s", step.GetID(), selectedRouteID)
+			currentCount := progress.DecisionEvaluationCounts[routingKey]
+			newCount := currentCount + 1
+			progress.DecisionEvaluationCounts[routingKey] = newCount
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Routing evaluation count for %s: %d", routingKey, newCount))
+
+			if newCount > 2 {
+				errorMsg := fmt.Sprintf("infinite loop detected: routing step '%s' (ID: %s) has selected route %s %d times", step.GetTitle(), step.GetID(), selectedRouteID, newCount)
+				hcpo.GetLogger().Error(errorMsg, nil)
+				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "routing-step-loop-detection", fmt.Sprintf("Routing step: %s", step.GetTitle()), errorMsg, i, iteration)
+				return fmt.Errorf("workflow error: %s", errorMsg)
+			}
+
+			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after routing evaluation: %v", err))
+			}
+
+			// Handle next step navigation
+			if nextStepID == "end" {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Routing step %d specified 'end' - terminating workflow", i+1))
+				break
+			} else if nextStepID != "" {
+				targetStepIndex := -1
+				for idx, s := range breakdownSteps {
+					if s.GetID() == nextStepID {
+						targetStepIndex = idx
+						break
+					}
+				}
+				if targetStepIndex >= 0 {
+					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Routing to step %d (ID: %s)", targetStepIndex+1, nextStepID))
+
+					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v", targetStepIndex+1, err))
+					}
+
+					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
+					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
+						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
+							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v", stepNum, err))
+						}
+					}
+					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
+					}
+
+					if targetStepIndex < startFromStep {
+						startFromStep = targetStepIndex
+					}
+
+					i = targetStepIndex - 1
+					continue
+				} else {
+					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
+				}
+			}
+
 			continue
 		}
 

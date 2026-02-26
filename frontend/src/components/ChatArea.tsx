@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
+import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
 import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
@@ -117,9 +118,28 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     targetTabId ? state.chatTabs[targetTabId] : undefined
   )
   
-  // Get all tabs reactively for polling and other operations
-  const chatTabs = useChatStore(state => state.chatTabs)
-  
+  // PERF FIX: Stable tab-session key to avoid phantom re-renders.
+  //
+  // PROBLEM: Previously `const chatTabs = useChatStore(state => state.chatTabs)` subscribed
+  // to the full chatTabs object. Every `setTabStreaming`, `setTabCompleted`, `setTabConfig`
+  // call creates a new `chatTabs` reference (Zustand immutable update), causing ChatArea
+  // to re-render even when no tab/session was added or removed. This caused 10-20 phantom
+  // renders between actual data changes (visible as "no dep change" in render logs).
+  //
+  // FIX: Derive a stable string key from tab IDs + session IDs + modes. This key only
+  // changes when tabs are created/deleted or sessions are assigned — NOT when tab properties
+  // (isStreaming, isCompleted, eventMode, etc.) are updated. Downstream memos (allTabs,
+  // tabsWithSessions, tabsWithActiveSessions) recompute only when this key changes.
+  const tabSessionKey = useChatStore(state => {
+    const tabs = state.chatTabs
+    const parts: string[] = []
+    for (const id of Object.keys(tabs)) {
+      const t = tabs[id]
+      parts.push(`${id}:${t.sessionId || ''}:${t.metadata?.mode || ''}`)
+    }
+    return parts.sort().join(',')
+  })
+
   // Determine which servers to use based on mode category
   // CRITICAL: Workflow preset servers should ONLY be used in workflow mode, never leak into chat mode
   const effectiveServers = useMemo(() => {
@@ -185,9 +205,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     return filteredTools
   }, [allTools, effectiveServers, selectedModeCategory, activeTab?.config])
   
-  // Get all tabs to track changes for polling
+  // PERF FIX: Derive tab lists from stable tabSessionKey instead of raw chatTabs reference.
+  // Uses getState() for the actual tab objects (avoids subscription), and tabSessionKey
+  // as the recomputation trigger (only changes on tab add/remove/session change).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allTabs = useMemo(() => Object.values(chatTabs), [chatTabs])
+  const allTabs = useMemo(() => Object.values(useChatStore.getState().chatTabs), [tabSessionKey])
   const tabsWithSessions = useMemo(() => allTabs.filter(tab => tab.sessionId), [allTabs])
   
   // No observer ID syncing needed - sessions are used directly
@@ -310,6 +332,19 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     // In advanced mode, show all events
     return tabEvents
   }, [tabEvents, activeTab?.eventMode])
+
+  // --- Render tracking (filter by [Render] in console) ---
+  useRenderLogger('ChatArea', {
+    displayEvents: displayEvents.length,
+    tabEvents: tabEvents.length,
+    isStreaming,
+    autoScroll,
+    activeTabId: activeTab?.tabId,
+    activeSessionId,
+    finalResponse: !!finalResponse,
+    tabSessionKey,
+  })
+  useMemoLogger('ChatArea.displayEvents', displayEvents, displayEvents.length)
   
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
@@ -458,11 +493,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const handleScroll = useCallback(() => {
     if (!chatContentRef.current) return;
     
-    // If this is a programmatic scroll, ignore it (don't disable auto-scroll)
+    // If this is a programmatic scroll, ignore it entirely (don't disable auto-scroll,
+    // don't update lastScrollTop via Zustand — that would trigger ~60 re-renders/sec)
     if (isProgrammaticScrollRef.current) {
-      // Still update last scroll position to track movement
-      const element = chatContentRef.current;
-      setLastScrollTop(element.scrollTop);
       return;
     }
     
@@ -579,7 +612,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       requestAnimationFrame(() => {
         const element = chatContentRef.current;
         if (!element) return;
-        
+
         // Always scroll to bottom when auto-scroll is enabled and new events arrive
         // The scroll handler will disable auto-scroll if user manually scrolls away
         scrollToBottom('smooth');
@@ -936,17 +969,30 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
       }
 
-      const { processWorkspaceEvent } = useWorkspaceStore.getState()
-      processWorkspaceEvent(event)
+      // PERF FIX: Only call processWorkspaceEvent for workspace_file_operation events.
+      // Previously called for ALL events (tool_execution, streaming_text, delegation_start, etc.),
+      // each incurring function call + event type check + dedup lookup overhead.
+      if (event.type === 'workspace_file_operation') {
+        useWorkspaceStore.getState().processWorkspaceEvent(event)
+      }
 
       newEvents.push(event)
     }
 
-    // Refresh workspace sidebar when a completion event arrives and files were modified
+    // PERF FIX: Mark workspace as stale instead of auto-fetching.
+    //
+    // PROBLEM: Previously called fetchFiles() here, which fetches the entire workspace tree
+    // (~2-3MB JSON for large workspaces with many workflow runs). This happened on every
+    // completion event and background agent completion.
+    //
+    // FIX: Set needsRefresh flag → Workspace component shows a "Files may be out of date"
+    // banner with a manual "Refresh" button. New files during execution are still added
+    // incrementally via addFileToTree (from workspace_file_operation events, no network).
     const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
     if (isCompletionLike && hadWorkspaceActivityRef.current) {
       hadWorkspaceActivityRef.current = false
-      useWorkspaceStore.getState().fetchFiles()
+      console.log('[Workspace] Marking needsRefresh (completion event + had workspace activity)')
+      useWorkspaceStore.getState().setNeedsRefresh(true)
     }
 
     // Defer streaming text clear
@@ -1027,6 +1073,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     flushRAFRef.current = 0
     const pending = pendingSSEEventsRef.current
     if (pending.size === 0) return
+
+    // Log flush stats for perf debugging
+    let totalEvents = 0
+    for (const batch of pending.values()) totalEvents += batch.events.length
+    console.debug(`[SSE Flush] ${pending.size} sessions, ${totalEvents} events`)
 
     // Take snapshot and clear
     const batches = new Map(pending)
@@ -1478,7 +1529,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     })
     
     return filtered
-  }, [tabsWithSessions, activeSessionIds, chatTabs])
+    // PERF FIX: Removed `chatTabs` from dependencies. Previously this memo recomputed on
+    // every setTabStreaming/setTabCompleted/setTabConfig because `chatTabs` changed reference.
+    // The function already uses getState() for fresh tab data (lines above), so the memo
+    // only needs to recompute when tabsWithSessions or activeSessionIds actually change.
+  }, [tabsWithSessions, activeSessionIds])
   
   // SSE connection management — connect/disconnect based on active sessions
   // Falls back to polling if SSE connection fails (handled inside connectSSE's onError callback)

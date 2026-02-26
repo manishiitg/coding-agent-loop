@@ -167,7 +167,9 @@ export default function Workspace({
     setShowFileContent,
     fetchFiles,
     setActiveFolder,
-    setBinaryFileData
+    setBinaryFileData,
+    needsRefresh,
+    setNeedsRefresh
   } = useWorkspaceStore()
 
   const isSemanticSearchEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.semantic_search_enabled ?? false)
@@ -1967,6 +1969,26 @@ export default function Workspace({
       {/* Content */}
       {!minimized && (
         <div className="flex-1 overflow-hidden">
+          {/* PERF FIX: Stale workspace banner — replaces automatic fetchFiles() calls.
+              Instead of fetching the full workspace tree (~2-3MB) on every step_progress_updated
+              and completion event, we show this banner and let the user refresh manually.
+              New files are still added incrementally via addFileToTree (no network). */}
+          {needsRefresh && (
+            <div className="flex items-center justify-between px-3 py-1.5 bg-yellow-500/10 border-b border-yellow-500/20 text-xs">
+              <span className="text-yellow-600 dark:text-yellow-500">Files may be out of date</span>
+              <button
+                onClick={() => {
+                  console.log('[Workspace] Manual refresh triggered by user')
+                  setNeedsRefresh(false)
+                  fetchFiles(activeFolder)
+                }}
+                disabled={loading}
+                className="ml-2 px-2 py-0.5 rounded text-yellow-600 dark:text-yellow-500 hover:bg-yellow-500/20 font-medium disabled:opacity-50"
+              >
+                Refresh
+              </button>
+            </div>
+          )}
           {/* Folder Structure - Full Width */}
           <div ref={workspaceScrollRef} className="h-full overflow-y-auto">
             <div className="p-4">

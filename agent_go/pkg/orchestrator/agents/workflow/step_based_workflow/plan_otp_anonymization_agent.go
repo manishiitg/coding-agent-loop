@@ -107,10 +107,8 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 		return nil, fmt.Errorf("no valid LLM configuration found for anonymization agent: presetPhaseLLM is empty or invalid")
 	}
 
-	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
-	// No need to add human tools separately as they're already combined in WorkspaceTools
-	allTools := am.WorkspaceTools
-	allExecutors := am.WorkspaceToolExecutors
+	// Use minimal workspace tools (shell_command + human) for phase agent
+	allTools, allExecutors := am.BaseOrchestrator.PreparePhaseAgentTools()
 
 	// Create agent config with the selected LLM config
 	config := am.CreateStandardAgentConfigWithLLM("anonymization-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
@@ -119,10 +117,10 @@ func (am *AnonymizationManager) createAnonymizationAgent(ctx context.Context, wo
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Code execution mode and tool search mode only apply to execution agents, not anonymization agents
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(am.presetPhaseLLM)
 	config.UseToolSearchMode = false
-	am.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for anonymization agent (phase agents always use simple mode)"))
+	am.GetLogger().Info(fmt.Sprintf("🔧 Anonymization agent code execution mode: %v (provider requires it: %v)", config.UseCodeExecutionMode, requiresCodeExecutionForProvider(am.presetPhaseLLM)))
 
 	// Large output virtual tools are enabled for anonymization (agent may generate large reports)
 
@@ -385,7 +383,7 @@ Learning files are stored in step-specific folders:
 - Branch step learnings: {WorkspacePath}/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
 - Todo Task sub-agent learnings: {WorkspacePath}/learnings/step-{X}-sub-{routeID}/ (at workspace root, not inside runs/)
 
-You must scan BOTH shared and step-specific folders (including branch step and todo task sub-agent folders). Use list_workspace_files to discover all step-specific folders recursively.
+You must scan BOTH shared and step-specific folders (including branch step and todo task sub-agent folders). Use execute_shell_command with 'find . -maxdepth 3 -type f' to discover all step-specific folders recursively.
 `
 
 	return `# Learning Anonymization Agent
@@ -413,7 +411,7 @@ This makes learnings reusable across different environments, accounts, and confi
    - What replacements you plan to make (actual value → {{VARIABLE_NAME}})
    - The impact of these changes
 3. The human_feedback tool will automatically return the user's response. **After receiving the response**:
-   - If user approved: Proceed with file modifications using update_workspace_file tool
+   - If user approved: Proceed with file modifications using execute_shell_command
    - If user asked questions or needs clarification: Respond conversationally without modifying files
    - If user rejected or requested changes: Adjust your approach and either ask again with human_feedback or respond conversationally
 4. You can modify multiple files in the same turn after getting approval, but always confirm each batch of changes
@@ -422,7 +420,7 @@ This makes learnings reusable across different environments, accounts, and confi
 
 1. **Understand Available Variables** - The variables are provided in the template variables (VariablesJSON). You have access to the learnings/ folder - variables are passed to you, not read from files.
 
-2. **Scan Learnings Folder** - Use list_workspace_files tool to scan the learnings folder recursively:
+2. **Scan Learnings Folder** - Use execute_shell_command with 'find . -maxdepth 3 -type f' to scan the learnings folder recursively:
    - **Shared folders**: Scan learnings/ (including subdirectories)
    - **Regular step folders**: Scan learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
    - **Branch step folders**: Scan learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
@@ -432,7 +430,7 @@ This makes learnings reusable across different environments, accounts, and confi
    - Identify all files that may contain actual values
 
 3. **Read Files and Identify Values** - For each file:
-   - Use read_workspace_file tool to read the file content
+   - Use execute_shell_command with 'cat' to read the file content
    - **Phase 1: Match Known Variables** - Analyze the content to find values that match known variables:
      - Use fuzzy matching: Look for values that are similar to variable values, not just exact matches
      - Example: If variable is AWS_ACCOUNT_ID with value "123456789012", look for:
@@ -463,7 +461,7 @@ This makes learnings reusable across different environments, accounts, and confi
    - Wait for user approval before proceeding
 
 5. **Replace Values with Variables** - After approval:
-   - **For .md files**: Use update_workspace_file tool to modify files in place
+   - **For .md files**: Use execute_shell_command to modify files in place
      - Replace actual values with {{VARIABLE_NAME}} placeholders
      - For newly detected values, create appropriate variable names (e.g., {{EMAIL_ADDRESS}}, {{API_ENDPOINT}})
      - Preserve all other content exactly as-is
@@ -531,9 +529,7 @@ This makes learnings reusable across different environments, accounts, and confi
    - Go files (.go) in learnings/code/ and step-specific folders (regular and branch step folders)
 
 ### **Available Tools:**
-- **list_workspace_files**: List files in learnings/ and learnings/ folders (recursively), and in runs/ folder to discover step-specific folders
-- **read_workspace_file**: Read file content to analyze
-- **update_workspace_file**: Modify files in place (AFTER human approval)
+- **execute_shell_command**: List files (find . -maxdepth 3 -type f), read file content (cat), and modify files in place (AFTER human approval)
 - **human_feedback**: **REQUIRED** - Get user confirmation before making changes
 
 ## 📝 **REQUIRED OUTPUT FORMAT**
@@ -559,7 +555,7 @@ func (agent *WorkflowAnonymizationAgent) anonymizationUserMessageProcessor(templ
 - **Regular Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (at workspace root, not inside runs/, e.g., step-1/, step-2/)
 - **Branch Step Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
 - **Todo Task Sub-Agent Learnings Folders**: ` + templateVars["WorkspacePath"] + `/learnings/step-{X}-sub-{routeID}/ (at workspace root, not inside runs/)
-- **IMPORTANT**: Scan BOTH shared, regular step, branch step, and todo task sub-agent folders. Use list_workspace_files to discover all step folders recursively.
+- **IMPORTANT**: Scan BOTH shared, regular step, branch step, and todo task sub-agent folders. Use execute_shell_command with 'find . -maxdepth 3 -type f' to discover all step folders recursively.
 `
 
 	return `# Anonymize Learnings Task
@@ -595,14 +591,14 @@ These variables are available for replacement. When you find actual values in le
 		return ""
 	}() + `## 🧠 **YOUR TASK**
 
-1. **Scan learnings folders**: Use list_workspace_files to find all files:
+1. **Scan learnings folders**: Use execute_shell_command with 'find . -maxdepth 3 -type f' to find all files:
    - **Shared folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
    - **Shared folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/ (including subdirectories)
    - **Regular step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
    - **Branch step folders**: .md and .py files in ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/, e.g., step-3-true-0/, step-3-false-1/)
    - **Regular step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{X}/ (all regular step folders, at workspace root, not inside runs/)
    - **Branch step folders**: .md and .go files in ` + templateVars["WorkspacePath"] + `/learnings/step-{parentStep}-{true/false}-{branchIdx}/ (all branch step folders, at workspace root, not inside runs/)
-   - Use list_workspace_files recursively to discover all step folders (regular and branch)
+   - Use execute_shell_command with 'find . -maxdepth 3 -type f' to discover all step folders (regular and branch)
 
 2. **Read and analyze files**: For each file, read its content and identify:
    - **Known variables**: Values that match the variables provided above

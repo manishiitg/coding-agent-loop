@@ -63,6 +63,7 @@ Answer user questions directly. Only analyze logs/files when the user specifical
 - Regular steps: 'step-{X}/' (X = 1-based step number)
 - Conditional branches: 'step-{X}-if-true-{idx}/', 'step-{X}-if-false-{idx}/'
 - Decision steps: 'step-{X}-decision/'
+- Routing steps: 'step-{X}/' (same as regular - routing evaluation stored in logs)
 - Sub-agents (orchestration/todo_task): 'step-{X}-sub-agent-{idx}/'
 - Generic agents (todo_task only): 'step-{X}-generic-agent-{idx}/'
 
@@ -71,6 +72,7 @@ Answer user questions directly. Only analyze logs/files when the user specifical
 - **Conditional**: 'logs/step-X/conditional-evaluation.json' — condition_result (true/false), condition_reason, branch_executed
 - **Decision**: 'logs/step-X/decision-evaluation.json' — decision_result, decision_reasoning, routing targets
 - **Orchestration/TodoTask**: 'logs/step-X/orchestration-execution.json' — JSONL file, one line per iteration with selected_route_id, success_criteria_met
+- **Routing**: 'logs/step-X/routing-evaluation.json' -- selected_route_id, reasoning, routing_question, routes
 - **TodoTask**: 'execution/step-X/tasks.md' — markdown task list with checkbox progress
 
 ## 🛠️ PLAN MODIFICATION TOOLS
@@ -79,7 +81,8 @@ Use 'update_*', 'add_*', 'delete_plan_steps', etc. ONLY after user approval via 
 ### Top-Level Steps
 - 'update_regular_step': Update regular steps by step_id (title, description, success_criteria, validation_schema, etc.)
 - 'update_todo_task_step': Update todo_task steps by step_id (title, description, todo_task_step fields)
-- 'add_plan_step', 'delete_plan_steps': Add/remove top-level steps
+- 'update_routing_step': Update routing steps by step_id (routing_question, routes, default_route_id)
+- 'add_plan_step', 'add_routing_step', 'delete_plan_steps': Add/remove top-level steps
 
 ### Nested Sub-Agent Steps (inside todo_task or orchestration steps)
 **IMPORTANT**: Sub-agent steps inside 'predefined_routes' are NOT top-level steps. Use route-specific tools:
@@ -121,6 +124,13 @@ Example: To update 'publish-notion-report' inside todo_task step 'codebase-inven
 <summary>Orchestration Steps</summary>
 - Main Orchestrator: Check 'logs/step-X/orchestration-execution.json' (JSONL) for routing decisions and infinite loops (same route selected repeatedly)
 - Sub-Agents: Check 'logs/step-X-sub-agent-{i}/' for sub-agent issues
+</details>
+
+<details>
+<summary>Routing Steps</summary>
+- Read 'logs/step-X/routing-evaluation.json' -- which route was selected and why ('selected_route_id', 'reasoning')
+- If execute-then-route mode: also check 'logs/step-X/routing-execution.json' for execution output before routing
+- Two modes: Execute-then-route (has description) executes first then picks route; Pure routing (no description) evaluates prior context only
 </details>
 
 <details>
@@ -364,10 +374,8 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 		return nil, fmt.Errorf("no valid LLM configuration found for plan improvement agent: presetPlanImprovementLLM and presetPhaseLLM are both empty or invalid")
 	}
 
-	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
-	// No need to add human tools separately as they're already combined in WorkspaceTools
-	allTools := pim.WorkspaceTools
-	allExecutors := pim.WorkspaceToolExecutors
+	// Use minimal workspace tools (shell_command + human) for phase agent
+	allTools, allExecutors := pim.BaseOrchestrator.PreparePhaseAgentTools()
 
 	// Create agent config with the selected LLM config
 	config := pim.CreateStandardAgentConfigWithLLM("plan-improvement-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
@@ -380,8 +388,8 @@ func (pim *PlanImprovementManager) createPlanImprovementAgent(ctx context.Contex
 
 	// Plan improvement agent uses simple agent mode (no code execution, no tool search)
 	// Even with MCP tools, we don't need code execution for plan debugging
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(pim.presetPhaseLLM)
 	config.UseToolSearchMode = false
 
 	if len(selectedServers) > 0 && mcpConfigPath != "" {
@@ -542,7 +550,7 @@ Run folder contains:
 - %s/execution/ - step execution outputs
 - %s/logs/ - validation and execution logs
 %s
-Use list_workspace_files to explore:
+Use execute_shell_command with 'ls' to explore:
 - Execution result files in %s/execution/%s
 - Detailed logs in %s/logs/step-X/ including:
   * validation-{N}.json - validation responses for each validation attempt

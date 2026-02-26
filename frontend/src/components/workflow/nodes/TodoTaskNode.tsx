@@ -218,7 +218,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
         const hasLearningFiles = files && Array.isArray(files) && files.some((file: { filepath?: string; name?: string }) => {
           const fileName = file.filepath || file.name || ''
-          return fileName.endsWith('.md') || (fileName.startsWith('code/') && fileName.endsWith('.go'))
+          return fileName.endsWith('.md') || (fileName.startsWith('code/') && /\.(go|py|sh|js|ts|jsx|tsx|bash|rb|java|rs|c|cpp|json|yaml|yml)$/.test(fileName))
         })
 
         setLearningsExist(hasLearningFiles)

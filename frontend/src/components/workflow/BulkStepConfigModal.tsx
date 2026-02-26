@@ -363,7 +363,6 @@ export default function BulkStepConfigModal({
       | "enable_learning"
       | "set_execution_llm"
       | "set_learning_llm"
-      | "enable_only_basic_tools"
       | "enable_only_advanced_tools"
       | "disable_read_image_access"
       | "disable_human_tools"
@@ -410,14 +409,6 @@ export default function BulkStepConfigModal({
             };
           }
           break;
-        case "enable_only_basic_tools": {
-          const basicTools = getToolsByCategory("workspace_basic", capabilities?.workspace);
-          newOverrides.enabled_custom_tools = [
-            ...basicTools.map((tool) => `workspace_tools:${tool}`),
-            "human_tools:human_feedback",
-          ];
-          break;
-        }
         case "enable_only_advanced_tools": {
           const advancedTools = getToolsByCategory("workspace_advanced", capabilities?.workspace);
           newOverrides.enabled_custom_tools = [
@@ -563,20 +554,17 @@ export default function BulkStepConfigModal({
     const wsTools = tools.filter(t => t.startsWith('workspace_tools:')).map(t => t.split(':')[1]);
     const humanTools = tools.filter(t => t.startsWith('human_tools:'));
 
-    const basicTools = getToolsByCategory('workspace_basic', capabilities?.workspace);
     const advancedTools = getToolsByCategory('workspace_advanced', capabilities?.workspace);
 
-    const isBasicOnly = wsTools.length === basicTools.length && wsTools.every(t => basicTools.includes(t));
     const isAdvancedOnly = wsTools.length === advancedTools.length && wsTools.every(t => advancedTools.includes(t));
 
     const parts: string[] = [];
-    if (isBasicOnly) parts.push('Basic tools only');
-    else if (isAdvancedOnly) parts.push('Advanced tools only');
+    if (isAdvancedOnly) parts.push('Advanced tools only');
     else parts.push(`${wsTools.length} workspace tools`);
 
     if (humanTools.length === 0) parts.push('no human tools');
 
-    if (!isBasicOnly && !isAdvancedOnly && !wsTools.includes('read_image')) {
+    if (!isAdvancedOnly && !wsTools.includes('read_image')) {
       parts.push('no images');
     }
 
@@ -845,7 +833,6 @@ export default function BulkStepConfigModal({
 
           <div className="flex flex-wrap gap-2">
             {([
-              { label: 'Basic Only', action: 'enable_only_basic_tools' as const },
               { label: 'Advanced Only', action: 'enable_only_advanced_tools' as const },
               { label: 'No Images', action: 'disable_read_image_access' as const },
               { label: 'No Human Tools', action: 'disable_human_tools' as const },

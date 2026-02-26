@@ -370,7 +370,7 @@ These tools operate on **top-level steps** (steps at the root of `plan.json`):
 | `update_decision_step` | Update a decision step | `step_id`, `decision_evaluation_question`, etc. |
 | `convert_step_to_conditional` | Convert a step to conditional | `step_id`, `condition_question` |
 
-#### Nested Sub-Agent Tools (TodoTask & Orchestration Steps)
+#### Nested Sub-Agent Tools (TodoTask Steps)
 
 **IMPORTANT**: Sub-agent steps inside `predefined_routes` are NOT top-level steps. You cannot use `update_regular_step` on them.
 
@@ -425,12 +425,15 @@ plan.json
 │   ├── Regular Step (type: "regular")
 │   ├── Decision Step (type: "decision")
 │   ├── Conditional Step (type: "conditional")
-│   ├── Orchestration Step (type: "orchestration")
-│   │   └── orchestration_routes[]       # Nested routes
-│   │       └── sub_agent_step           # Use update_orchestration_route (if available)
-│   └── TodoTask Step (type: "todo_task")
-│       └── predefined_routes[]          # Nested routes
-│           └── sub_agent_step           # Use update_todo_task_route
+│   ├── Routing Step (type: "routing")
+│   │   └── routes[]                     # N-way routes (route_id + next_step_id)
+│   ├── Human Input Step (type: "human_input")
+│   ├── TodoTask Step (type: "todo_task")
+│   │   └── predefined_routes[]          # Nested routes
+│   │       └── sub_agent_step           # Use update_todo_task_route
+│   └── Orchestration Step (type: "orchestration")  # DEPRECATED
+│       └── orchestration_routes[]       # Use todo_task or routing instead
+│           └── sub_agent_step
 ```
 
 ### Auto-Unlock Learnings
@@ -562,7 +565,7 @@ workspace/
     │   │   ├── step-2-if-true-0/     # Conditional branch step (true branch, index 0)
     │   │   ├── step-3-if-false-1/    # Conditional branch step (false branch, index 1)
     │   │   ├── step-4-decision/      # Decision step execution output
-    │   │   ├── step-5-sub-agent-0/   # Orchestration/todo_task sub-agent output
+    │   │   ├── step-5-sub-agent-0/   # Todo_task sub-agent output
     │   │   └── step-5-generic-agent-0/  # Todo_task generic agent output
     │   └── logs/                     # Execution logs
     │       ├── step-1/
@@ -599,7 +602,7 @@ workspace/
 
 ### plan.json
 
-Supports 6 step types: `regular`, `conditional`, `decision`, `orchestration`, `todo_task`, `human_input`.
+Supports 7 step types: `regular`, `conditional`, `decision`, `todo_task`, `human_input`, `routing`, and `orchestration` (deprecated — use `todo_task` or `routing` instead).
 
 ```json
 {
@@ -653,6 +656,30 @@ Supports 6 step types: `regular`, `conditional`, `decision`, `orchestration`, `t
         {"route_id": "api-fetch", "route_name": "API Fetcher", "sub_agent_step": {"...": "..."}}
       ],
       "enable_generic_agent": true
+    },
+    {
+      "type": "human_input",
+      "id": "get-user-preference",
+      "title": "Ask user for deployment preference",
+      "question": "Which environment should we deploy to?",
+      "response_type": "multiple_choice",
+      "options": ["staging", "production", "both"],
+      "variable_name": "deploy_target",
+      "option_routes": {
+        "staging": "deploy-staging",
+        "production": "deploy-production",
+        "both": "deploy-both"
+      }
+    },
+    {
+      "type": "routing",
+      "id": "route-by-quality",
+      "title": "Route based on quality results",
+      "routing_question": "Based on the quality check results and user feedback, which path should we take?",
+      "routes": [
+        {"route_id": "pass", "route_name": "Quality Passed", "condition": "All checks passed", "next_step_id": "publish-results"},
+        {"route_id": "fail", "route_name": "Quality Failed", "condition": "One or more checks failed", "next_step_id": "fix-issues"}
+      ]
     }
   ]
 }
@@ -695,11 +722,12 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 | **Conditional** (wrapper) | _(not executed)_ | `logs/step-{X}/` | `conditional-evaluation.json` (condition_result, branch_executed) |
 | **Conditional** (branches) | `execution/step-{X}-if-true-{idx}/` or `step-{X}-if-false-{idx}/` | `logs/step-{X}-if-true-{idx}/` | Same as regular |
 | **Decision** | `execution/step-{X}-decision/` | `logs/step-{X}/` | `decision-execution.json`, `decision-evaluation.json` (decision_result, reasoning) |
-| **Orchestration** | `execution/step-{X}/` | `logs/step-{X}/` | `orchestration-execution.json` (JSONL: routing decisions per iteration) |
-| **Orchestration** (sub-agents) | `execution/step-{X}-sub-agent-{idx}/` | `logs/step-{X}-sub-agent-{idx}/` | Same as regular |
+| **Orchestration** _(deprecated)_ | `execution/step-{X}/` | `logs/step-{X}/` | `orchestration-execution.json` (JSONL: routing decisions per iteration) |
+| **Orchestration** (sub-agents) _(deprecated)_ | `execution/step-{X}-sub-agent-{idx}/` | `logs/step-{X}-sub-agent-{idx}/` | Same as regular |
 | **TodoTask** | `execution/step-{X}/` | `logs/step-{X}/` | `orchestration-execution.json`, `tasks.md` (markdown task list with checkboxes) |
 | **TodoTask** (sub-agents) | `execution/step-{X}-sub-agent-{idx}/` | `logs/step-{X}-sub-agent-{idx}/` | Same as regular |
 | **TodoTask** (generic agents) | `execution/step-{X}-generic-agent-{idx}/` | `logs/step-{X}-generic-agent-{idx}/` | Same as regular |
+| **Routing** | `execution/step-{X}/` | `logs/step-{X}/` | `routing-evaluation.json` (selected_route_id, reasoning) |
 | **Human Input** | `execution/step-{X}/` | _(none)_ | Only `step_done.json` |
 
 **Learning Folders** (separate from execution, shared across runs):
@@ -1035,11 +1063,11 @@ type CleanupScope struct {
 
 ## Overview
 
-**Status**: ✅ **FULLY IMPLEMENTED** (as Orchestration Step)
+**Status**: ⚠️ **DEPRECATED** — Replaced by `todo_task` (for sub-agent orchestration) and `routing` (for N-way path selection). Existing orchestration steps still execute, but the planning agent no longer creates new ones. All planning tools (`add_orchestration_step`, `update_orchestration_step`, `add/update/delete_orchestration_route`) have been removed.
 
-**Orchestration Step** (also referred to as "Routing Step" in planning docs) is a step type that acts as an orchestrator with multiple sub-agents. The main orchestration step executes with full MCP tools, evaluates its output to select a sub-agent based on conditions, and iteratively executes sub-agents until success criteria is met.
+**Orchestration Step** (`type: "orchestration"`) was a step type that acts as an orchestrator with multiple sub-agents. The main orchestration step executes with full MCP tools, evaluates its output to select a sub-agent based on conditions, and iteratively executes sub-agents until success criteria is met.
 
-**Note**: The implementation uses "Orchestration" naming (`OrchestrationPlanStep`, `executeOrchestrationStep()`, etc.) rather than "Routing" naming.
+**Note**: The implementation uses "Orchestration" naming (`OrchestrationPlanStep`, `executeOrchestrationStep()`, etc.).
 
 ## Key Concepts
 
@@ -1379,7 +1407,7 @@ The planning agent has access to comprehensive plan modification tools:
 - `add_decision_step` - Add a new decision step
 - `convert_step_to_conditional` - Convert a step to conditional
 
-**Nested Sub-Agent Tools (for routes inside todo_task/orchestration steps)**:
+**Nested Sub-Agent Tools (for routes inside todo_task steps)**:
 - `add_todo_task_route` - Add a route with sub-agent to a todo_task step
 - `update_todo_task_route` - Update a route and its nested sub_agent_step
 - `delete_todo_task_route` - Remove a route from a todo_task step
@@ -1899,6 +1927,98 @@ The conditional agent supports code execution mode:
 - [`controller_learning_helpers.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_learning_helpers.go): Learning history loading (`LoadStepLearningHistory()`)
 - [`base_orchestrator_agent.go`](../agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go): Structured response event emission
 - [`base_agent.go`](../agent_go/pkg/orchestrator/agents/base_agent.go): Agent type constants
+
+---
+---
+
+# Routing Step (N-way LLM Routing)
+
+## Overview
+
+The **Routing Step** (`type: "routing"`) provides N-way LLM-based routing. It evaluates a `routing_question` and selects one of N routes (each with `route_id` + `next_step_id`). This is distinct from the Orchestration Step which has sub-agents — routing steps simply pick a path.
+
+**Two modes**:
+1. **Execute-then-route**: Has `description`/`success_criteria`, executes first, then routes based on execution output.
+2. **Pure routing**: No `description`, evaluates prior step context to pick a route.
+
+## Key Files
+
+- [`controller_routing.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_routing.go): Routing step execution (`executeRoutingStep()`)
+- [`conditional_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/conditional_agent.go): `EvaluateRouting()` method and routing system/user prompt templates
+
+## Context Flow for Routing
+
+The routing agent receives prior step context via `conditionContext` (pure routing mode) or `executionResult` (execute-then-route mode).
+
+### Pure Routing Mode — Context Building
+
+```go
+// Scan all previous execution results:
+// 1. ALL human_input step results (CRITICAL marker) — regardless of position
+// 2. Most recent non-human-input execution result
+
+// First pass: include all human_input step results
+for idx := 0; idx < len(previousExecutionResults) && idx < stepIndex; idx++ {
+    if allSteps[idx].StepType() == StepTypeHumanInput {
+        // Marked as: "HUMAN FEEDBACK from Step N (CRITICAL - This takes priority)"
+    }
+}
+
+// Second pass: include the last non-human-input execution result
+for idx := len(previousExecutionResults) - 1; idx >= 0; idx-- {
+    if allSteps[idx].StepType() != StepTypeHumanInput {
+        // Included as: "Most Recent Step Execution Output"
+        break
+    }
+}
+```
+
+**Key Rules**:
+- **All** human_input results are included regardless of position (marked CRITICAL)
+- Most recent non-human-input result is included for general context
+- No learning history (routing steps do not load or save learnings)
+- Variables (`variableNames`, `variableValues`) are passed to the routing LLM
+
+## Human Input + Routing Pattern
+
+When a user needs to provide input that determines the workflow path, place a `human_input` step **before** a `routing` step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do **not** use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
+
+Example workflow:
+```
+Step 1: human_input  → "Which environment?" (user answers "staging")
+Step 2: routing      → Sees human feedback as CRITICAL, routes to deploy-staging
+```
+
+---
+---
+
+# Previous Steps Context Flow (`buildPreviousStepsSummary`)
+
+## Overview
+
+The `buildPreviousStepsSummary()` function in [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) builds context from prior steps for regular steps, todo task steps, and other step types that use the shared execution path.
+
+## What It Includes
+
+1. **Step metadata**: Title, description (truncated to 200 chars), and output file path for all prior steps whose `context_output` is in the current step's `context_dependencies`.
+2. **ALL human_input step results**: Scans all prior steps and includes every `human_input` result with CRITICAL emphasis, regardless of position.
+3. **Most recent non-human-input execution result**: The last non-human-input step's result (truncated to 2000 chars).
+
+## Context Priority
+
+| Source | Included | Priority |
+|--------|----------|----------|
+| Human input steps (any position) | All of them | CRITICAL — "You MUST incorporate this human feedback" |
+| Most recent non-human-input step result | One (most recent) | Standard context |
+| Step metadata (title, description, output file) | All dependency steps | Reference only |
+
+## Comparison Across Step Types
+
+| | Routing Step | Regular/TodoTask/Other Steps | Conditional Step |
+|---|---|---|---|
+| **Human input steps** | All (any position) | All (any position) | Only immediate previous |
+| **Non-human-input results** | Most recent one | Most recent one | Most recent one |
+| **Step metadata** | Not included | Titles + descriptions for dependency steps | Not included |
 
 ---
 ---

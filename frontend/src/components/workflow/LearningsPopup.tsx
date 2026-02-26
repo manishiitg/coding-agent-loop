@@ -362,43 +362,58 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
         }
       }
 
-      // Also check the code/ subdirectory for .go files
-      try {
-        const codePath = `${learningsPath}/code`
-        console.log('[LearningsPopup] Checking code path:', codePath)
-        const codeFilesResponse = await agentApi.getPlannerFiles(codePath, 100)
-        console.log('[LearningsPopup] Code files response:', codeFilesResponse)
-        const codeFiles: Array<PlannerFile & { name?: string }> = Array.isArray(codeFilesResponse)
-          ? codeFilesResponse
-          : (codeFilesResponse?.data && Array.isArray(codeFilesResponse.data) ? codeFilesResponse.data : [])
-        console.log('[LearningsPopup] Code files found:', codeFiles)
+      // Check for code files in the code/ subdirectory (already returned in the files listing with code/ prefix)
+      const codeExtensions = ['.go', '.py', '.sh', '.js', '.ts', '.jsx', '.tsx', '.bash', '.curl', '.rb', '.java', '.rs', '.c', '.cpp', '.json', '.yaml', '.yml']
 
-        // Find the first .go file
-        const codeFile = codeFiles.find((file) => {
-          const fileName = file.filepath || file.name || ''
-          return fileName.endsWith('.go')
-        })
-        console.log('[LearningsPopup] Code file:', codeFile)
+      // First try: find code files from the already-fetched file listing (files with code/ prefix)
+      let codeFile = files.find((file) => {
+        const fileName = file.filepath || file.name || ''
+        return fileName.startsWith('code/') && codeExtensions.some(ext => fileName.endsWith(ext))
+      })
+      console.log('[LearningsPopup] Code file from parent listing:', codeFile)
 
-        if (codeFile) {
-          let codeFilePath = codeFile.filepath || codeFile.name
-          if (codeFilePath) {
-            codeFileName = codeFilePath.split('/').pop() || 'code.go'
-            if (!codeFilePath.startsWith(workspacePath)) {
-              const cleanPath = codeFilePath.startsWith('/') ? codeFilePath.slice(1) : codeFilePath
-              codeFilePath = `${workspacePath}/${cleanPath}`
-            }
-            console.log('[LearningsPopup] Fetching code from:', codeFilePath)
-            const codeResponse = await agentApi.getPlannerFileContent(codeFilePath)
-            console.log('[LearningsPopup] Code response:', codeResponse)
-            if (codeResponse.success && codeResponse.data && codeResponse.data.content) {
-              codeContent = codeResponse.data.content
-              console.log('[LearningsPopup] Code content loaded, length:', codeContent.length)
-            }
+      // Fallback: try listing the code/ subdirectory directly
+      if (!codeFile) {
+        try {
+          const codePath = `${learningsPath}/code`
+          console.log('[LearningsPopup] Checking code path:', codePath)
+          const codeFilesResponse = await agentApi.getPlannerFiles(codePath, 100)
+          console.log('[LearningsPopup] Code files response:', codeFilesResponse)
+          const codeFiles: Array<PlannerFile & { name?: string }> = Array.isArray(codeFilesResponse)
+            ? codeFilesResponse
+            : (codeFilesResponse?.data && Array.isArray(codeFilesResponse.data) ? codeFilesResponse.data : [])
+          console.log('[LearningsPopup] Code files found:', codeFiles)
+
+          codeFile = codeFiles.find((file) => {
+            const fileName = file.filepath || file.name || ''
+            return codeExtensions.some(ext => fileName.endsWith(ext))
+          })
+          console.log('[LearningsPopup] Code file from subfolder listing:', codeFile)
+        } catch (codeErr) {
+          console.log('[LearningsPopup] Code folder error (might not exist):', codeErr)
+        }
+      }
+
+      if (codeFile) {
+        let codeFilePath = codeFile.filepath || codeFile.name
+        if (codeFilePath) {
+          codeFileName = codeFilePath.split('/').pop() || 'code'
+          if (!codeFilePath.startsWith(workspacePath)) {
+            const cleanPath = codeFilePath.startsWith('/') ? codeFilePath.slice(1) : codeFilePath
+            codeFilePath = `${workspacePath}/${cleanPath}`
+          }
+          // If filepath is relative (e.g. code/file.py), prepend learningsPath
+          if (!codeFilePath.includes('/learnings/')) {
+            codeFilePath = `${learningsPath}/${codeFilePath}`
+          }
+          console.log('[LearningsPopup] Fetching code from:', codeFilePath)
+          const codeResponse = await agentApi.getPlannerFileContent(codeFilePath)
+          console.log('[LearningsPopup] Code response:', codeResponse)
+          if (codeResponse.success && codeResponse.data && codeResponse.data.content) {
+            codeContent = codeResponse.data.content
+            console.log('[LearningsPopup] Code content loaded, length:', codeContent.length)
           }
         }
-      } catch (codeErr) {
-        console.log('[LearningsPopup] Code folder error (might not exist):', codeErr)
       }
 
       if (!mdContent && !codeContent) {

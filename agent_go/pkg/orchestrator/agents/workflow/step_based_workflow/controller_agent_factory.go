@@ -671,13 +671,34 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 	var executorsToUse map[string]interface{}
 
 	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
+		// Migrate old tool configs: strip deprecated categories and ensure workspace_advanced is present.
+		// workspace_basic and workspace_git are deprecated — shell_command handles all file/git ops.
+		var enabledTools []string
+		hasAdvanced := false
+		for _, entry := range stepConfig.EnabledCustomTools {
+			if strings.HasPrefix(entry, "workspace_basic") {
+				continue // Drop deprecated workspace_basic entries
+			}
+			if strings.HasPrefix(entry, "workspace_git") {
+				continue // Drop deprecated workspace_git entries
+			}
+			if strings.HasPrefix(entry, "workspace_advanced") {
+				hasAdvanced = true
+			}
+			enabledTools = append(enabledTools, entry)
+		}
+		if !hasAdvanced {
+			enabledTools = append(enabledTools, "workspace_advanced:*")
+			hcpo.GetLogger().Info("🔧 Auto-including workspace_advanced:* (migrated from old workspace_basic config)")
+		}
+
 		// Filter tools based on unified format (category:tool or category:*)
 		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
 			hcpo.WorkspaceTools,
 			hcpo.WorkspaceToolExecutors,
-			stepConfig.EnabledCustomTools,
+			enabledTools,
 		)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(toolsToRegister), len(enabledTools), enabledTools))
 	} else {
 		// Default: enable only advanced + human tools (not all tools)
 		// This avoids exposing basic file tools that may not be needed
@@ -696,31 +717,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 	return toolsToRegister, executorsToUse
 }
 
-// prepareWorkspaceToolsOnly prepares workspace tools excluding human tools
-// This is used for learning agents which should NOT have access to human tools (like human_feedback)
-// Learning agents are pure LLM analysis agents that should not block on human input
+// prepareWorkspaceToolsOnly prepares minimal workspace tools for learning agents.
+// Learning agents only need shell_command (for reading files) and diff_patch_workspace_file
+// (for writing learnings). They should NOT have human tools (like human_feedback) since
+// they are pure LLM analysis agents that should not block on human input.
 func (hcpo *StepBasedWorkflowOrchestrator) prepareWorkspaceToolsOnly() ([]llmtypes.Tool, map[string]interface{}) {
-	var filteredTools []llmtypes.Tool
-	filteredExecutors := make(map[string]interface{})
-
-	for _, tool := range hcpo.WorkspaceTools {
-		toolName := tool.Function.Name
-		// Check if this tool is a human tool by looking at its category
-		if hcpo.ToolCategories != nil {
-			if category, exists := hcpo.ToolCategories[toolName]; exists && category == "human" {
-				// Skip human tools for learning agents
-				hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding human tool '%s' from learning agent (learning agents should not have human tools)", toolName))
-				continue
-			}
-		}
-		filteredTools = append(filteredTools, tool)
-		// Also include corresponding executor
-		if executor, exists := hcpo.WorkspaceToolExecutors[toolName]; exists {
-			filteredExecutors[toolName] = executor
-		}
-	}
-
-	return filteredTools, filteredExecutors
+	tools, executors := orchestrator.FilterCustomToolsByCategory(
+		hcpo.WorkspaceTools,
+		hcpo.WorkspaceToolExecutors,
+		[]string{
+			"workspace_advanced:execute_shell_command",
+			"workspace_advanced:diff_patch_workspace_file",
+		},
+	)
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Prepared %d learning agent tools (execute_shell_command + diff_patch, no human tools)", len(tools)))
+	return tools, executors
 }
 
 // addPrerequisiteDetectionTool adds prerequisite detection tool if prerequisite detection is enabled
@@ -1266,10 +1277,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM validation agent
 
 	// Code execution mode and tool search mode only apply to execution agents, not validation agents
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
 	config.UseToolSearchMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Disabling code execution mode and tool search mode for validation agent (phase agents always use simple mode)"))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Validation agent code execution mode: %v (provider requires it: %v)", config.UseCodeExecutionMode, requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)))
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
@@ -1303,9 +1314,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 		return nil, fmt.Errorf("failed to create and setup validation agent: %w", err)
 	}
 
-	// 6. Post-setup: folder guard paths (validation agents don't use code execution mode, so no registry update needed)
-	// Note: Validation agents have config.UseCodeExecutionMode = false, so base factory won't update registry
-	// and we don't need to update it either - validation agents are pure LLM agents with no code execution
+	// 6. Post-setup: folder guard paths
+	// Note: Validation agents typically don't use code execution mode (unless provider requires it),
+	// so base factory usually won't update registry
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
 		// Log warning but don't fail agent creation
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
@@ -1354,8 +1365,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 
 	// Code execution mode and tool search mode only apply to execution agents, not learning agents
 	// CRITICAL: Override orchestrator-level code execution mode and tool search mode setting - learning agents are pure LLM analysis agents
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
 	config.UseToolSearchMode = false
 	if wasCodeExecutionMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
@@ -1812,10 +1823,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default todo task orchestrator tools: %v", config.SelectedTools))
 	}
 
-	// TEMP: Force simple agent mode for todo task orchestrator — always disable code execution and tool search
-	// TODO: Remove this override once todo task step supports tool_search/code_exec agent types properly
-	isCodeExecutionMode := false
+	// Enable code execution mode for CLI providers (claude-code, gemini-cli) that need HTTP bridge for tool routing
+	// Non-CLI providers use simple agent mode (no code execution)
+	isCodeExecutionMode := llmConfig.Primary.Provider == "claude-code" || llmConfig.Primary.Provider == "gemini-cli"
 	config.UseCodeExecutionMode = isCodeExecutionMode
+	if isCodeExecutionMode {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Todo task orchestrator: code execution mode enabled for CLI provider '%s'", llmConfig.Primary.Provider))
+	}
 
 	isToolSearchMode := false
 	config.UseToolSearchMode = isToolSearchMode
@@ -2315,9 +2329,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
 	// Scoring agents always use NoServers (pure LLM analysis agent)
-	// Phase agents always use simple mode regardless of workflow mode setting
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
 	config.ServerNames = []string{mcpclient.NoServers}
-	config.UseCodeExecutionMode = false
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
 	config.UseToolSearchMode = false
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)
@@ -2477,11 +2491,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
 	// Orchestration learning agents always use NoServers (pure LLM analysis agent)
-	// Phase agents always use simple mode regardless of workflow mode setting
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Code execution mode and tool search mode don't apply to learning agents
-	config.UseCodeExecutionMode = false
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
 	config.UseToolSearchMode = false
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)

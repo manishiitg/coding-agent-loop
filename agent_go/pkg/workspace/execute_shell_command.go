@@ -19,14 +19,15 @@ type ExecuteShellCommandParams struct {
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
-	// Default empty working directory to "." (workspace root)
+	// Reject empty working directory — the tool definition marks it as required
 	if params.WorkingDirectory == "" {
-		params.WorkingDirectory = "."
+		return "", fmt.Errorf("working_directory is required for execute_shell_command; specify the step execution folder path (e.g., 'execution/step-1/') so commands run in the correct directory")
 	}
 
-	// Validate working directory against folder guard (write operation since commands can modify files)
+	// Validate working directory against folder guard (read operation — cd is not a write;
+	// actual write restrictions are enforced container-side via FolderGuard mount config)
 	if params.WorkingDirectory != "" {
-		if err := c.ValidatePath(params.WorkingDirectory, true); err != nil {
+		if err := c.ValidatePath(params.WorkingDirectory, false); err != nil {
 			return "", err
 		}
 	}
@@ -62,10 +63,13 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		return "", err
 	}
 
-	formatted, isError := formatShellResponse(respBody)
-	if isError {
-		return "", fmt.Errorf("%s", formatted)
-	}
+	// Always return the formatted result (stdout, stderr, exit_code) as a successful
+	// tool result. Previously, non-zero exit codes were wrapped as Go errors, which
+	// caused the LLM to see a generic "Tool execution failed" message instead of the
+	// actual stdout/stderr. By returning the full output, the LLM can read exit_code,
+	// stderr, and stdout to understand what went wrong and take corrective action.
+	// Only infrastructure errors (network, validation) use Go errors.
+	formatted, _ := formatShellResponse(respBody)
 	return formatted, nil
 }
 

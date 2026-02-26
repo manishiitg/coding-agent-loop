@@ -10,7 +10,7 @@ func shellToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary (/app/workspace-docs).\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"' resolves to '/app/workspace-docs/scripts')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use absolute paths starting with '/app/workspace-docs' (e.g., '/app/workspace-docs/script.py', '/app/workspace-docs/data/file.csv'). This ensures scripts work regardless of the working_directory setting.\n\nReturns stdout, stderr, and exit code. Always executes via shell (sh -c), supporting pipes (|), redirects (>), chaining (&&, ||), environment variables, and wildcards.",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary.\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use relative paths from the working directory or workspace root. The shell starts in the workspace root by default.\n\nReturns stdout, stderr, and exit code. Always executes via shell (sh -c), supporting pipes (|), redirects (>), chaining (&&, ||), environment variables, and wildcards.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -22,7 +22,7 @@ func shellToolDef() llmtypes.Tool {
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
-						"description": "Relative directory path within workspace to execute command. Example: 'scripts' resolves to '/app/workspace-docs/scripts'. Use '.' for workspace root.",
+						"description": "Relative directory path within workspace to execute command. Example: 'scripts' resolves to the scripts/ folder in workspace. Use '.' for workspace root.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",
@@ -55,39 +55,6 @@ func imageToolDef() llmtypes.Tool {
 					},
 				},
 				"required": []string{"filepath", "query"},
-			}),
-		},
-	}
-}
-
-// webToolDef returns the fetch_web_content tool definition (single source of truth).
-func webToolDef() llmtypes.Tool {
-	return llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "fetch_web_content",
-			Description: "Fetch content from a URL. Supports HTTP/HTTPS requests with configurable timeout. Can optionally convert HTML responses to markdown for easier processing by the LLM.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"url": map[string]interface{}{
-						"type":        "string",
-						"description": "The URL to fetch content from (must be http:// or https://)",
-					},
-					"timeout": map[string]interface{}{
-						"type":        "integer",
-						"description": "Timeout in seconds (default: 30, max: 120)",
-					},
-					"convert_to_markdown": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Convert HTML to markdown for easier processing (default: true)",
-					},
-					"headers": map[string]interface{}{
-						"type":        "object",
-						"description": "Optional custom headers (e.g., {\"Authorization\": \"Bearer token\"})",
-					},
-				},
-				"required": []string{"url"},
 			}),
 		},
 	}
@@ -136,22 +103,16 @@ func GetImageToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{imageToolDef()}
 }
 
-// GetWebToolDefinitions returns only the web fetch (fetch_web_content) tool.
-func GetWebToolDefinitions() []llmtypes.Tool {
-	return []llmtypes.Tool{webToolDef()}
-}
-
 // GetPDFToolDefinitions returns only the PDF (read_pdf) tool.
 func GetPDFToolDefinitions() []llmtypes.Tool {
 	return []llmtypes.Tool{pdfToolDef()}
 }
 
-// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, web, PDF, diff_patch). No duplication: built from the single-tool getters.
+// GetAdvancedToolDefinitions returns all advanced workspace tools (shell, image, PDF, diff_patch). No duplication: built from the single-tool getters.
 func GetAdvancedToolDefinitions() []llmtypes.Tool {
 	var tools []llmtypes.Tool
 	tools = append(tools, GetShellToolDefinitions()...)
 	tools = append(tools, GetImageToolDefinitions()...)
-	tools = append(tools, GetWebToolDefinitions()...)
 	tools = append(tools, GetPDFToolDefinitions()...)
 	tools = append(tools, GetDiffPatchToolDefinitions()...)
 	return tools

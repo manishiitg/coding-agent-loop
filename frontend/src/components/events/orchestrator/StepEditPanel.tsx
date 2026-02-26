@@ -198,9 +198,9 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   // workspace_tools expanded by default to show tool configuration
   const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set(['workspace_tools']));
   // State for expanded workspace sub-categories (expanded by default to show tools)
-  // Maps to backend categories: workspace_basic (9 tools), workspace_git (2 tools), workspace_advanced (4 tools), workspace_browser (1 tool)
+  // Maps to backend categories: workspace_advanced (4 tools), workspace_browser (1 tool)
   const [expandedWorkspaceSubCategories, setExpandedWorkspaceSubCategories] = useState<Set<string>>(
-    new Set(['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser'])
+    new Set(['workspace_advanced', 'workspace_browser'])
   );
 
   // Track the step to detect when step changes (using title + index as stable identifier)
@@ -301,7 +301,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
 
       // Reset expanded categories when step changes (keep workspace_tools expanded by default)
       setExpandedToolCategories(new Set(['workspace_tools']));
-      setExpandedWorkspaceSubCategories(new Set(['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']));
+      setExpandedWorkspaceSubCategories(new Set(['workspace_advanced', 'workspace_browser']));
 
       // Update refs for next comparison
       prevStepIdentifierRef.current = stepIdentifier;
@@ -378,7 +378,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   };
 
   // Sub-categories that belong to workspace_tools parent
-  const WORKSPACE_SUB_CATEGORIES = ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser'];
+  const WORKSPACE_SUB_CATEGORIES = ['workspace_advanced', 'workspace_browser'];
 
   const isCategoryEnabled = (category: string, enabledTools: string[]): boolean => {
     // Empty array means all tools enabled by default
@@ -928,23 +928,18 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
         parts.push('All workspace tools');
       } else {
         // Show sub-category breakdown (matches backend categories)
-        const basicTools = getToolsByCategory('workspace_basic', capabilities?.workspace);
-        const gitTools = getToolsByCategory('workspace_git', capabilities?.workspace);
         const advancedTools = getToolsByCategory('workspace_advanced', capabilities?.workspace);
+        const browserTools = getToolsByCategory('workspace_browser', capabilities?.workspace);
 
-        const basicEnabled = workspaceSpecificTools.filter(t => basicTools.includes(t)).length;
-        const gitEnabled = workspaceSpecificTools.filter(t => gitTools.includes(t)).length;
         const advancedEnabled = workspaceSpecificTools.filter(t => advancedTools.includes(t)).length;
+        const browserEnabled = workspaceSpecificTools.filter(t => browserTools.includes(t)).length;
 
         const subCategoryParts = [];
-        if (basicEnabled > 0) {
-          subCategoryParts.push(`${basicEnabled}/${basicTools.length} basic`);
-        }
-        if (gitEnabled > 0) {
-          subCategoryParts.push(`${gitEnabled}/${gitTools.length} git`);
-        }
         if (advancedEnabled > 0) {
           subCategoryParts.push(`${advancedEnabled}/${advancedTools.length} advanced`);
+        }
+        if (browserEnabled > 0) {
+          subCategoryParts.push(`${browserEnabled}/${browserTools.length} browser`);
         }
 
         if (subCategoryParts.length > 0) {
@@ -1970,7 +1965,7 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
 
                         // Count enabled tools from all sub-categories
                         let enabledCount = 0;
-                        for (const subCat of ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']) {
+                        for (const subCat of ['workspace_advanced', 'workspace_browser']) {
                           // Check if sub-category:* is enabled
                           if (isCategoryEnabled(subCat, enabledCustomTools)) {
                             enabledCount += getToolsByCategory(subCat, capabilities?.workspace).length;
@@ -2011,7 +2006,7 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
 
                         // Count enabled tools from all sub-categories
                         let enabledCount = 0;
-                        for (const subCat of ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']) {
+                        for (const subCat of ['workspace_advanced', 'workspace_browser']) {
                           // Check if sub-category:* is enabled
                           if (isCategoryEnabled(subCat, enabledCustomTools)) {
                             enabledCount += getToolsByCategory(subCat, capabilities?.workspace).length;
@@ -2047,152 +2042,8 @@ const allCategoryTools = getToolsByCategory(category, capabilities?.workspace);
                 </div>
                 {expandedToolCategories.has('workspace_tools') && (
                   <div className="ml-6 space-y-3 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                    {/* Workspace Tools Sub-categories (matches backend: workspace_basic, workspace_git, workspace_advanced) */}
+                    {/* Workspace Tools Sub-categories (matches backend: workspace_advanced, workspace_browser) */}
                     {/* Backend receives individual tool names in enabled_custom_tools with category prefixes */}
-                    {/* Basic Workspace Tools Sub-category (9 tools) */}
-                    {(() => {
-                      const subCategoryName = 'workspace_basic';
-                      const subCategoryTools = getToolsByCategory(subCategoryName, capabilities?.workspace);
-                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_basic', subCategoryTools, enabledCustomTools);
-                      const enabledInSubCategory = subCategoryTools.filter((toolName: string) =>
-                        isToolEnabled('workspace_basic', toolName, enabledCustomTools)
-                      );
-
-                      return (
-                        <div key={subCategoryName} className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <label className="flex items-center gap-2 cursor-pointer flex-1">
-                              <input
-                                type="checkbox"
-                                checked={isSubCategoryChecked}
-                                onChange={(e) => {
-                                  setEnabledCustomTools(prev =>
-                                    toggleSubCategory('workspace_basic', subCategoryTools, e.target.checked, prev)
-                                  );
-                                }}
-                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                              />
-                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Basic Workspace</span>
-                              <span className="text-xs text-gray-500 dark:text-gray-500">
-                                ({enabledInSubCategory.length}/{subCategoryTools.length})
-                              </span>
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const newExpanded = new Set(expandedWorkspaceSubCategories);
-                                if (newExpanded.has(subCategoryName)) {
-                                  newExpanded.delete(subCategoryName);
-                                } else {
-                                  newExpanded.add(subCategoryName);
-                                }
-                                setExpandedWorkspaceSubCategories(newExpanded);
-                              }}
-                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                            >
-                              {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
-                            </button>
-                          </div>
-                          {expandedWorkspaceSubCategories.has(subCategoryName) && (
-                            <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                              {subCategoryTools.map((toolName: string) => {
-                                const toolIsEnabled = isToolEnabled('workspace_basic', toolName, enabledCustomTools);
-                                return (
-                                  <label key={toolName} className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={toolIsEnabled}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          setEnabledCustomTools(prev => enableTool('workspace_basic', toolName, prev));
-                                        } else {
-                                          setEnabledCustomTools(prev => disableTool('workspace_basic', toolName, prev));
-                                        }
-                                      }}
-                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                    />
-                                    <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-
-                    {/* Git Tools Sub-category (2 tools: sync + status) */}
-                    {capabilities?.workspace?.github_sync_enabled !== false && (() => {
-                      const subCategoryName = 'workspace_git';
-                      const subCategoryTools = getToolsByCategory(subCategoryName, capabilities?.workspace);
-                      const isSubCategoryChecked = isSubCategoryEnabled('workspace_git', subCategoryTools, enabledCustomTools);
-                      const enabledInSubCategory = subCategoryTools.filter((toolName: string) =>
-                        isToolEnabled('workspace_git', toolName, enabledCustomTools)
-                      );
-
-                      return (
-                        <div key={subCategoryName} className="space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <label className="flex items-center gap-2 cursor-pointer flex-1">
-                              <input
-                                type="checkbox"
-                                checked={isSubCategoryChecked}
-                                onChange={(e) => {
-                                  setEnabledCustomTools(prev =>
-                                    toggleSubCategory('workspace_git', subCategoryTools, e.target.checked, prev)
-                                  );
-                                }}
-                                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                              />
-                              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Git Tools</span>
-                              <span className="text-xs text-gray-500 dark:text-gray-500">
-                                ({enabledInSubCategory.length}/{subCategoryTools.length})
-                              </span>
-                            </label>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const newExpanded = new Set(expandedWorkspaceSubCategories);
-                                if (newExpanded.has(subCategoryName)) {
-                                  newExpanded.delete(subCategoryName);
-                                } else {
-                                  newExpanded.add(subCategoryName);
-                                }
-                                setExpandedWorkspaceSubCategories(newExpanded);
-                              }}
-                              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                            >
-                              {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
-                            </button>
-                          </div>
-                          {expandedWorkspaceSubCategories.has(subCategoryName) && (
-                            <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                              {subCategoryTools.map((toolName: string) => {
-                                const toolIsEnabled = isToolEnabled('workspace_git', toolName, enabledCustomTools);
-                                return (
-                                  <label key={toolName} className="flex items-center gap-2 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={toolIsEnabled}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
-                                          setEnabledCustomTools(prev => enableTool('workspace_git', toolName, prev));
-                                        } else {
-                                          setEnabledCustomTools(prev => disableTool('workspace_git', toolName, prev));
-                                        }
-                                      }}
-                                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                    />
-                                    <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-
                     {/* Advanced Workspace Tools Sub-category (4 tools: shell, image, web, PDF) */}
                     {(() => {
                       const subCategoryName = 'workspace_advanced';

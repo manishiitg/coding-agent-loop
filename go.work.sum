@@ -577,6 +577,7 @@ github.com/manishiitg/mcpagent v1.2.4/go.mod h1:orSK8bw3r8lWWWPEmUiaxXd40PypJALR
 github.com/manishiitg/mcpagent v1.2.8/go.mod h1:orSK8bw3r8lWWWPEmUiaxXd40PypJALR86j6daZSyEI=
 github.com/manishiitg/mcpagent v1.2.9 h1:MxAXwn0AotoAo9ZqRr1kvdzj2jikAs9irVzXwpnKxDo=
 github.com/manishiitg/mcpagent v1.2.9/go.mod h1:8ysuuP0GsETUaVU3NED+RmzyZ2hTg50xq0t7WMBui/A=
+github.com/manishiitg/mcpagent v1.5.0/go.mod h1:VXt/+wE/9gZLJIqDeawgg6o+98xmS2UYKPiJLfaikaA=
 github.com/moby/docker-image-spec v1.3.1 h1:jMKff3w6PgbfSa69GfNg+zN/XLhfXJGnEx3Nl2EsFP0=
 github.com/moby/docker-image-spec v1.3.1/go.mod h1:eKmb5VW8vQEh/BAr2yvVNvuiJuY6UIocYsFu/DxxRpo=
 github.com/moby/patternmatcher v0.6.0 h1:GmP9lR19aU5GqSSFko+5pRqHi+Ohk1O69aFiKkVGiPk=

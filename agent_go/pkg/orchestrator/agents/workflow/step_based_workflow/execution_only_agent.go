@@ -22,7 +22,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 
 ## 🤖 Role & Responsibility
 - **Identity**: Execution-Only Agent (Focused on completion, not discovery).
-- **Goal**: Execute the current plan step using MCP tools or Python code.
+- **Goal**: Execute the current plan step using MCP tools or code execution.
 {{if .LearningHistory}}- **Context**: Pre-discovered learning history available (read-only reference).{{end}}
 
 {{if .IsCodeExecutionMode}}
@@ -40,18 +40,24 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.VariableNames}}
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
 
-**Handling**: Step descriptions are already resolved. For Python code/tool calls, use the resolved values directly.
+**Handling**: Step descriptions are already resolved. For code and tool calls, use the resolved values directly.
 {{end}}
 
 ## 🚨 CRITICAL EXECUTION RULES
 1. **Source of Truth**: The **Step Description** defines WHAT to do. It ALWAYS overrides learnings.
 2. **Workspace Paths**:
-   - **Python Code**: Use workspace tools (read_workspace_file, write_workspace_file) for file operations. For MCP tool calls, use HTTP requests to per-tool endpoints via 'os.environ["MCP_API_URL"]'.
    - **Tool Args**: Pass '{{.WorkspacePath}}' as the workspace path argument.
    - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
-3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.
-4. **Mandatory Output**: Create '{{.StepExecutionPath}}/{{.StepContextOutput}}' matching the provided schema.
-5. **File Existence**: 'ReadWorkspaceFile' **PANICS** if the file is missing (it does NOT return an error string). **ALWAYS** use 'ListWorkspaceFiles' to verify existence before reading.
+{{if .IsCodeExecutionMode}}   - **execute_shell_command working_directory**: ALWAYS set `+"`"+`working_directory`+"`"+` to '{{.StepExecutionPath}}' so that code runs inside the step folder. This ensures all output files are written to the correct step directory.
+   - **Writing output files**: Use paths relative to the step folder (e.g., `+"`"+`open("{{.StepContextOutput}}", "w")`+"`"+`). The `+"`"+`working_directory`+"`"+` setting handles the base path automatically.
+   - **Reading dependencies from other steps**: Use relative paths from the workspace root in your code: `+"`"+`execution/step-N/file.json`+"`"+`.
+   - **MCP tool calls**: Use HTTP requests to per-tool endpoints via `+"`"+`os.environ["MCP_API_URL"]`+"`"+` and `+"`"+`os.environ["MCP_API_TOKEN"]`+"`"+`.
+{{else}}   - **File Operations**: Prefer `+"`"+`execute_shell_command`+"`"+` for reading files (`+"`"+`cat`+"`"+`, `+"`"+`head`+"`"+`), writing files (shell redirects, `+"`"+`python3 -c`+"`"+`), and data processing. Use `+"`"+`diff_patch_workspace_file`+"`"+` for targeted edits to existing files.
+   - **execute_shell_command working_directory**: ALWAYS set `+"`"+`working_directory`+"`"+` to '{{.StepExecutionPath}}' so commands run inside the step folder. Use **relative file paths** in the command string (e.g., `+"`"+`echo '...' > output.json`+"`"+`). Do NOT embed full workspace paths in the command — the `+"`"+`working_directory`+"`"+` parameter handles path resolution.
+   - **MCP tools**: Use MCP tools directly for external service calls.
+{{end}}3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.{{if .IsCodeExecutionMode}} Read dependency files from code using relative workspace paths.{{else}} Use `+"`"+`execute_shell_command`+"`"+` (e.g., `+"`"+`cat`+"`"+`) to read dependency files. The **Inputs** field below shows exact file paths.{{end}}
+4. **Mandatory Output**: Create '{{.StepContextOutput}}' in the step folder '{{.StepExecutionPath}}/'.{{if .IsCodeExecutionMode}} With `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+`, just write to '{{.StepContextOutput}}' directly in your code.{{else}} Use `+"`"+`execute_shell_command`+"`"+` with `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+` or `+"`"+`diff_patch_workspace_file`+"`"+`.{{end}}
+5. **File Existence**: {{if .IsCodeExecutionMode}}Before reading files in code, verify they exist (e.g., `+"`"+`os.path.exists()`+"`"+` in Python).{{else}}Use `+"`"+`execute_shell_command(command="ls ...", ...)`+"`"+` to verify files exist before reading.{{end}}
 6. **Parallel Tools**: When you need multiple independent operations (e.g., reading several files, making unrelated tool calls), call them ALL in a single response for parallel execution.
 
 {{if .PreviousStepsSummary}}
@@ -98,11 +104,15 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{end}}
 
 {{if .IsCodeExecutionMode}}
-## 💻 Advanced Code Patterns
-- **JSON Safety**: Read dependencies FIRST, parse with 'json.loads()', then process.
-- **Robust Parsing**: For CSV/Delimited text, use Python's 'csv' module or 'pandas' to handle complex data reliably.
-- **Verification**: Programmatically verify success. Print "✅ PASS: [detail]" or "❌ FAIL: [reason]" + 'sys.exit(1)'.
-- **Repeatability**: Write one comprehensive Python script with helper functions rather than fragmented commands.
+## 💻 Code Execution Patterns
+- **Working Directory**: ALWAYS pass `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+` to execute_shell_command. Example tool call:
+  `+"`"+`execute_shell_command(command="python3 script.py", working_directory="{{.StepExecutionPath}}")`+"`"+`
+- **Output Files**: Write output using just the filename since working_directory is set. E.g., `+"`"+`open("{{.StepContextOutput}}", "w")`+"`"+` — this writes to `+"`"+`{{.StepExecutionPath}}/{{.StepContextOutput}}`+"`"+`.
+- **Reading Other Steps' Output**: Dependencies from other steps are at relative paths from workspace root. In code, use `+"`"+`execution/step-N/file.json`+"`"+` to read them.
+- **JSON Safety**: Read dependencies FIRST, parse with `+"`"+`json.loads()`+"`"+`, then process.
+- **Robust Parsing**: For CSV/Delimited text, use Python's `+"`"+`csv`+"`"+` module or `+"`"+`pandas`+"`"+` to handle complex data reliably.
+- **Verification**: Programmatically verify success. Print "✅ PASS: [detail]" or "❌ FAIL: [reason]" + `+"`"+`sys.exit(1)`+"`"+`.
+- **Repeatability**: Write one comprehensive script with helper functions rather than fragmented commands.
 {{end}}
 
 {{if .ValidationSchema}}
@@ -179,12 +189,13 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `## �
 ### 📚 Learning Resources
 Full details available in:
 {{.LearningFilePaths}}
-*Use read_workspace_file to access these if needed.*
+*Use execute_shell_command with 'cat' to access these if needed.*
 {{end}}
 
 ### 📋 Requirements
 - **Inputs**: {{.StepContextDependencies}}
-- **Output File**: {{.StepContextOutput}} (Create in {{.StepExecutionPath}}/)`)
+- **Output File**: {{.StepContextOutput}} (Create in {{.StepExecutionPath}}/)
+{{if eq .IsCodeExecutionMode "true"}}- **execute_shell_command**: Set `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+` so output files land in the correct step folder.{{end}}`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {
@@ -306,6 +317,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"UseToolSearchMode":          useToolSearchMode,
 		"ToolSearchInstructions":     toolSearchInstructions,
 		"HasLoop":                    hasLoop,
+		"LoopCondition":              templateVars["LoopCondition"],
+		"CurrentIteration":           templateVars["CurrentIteration"],
+		"MaxIterations":              templateVars["MaxIterations"],
 		"StepContextOutput":          stepContextOutput,
 		"CurrentDate":                currentDate,
 		"CurrentTime":                currentTime,
@@ -320,8 +334,9 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"OtherAgentsCapabilities":    otherAgentsCapabilities,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
-		"ValidationSchema":           validationSchema,      // Validation schema JSON string
+		"ValidationSchema":           validationSchema,                        // Validation schema JSON string
 		"KnowledgebasePath":          knowledgebasePath,                       // Knowledgebase folder path
+		"UseKnowledgebase":           templateVars["UseKnowledgebase"],        // Whether knowledgebase is enabled
 		"FolderGuardReadPaths":       folderGuardReadPaths,                    // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":      folderGuardWritePaths,                   // Folder guard write paths for agent guidance
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],    // Skip cleanup mode flag

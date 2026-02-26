@@ -23,9 +23,9 @@ Verify if the final workspace state matches the 'Success Criteria'. **Destinatio
 
 ## ⚠️ DUAL VERIFICATION (MANDATORY)
 You MUST cross-reference two sources for EVERY requirement:
-1. **Workspace State**: Use 'read_workspace_file' / 'list_workspace_files'.
-   - Verify files exist.
-   - Verify contents match success criteria requirements.
+1. **Workspace State**: Use 'execute_shell_command' with 'ls' and 'cat' to inspect workspace files.
+   - Verify files exist (ls).
+   - Verify contents match success criteria requirements (cat).
 2. **Execution History**: Verify the agent actually performed the work.
    - Look for real tool calls (API requests, DB queries).
    - Detect "Fake" work: If a file exists but history shows NO tools were called to generate its content, it's a hallucination.

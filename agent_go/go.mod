@@ -3,7 +3,6 @@ module mcp-agent-builder-go/agent_go
 go 1.24.4
 
 require (
-	github.com/JohannesKaufmann/html-to-markdown v1.6.0
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/gin-gonic/gin v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
@@ -11,11 +10,10 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/invopop/jsonschema v0.13.0
 	github.com/joho/godotenv v1.5.1
-	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.4.0
-	github.com/manishiitg/multi-llm-provider-go v0.3.7
+	github.com/manishiitg/mcpagent v1.5.0
+	github.com/manishiitg/multi-llm-provider-go v0.4.0
 	github.com/mark3labs/mcp-go v0.44.0
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8
@@ -29,17 +27,11 @@ require (
 
 replace github.com/manishiitg/mcp-agent-builder-go/workspace => ../workspace
 
-replace github.com/manishiitg/mcpagent => ../../mcpagent
-
-replace github.com/manishiitg/multi-llm-provider-go => ../../multi-llm-provider-go
-
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.18.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/PaesslerAG/gval v1.0.0 // indirect
-	github.com/PuerkitoBio/goquery v1.9.2 // indirect
-	github.com/andybalholm/cascadia v1.3.2 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.19.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.1 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect

@@ -28,13 +28,14 @@ Only capture learnings specific to **orchestrator decision-making**.
 - **Task-Specific Failures**: Document routing/evaluation errors (ignore general code issues).
 
 ## 📁 FILE MANAGEMENT ALGORITHM (MANDATORY)
-1. **Discover**: List ALL '*orchestrator_learning.md' files in '{{.WritePath}}'.
-2. **Retrieve**: Read ALL variations found.
+**Available tools**: execute_shell_command (for listing, reading, and deleting files) and diff_patch_workspace_file (for writing/updating files).
+1. **Discover**: Use execute_shell_command with 'ls' to list ALL '*orchestrator_learning.md' files in '{{.WritePath}}'.
+2. **Retrieve**: Use execute_shell_command with 'cat' to read ALL variations found.
 3. **Consolidate**: Merge current findings with history into ONE final file.
    - Prioritize LATEST successful patterns.
    - Anonymize variables ({{ "{{" }}VARS{{ "}}" }}) and normalize paths.
-4. **Persist**: Write ONE consolidated file to '{{.WritePath}}/orchestrator_learning.md'.
-5. **Clean**: Delete ALL other '*orchestrator_learning.md' files in that folder.
+4. **Persist**: Use diff_patch_workspace_file to write ONE consolidated file to '{{.WritePath}}/orchestrator_learning.md'.
+5. **Clean**: Use execute_shell_command with 'rm' to delete ALL other '*orchestrator_learning.md' files in that folder.
 
 ## 📤 OUTPUT FORMAT
 - **⭐ OPTIMAL ROUTING PATTERN** [Runs: X | Success: Y%]
@@ -53,15 +54,15 @@ var orchestrationLearningUserTemplate = MustRegisterTemplate("orchestrationLearn
 
 ## 🧠 Instructions
 1. **CONSOLIDATE**:
-   - List files in '{{.WritePath}}'.
-   - Read ALL '*orchestrator_learning.md' files.
+   - Use execute_shell_command with 'ls' to list files in '{{.WritePath}}'.
+   - Use execute_shell_command with 'cat' to read ALL '*orchestrator_learning.md' files.
    - Merge current history with existing patterns.
 2. **EXTRACT**:
    - Map routing decisions and success evaluations.
    - Replace variables with placeholders: {{.Variables}}
 3. **PERSIST & CLEAN**:
-   - Write ONE file: '{{.WritePath}}/orchestrator_learning.md'.
-   - Delete all other '*orchestrator_learning.md' files.
+   - Use diff_patch_workspace_file to write ONE file: '{{.WritePath}}/orchestrator_learning.md'.
+   - Use execute_shell_command with 'rm' to delete all other '*orchestrator_learning.md' files.
 
 ---
 ## 🎯 AVAILABLE ROUTES

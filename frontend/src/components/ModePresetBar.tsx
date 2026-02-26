@@ -41,10 +41,10 @@ const getModeName = (category: string) => {
 
 const MODE_PILLS = [
   {
-    key: 'chat' as const,
-    label: 'Chat',
-    icon: MessageCircle,
-    activeClasses: 'bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-100 dark:ring-blue-500/40',
+    key: 'multi-agent' as const,
+    label: 'Multi-Agent',
+    icon: Users,
+    activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
   {
@@ -55,10 +55,10 @@ const MODE_PILLS = [
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
   {
-    key: 'multi-agent' as const,
-    label: 'Multi-Agent',
-    icon: Users,
-    activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
+    key: 'chat' as const,
+    label: 'Chat',
+    icon: MessageCircle,
+    activeClasses: 'bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-100 dark:ring-blue-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
 ] as const

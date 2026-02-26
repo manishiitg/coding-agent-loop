@@ -270,17 +270,6 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
           {/* Mode Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 justify-items-center max-w-4xl mx-auto">
-            {/* Chat Mode */}
-            <ModeCard
-              category="chat"
-              title="Chat Mode"
-              description="Quick conversations with AI. Perfect for answering questions, brainstorming ideas, and having natural dialogues."
-              icon={<MessageCircle className="w-5 h-5 text-blue-600" />}
-              features={getModeInfoForModal('chat').features}
-              exampleQueries={getModeInfoForModal('chat').examples}
-              onSelect={() => handleModeSelect('chat')}
-            />
-
             {/* Multi Agent Chat Mode */}
             <ModeCard
               category="multi-agent"
@@ -301,6 +290,17 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               features={getModeInfoForModal('workflow').features}
               exampleQueries={getModeInfoForModal('workflow').examples}
               onSelect={() => handleModeSelect('workflow')}
+            />
+
+            {/* Chat Mode */}
+            <ModeCard
+              category="chat"
+              title="Chat Mode"
+              description="Quick conversations with AI. Perfect for answering questions, brainstorming ideas, and having natural dialogues."
+              icon={<MessageCircle className="w-5 h-5 text-blue-600" />}
+              features={getModeInfoForModal('chat').features}
+              exampleQueries={getModeInfoForModal('chat').examples}
+              onSelect={() => handleModeSelect('chat')}
             />
           </div>
 

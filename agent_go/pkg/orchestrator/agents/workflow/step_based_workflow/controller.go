@@ -1244,3 +1244,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Conte
 
 	return MatureLearnings
 }
+
+// requiresCodeExecutionForProvider checks if the given LLM config uses a CLI-based provider
+// (claude-code or gemini-cli) that requires code execution mode to access tools via the HTTP bridge.
+// Phase agents normally disable code execution mode, but these providers need it enabled.
+func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
+	if config == nil {
+		return false
+	}
+	return config.Provider == "claude-code" || config.Provider == "gemini-cli"
+}
+
+// isCliProviderForPrompt checks if the given provider is a CLI-based provider (claude-code or gemini-cli)
+// that should use the normal (non-code-execution) prompt template.
+// CLI providers have their own tool-calling capabilities and don't need code execution prompt instructions,
+// even though code execution mode is technically enabled for HTTP bridge/tool routing.
+func isCliProviderForPrompt(provider string) bool {
+	return provider == "claude-code" || provider == "gemini-cli"
+}

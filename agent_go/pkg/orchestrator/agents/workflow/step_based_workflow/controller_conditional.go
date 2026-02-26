@@ -419,6 +419,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 							s.AgentConfigs = &AgentConfigs{}
 						case *OrchestrationPlanStep:
 							s.AgentConfigs = &AgentConfigs{}
+						case *RoutingPlanStep:
+							s.AgentConfigs = &AgentConfigs{}
 						}
 						branchStepConfig = getAgentConfigs(branchStepPlan)
 					}
@@ -442,6 +444,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 								case *DecisionPlanStep:
 									s.AgentConfigs = &AgentConfigs{}
 								case *OrchestrationPlanStep:
+									s.AgentConfigs = &AgentConfigs{}
+								case *RoutingPlanStep:
 									s.AgentConfigs = &AgentConfigs{}
 								}
 								branchStepConfig = getAgentConfigs(branchStepPlan)

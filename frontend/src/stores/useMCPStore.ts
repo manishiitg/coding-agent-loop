@@ -154,8 +154,8 @@ export const useMCPStore = create<MCPState>()(
           try {
             const toolList = await agentApi.getTools() as ToolDefinition[]
 
-            // Get the list of currently available servers from the fresh tool list
-            const availableServers = [...new Set(toolList.map((tool: ToolDefinition) => tool.server).filter((server): server is string => typeof server === 'string'))]
+            // Get the list of properly discovered servers (status === 'ok') from the fresh tool list
+            const availableServers = [...new Set(toolList.filter((tool: ToolDefinition) => tool.status === 'ok').map((tool: ToolDefinition) => tool.server).filter((server): server is string => typeof server === 'string'))]
 
             // Filter persisted enabledServers to only include servers that still exist
             // This removes servers that were deleted from the config
@@ -288,7 +288,7 @@ export const useMCPStore = create<MCPState>()(
         // Helper methods
         getAvailableServers: () => {
           const state = get()
-          return [...new Set(state.toolList.map((tool: ToolDefinition) => tool.server).filter((server): server is string => typeof server === 'string'))]
+          return [...new Set(state.toolList.filter((tool: ToolDefinition) => tool.status === 'ok').map((tool: ToolDefinition) => tool.server).filter((server): server is string => typeof server === 'string'))]
         },
 
         getServerGroups: () => {

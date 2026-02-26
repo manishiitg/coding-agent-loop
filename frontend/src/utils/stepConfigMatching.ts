@@ -253,8 +253,25 @@ export interface HumanInputPlanStep extends CommonStepFields {
   option_routes?: Record<string, string>; // Optional: for multiple_choice type - maps option index (as string "0", "1", etc.) or option value to next_step_id
 }
 
+// Routing route for routing steps
+export interface RoutingRoute {
+  route_id: string;
+  route_name: string;
+  condition: string;
+  next_step_id: string;
+}
+
+// Routing step (N-way LLM-based routing)
+export interface RoutingPlanStep extends CommonStepFields {
+  type: 'routing';
+  routing_question: string;           // Question to evaluate for route selection
+  routes: RoutingRoute[];             // Available routes (min 2)
+  default_route_id?: string;          // Optional fallback route_id
+  selected_route_id?: string;         // runtime: stores selected route
+}
+
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep | HumanInputPlanStep | TodoTaskPlanStep;
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep | HumanInputPlanStep | TodoTaskPlanStep | RoutingPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -297,4 +314,7 @@ export function isTodoTaskStep(step: PlanStep): step is TodoTaskPlanStep {
   return step.type === 'todo_task';
 }
 
+export function isRoutingStep(step: PlanStep): step is RoutingPlanStep {
+  return step.type === 'routing';
+}
 

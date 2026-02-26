@@ -54,15 +54,63 @@ func CreateWorkspaceAdvancedToolExecutorsWithUserID(userID string) map[string]fu
 	return executors
 }
 
+// CreateWorkspaceAdvancedToolExecutorsWithSession creates workspace advanced tool executors
+// with an explicit user ID and session ID. The session ID is injected as MCP_SESSION_ID
+// env var so that code execution mode HTTP tool calls can include it for connection reuse
+// (e.g., sharing the same Playwright browser across calls within a session).
+// Returns (executors, envMap) — the envMap is the same map reference used by the workspace
+// client, so callers can update MCP_API_URL/MCP_SESSION_ID dynamically when the session changes.
+func CreateWorkspaceAdvancedToolExecutorsWithSession(userID, sessionID string) (map[string]func(ctx context.Context, args map[string]any) (string, error), map[string]string) {
+	return CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID, nil)
+}
+
+// CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv creates workspace advanced tool executors
+// with session support and additional environment variables (e.g., secrets).
+// The extraEnvVars are injected into the shell environment alongside MCP_API_URL, MCP_API_TOKEN, etc.
+// Returns (executors, envMap) — the envMap is the same map reference stored as Client.ExtraEnv,
+// so callers can update MCP_API_URL/MCP_SESSION_ID in-place and the changes propagate to all
+// subsequent executor calls (Go maps are reference types).
+func CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID string, extraEnvVars map[string]string) (map[string]func(ctx context.Context, args map[string]any) (string, error), map[string]string) {
+	env := getMCPExtraEnv(sessionID)
+	// Merge additional env vars (secrets, etc.) — these don't override MCP vars
+	for k, v := range extraEnvVars {
+		if _, exists := env[k]; !exists {
+			env[k] = v
+		}
+	}
+	client := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithUserID(userID),
+		workspace.WithExtraEnv(env),
+	)
+	executors := workspace.NewAdvancedExecutor(client)
+	wrapReadImageExecutor(executors)
+	return executors, env
+}
+
 // getMCPExtraEnv returns MCP-related env vars to inject into shell commands.
 // These are set by server.go at startup for code execution mode.
-func getMCPExtraEnv() map[string]string {
+// An optional sessionID can be passed to inject MCP_SESSION_ID for connection reuse.
+func getMCPExtraEnv(sessionID ...string) map[string]string {
 	env := make(map[string]string)
-	if url := os.Getenv("MCP_API_URL"); url != "" {
-		env["MCP_API_URL"] = url
+	baseURL := os.Getenv("MCP_API_URL")
+	if baseURL != "" {
+		if len(sessionID) > 0 && sessionID[0] != "" {
+			// Embed session_id in the URL path: MCP_API_URL becomes {base}/s/{session_id}
+			// The server registers session-scoped routes at /s/{session_id}/tools/...
+			// so agent code calling {MCP_API_URL}/tools/mcp/{server}/{tool} automatically
+			// includes the session_id without the agent needing to add it to the body.
+			env["MCP_API_URL"] = baseURL + "/s/" + sessionID[0]
+		} else {
+			env["MCP_API_URL"] = baseURL
+		}
 	}
 	if token := os.Getenv("MCP_API_TOKEN"); token != "" {
 		env["MCP_API_TOKEN"] = token
+	}
+	if len(sessionID) > 0 && sessionID[0] != "" {
+		env["MCP_SESSION_ID"] = sessionID[0]
 	}
 	return env
 }

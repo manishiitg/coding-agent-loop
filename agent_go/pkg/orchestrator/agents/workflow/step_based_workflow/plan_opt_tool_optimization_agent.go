@@ -475,20 +475,18 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 		return nil, fmt.Errorf("no valid LLM configuration found for plan tool optimization agent: presetPhaseLLM is empty or invalid")
 	}
 
-	// Use workspace tools directly - they already include human_feedback (created by createCustomTools in server.go)
-	// No need to add human tools separately as they're already combined in WorkspaceTools
-	allTools := ptom.WorkspaceTools
-	allExecutors := ptom.WorkspaceToolExecutors
+	// Use minimal workspace tools (shell_command + human) for phase agent
+	allTools, allExecutors := ptom.BaseOrchestrator.PreparePhaseAgentTools()
 
 	// Create agent config with the selected LLM config
 	config := ptom.CreateStandardAgentConfigWithLLM("plan-tool-optimization-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 
 	// Explicitly disable code execution mode and tool search mode for tool optimization agent
 	// This agent only needs file read/write operations, not code execution
-	// Phase agents always use simple mode regardless of workflow mode setting
-	config.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(ptom.presetPhaseLLM)
 	config.UseToolSearchMode = false
-	ptom.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode and tool search mode disabled for plan tool optimization agent (phase agents always use simple mode)"))
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Tool optimization agent code execution mode: %v (provider requires it: %v)", config.UseCodeExecutionMode, requiresCodeExecutionForProvider(ptom.presetPhaseLLM)))
 
 	// Tool optimization agent doesn't need MCP servers - uses workspace tools only
 	config.ServerNames = []string{mcpclient.NoServers}
@@ -1598,7 +1596,7 @@ The StepLogsFolderMappingJSON provides step-specific log paths. The ToolUsageSum
 
 ## READING EXECUTION OUTPUT FILES
 
-Execution output files are stored in logs folders. Use search_large_output tool (if enabled) or read_workspace_file to read them.
+Execution output files are stored in logs folders. Use search_large_output tool (if enabled) or execute_shell_command with 'cat' to read them.
 
 ### Conversation History File Structure
 
@@ -1652,7 +1650,7 @@ Execution output files are stored in logs folders. Use search_large_output tool 
 
 **To read execution result:**
 - Use search_large_output with operation="query" and jq query: .execution_result
-- Or use read_workspace_file to read the entire file
+- Or use execute_shell_command with 'cat' to read the entire file
 `
 
 	// Conditionally include knowledgebase section based on preset setting
@@ -1721,7 +1719,7 @@ Execution logs are OPTIONAL and only checked if the user explicitly requests it.
 2. Use ToolUsageSummaryJSON as a quick reference (but verify with actual logs)
 3. **Read conversation history files** to extract actual tool calls:
    - File pattern: logs/step-{X}/execution/execution-attempt-{N}-iteration-{M}-conversation.json
-   - Use search_large_output (if enabled) or read_workspace_file to read the JSON
+   - Use search_large_output (if enabled) or execute_shell_command with 'cat' to read the JSON
    - Extract tool names from conversation_history array (see JSON structure in prompt)
    - **Only count tools from successful executions** (check execution_result.json for success indicators)
 4. Compare log data with learnings and step description
@@ -1898,7 +1896,6 @@ For each step being converted to Tool Search Mode, present:
 | **Execute Shell** | workspace_advanced:execute_shell_command | If shell enabled, **REMOVE workspace_basic** (shell replaces file tools). Include if learnings show shell OR description mentions scripts/commands | Yes |
 | **Read Image** | workspace_advanced:read_image | ONLY if step needs to ANALYZE image content (not just move files) | Yes |
 | **Read PDF** | workspace_advanced:read_pdf | ONLY if step needs to EXTRACT/ANALYZE PDF text (not just move files) | Yes |
-| **Fetch Web** | workspace_advanced:fetch_web_content | ONLY if learnings show web fetching OR description mentions URLs/web content | Yes |
 | **GitHub Sync** | workspace_git:* (sync_workspace_to_github, get_workspace_github_status) | ONLY if learnings show git usage OR description mentions GitHub/sync | Yes |
 | **MCP Tools** | server:tool | Learnings ONLY (or logs if user requested) | **NO** |
 | **NO_SERVERS** | ['NO_SERVERS'] | If no MCP tools used | Set when step only needs workspace/human tools |

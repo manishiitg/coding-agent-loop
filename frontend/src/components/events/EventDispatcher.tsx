@@ -79,6 +79,7 @@ import {
   TodoStepsExtractedEventDisplay,
   StepProgressUpdatedEventDisplay,
   DecisionEvaluatedEventDisplay,
+  RoutingEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
   PrerequisiteNavigationEventDisplay,
   TodoTaskRouteSelectedEventDisplay,
@@ -217,7 +218,7 @@ interface EventDispatcherProps {
  * Internal component to render the hierarchical logs of a sub-agent
  * in a simplified, non-virtualized list within a scrollable area.
  */
-const MAX_SUBAGENT_CHILDREN = 30
+const MAX_SUBAGENT_CHILDREN = 20
 
 const SubAgentHierarchy: React.FC<{
   nodes: EventNode[]
@@ -988,12 +989,24 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
 
+  // Routing Evaluated Event
+  if (isEventType(event, 'routing_evaluated')) {
+    return (
+      <CompactWrapper>
+        <RoutingEvaluatedEventDisplay
+          event={getEventData(event)}
+          compact={compact}
+        />
+      </CompactWrapper>
+    )
+  }
+
   // Todo Task Events
   if (isEventType(event, 'todo_task_route_selected')) {
     return (
       <CompactWrapper>
-        <TodoTaskRouteSelectedEventDisplay 
-          event={getEventData(event)} 
+        <TodoTaskRouteSelectedEventDisplay
+          event={getEventData(event)}
           compact={compact}
         />
       </CompactWrapper>

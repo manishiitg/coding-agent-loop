@@ -301,20 +301,19 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 
 	agentConfig := em.CreateStandardAgentConfigWithLLM("evaluation-designer-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	agentConfig.ServerNames = []string{mcpclient.NoServers}
-	// Phase agents always use simple mode regardless of workflow mode setting
-	agentConfig.UseCodeExecutionMode = false
+	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	agentConfig.UseCodeExecutionMode = requiresCodeExecutionForProvider(em.presetPhaseLLM)
 	agentConfig.UseToolSearchMode = false
 
-	// Register WorkspaceTools (including human_feedback)
+	// Register minimal workspace tools (shell_command + human) for phase agent
 	var toolsToRegister []llmtypes.Tool
 	var executorsToUse map[string]interface{}
-	if em.BaseOrchestrator != nil {
-		if em.WorkspaceTools != nil && em.WorkspaceToolExecutors != nil {
-			toolsToRegister, executorsToUse = em.BaseOrchestrator.PrepareWorkspaceToolsWithFolderGuard(
-				em.WorkspaceTools,
-				em.WorkspaceToolExecutors,
-			)
-		}
+	phaseTools, phaseExecutors := em.BaseOrchestrator.PreparePhaseAgentTools()
+	if em.BaseOrchestrator != nil && phaseTools != nil && phaseExecutors != nil {
+		toolsToRegister, executorsToUse = em.BaseOrchestrator.PrepareWorkspaceToolsWithFolderGuard(
+			phaseTools,
+			phaseExecutors,
+		)
 	}
 
 	agent, err := em.CreateAndSetupStandardAgentWithConfig(

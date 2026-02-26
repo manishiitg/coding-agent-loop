@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck, Search } from 'lucide-react'
-import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, OrchestratorNodeData } from '../hooks/usePlanToFlow'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck, Search, Route } from 'lucide-react'
+import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, OrchestratorNodeData, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
@@ -52,10 +52,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
 
   // Type guard to check if node has step data
-  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData } => {
-    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') &&
+  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | RoutingStepNodeData } => {
+    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'routing') &&
            'step' in node.data &&
-           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData).step === 'object'
+           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | RoutingStepNodeData).step === 'object'
   }
 
   // Build a flat list of all steps including branch steps
@@ -294,7 +294,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
         // Check if there are any learning files (exclude .learning_metadata.json)
         const hasLearningFiles = files && Array.isArray(files) && files.some((file: { filepath?: string; name?: string }) => {
           const fileName = file.filepath || file.name || ''
-          return fileName.endsWith('.md') || (fileName.startsWith('code/') && fileName.endsWith('.go'))
+          return fileName.endsWith('.md') || (fileName.startsWith('code/') && /\.(go|py|sh|js|ts|jsx|tsx|bash|rb|java|rs|c|cpp|json|yaml|yml)$/.test(fileName))
         })
         
         return { stepId, exists: hasLearningFiles }
@@ -537,6 +537,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         )}
                         {nodeType === 'orchestrator' && (
                           <GitBranch className="w-3 h-3 text-indigo-500 flex-shrink-0" />
+                        )}
+                        {nodeType === 'routing' && (
+                          <Route className="w-3 h-3 text-teal-500 flex-shrink-0" />
                         )}
                         <span>
                           {nodeType === 'orchestrator' && isOrchestrationStep(step) && step.orchestration_step?.title

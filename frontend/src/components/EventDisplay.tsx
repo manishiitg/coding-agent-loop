@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
 import { agentApi } from '../services/api'
 import type { PollingEvent } from '../services/api-types'
+import { useRenderLogger } from '../utils/renderLogger'
 
 interface EventDisplayProps {
   onFeedbackSubmitted?: () => void
@@ -72,6 +73,15 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     }
     return propEvents || []
   }, [propEvents])
+
+  useRenderLogger('EventDisplay', {
+    events: events.length,
+    hasStreamingText: !!currentStreamingText,
+    streamingTextLen: currentStreamingText.length,
+    finalResponse: !!finalResponse,
+    isCompleted,
+    sessionId,
+  })
 
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])

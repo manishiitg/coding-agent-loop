@@ -110,6 +110,12 @@ type BaseOrchestrator struct {
 	// When set, all agents created by this orchestrator share MCP connections
 	mcpSessionID string
 
+	// Reference to the workspace executor env map (from CreateWorkspaceAdvancedToolExecutorsWithSession*)
+	// When the MCP session ID changes (e.g., per-group in batch execution), we update
+	// MCP_API_URL and MCP_SESSION_ID in this map so that code execution mode shell commands
+	// use the correct session-scoped URL (preventing new browser tabs per Playwright call).
+	workspaceEnvRef map[string]string
+
 	// Browser downloads path (relative to workspace, e.g., "runs/iteration-2/xspaces/execution/Downloads")
 	// Set by setupBrowserDownloadsPathOverride when agent-browser is detected.
 	// Injected into context via BrowserDownloadsPathKey so the browser executor uses it as working directory.
@@ -267,12 +273,53 @@ func getMapKeys(m map[string]string) []string {
 // SetMCPSessionID sets the MCP session ID for connection sharing across agents
 // When set, all agents created by this orchestrator share MCP connections
 // Connections persist until CloseSession() is called (not when agents close)
+//
+// Also updates MCP_API_URL and MCP_SESSION_ID in the workspace executor env map
+// (if SetWorkspaceEnvRef was called). This ensures code execution mode shell commands
+// use the correct session-scoped URL, preventing session registry misses that cause
+// new browser instances per Playwright call.
 func (bo *BaseOrchestrator) SetMCPSessionID(sessionID string) {
+	previousSessionID := bo.mcpSessionID
 	bo.mcpSessionID = sessionID
-	bo.logger.Info(fmt.Sprintf("🔗 Set MCP session ID for connection sharing: %s", sessionID))
+	bo.logger.Info(fmt.Sprintf("🔗 Set MCP session ID for connection sharing: %s (previous: %s)", sessionID, previousSessionID))
+
+	// Propagate session change to workspace executor env map for code execution mode
+	if bo.workspaceEnvRef != nil && sessionID != "" {
+		if baseURL := os.Getenv("MCP_API_URL"); baseURL != "" {
+			oldURL := bo.workspaceEnvRef["MCP_API_URL"]
+			newURL := baseURL + "/s/" + sessionID
+			bo.workspaceEnvRef["MCP_API_URL"] = newURL
+			bo.workspaceEnvRef["MCP_SESSION_ID"] = sessionID
+			bo.logger.Info(fmt.Sprintf("🔗 Updated workspace env MCP_API_URL: %s → %s", oldURL, newURL))
+			bo.logger.Info(fmt.Sprintf("🔗 Updated workspace env MCP_SESSION_ID: %s", sessionID))
+		} else {
+			bo.logger.Debug("🔗 MCP_API_URL env not set, skipping workspace env update")
+		}
+	} else if bo.workspaceEnvRef == nil {
+		bo.logger.Debug("🔗 No workspace env ref set, skipping workspace env update (workspaceEnvRef is nil)")
+	}
 }
 
 // GetMCPSessionID returns the MCP session ID
 func (bo *BaseOrchestrator) GetMCPSessionID() string {
 	return bo.mcpSessionID
+}
+
+// SetWorkspaceEnvRef stores a reference to the workspace executor env map.
+// This allows SetMCPSessionID to update MCP_API_URL and MCP_SESSION_ID in-place
+// so that code execution mode shell commands automatically use the correct session URL.
+// The env map is the same reference used by workspace.Client.ExtraEnv (Go maps are reference types).
+func (bo *BaseOrchestrator) SetWorkspaceEnvRef(env map[string]string) {
+	bo.workspaceEnvRef = env
+	if env != nil {
+		bo.logger.Info(fmt.Sprintf("🔗 Stored workspace env ref (keys: %v, MCP_API_URL=%s, MCP_SESSION_ID=%s)",
+			getMapKeys(env), env["MCP_API_URL"], env["MCP_SESSION_ID"]))
+	}
+}
+
+// GetWorkspaceEnvRef returns the workspace executor env map reference.
+// Used to propagate the env ref from parent orchestrators to child orchestrators
+// so that MCP_API_URL updates flow through when the session ID changes.
+func (bo *BaseOrchestrator) GetWorkspaceEnvRef() map[string]string {
+	return bo.workspaceEnvRef
 }

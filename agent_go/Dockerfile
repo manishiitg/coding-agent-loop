@@ -73,8 +73,8 @@ RUN npm install -g agent-browser
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install uv (uvx for Python MCP servers)
-RUN pip3 install --break-system-packages uv
+# Install uv (uvx for Python MCP servers) and pypdf (for read_pdf tool)
+RUN pip3 install --break-system-packages uv pypdf
 
 # Verify npx and docker are available
 RUN which npx && which docker && npm --version && npx --version && docker --version
@@ -93,6 +93,9 @@ WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/agent_go/mcp-agent .
+
+# Copy Python scripts (PDF extraction, etc.)
+COPY agent_go/scripts/extract_pdf_text.py /app/scripts/
 
 # Copy Go from builder for code execution mode (run Go snippets)
 COPY --from=builder /usr/local/go /usr/local/go

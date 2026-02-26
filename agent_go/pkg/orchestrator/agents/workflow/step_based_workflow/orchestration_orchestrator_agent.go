@@ -48,7 +48,7 @@ Coordinate work between sub-agents. You evaluate the situation, verify success, 
 {{if .IsCodeExecutionMode}}
 **Code Execution Rules**:
 - **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' for HTTP requests to per-tool endpoints.
-- **File Operations**: Use workspace tools (read_workspace_file, write_workspace_file) for file access.
+- **File Operations**: Use execute_shell_command (cat, ls, echo/redirect) for file access.
 - **NEVER** hardcode absolute paths or API tokens.
 {{end}}{{end}}
 
@@ -77,7 +77,7 @@ Before proceeding:
 
 ### 1. Analysis
 - **Goal**: Analyze Context Dependencies vs. Success Criteria.
-- **Tools**: Use 'read_workspace_file', 'list_workspace_files', and MCP tools to gather factual evidence of the current state.
+- **Tools**: Use 'execute_shell_command' (with cat, ls, etc.) and MCP tools to gather factual evidence of the current state.
 
 ### 2. Success Verification (MANDATORY)
 - **Cross-Reference**: Verify 'Success Criteria' by cross-referencing Workspace State (artifacts) vs. Execution History (tool calls).

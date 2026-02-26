@@ -13,7 +13,7 @@ import { isConditionalStep, isOrchestrationStep, isDecisionStep, isTodoTaskStep 
 import { getToolsByCategory, HUMAN_TOOLS } from '../../../utils/customToolNames'
 
 // Sub-categories that belong to workspace_tools parent
-const WORKSPACE_SUB_CATEGORIES = ['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser']
+const WORKSPACE_SUB_CATEGORIES = ['workspace_advanced', 'workspace_browser']
 
 interface MultiStepSidebarProps {
   selectedStepIds: string[]
@@ -67,7 +67,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
   const [enabledCustomTools, setEnabledCustomTools] = useState<string[]>([])
   const [expandedToolCategories, setExpandedToolCategories] = useState<Set<string>>(new Set(['workspace_tools']))
   const [expandedWorkspaceSubCategories, setExpandedWorkspaceSubCategories] = useState<Set<string>>(
-    new Set(['workspace_basic', 'workspace_git', 'workspace_advanced', 'workspace_browser'])
+    new Set(['workspace_advanced', 'workspace_browser'])
   )
 
   // Track if we've initialized from first step
@@ -793,150 +793,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                     {/* Workspace Sub-categories */}
                     {expandedToolCategories.has('workspace_tools') && (
                       <div className="ml-6 space-y-3 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                        {/* Basic Workspace Tools */}
-                        {(() => {
-                          const subCategoryName = 'workspace_basic'
-                          const subCategoryTools = getToolsByCategory(subCategoryName, capabilities?.workspace)
-                          const isSubCategoryChecked = isSubCategoryEnabled(subCategoryName, subCategoryTools, enabledCustomTools)
-                          const enabledInSubCategory = subCategoryTools.filter((toolName: string) =>
-                            isToolEnabled(subCategoryName, toolName, enabledCustomTools)
-                          )
-
-                          return (
-                            <div key={subCategoryName} className="space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <label className="flex items-center gap-2 cursor-pointer flex-1">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSubCategoryChecked}
-                                    onChange={(e) => {
-                                      setEnabledCustomTools(prev =>
-                                        toggleSubCategory(subCategoryName, subCategoryTools, e.target.checked, prev)
-                                      )
-                                    }}
-                                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                  />
-                                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Basic Workspace</span>
-                                  <span className="text-xs text-gray-500 dark:text-gray-500">
-                                    ({enabledInSubCategory.length}/{subCategoryTools.length})
-                                  </span>
-                                </label>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const newExpanded = new Set(expandedWorkspaceSubCategories)
-                                    if (newExpanded.has(subCategoryName)) {
-                                      newExpanded.delete(subCategoryName)
-                                    } else {
-                                      newExpanded.add(subCategoryName)
-                                    }
-                                    setExpandedWorkspaceSubCategories(newExpanded)
-                                  }}
-                                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                                >
-                                  {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
-                                </button>
-                              </div>
-                              {expandedWorkspaceSubCategories.has(subCategoryName) && (
-                                <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                                  {subCategoryTools.map((toolName: string) => {
-                                    const toolIsEnabled = isToolEnabled(subCategoryName, toolName, enabledCustomTools)
-                                    return (
-                                      <label key={toolName} className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={toolIsEnabled}
-                                          onChange={(e) => {
-                                            if (e.target.checked) {
-                                              setEnabledCustomTools(prev => enableTool(subCategoryName, toolName, prev))
-                                            } else {
-                                              setEnabledCustomTools(prev => disableTool(subCategoryName, toolName, prev))
-                                            }
-                                          }}
-                                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                        />
-                                        <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
-                                      </label>
-                                    )
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })()}
-
-                        {/* Git Tools */}
-                        {capabilities?.workspace?.github_sync_enabled !== false && (() => {
-                          const subCategoryName = 'workspace_git'
-                          const subCategoryTools = getToolsByCategory(subCategoryName, capabilities?.workspace)
-                          const isSubCategoryChecked = isSubCategoryEnabled(subCategoryName, subCategoryTools, enabledCustomTools)
-                          const enabledInSubCategory = subCategoryTools.filter((toolName: string) =>
-                            isToolEnabled(subCategoryName, toolName, enabledCustomTools)
-                          )
-
-                          return (
-                            <div key={subCategoryName} className="space-y-1.5">
-                              <div className="flex items-center justify-between">
-                                <label className="flex items-center gap-2 cursor-pointer flex-1">
-                                  <input
-                                    type="checkbox"
-                                    checked={isSubCategoryChecked}
-                                    onChange={(e) => {
-                                      setEnabledCustomTools(prev =>
-                                        toggleSubCategory(subCategoryName, subCategoryTools, e.target.checked, prev)
-                                      )
-                                    }}
-                                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                  />
-                                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Git Tools</span>
-                                  <span className="text-xs text-gray-500 dark:text-gray-500">
-                                    ({enabledInSubCategory.length}/{subCategoryTools.length})
-                                  </span>
-                                </label>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const newExpanded = new Set(expandedWorkspaceSubCategories)
-                                    if (newExpanded.has(subCategoryName)) {
-                                      newExpanded.delete(subCategoryName)
-                                    } else {
-                                      newExpanded.add(subCategoryName)
-                                    }
-                                    setExpandedWorkspaceSubCategories(newExpanded)
-                                  }}
-                                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                                >
-                                  {expandedWorkspaceSubCategories.has(subCategoryName) ? 'Hide' : 'Show'} tools
-                                </button>
-                              </div>
-                              {expandedWorkspaceSubCategories.has(subCategoryName) && (
-                                <div className="ml-6 space-y-1.5 pl-2 border-l-2 border-gray-200 dark:border-gray-700">
-                                  {subCategoryTools.map((toolName: string) => {
-                                    const toolIsEnabled = isToolEnabled(subCategoryName, toolName, enabledCustomTools)
-                                    return (
-                                      <label key={toolName} className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                          type="checkbox"
-                                          checked={toolIsEnabled}
-                                          onChange={(e) => {
-                                            if (e.target.checked) {
-                                              setEnabledCustomTools(prev => enableTool(subCategoryName, toolName, prev))
-                                            } else {
-                                              setEnabledCustomTools(prev => disableTool(subCategoryName, toolName, prev))
-                                            }
-                                          }}
-                                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                                        />
-                                        <span className="text-xs text-gray-600 dark:text-gray-400">{toolName}</span>
-                                      </label>
-                                    )
-                                  })}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })()}
-
                         {/* Advanced Tools */}
                         {(() => {
                           const subCategoryName = 'workspace_advanced'

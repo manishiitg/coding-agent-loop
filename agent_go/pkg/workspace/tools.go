@@ -371,7 +371,7 @@ func IsGitSyncEnabled() bool {
 	return enabled == "true" || os.Getenv("GITHUB_TOKEN") != ""
 }
 
-// NewAdvancedExecutor creates executors for advanced workspace tools (shell, image, web fetch, pdf)
+// NewAdvancedExecutor creates executors for advanced workspace tools (shell, image, pdf, diff patch)
 func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
@@ -389,14 +389,6 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 			return "", fmt.Errorf("invalid arguments: %w", err)
 		}
 		return client.ReadImage(ctx, params)
-	}
-
-	executors["fetch_web_content"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params FetchWebContentParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
-		}
-		return client.FetchWebContent(ctx, params)
 	}
 
 	executors["read_pdf"] = func(ctx context.Context, args map[string]interface{}) (string, error) {

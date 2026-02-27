@@ -14,10 +14,11 @@ import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
 import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
+import PushToGistDialog from "./components/workspace/PushToGistDialog";
 import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport, exportPdfChunked } from "./utils/pdfExport";
-import { Edit, Save, X, Loader2, Download, Link } from "lucide-react";
+import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { EventModeProvider } from "./components/events";
@@ -169,6 +170,7 @@ function App() {
   const [isRestoring, setIsRestoring] = useState(false)
   const [restoreError, setRestoreError] = useState<string | null>(null)
   const [isExportingPdf, setIsExportingPdf] = useState(false)
+  const [showPushToGistDialog, setShowPushToGistDialog] = useState(false)
   const [exportProgress, setExportProgress] = useState<string | null>(null)
   const [shareCopied, setShareCopied] = useState(false)
   const markdownContentRef = useRef<HTMLDivElement>(null)
@@ -1011,6 +1013,17 @@ function App() {
                             )}
                           </button>
                         )}
+                        {selectedFile?.path && (
+                         selectedFile.path.toLowerCase().endsWith('.md') ||
+                         selectedFile.path.toLowerCase().endsWith('.markdown')) && (
+                          <button
+                            onClick={() => setShowPushToGistDialog(true)}
+                            className="flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Push to GitHub Gist"
+                          >
+                            <Github className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -1275,6 +1288,14 @@ function App() {
             />
           </div>
         </div>
+
+        {/* Push to Gist Dialog */}
+        <PushToGistDialog
+          isOpen={showPushToGistDialog}
+          onClose={() => setShowPushToGistDialog(false)}
+          fileContent={fileContent}
+          fileName={selectedFile?.name || selectedFile?.path?.split('/').pop() || 'document.md'}
+        />
 
         {/* File Revisions Modal */}
         <FileRevisionsModal

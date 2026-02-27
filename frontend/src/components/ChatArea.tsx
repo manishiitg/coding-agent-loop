@@ -841,9 +841,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
     // --- Session status handling ---
     const sessionStatus = response.session_status
+    const streamTextLen = useChatStore.getState().streamingText[actualSessionId]?.length ?? 0
+    console.log(`[STREAM-DEBUG] sessionStatus=${sessionStatus} sid=${actualSessionId} tab=${!!tab} hasBgAgents=${response.has_running_background_agents} streamTextLen=${streamTextLen}`)
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
+        console.log(`[STREAM-DEBUG] session ${sessionStatus} → clearStreamingText (tab path)`)
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
           chatStore.setTabStreaming(tab.tabId, false)
@@ -851,8 +854,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           chatStore.setTabCompleted(tab.tabId, true)
           chatStore.setTabStreaming(tab.tabId, false)
         }
-        // Clear streaming text when session ends — safety net in case completion events
-        // (llm_generation_end, agent_end) were filtered or missed
         chatStore.clearStreamingText(actualSessionId)
       } else if (sessionStatus === 'running') {
         chatStore.setTabCompleted(tab.tabId, false)
@@ -865,6 +866,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       chatStore.setTabHasRunningBgAgents(tab.tabId, hasBgAgents)
     } else if (!tab && sessionStatus) {
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
+        console.log(`[STREAM-DEBUG] session ${sessionStatus} → clearStreamingText (no-tab path)`)
         setIsStreaming(false)
         setIsCompleted(true)
         setHasActiveChat(false)
@@ -912,11 +914,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         || (typeof rawCorrelationId === 'string' && rawCorrelationId.startsWith('delegation-'))
 
       if (event.type === 'streaming_start') {
-        // Only treat as delegation streaming if correlationId starts with "delegation-"
-        // Root-agent streaming may have hierarchy_level > 0 and a component (e.g. "llm")
-        // which triggers isSubAgentEvent, but these are NOT delegation events
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        console.log(`[STREAM-DEBUG][poll] streaming_start sid=${actualSessionId} isDelegation=${isDelegationStreaming} correlationId=${correlationId}`)
         if (isDelegationStreaming) {
           chatStore.clearDelegationStreamingText(correlationId as string)
         } else {
@@ -944,11 +944,35 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         }
         continue
       }
-      if (event.type === 'streaming_end') continue
+      if (event.type === 'streaming_end') {
+        const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+        const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        console.log(`[STREAM-DEBUG][poll] streaming_end sid=${actualSessionId} isDelegation=${isDelegationStreaming}`)
+        if (!isDelegationStreaming) {
+          chatStore.clearStreamingStatus(actualSessionId)
+          const sidForClear = actualSessionId
+          const textSnapshot = useChatStore.getState().streamingText[sidForClear]
+          console.log(`[STREAM-DEBUG][poll] scheduling deferred clear, textLen=${textSnapshot?.length ?? 0}`)
+          setTimeout(() => {
+            const currentText = useChatStore.getState().streamingText[sidForClear]
+            const match = currentText === textSnapshot
+            console.log(`[STREAM-DEBUG][poll] deferred clear firing, match=${match}, currentLen=${currentText?.length ?? 0}`)
+            if (currentText && match) {
+              useChatStore.getState().clearStreamingText(sidForClear)
+              console.log(`[STREAM-DEBUG][poll] clearStreamingText called`)
+            }
+          }, 500)
+        }
+        continue
+      }
       if (event.type === 'user_message') continue
 
-      if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end')) {
+      // Log ALL non-streaming event types for debugging
+      console.log(`[STREAM-DEBUG][poll] event type=${event.type} isSubAgent=${isSubAgentEvent} component=${rawComponent} correlationId=${rawCorrelationId}`)
+
+      if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end' || event.type === 'conversation_error' || event.type === 'context_cancelled')) {
         hasCompletionEvent = true
+        console.log(`[STREAM-DEBUG][poll] hasCompletionEvent=true triggered by ${event.type}`)
       }
 
       if (event.type === 'delegation_end') {
@@ -999,10 +1023,14 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (hasCompletionEvent) {
       const sid = actualSessionId
       const textBeforeClear = useChatStore.getState().streamingText[sid]
+      console.log(`[STREAM-DEBUG] hasCompletionEvent=true, scheduling RAF clear, textLen=${textBeforeClear?.length ?? 0}`)
       requestAnimationFrame(() => {
         const currentText = useChatStore.getState().streamingText[sid]
+        const match = currentText === textBeforeClear
+        console.log(`[STREAM-DEBUG] RAF clear firing, match=${match}, currentLen=${currentText?.length ?? 0}`)
         if (currentText === textBeforeClear) {
           useChatStore.getState().clearStreamingText(sid)
+          console.log(`[STREAM-DEBUG] RAF clearStreamingText called`)
         }
       })
     }
@@ -1117,6 +1145,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         if (event.type === 'streaming_start') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          console.log(`[STREAM-DEBUG][sse] streaming_start sid=${actualSessionId} isDelegation=${isDelegation} correlationId=${correlationId}`)
           if (isDelegation) {
             chatStore.clearDelegationStreamingText(correlationId as string)
           } else {
@@ -1138,8 +1167,26 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             if (chunkIndex === 0) chatStore.clearStreamingText(actualSessionId)
             chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
           }
+        } else if (event.type === 'streaming_end') {
+          const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
+          const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+          console.log(`[STREAM-DEBUG][sse] streaming_end sid=${actualSessionId} isDelegation=${isDelegation}`)
+          if (!isDelegation) {
+            chatStore.clearStreamingStatus(actualSessionId)
+            const sidForClear = actualSessionId
+            const textSnapshot = useChatStore.getState().streamingText[sidForClear]
+            console.log(`[STREAM-DEBUG][sse] scheduling deferred clear, textLen=${textSnapshot?.length ?? 0}`)
+            setTimeout(() => {
+              const currentText = useChatStore.getState().streamingText[sidForClear]
+              const match = currentText === textSnapshot
+              console.log(`[STREAM-DEBUG][sse] deferred clear firing, match=${match}, currentLen=${currentText?.length ?? 0}`)
+              if (currentText && match) {
+                useChatStore.getState().clearStreamingText(sidForClear)
+                console.log(`[STREAM-DEBUG][sse] clearStreamingText called`)
+              }
+            }, 500)
+          }
         }
-        // streaming_end is a no-op
       } else {
         nonStreamingEvents.push(event)
       }

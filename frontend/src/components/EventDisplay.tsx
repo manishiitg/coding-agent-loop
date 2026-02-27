@@ -64,6 +64,9 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const currentStreamingText = useChatStore(state =>
     sessionId ? state.streamingText[sessionId] || '' : ''
   )
+  const currentStreamingStatus = useChatStore(state =>
+    sessionId ? state.streamingStatus[sessionId] || '' : ''
+  )
 
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
@@ -132,7 +135,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       )}
 
       {/* Streaming Text Display - shows LLM output as it generates */}
-      {currentStreamingText && (
+      {(currentStreamingText || currentStreamingStatus) && (
         <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 shadow-sm min-w-0">
           <CardContent className={`${compact ? 'p-2' : 'p-3'} min-w-0`}>
             <div className="flex items-center gap-1.5 mb-1">
@@ -141,12 +144,19 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
                 Generating...
               </span>
             </div>
-            <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-              <ReactMarkdown components={markdownComponents}>
-                {currentStreamingText}
-              </ReactMarkdown>
-              <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
-            </div>
+            {currentStreamingText && (
+              <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+                <ReactMarkdown components={markdownComponents}>
+                  {currentStreamingText}
+                </ReactMarkdown>
+                <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
+              </div>
+            )}
+            {currentStreamingStatus && (
+              <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-blue-500 dark:text-blue-400 italic mt-1 opacity-75`}>
+                {currentStreamingStatus}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

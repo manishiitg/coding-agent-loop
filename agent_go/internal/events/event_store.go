@@ -28,13 +28,16 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 	"cache_cleanup":             true,
 	"cache_error":               true,
 	"cache_operation_start":     true,
-	// Streaming events — ephemeral, only useful in real-time via subscriber.
+	// Streaming chunks — ephemeral, only useful in real-time via subscriber.
 	// Excluding from GetEvents/polling prevents them from consuming the InitialEventsLimit (300)
 	// and pushing important events (request_human_feedback, tool calls) out of range.
 	// Subscribers still receive these in real-time (see AddEvent override).
 	"streaming_start": true,
 	"streaming_chunk": true,
-	"streaming_end":   true,
+	// NOTE: streaming_end is NOT excluded — it's a critical lifecycle signal that the frontend
+	// needs to clear the streaming card. Since SSE can miss it (race condition, reconnect),
+	// it must be recoverable via polling backfill. It's only 1 event per LLM call.
+	// "streaming_end": true,
 }
 
 // ADVANCED_MODE_EVENTS contains event types that are only shown in advanced mode

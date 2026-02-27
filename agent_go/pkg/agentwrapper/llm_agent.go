@@ -752,8 +752,8 @@ func initializeLLMWithConfig(config LLMAgentConfig, logger loggerv2.Logger, trac
 	// Create a separate LLM logger that writes to llm_debug.log
 	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
 	var v2LoggerForLLM loggerv2.Logger
-	                llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "info", "text", true)
-	                if err != nil {
+	llmLogger, err := agentlogger.CreateLogger("logs/llm_debug.log", "info", "text", true)
+	if err != nil {
 		// Fallback to the provided logger if LLM logger creation fails
 		if logger != nil {
 			v2LoggerForLLM = logger
@@ -795,7 +795,7 @@ func (w *LLMAgentWrapper) EmitTypedEvent(ctx context.Context, eventData events.E
 func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (<-chan string, error) {
 	w.mu.RLock()
 	if w.closed {
-		w.mu.Unlock()
+		w.mu.RUnlock()
 		return nil, errors.New("agent is closed")
 	}
 	w.mu.RUnlock()
@@ -807,6 +807,46 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 	go func() {
 		defer close(textChan)
 
+		// Set up real-time streaming callback to forward content chunks as they arrive.
+		// This is critical for CLI providers (Gemini CLI, Claude Code) where the entire
+		// agentic loop runs inside the CLI process — without this, the user sees nothing
+		// until the full response is ready.
+		streamedAny := false
+		streamedChunks := 0
+		w.mu.Lock()
+		prevCallback := w.agent.StreamingCallback
+		w.agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
+			if chunk.Type == llmtypes.StreamChunkTypeContent && chunk.Content != "" {
+				if !streamedAny {
+					w.logger.Info(fmt.Sprintf("[STREAMING] First real-time chunk received (len=%d), streaming callback active", len(chunk.Content)))
+				}
+				streamedAny = true
+				streamedChunks++
+				select {
+				case <-ctx.Done():
+				case textChan <- chunk.Content:
+				}
+			}
+			// Chain to previous callback if any
+			if prevCallback != nil {
+				prevCallback(chunk)
+			}
+		}
+		w.mu.Unlock()
+		w.logger.Info("[STREAMING] Real-time streaming callback installed")
+
+		// Restore previous callback on exit
+		defer func() {
+			w.mu.Lock()
+			w.agent.StreamingCallback = prevCallback
+			w.mu.Unlock()
+			if streamedAny {
+				w.logger.Info(fmt.Sprintf("[STREAMING] Streamed %d chunks in real-time", streamedChunks))
+			} else {
+				w.logger.Info("[STREAMING] No real-time chunks received, will send full response")
+			}
+		}()
+
 		// Add user message to history
 		w.AppendUserMessage(prompt)
 
@@ -817,7 +857,22 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		response, updatedMessages, err := w.agent.AskWithHistory(ctx, messages)
 
 		if err != nil {
-			// Send error event via the existing EventObserver (no duplicate listener needed)
+			w.logger.Error("AskWithHistory failed", err)
+			// Surface a user-visible error message so the frontend doesn't just silently hang.
+			errMsg := "⚠️ An error occurred while generating a response. Please try again."
+			errStr := err.Error()
+			if strings.Contains(errStr, "gemini cli overloaded") ||
+				strings.Contains(errStr, "high demand") ||
+				strings.Contains(errStr, "signal: killed") ||
+				strings.Contains(errStr, "gemini cli execution failed") {
+				errMsg = "⚠️ Gemini API is currently overloaded — no response received. Please try again in a moment."
+			} else if strings.Contains(errStr, "context deadline exceeded") || strings.Contains(errStr, "context canceled") {
+				errMsg = "⚠️ Request timed out. Please try again."
+			}
+			select {
+			case <-ctx.Done():
+			case textChan <- errMsg:
+			}
 			return
 		}
 
@@ -827,13 +882,14 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		w.history = updatedMessages
 		w.mu.Unlock()
 
-		// Send the full response as a single chunk
-		if response != "" {
+		// Only send the full response if we didn't already stream it via callback.
+		// For non-streaming providers (standard API), no callback fires and we send the full text.
+		// For CLI providers with streaming, chunks were already sent incrementally.
+		if !streamedAny && response != "" {
 			select {
 			case <-ctx.Done():
 				return
 			case textChan <- response:
-				// Full response sent successfully
 			}
 		}
 	}()

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Terminal, CheckCircle, AlertCircle, Loader2, Eye, EyeOff } from 'lucide-react'
+import { Terminal, CheckCircle, AlertCircle, Loader2, Eye, EyeOff, ChevronDown } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
@@ -16,14 +16,14 @@ export function GeminiCLISection({ onPublished }: GeminiCLISectionProps) {
   const [publishStatus, setPublishStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [publishError, setPublishError] = useState<string | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
-  const { saveLLM, savedLLMs, geminiCliApiKey, setGeminiCliApiKey } = useLLMStore()
+  const { saveLLM, savedLLMs, geminiCliApiKey, setGeminiCliApiKey, geminiCliModel, setGeminiCliModel } = useLLMStore()
 
   // Test connection state
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'valid' | 'invalid'>('idle')
   const [testMessage, setTestMessage] = useState<string | null>(null)
 
   const alreadyPublished = savedLLMs.some(
-    llm => llm.provider === 'gemini-cli' && llm.model_id === 'gemini-cli'
+    llm => llm.provider === 'gemini-cli' && llm.model_id === geminiCliModel
   )
 
   const handleTestConnection = async () => {
@@ -58,10 +58,10 @@ export function GeminiCLISection({ onPublished }: GeminiCLISectionProps) {
     try {
       const llmModel = {
         provider: 'gemini-cli' as const,
-        model_id: 'gemini-cli',
+        model_id: geminiCliModel,
       }
 
-      saveLLM(llmModel, publishName.trim(), 'Gemini CLI', 'none')
+      saveLLM(llmModel, publishName.trim(), `Gemini CLI (${geminiCliModel})`, 'none')
       setPublishName('')
       setIsPublishing(false)
       setPublishStatus('success')
@@ -124,11 +124,21 @@ export function GeminiCLISection({ onPublished }: GeminiCLISectionProps) {
 
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Model</h4>
-        <div className="flex items-center gap-2">
-          <div className="flex-1 bg-secondary/50 border border-border/50 rounded px-3 py-2 text-sm text-muted-foreground font-mono">
-            gemini-cli
-          </div>
-          <span className="text-xs text-muted-foreground">(fixed)</span>
+        <p className="text-sm text-muted-foreground mb-3">
+          Select which Gemini model to use. <code className="text-xs bg-secondary px-1 py-0.5 rounded">auto</code> lets the CLI pick the best model automatically.
+        </p>
+        <div className="relative">
+          <select
+            value={geminiCliModel}
+            onChange={(e) => setGeminiCliModel(e.target.value)}
+            className="w-full appearance-none px-3 py-2 pr-8 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
+          >
+            <option value="auto">auto (recommended)</option>
+            <option value="pro">pro</option>
+            <option value="flash">flash</option>
+            <option value="flash-lite">flash-lite</option>
+          </select>
+          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
         </div>
       </Card>
 
@@ -205,7 +215,7 @@ export function GeminiCLISection({ onPublished }: GeminiCLISectionProps) {
             size="sm"
             onClick={() => {
               setIsPublishing(true)
-              setPublishName('Gemini CLI')
+              setPublishName(`Gemini CLI (${geminiCliModel})`)
               setPublishError(null)
             }}
           >

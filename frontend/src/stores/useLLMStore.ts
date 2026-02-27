@@ -35,6 +35,8 @@ interface LLMState extends StoreActions {
   // CLI provider API keys
   geminiCliApiKey: string
   setGeminiCliApiKey: (key: string) => void
+  geminiCliModel: string
+  setGeminiCliModel: (model: string) => void
 
   // Custom models for each provider
   customBedrockModels: string[]
@@ -209,6 +211,10 @@ export const useLLMStore = create<LLMState>()(
         geminiCliApiKey: '',
         setGeminiCliApiKey: (key) => {
           set({ geminiCliApiKey: key })
+        },
+        geminiCliModel: 'auto',
+        setGeminiCliModel: (model) => {
+          set({ geminiCliModel: model })
         },
 
         // Custom models for each provider
@@ -921,6 +927,7 @@ export const useLLMStore = create<LLMState>()(
           customVertexModels: state.customVertexModels,
           customAzureModels: state.customAzureModels,
           geminiCliApiKey: state.geminiCliApiKey,
+          geminiCliModel: state.geminiCliModel,
           showLLMModal: state.showLLMModal,
           delegationTierConfig: state.delegationTierConfig,
           // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels

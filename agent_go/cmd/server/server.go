@@ -721,6 +721,9 @@ type StreamingAPI struct {
 	// Gemini CLI session IDs for --resume (our sessionID -> CLI session_id)
 	geminiSessionIDs map[string]string
 
+	// Gemini CLI project directory IDs for per-invocation isolation (our sessionID -> dir ID)
+	geminiProjectDirIDs map[string]string
+
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
 	completionLoopStartedMu sync.Mutex
@@ -1123,6 +1126,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted: make(map[string]bool),
 		claudeCodeSessionIDs:  make(map[string]string),
 		geminiSessionIDs:      make(map[string]string),
+		geminiProjectDirIDs:   make(map[string]string),
 	}
 
 	// Generate API token for code execution mode per-tool endpoints
@@ -4706,6 +4710,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Restore Gemini CLI project dir ID for per-invocation isolation
+		if gDirID, ok := api.geminiProjectDirIDs[sessionID]; ok {
+			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
+				underlyingAgent.GeminiProjectDirID = gDirID
+				log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
+			}
+		}
+
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
 		log.Printf("[LATENCY_DEBUG] T+%dms | Starting StreamWithEvents (LLM call) | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
@@ -4809,6 +4821,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if gSID := underlyingAgent.GeminiSessionID; gSID != "" {
 				api.geminiSessionIDs[sessionID] = gSID
 				log.Printf("[GEMINI CLI] Saved session ID %s for session %s", gSID, sessionID)
+			}
+			// Save Gemini CLI project dir ID for per-invocation isolation
+			if gDirID := underlyingAgent.GeminiProjectDirID; gDirID != "" {
+				api.geminiProjectDirIDs[sessionID] = gDirID
+				log.Printf("[GEMINI CLI] Saved project dir ID %s for session %s", gDirID, sessionID)
 			}
 		}
 
@@ -4996,8 +5013,9 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	// Clear Claude Code CLI session ID
 	delete(api.claudeCodeSessionIDs, sessionID)
 
-	// Clear Gemini CLI session ID
+	// Clear Gemini CLI session ID and project dir ID
 	delete(api.geminiSessionIDs, sessionID)
+	delete(api.geminiProjectDirIDs, sessionID)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))

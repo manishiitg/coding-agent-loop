@@ -17,6 +17,11 @@ import { logger } from '../utils/logger'
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
 
+// Streaming inactivity auto-clear timers (per sessionId)
+// When no new chunk arrives for 3s, streaming text is auto-cleared
+const _streamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+const STREAMING_INACTIVITY_MS = 3000
+
 // Per-mode event counts type - stores last viewed count for each event mode
 export type PerModeEventCounts = Record<EventMode, number>
 
@@ -295,7 +300,8 @@ interface ChatState extends StoreActions {
 
   // Streaming text accumulation (per session)
   // Only tracks parent agent streaming - sub-agent streaming routed to delegationStreamingText
-  streamingText: Record<string, string>  // sessionId → accumulated streaming text
+  streamingText: Record<string, string>  // sessionId → accumulated streaming text (response content only)
+  streamingStatus: Record<string, string>  // sessionId → latest status/heartbeat message (⏳/⚠️ messages)
   lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
 
   // Sub-agent streaming text accumulation (per delegation)
@@ -402,6 +408,7 @@ interface ChatState extends StoreActions {
   // Streaming text actions
   appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => void
   clearStreamingText: (sessionId: string) => void
+  clearStreamingStatus: (sessionId: string) => void
 
   // Delegation streaming text actions
   appendDelegationStreamingChunk: (delegationId: string, chunkIndex: number, chunk: string) => void
@@ -461,6 +468,7 @@ export const useChatStore = create<ChatState>()(
 
       // Streaming text accumulation (per session)
       streamingText: {},
+      streamingStatus: {},
       lastStreamingChunkIndex: {},
 
       // Sub-agent streaming text accumulation (per delegation)
@@ -885,6 +893,20 @@ export const useChatStore = create<ChatState>()(
       // Only parent agent streaming is processed - sub-agent streaming is filtered out in ChatArea
       appendStreamingChunk: (sessionId: string, chunkIndex: number, chunk: string) => {
         if (typeof chunk !== 'string' || !chunk) return
+
+        // Reset inactivity auto-clear timer — if no new chunk arrives in 3s, clear streaming text
+        if (_streamingInactivityTimers[sessionId]) {
+          clearTimeout(_streamingInactivityTimers[sessionId])
+        }
+        _streamingInactivityTimers[sessionId] = setTimeout(() => {
+          const currentText = useChatStore.getState().streamingText[sessionId]
+          if (currentText) {
+            console.log(`[STREAM-DEBUG] inactivity auto-clear for ${sessionId} (no chunk for ${STREAMING_INACTIVITY_MS}ms)`)
+            useChatStore.getState().clearStreamingText(sessionId)
+          }
+          delete _streamingInactivityTimers[sessionId]
+        }, STREAMING_INACTIVITY_MS)
+
         set((state) => {
           let lastIndex = state.lastStreamingChunkIndex[sessionId] ?? -1
           let currentText = state.streamingText[sessionId] || ''
@@ -900,11 +922,31 @@ export const useChatStore = create<ChatState>()(
             return state
           }
 
+          // Route heartbeat/status messages (⏳/⚠️ Gemini) to streamingStatus instead of streamingText
+          const isStatusMessage = chunk.includes('⏳') || chunk.includes('⚠️ Gemini')
+          if (isStatusMessage) {
+            return {
+              streamingStatus: {
+                ...state.streamingStatus,
+                [sessionId]: chunk.trim()
+              },
+              lastStreamingChunkIndex: {
+                ...state.lastStreamingChunkIndex,
+                [sessionId]: chunkIndex
+              }
+            }
+          }
+
+          // Clear status once real content arrives
+          const newStreamingStatus = { ...state.streamingStatus }
+          delete newStreamingStatus[sessionId]
+
           return {
             streamingText: {
               ...state.streamingText,
               [sessionId]: currentText + chunk
             },
+            streamingStatus: newStreamingStatus,
             lastStreamingChunkIndex: {
               ...state.lastStreamingChunkIndex,
               [sessionId]: chunkIndex
@@ -914,12 +956,27 @@ export const useChatStore = create<ChatState>()(
       },
 
       clearStreamingText: (sessionId: string) => {
+        // Cancel any pending inactivity timer
+        if (_streamingInactivityTimers[sessionId]) {
+          clearTimeout(_streamingInactivityTimers[sessionId])
+          delete _streamingInactivityTimers[sessionId]
+        }
         set((state) => {
           const newStreamingText = { ...state.streamingText }
           delete newStreamingText[sessionId]
+          const newStreamingStatus = { ...state.streamingStatus }
+          delete newStreamingStatus[sessionId]
           const newLastIdx = { ...state.lastStreamingChunkIndex }
           delete newLastIdx[sessionId]
-          return { streamingText: newStreamingText, lastStreamingChunkIndex: newLastIdx }
+          return { streamingText: newStreamingText, streamingStatus: newStreamingStatus, lastStreamingChunkIndex: newLastIdx }
+        })
+      },
+
+      clearStreamingStatus: (sessionId: string) => {
+        set((state) => {
+          const newStreamingStatus = { ...state.streamingStatus }
+          delete newStreamingStatus[sessionId]
+          return { streamingStatus: newStreamingStatus }
         })
       },
 
@@ -1054,6 +1111,7 @@ export const useChatStore = create<ChatState>()(
           chatTabs: {},
           activeTabId: null,
           streamingText: {},
+          streamingStatus: {},
           lastStreamingChunkIndex: {},
           delegationStreamingText: {},
           lastDelegationChunkIndex: {}

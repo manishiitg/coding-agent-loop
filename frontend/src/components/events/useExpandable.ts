@@ -1,35 +1,16 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useEventMode } from './useEventMode'
+import { useState, useCallback } from 'react'
 
 export const useExpandable = (defaultCollapsedInMicro = true) => {
-  const { mode, setMode } = useEventMode()
-  
-  // Determine if we should be expanded based on mode
-  // Collapsed by default only in 'micro' mode
-  const isMicro = mode === 'micro'
-  const shouldBeExpanded = defaultCollapsedInMicro ? !isMicro : true
-  
+  // Items start collapsed by default (micro mode behavior)
+  const shouldBeExpanded = defaultCollapsedInMicro ? false : true
+
   // Local state
   const [isExpanded, setIsExpanded] = useState(shouldBeExpanded)
 
-  // Sync with mode changes
-  useEffect(() => {
-    setIsExpanded(shouldBeExpanded)
-  }, [mode, shouldBeExpanded])
+  // Toggle function
+  const toggle = useCallback(() => {
+    setIsExpanded(prev => !prev)
+  }, [])
 
-  // Toggle function that handles modifier keys for global switching
-  const toggle = useCallback((e?: React.MouseEvent) => {
-    if (e && (e.altKey || e.metaKey)) {
-      // Global toggle via modifier key
-      // If currently collapsed (and we want to expand), switch to 'advanced' (expanded)
-      // If currently expanded (and we want to collapse), switch to 'micro' (collapsed)
-      const newMode = !isExpanded ? 'advanced' : 'micro'
-      setMode(newMode)
-    } else {
-      // Local toggle
-      setIsExpanded(prev => !prev)
-    }
-  }, [isExpanded, setMode])
-
-  return { isExpanded, toggle, mode }
+  return { isExpanded, toggle }
 }

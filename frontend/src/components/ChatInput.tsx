@@ -245,24 +245,37 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
 
-    // Fallback: Check LLM generation end events (iterate backwards)
+    // Fallback: Check llm_generation_end and tool_call_end events for context usage (iterate backwards)
     for (let i = tabEvents.length - 1; i >= 0; i--) {
       const event = tabEvents[i]
+      if (isSubAgentEvent(event)) continue
+
       if (event.type === 'llm_generation_end') {
-        // Skip sub-agent llm_generation_end events
-        if (isSubAgentEvent(event)) continue
         const llmData = event.data?.data?.llm_generation_end
         const contextPercent = llmData?.metadata?.context_usage_percent as number | undefined
-
         if (contextPercent && contextPercent > 0) {
-          const minimalTokenUsage = {
-            context_usage_percent: contextPercent,
-            model_context_window: llmData?.metadata?.model_context_window as number | undefined,
-            context_window_usage: llmData?.metadata?.current_context_window_usage as number | undefined,
-          }
           return {
             contextUsagePercent: contextPercent,
-            latestTokenUsage: minimalTokenUsage
+            latestTokenUsage: {
+              context_usage_percent: contextPercent,
+              model_context_window: llmData?.metadata?.model_context_window as number | undefined,
+              context_window_usage: llmData?.metadata?.current_context_window_usage as number | undefined,
+            }
+          }
+        }
+      }
+
+      if (event.type === 'tool_call_end') {
+        const payload = event.data?.data || event.data
+        const contextPercent = (payload as Record<string, unknown>)?.context_usage_percent as number | undefined
+        if (contextPercent && contextPercent > 0) {
+          return {
+            contextUsagePercent: contextPercent,
+            latestTokenUsage: {
+              context_usage_percent: contextPercent,
+              model_context_window: (payload as Record<string, unknown>)?.model_context_window as number | undefined,
+              context_window_usage: (payload as Record<string, unknown>)?.context_window_usage as number | undefined,
+            }
           }
         }
       }

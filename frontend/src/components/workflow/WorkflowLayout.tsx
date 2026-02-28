@@ -62,8 +62,7 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
     }
 
     // Load events for this session
-    const eventMode = 'micro'
-    const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
+    const response = await agentApi.getSessionEvents(sessionId, -1)
     const events = response.events as PollingEvent[]
 
     if (events.length === 0) {

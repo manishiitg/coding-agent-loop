@@ -2,36 +2,9 @@ import { useEffect, useState, useMemo } from 'react'
 import { sessionShareApi, type SharedSessionResponse } from '../services/api'
 import { Loader2, Share2, Clock, ExternalLink } from 'lucide-react'
 import { EventList } from '../components/events'
-import { EventModeContext } from '../components/events/EventContext'
+import { shouldShowEventByMode } from '../components/events/eventModeUtils'
 import type { PollingEvent } from '../services/api-types'
 import '../components/events/EventHierarchy.css'
-
-const noop = () => {}
-
-// Mirror backend event mode filtering (event_store.go)
-const NEVER_SHOW_EVENTS = new Set([
-  'tool_execution', 'tool_output', 'tool_response', 'tool_call_progress',
-  'cache_event', 'comprehensive_cache_event', 'cache_hit', 'cache_miss',
-  'cache_write', 'cache_expired', 'cache_cleanup', 'cache_error', 'cache_operation_start',
-])
-
-const ADVANCED_MODE_EVENTS = new Set([
-  'llm_generation_start', 'llm_generation_with_retry',
-  'conversation_start', 'conversation_turn',
-])
-
-const TINY_MODE_ADDITIONAL_EVENTS = new Set([
-  'user_message', 'system_prompt', 'agent_error',
-  'llm_generation_end', 'batch_execution_canceled',
-])
-
-function shouldShowEventMicro(eventType: string): boolean {
-  if (!eventType) return false
-  if (NEVER_SHOW_EVENTS.has(eventType)) return false
-  if (ADVANCED_MODE_EVENTS.has(eventType)) return false
-  if (TINY_MODE_ADDITIONAL_EVENTS.has(eventType)) return false
-  return true
-}
 
 interface SharedSessionProps {
   shareToken: string
@@ -77,7 +50,7 @@ export function SharedSession({ shareToken, onBack }: SharedSessionProps) {
           parent_id: (r.parent_id as string) || undefined,
         } as PollingEvent
       })
-      .filter(e => shouldShowEventMicro(e.type || ''))
+      .filter(e => shouldShowEventByMode(e.type || ''))
   }, [session])
 
   if (loading) {
@@ -172,14 +145,11 @@ export function SharedSession({ shareToken, onBack }: SharedSessionProps) {
       {/* Content - full width, minimal padding */}
       <div className="px-2 sm:px-4 py-2 h-[calc(100vh-64px)] overflow-y-auto">
         {events.length > 0 ? (
-          <EventModeContext.Provider value={{ mode: 'micro', setMode: noop }}>
             <EventList
               events={events}
               compact
               flatHierarchy
-              eventMode="micro"
             />
-          </EventModeContext.Provider>
         ) : (
           <div className="text-center py-8 text-gray-500 dark:text-gray-400">
             No events to display

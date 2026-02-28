@@ -209,7 +209,6 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 
 		limitStr := c.DefaultQuery("limit", "100")
 		offsetStr := c.DefaultQuery("offset", "0")
-		eventMode := c.DefaultQuery("event_mode", "micro")
 
 		limit, err := strconv.Atoi(limitStr)
 		if err != nil {
@@ -221,14 +220,6 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid offset parameter"})
 			return
-		}
-
-		// Validate event mode
-		switch eventMode {
-		case "advanced", "tiny", "micro":
-			// valid
-		default:
-			eventMode = "micro"
 		}
 
 		// Cap limit to prevent slow queries (max 500 per request)
@@ -243,7 +234,7 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			return
 		}
 
-		log.Printf("[CHAT_HISTORY] Loading events for session %s: found %d events (eventMode=%s)", sessionID, len(dbEvents), eventMode)
+		log.Printf("[CHAT_HISTORY] Loading events for session %s: found %d events", sessionID, len(dbEvents))
 
 		// Convert database events to polling events format (same structure as polling API)
 		convertedEvents := make([]events.Event, 0, len(dbEvents))
@@ -276,7 +267,7 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			}
 
 			// Apply event mode filtering (same as polling API)
-			if !events.ShouldShowEventByMode(string(helper.Type), eventMode) {
+			if !events.ShouldShowEvent(string(helper.Type)) {
 				filteredOut++
 				continue
 			}
@@ -318,7 +309,7 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			})
 		}
 
-		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, filtered_out=%d, parse_errors=%d (eventMode=%s)", len(dbEvents), len(convertedEvents), filteredOut, parseErrors, eventMode)
+		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, filtered_out=%d, parse_errors=%d", len(dbEvents), len(convertedEvents), filteredOut, parseErrors)
 
 		// Get total count using COUNT(*) - O(1) with index
 		total := offset + len(dbEvents)

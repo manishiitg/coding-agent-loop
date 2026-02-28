@@ -59,15 +59,6 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	eventMode := r.URL.Query().Get("event_mode")
-	if eventMode == "" {
-		eventMode = "micro"
-	}
-	if eventMode != "advanced" && eventMode != "tiny" && eventMode != "micro" {
-		http.Error(w, "event_mode must be 'advanced', 'tiny', or 'micro'", http.StatusBadRequest)
-		return
-	}
-
 	sinceIndex := -1
 	// Support both ?since= and the standard Last-Event-ID header (EventSource auto-reconnect)
 	sinceStr := r.URL.Query().Get("since")
@@ -98,9 +89,9 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 	flusher.Flush()
 
 	// 4. Subscribe FIRST so no events are lost, then backfill
-	sub := api.eventStore.Subscribe(sessionID, eventMode)
+	sub := api.eventStore.Subscribe(sessionID)
 	defer api.eventStore.Unsubscribe(sessionID, sub)
-	log.Printf("[SSE] Subscribed to session %s (eventMode=%s, since=%d)", sessionID, eventMode, sinceIndex)
+	log.Printf("[SSE] Subscribed to session %s (since=%d)", sessionID, sinceIndex)
 
 	ctx := r.Context()
 
@@ -108,7 +99,6 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 	if sinceIndex >= 0 {
 		result := api.eventStore.GetEvents(sessionID, events.GetEventsOptions{
 			SinceIndex: sinceIndex,
-			EventMode:  eventMode,
 		})
 		if len(result.Events) > 0 {
 			msg := sseEventMessage{

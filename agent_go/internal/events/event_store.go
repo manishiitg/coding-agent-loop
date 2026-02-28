@@ -40,29 +40,25 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 	// "streaming_end": true,
 }
 
-// ADVANCED_MODE_EVENTS contains event types that are only shown in advanced mode
-// In tiny/micro mode, these are hidden along with TINY_MODE_ADDITIONAL_EVENTS
-// Note: step_progress_updated is NOT in this list because it's required for React Flow canvas
+// HIDDEN_EVENTS contains additional event types hidden from UI display
+// Note: user_message is NOT filtered — essential for conversation display on session restore
+// system_prompt is stored in DB but hidden
+// NOTE: agent_end is NOT filtered — the frontend needs it to clear
+// the "Generating..." state and streaming text. Without it, the UI stays stuck.
+// NOTE: llm_generation_end is NOT filtered — ChatInput uses it as fallback for the
+// context usage circle (token_usage with conversation_total is not emitted by all providers).
+// The frontend hides it from the event list display via its own HIDDEN_EVENTS.
+// step_progress_updated is NOT in this list because it's required for React Flow canvas
 // node highlighting - it must always be sent to frontend for workflow mode to function correctly.
-var ADVANCED_MODE_EVENTS = map[string]bool{
+var HIDDEN_EVENTS = map[string]bool{
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
 	"conversation_start":        true,
 	"conversation_turn":         true,
-}
-
-// TINY_MODE_ADDITIONAL_EVENTS contains additional event types hidden in tiny/micro mode
-// Tiny mode hides ADVANCED_MODE_EVENTS + these additional lifecycle events
-// Note: user_message is NOT filtered — essential for conversation display on session restore
-// system_prompt is stored in DB but hidden in tiny/micro mode
-// NOTE: agent_end is NOT filtered — the frontend needs it to clear
-// the "Generating..." state and streaming text. Without it, the UI stays stuck.
-var TINY_MODE_ADDITIONAL_EVENTS = map[string]bool{
-	"system_prompt":            true,
-	"agent_start":              true,
-	"agent_error":              true,
-	"llm_generation_end":       true,
-	"batch_execution_canceled": true,
+	"system_prompt":             true,
+	"agent_start":               true,
+	"agent_error":               true,
+	"batch_execution_canceled":  true,
 }
 
 // MaxPollingLimit is the maximum number of events returned in a single polling request
@@ -75,24 +71,17 @@ const MaxPollingLimit = 1000 // Match frontend MAX_EVENTS limit
 // (orchestrator_agent_start, delegation_start) may be far back in the event stream
 const InitialEventsLimit = 300
 
-// ShouldShowEventByMode checks if an event should be shown based on event mode
-func ShouldShowEventByMode(eventType string, eventMode string) bool {
+// ShouldShowEvent checks if an event should be shown in the UI
+func ShouldShowEvent(eventType string) bool {
 	if eventType == "" {
 		return false
 	}
-	// First check: NEVER show these events in any mode
+	// First check: NEVER show these events
 	if NEVER_SHOW_EVENTS[eventType] {
 		return false
 	}
-	if eventMode == "advanced" {
-		return true // Show all events in advanced mode
-	}
-	if eventMode == "tiny" || eventMode == "micro" {
-		// In tiny/micro mode, hide ADVANCED_MODE_EVENTS + TINY_MODE_ADDITIONAL_EVENTS
-		return !ADVANCED_MODE_EVENTS[eventType] && !TINY_MODE_ADDITIONAL_EVENTS[eventType]
-	}
-	// Fallback: treat unknown modes as tiny
-	return !ADVANCED_MODE_EVENTS[eventType] && !TINY_MODE_ADDITIONAL_EVENTS[eventType]
+	// Filter out hidden events
+	return !HIDDEN_EVENTS[eventType]
 }
 
 // Event represents a generic event that can be stored and retrieved
@@ -135,7 +124,6 @@ type ActivityCallback func(sessionID string)
 // Subscriber represents a client subscribed to real-time events for a session via SSE.
 type Subscriber struct {
 	Ch        chan Event
-	EventMode string
 	SessionID string
 }
 
@@ -188,10 +176,9 @@ func (es *EventStore) SetActivityCallback(callback ActivityCallback) {
 // Subscribe creates a new subscriber for real-time events on a session.
 // The returned Subscriber's Ch channel receives events as they are added.
 // Buffer size is 256 to absorb bursts without blocking AddEvent.
-func (es *EventStore) Subscribe(sessionID, eventMode string) *Subscriber {
+func (es *EventStore) Subscribe(sessionID string) *Subscriber {
 	sub := &Subscriber{
 		Ch:        make(chan Event, 256),
-		EventMode: eventMode,
 		SessionID: sessionID,
 	}
 	es.subscribersMu.Lock()
@@ -248,11 +235,11 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 	es.subscribersMu.RLock()
 	subs := es.subscribers[sessionID]
 	for _, sub := range subs {
-		// Apply event mode filtering for subscriber.
+		// Apply event filtering for subscriber.
 		// Exception: streaming events are always delivered to subscribers for real-time display,
 		// even though they're in NEVER_SHOW_EVENTS (excluded from GetEvents backfill/polling).
 		isStreamingEvent := event.Type == "streaming_start" || event.Type == "streaming_chunk" || event.Type == "streaming_end"
-		if !isStreamingEvent && sub.EventMode != "" && !ShouldShowEventByMode(event.Type, sub.EventMode) {
+		if !isStreamingEvent && !ShouldShowEvent(event.Type) {
 			continue
 		}
 		select {
@@ -279,10 +266,9 @@ func (es *EventStore) InitializeSession(sessionID string, baseIndex int) {
 
 // GetEventsOptions contains options for retrieving events
 type GetEventsOptions struct {
-	SinceIndex int    // For forward polling: get events after this index
-	Limit      int    // For pagination: maximum number of events to return (0 = no limit)
-	Offset     int    // For pagination: skip this many events (used for backward pagination)
-	EventMode  string // "advanced", "tiny", or "micro" - filters events by mode
+	SinceIndex int // For forward polling: get events after this index
+	Limit      int // For pagination: maximum number of events to return (0 = no limit)
+	Offset     int // For pagination: skip this many events (used for backward pagination)
 }
 
 // GetEventsResult contains the result of GetEvents call
@@ -345,23 +331,18 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		}
 
 		// Step 1: Filter the entire array first
-		var filteredEvents []Event
-		if opts.EventMode != "" {
-			filteredEvents = make([]Event, 0, len(events))
-			for _, event := range events {
-				if ShouldShowEventByMode(event.Type, opts.EventMode) {
-					filteredEvents = append(filteredEvents, event)
-				}
+		filteredEvents := make([]Event, 0, len(events))
+		for _, event := range events {
+			if ShouldShowEvent(event.Type) {
+				filteredEvents = append(filteredEvents, event)
 			}
-		} else {
-			filteredEvents = events
 		}
 
 		// Step 2: Find the position in filtered array that corresponds to "after sinceIndex" in unfiltered array
 		// Use effectiveSinceIndex (relative to in-memory array)
 		filteredCountUpToSinceIndex := 0
 		for i := 0; i <= effectiveSinceIndex && i < len(events); i++ {
-			if opts.EventMode == "" || ShouldShowEventByMode(events[i].Type, opts.EventMode) {
+			if ShouldShowEvent(events[i].Type) {
 				filteredCountUpToSinceIndex++
 			}
 		}
@@ -403,7 +384,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 					filteredCount := 0
 					actualLastIndex := -1
 					for i := 0; i < len(events); i++ {
-						if opts.EventMode == "" || ShouldShowEventByMode(events[i].Type, opts.EventMode) {
+						if ShouldShowEvent(events[i].Type) {
 							filteredCount++
 							if filteredCount == nextFilteredPos+MaxPollingLimit {
 								actualLastIndex = i
@@ -426,18 +407,11 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 
 		// CRITICAL: Filter FIRST, then paginate, to ensure correct offset calculation
 		// Otherwise, offset would be wrong if some events are filtered out
-		var eventsToPaginate []Event
-		if opts.EventMode != "" {
-			// Filter first
-			eventsToPaginate = make([]Event, 0, len(events))
-			for _, event := range events {
-				if ShouldShowEventByMode(event.Type, opts.EventMode) {
-					eventsToPaginate = append(eventsToPaginate, event)
-				}
+		eventsToPaginate := make([]Event, 0, len(events))
+		for _, event := range events {
+			if ShouldShowEvent(event.Type) {
+				eventsToPaginate = append(eventsToPaginate, event)
 			}
-		} else {
-			// No filtering needed
-			eventsToPaginate = events
 		}
 
 		// Now paginate the filtered events
@@ -460,18 +434,14 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 		// For pagination, lastProcessedIndex is not relevant (offset-based, not index-based)
 		lastProcessedIndex = -1
 	} else {
-		// No specific mode: return all events (with filtering if needed)
-		if opts.EventMode != "" {
-			filtered := make([]Event, 0, len(events))
-			for _, event := range events {
-				if ShouldShowEventByMode(event.Type, opts.EventMode) {
-					filtered = append(filtered, event)
-				}
+		// No specific mode: return all filtered events
+		filtered := make([]Event, 0, len(events))
+		for _, event := range events {
+			if ShouldShowEvent(event.Type) {
+				filtered = append(filtered, event)
 			}
-			result = filtered
-		} else {
-			result = events
 		}
+		result = filtered
 		// For "all events" mode, we processed all events
 		// Add baseIndex to return absolute index
 		lastProcessedIndex = baseIndex + len(events) - 1

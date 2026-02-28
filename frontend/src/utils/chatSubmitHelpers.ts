@@ -329,13 +329,13 @@ export function computeNewEventCount(
   isActive: boolean,
   tabEvents: Record<string, PollingEvent[]>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  shouldShowEventByMode: (type: string, mode: any) => boolean
+  shouldShowEventByMode: (type: string, mode?: any) => boolean
 ): number {
   if (isActive || !tab.sessionId) return 0
 
   const allEvents = tabEvents[tab.sessionId] || []
-  const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type, tab.eventMode))
-  const lastViewedCount = tab.lastViewedEventCounts?.[tab.eventMode] ?? tab.lastViewedEventCount ?? 0
+  const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type))
+  const lastViewedCount = tab.lastViewedEventCounts?.micro ?? tab.lastViewedEventCount ?? 0
 
   return Math.max(0, visibleEvents.length - lastViewedCount)
 }

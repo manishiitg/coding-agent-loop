@@ -87,18 +87,9 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	sinceStr := r.URL.Query().Get("since")
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
-	eventMode := r.URL.Query().Get("event_mode")
-	if eventMode == "" {
-		eventMode = "micro" // Default to micro mode
-	}
-	if eventMode != "advanced" && eventMode != "tiny" && eventMode != "micro" {
-		http.Error(w, "event_mode must be 'advanced', 'tiny', or 'micro'", http.StatusBadRequest)
-		return
-	}
 
 	// Build options for GetEvents
 	opts := events.GetEventsOptions{
-		EventMode:  eventMode,
 		SinceIndex: -1, // Default: not using sinceIndex
 		Limit:      0,  // Default: no limit
 		Offset:     0,  // Default: no offset
@@ -207,9 +198,8 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 						continue
 					}
 
-					// Apply event mode filtering
-					shouldShow := opts.EventMode == "" || events.ShouldShowEventByMode(string(typeOnly.Type), opts.EventMode)
-					if !shouldShow {
+					// Apply event filtering
+					if !events.ShouldShowEvent(string(typeOnly.Type)) {
 						filteredOut++
 						continue
 					}

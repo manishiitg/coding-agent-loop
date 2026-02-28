@@ -167,24 +167,18 @@ func (api *StreamingAPI) handleGetSharedSession(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Determine event mode for filtering (default: micro to reduce payload)
-	eventMode := r.URL.Query().Get("event_mode")
-	if eventMode == "" {
-		eventMode = "micro"
-	}
-
 	// Use a detached context for DB query (client disconnect shouldn't cancel mid-query)
 	dbCtx, dbCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer dbCancel()
 
 	// Get filtered events using SQL-level filtering for performance
 	// session.ID is the internal hex ID used as chat_session_id in the events table
-	filteredEvents, err := api.getFilteredEventsForShare(dbCtx, session.ID, eventMode)
+	filteredEvents, err := api.getFilteredEventsForShare(dbCtx, session.ID)
 	if err != nil {
 		log.Printf("[SHARE] Failed to get events: %v", err)
 		// Continue without events
 	}
-	log.Printf("[SHARE] Session %s: %d events after %s SQL filtering", share.SessionID, len(filteredEvents), eventMode)
+	log.Printf("[SHARE] Session %s: %d events after SQL filtering", share.SessionID, len(filteredEvents))
 
 	eventsJSON, _ := json.Marshal(filteredEvents)
 
@@ -423,28 +417,19 @@ func generateShareToken() string {
 
 // getFilteredEventsForShare retrieves events for a shared session with SQL-level event type filtering.
 // This avoids fetching and unmarshaling events that will be discarded, improving performance significantly.
-func (api *StreamingAPI) getFilteredEventsForShare(ctx context.Context, chatSessionID, eventMode string) ([]database.Event, error) {
+func (api *StreamingAPI) getFilteredEventsForShare(ctx context.Context, chatSessionID string) ([]database.Event, error) {
 	db := api.chatDB.GetDB()
 	isPostgres := isPostgresDB(api.chatDB)
 
-	// Build excluded event types based on mode
-	var excludedTypes []string
-	if eventMode != "advanced" {
-		// NEVER_SHOW_EVENTS + ADVANCED_MODE_EVENTS (hidden in tiny/micro)
-		excludedTypes = append(excludedTypes,
-			"tool_execution", "tool_output", "tool_response", "tool_call_progress",
-			"cache_event", "comprehensive_cache_event", "cache_hit", "cache_miss",
-			"cache_write", "cache_expired", "cache_cleanup", "cache_error", "cache_operation_start",
-			"llm_generation_start", "llm_generation_with_retry",
-			"conversation_start", "conversation_turn",
-		)
-		if eventMode == "tiny" || eventMode == "micro" {
-			// TINY_MODE_ADDITIONAL_EVENTS
-			excludedTypes = append(excludedTypes,
-				"user_message", "system_prompt", "agent_error",
-				"llm_generation_end", "batch_execution_canceled",
-			)
-		}
+	// Excluded event types (NEVER_SHOW_EVENTS + HIDDEN_EVENTS)
+	excludedTypes := []string{
+		"tool_execution", "tool_output", "tool_response", "tool_call_progress",
+		"cache_event", "comprehensive_cache_event", "cache_hit", "cache_miss",
+		"cache_write", "cache_expired", "cache_cleanup", "cache_error", "cache_operation_start",
+		"llm_generation_start", "llm_generation_with_retry",
+		"conversation_start", "conversation_turn",
+		"system_prompt", "agent_start", "agent_error",
+		"llm_generation_end", "batch_execution_canceled",
 	}
 
 	// Build query with optional NOT IN filter

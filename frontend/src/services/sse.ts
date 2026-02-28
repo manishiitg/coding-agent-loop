@@ -20,7 +20,6 @@ export class SSEConnection {
   private eventSource: EventSource | null = null
   private sessionId: string
   private sinceIndex: number
-  private eventMode: string
   private callbacks: SSECallbacks
   private consecutiveErrors = 0
   private maxConsecutiveErrors = 5
@@ -29,12 +28,10 @@ export class SSEConnection {
   constructor(
     sessionId: string,
     sinceIndex: number,
-    eventMode: string,
     callbacks: SSECallbacks
   ) {
     this.sessionId = sessionId
     this.sinceIndex = sinceIndex
-    this.eventMode = eventMode
     this.callbacks = callbacks
     this.connect()
   }
@@ -50,9 +47,7 @@ export class SSEConnection {
     }
 
     const baseUrl = getApiBaseUrl()
-    const params = new URLSearchParams({
-      event_mode: this.eventMode,
-    })
+    const params = new URLSearchParams()
     if (this.sinceIndex >= 0) {
       params.set('since', String(this.sinceIndex))
     }
@@ -102,19 +97,6 @@ export class SSEConnection {
       }
       // Otherwise EventSource will auto-reconnect with Last-Event-ID
     }
-  }
-
-  /** Update the event mode — closes and reopens the connection with the new filter. */
-  reconnectWithMode(eventMode: string) {
-    this.eventMode = eventMode
-    if (this.eventSource) {
-      this.eventSource.close()
-      this.eventSource = null
-    }
-    // Reset sinceIndex to 0 so we get all events with the new filter
-    this.sinceIndex = 0
-    this.consecutiveErrors = 0
-    this.connect()
   }
 
   /** Close the connection permanently. */

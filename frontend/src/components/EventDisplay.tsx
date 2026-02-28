@@ -16,6 +16,7 @@ interface EventDisplayProps {
   flatHierarchy?: boolean
   events?: PollingEvent[]  // Required: events should always be passed from ChatArea (tab-specific)
   sessionId?: string | null  // Session ID for streaming text lookup
+  tabId?: string  // Specific tab ID for independent tool-call toggling in multi-chat
 }
 
 // Shared markdown components factory for consistent rendering
@@ -47,7 +48,7 @@ const getMarkdownComponents = (compact: boolean) => ({
 })
 
 // Isolated event display component that can re-render without affecting input
-export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, flatHierarchy = false, events: propEvents, sessionId }) => {
+export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted, onSendMessage, compact = false, flatHierarchy = false, events: propEvents, sessionId, tabId }) => {
   // Store subscriptions (only for finalResponse and isCompleted - not events)
   const {
     finalResponse,
@@ -129,6 +130,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
               isApproving={false}
               compact={compact}
               flatHierarchy={flatHierarchy}
+              tabId={tabId}
             />
           </div>
         </div>

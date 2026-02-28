@@ -4,7 +4,6 @@ import { X, ArrowDown, Square, Maximize2, Minimize2 } from 'lucide-react'
 import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { EventModeToggle, ToolCallToggle } from '../events'
 import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { agentApi } from '../../services/api'
 import { logger } from '../../utils/logger'
@@ -67,11 +66,11 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   const newEventCount = useMemo(() => {
     if (isActive || !tab.sessionId) return 0
     const visibleEvents = events.filter(
-      e => e.type && shouldShowEventByMode(e.type, tab.eventMode)
+      e => e.type && shouldShowEventByMode(e.type)
     )
-    const lastViewedCount = tab.lastViewedEventCounts?.[tab.eventMode] ?? tab.lastViewedEventCount ?? 0
+    const lastViewedCount = tab.lastViewedEventCounts?.micro ?? tab.lastViewedEventCount ?? 0
     return Math.max(0, visibleEvents.length - lastViewedCount)
-  }, [isActive, tab.sessionId, tab.eventMode, tab.lastViewedEventCounts, tab.lastViewedEventCount, events])
+  }, [isActive, tab.sessionId, tab.lastViewedEventCounts, tab.lastViewedEventCount, events])
 
   const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
 
@@ -102,13 +101,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
         </span>
       )}
 
-      {/* Event Mode Toggle + Tool Call Toggle - show inside active tab header */}
-      {isActive && (
-        <div className="ml-1 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-          <EventModeToggle />
-          <ToolCallToggle />
-        </div>
-      )}
 
       {/* Stop Button - show for tabs with sessionId that are streaming/running */}
       {canStop && (

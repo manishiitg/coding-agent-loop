@@ -3,7 +3,6 @@ import { persist } from 'zustand/middleware'
 import type { PollingEvent, ExtendedLLMConfiguration, SessionStatusResponse, ActiveSessionInfo, ChatHistorySummary, DelegationTierConfig, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
 import { SSEConnection } from '../services/sse'
 import { shouldShowEventByMode } from '../components/events/eventModeUtils'
-import type { EventMode } from '../components/events/EventContext'
 import type { StoreActions } from './types'
 import type { FileContextItem } from './types'
 import type { WorkflowPhase } from '../constants/workflow'
@@ -22,14 +21,13 @@ const ACTIVE_SESSIONS_CACHE_TTL = 30000
 const _streamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 const STREAMING_INACTIVITY_MS = 3000
 
-// Per-mode event counts type - stores last viewed count for each event mode
-export type PerModeEventCounts = Record<EventMode, number>
+// Per-mode event counts type — kept for backwards compat with persisted state
+export type PerModeEventCounts = { micro: number }
 
-// Helper to compute per-mode event counts (full recomputation — use sparingly)
+// Helper to compute visible event counts (full recomputation — use sparingly)
 const computePerModeCounts = (events: PollingEvent[]): PerModeEventCounts => {
   return {
-    advanced: events.length, // Advanced shows all events
-    micro: events.filter(e => e.type && shouldShowEventByMode(e.type, 'micro')).length,
+    micro: events.filter(e => e.type && shouldShowEventByMode(e.type)).length,
   }
 }
 
@@ -40,10 +38,9 @@ const incrementPerModeCounts = (
 ): PerModeEventCounts => {
   let microDelta = 0
   for (const e of newEvents) {
-    if (e.type && shouldShowEventByMode(e.type, 'micro')) microDelta++
+    if (e.type && shouldShowEventByMode(e.type)) microDelta++
   }
   return {
-    advanced: existing.advanced + newEvents.length,
     micro: existing.micro + microDelta,
   }
 }
@@ -139,7 +136,6 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
-  eventMode: 'advanced' | 'micro'  // Event display mode for this tab
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
@@ -369,7 +365,7 @@ interface ChatState extends StoreActions {
   clearToasts: () => void
   
   // Tab management actions
-  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'micro') => Promise<string>  // Returns tabId
+  createChatTab: (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string) => Promise<string>  // Returns tabId
   switchTab: (tabId: string) => void
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
@@ -380,7 +376,6 @@ interface ChatState extends StoreActions {
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
-  setTabEventMode: (tabId: string, eventMode: 'advanced' | 'micro') => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
@@ -416,7 +411,7 @@ interface ChatState extends StoreActions {
 
   // SSE connection management
   sseConnections: Record<string, SSEConnection>  // sessionId -> SSEConnection
-  connectSSE: (sessionId: string, eventMode: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void) => void
+  connectSSE: (sessionId: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void) => void
   disconnectSSE: (sessionId: string) => void
   disconnectAllSSE: () => void
 
@@ -901,7 +896,6 @@ export const useChatStore = create<ChatState>()(
         _streamingInactivityTimers[sessionId] = setTimeout(() => {
           const currentText = useChatStore.getState().streamingText[sessionId]
           if (currentText) {
-            console.log(`[STREAM-DEBUG] inactivity auto-clear for ${sessionId} (no chunk for ${STREAMING_INACTIVITY_MS}ms)`)
             useChatStore.getState().clearStreamingText(sessionId)
           }
           delete _streamingInactivityTimers[sessionId]
@@ -1022,14 +1016,14 @@ export const useChatStore = create<ChatState>()(
       },
 
       // SSE connection management
-      connectSSE: (sessionId, eventMode, onMessage, onStatus) => {
+      connectSSE: (sessionId, onMessage, onStatus) => {
         const state = get()
         // Close existing connection for this session if any
         if (state.sseConnections[sessionId]) {
           state.sseConnections[sessionId].close()
         }
         const lastIndex = state.tabEventIndices[sessionId] ?? 0
-        const conn = new SSEConnection(sessionId, lastIndex, eventMode, {
+        const conn = new SSEConnection(sessionId, lastIndex, {
           onMessage,
           onStatusUpdate: onStatus,
           onError: () => {
@@ -1144,7 +1138,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       // Tab management actions
-      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string, eventMode?: 'advanced' | 'micro') => {
+      createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string) => {
         // Generate unique tab ID
         const timestamp = Date.now()
         const mode = metadata?.mode || 'chat'
@@ -1174,12 +1168,6 @@ export const useChatStore = create<ChatState>()(
           throw new Error('Session ID is required but was not provided or is empty')
         }
         
-        // Use provided eventMode, or default to 'micro' for both workflow and chat
-        let finalEventMode = eventMode
-        if (!finalEventMode) {
-          finalEventMode = 'micro'
-        }
-        
         // Create tab with session ID
         const tab: ChatTab = {
           tabId,
@@ -1188,12 +1176,11 @@ export const useChatStore = create<ChatState>()(
           isStreaming: false,
           isCompleted: false,
           hasRunningBgAgents: false,
-          eventMode: finalEventMode,
-          hideToolCalls: false,
+          hideToolCalls: true,
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
-          lastViewedEventCounts: { advanced: 0, micro: 0 }, // Initialize all modes to 0
+          lastViewedEventCounts: { micro: 0 }, // Initialize all modes to 0
           metadata
         }
         
@@ -1526,54 +1513,6 @@ export const useChatStore = create<ChatState>()(
       
       // updateTabObserverId removed - observers no longer used
       
-      setTabEventMode: (tabId: string, eventMode: 'advanced' | 'micro') => {
-        const state = get()
-        const tab = state.chatTabs[tabId]
-        if (!tab) return
-        
-        // Check if mode actually changed
-        const modeChanged = tab.eventMode !== eventMode
-        
-        set((state) => {
-          const updates: Partial<ChatState> = {
-            chatTabs: {
-              ...state.chatTabs,
-              [tabId]: {
-                ...tab,
-                eventMode
-              }
-            }
-          }
-          
-          // CRITICAL: When event mode changes, reset lastEventIndex and clear events IMMEDIATELY
-          // This forces the frontend to fetch all events from the beginning
-          // because the filtered view is completely different (micro vs advanced)
-          // The old events in the store are from the previous filter mode and are invalid
-          // Clear events FIRST to ensure UI shows empty state immediately
-          if (modeChanged && tab.sessionId) {
-            // Clear events IMMEDIATELY - this ensures the UI shows empty state right away
-            updates.tabEvents = {
-              ...state.tabEvents,
-              [tab.sessionId]: [] // Always set to empty array, even if it doesn't exist
-            }
-            // Reset lastEventIndex to -1 to trigger full reload
-            updates.tabEventIndices = {
-              ...state.tabEventIndices,
-              [tab.sessionId]: -1
-            }
-            // Reset hasMoreOlderEvents flag
-            updates.tabHasMoreOlderEvents = {
-              ...state.tabHasMoreOlderEvents,
-              [tab.sessionId]: false
-            }
-            // NOTE: SSE reconnection is handled by ChatArea's event mode change effect
-            // which calls sseConn.reconnectWithMode(). Do NOT disconnect SSE here —
-            // sseConnections isn't in the SSE effect's deps, so it can't re-create the connection.
-          }
-
-          return updates
-        })
-      },
 
       setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => {
         const state = get()
@@ -2019,7 +1958,7 @@ export const useChatStore = create<ChatState>()(
                 isStreaming: false, // Reset streaming state on reload
                 isCompleted: false,
                 hasRunningBgAgents: false,
-                eventMode: tab.eventMode, // Persist user preference
+                
                 hideToolCalls: tab.hideToolCalls ?? false, // Persist user preference
                 config: tab.config, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)
@@ -2030,7 +1969,7 @@ export const useChatStore = create<ChatState>()(
                 // - enableContextSummarization
                 createdAt: tab.createdAt, // Persist for ordering
                 lastViewedEventCount: 0, // @deprecated - Reset on reload
-                lastViewedEventCounts: { advanced: 0, micro: 0 }, // Reset on reload
+                lastViewedEventCounts: { micro: 0 }, // Reset on reload
                 metadata: tab.metadata // Persist mode and phase info
               }
             ])

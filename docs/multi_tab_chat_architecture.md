@@ -150,14 +150,17 @@ export interface ChatTab {
   sessionId: string | null  // Chat session ID (used for API requests)
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
-  eventMode: 'basic' | 'advanced' | 'tiny' | 'micro'  // Event display mode for this tab
+  hasRunningBgAgents: boolean  // Whether background agents are still running
+  hideToolCalls: boolean  // Tool call collapsing (default: true). Per-tab state so multi-chat panels are independent
   config: ChatTabConfig  // Tab-specific configuration (servers, LLM, etc.)
   createdAt: number  // Timestamp for ordering
-  lastViewedEventCount: number  // Last event count when viewed (for badge)
+  lastViewedEventCount: number  // @deprecated - kept for backwards compat
+  lastViewedEventCounts: Record<string, number>  // Per-mode last viewed counts
   metadata?: {
     phaseId?: string  // For workflow mode: phase ID
     phaseName?: string  // For workflow mode: phase name
     mode?: 'chat' | 'workflow'  // Which mode this tab belongs to
+    isRestored?: boolean  // Whether this tab was restored from a previous session
     presetQueryId?: string  // For workflow mode: preset query ID
   }
 }

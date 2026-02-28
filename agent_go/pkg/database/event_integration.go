@@ -10,18 +10,29 @@ import (
 
 // EventDatabaseObserver implements the EventObserver interface to store events in the database
 type EventDatabaseObserver struct {
-	db Database
+	db          Database
+	ShouldStore func(eventType string) bool
 }
 
 // NewEventDatabaseObserver creates a new database observer
-func NewEventDatabaseObserver(db Database) *EventDatabaseObserver {
-	return &EventDatabaseObserver{db: db}
+func NewEventDatabaseObserver(db Database, shouldStore func(eventType string) bool) *EventDatabaseObserver {
+	if shouldStore == nil {
+		shouldStore = func(eventType string) bool { return true }
+	}
+	return &EventDatabaseObserver{
+		db:          db,
+		ShouldStore: shouldStore,
+	}
 }
 
 // OnEvent handles incoming events and stores them in the database
 func (e *EventDatabaseObserver) OnEvent(event *events.Event) {
 	// Skip streaming events - they are ephemeral and handled in real-time via polling
 	if event.Type == events.StreamingStart || event.Type == events.StreamingChunk || event.Type == events.StreamingEnd {
+		return
+	}
+
+	if !e.ShouldStore(string(event.Type)) {
 		return
 	}
 
@@ -55,6 +66,10 @@ func (e *EventDatabaseObserver) HandleEvent(ctx context.Context, event *events.A
 	// Skip streaming events - they are ephemeral and handled in real-time via polling
 	// Persisting them would cause "Unknown Event Type" on page reload
 	if event.Type == events.StreamingStart || event.Type == events.StreamingChunk || event.Type == events.StreamingEnd {
+		return nil
+	}
+
+	if !e.ShouldStore(string(event.Type)) {
 		return nil
 	}
 

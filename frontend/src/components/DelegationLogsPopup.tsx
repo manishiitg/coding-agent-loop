@@ -19,7 +19,6 @@ import {
 import { agentApi } from '../services/api'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
 import { EventList } from './events'
-import { EventModeContext } from './events/EventContext'
 import type {
   AllDelegationLogsResponse,
   SessionDelegationLogs,
@@ -334,9 +333,6 @@ const DelegationLogsPopup: React.FC<DelegationLogsPopupProps> = ({
     }
   }, [allData, filteredSessions])
 
-  // Provide EventModeContext for EventList (advanced mode to show full details)
-  const [eventMode, setEventMode] = useState<'advanced' | 'micro'>('advanced')
-  const eventModeValue = useMemo(() => ({ mode: eventMode, setMode: setEventMode }), [eventMode])
 
   if (!isOpen) return null
 
@@ -534,9 +530,7 @@ const DelegationLogsPopup: React.FC<DelegationLogsPopupProps> = ({
                   <p className="text-xs text-muted-foreground p-3 text-center">No events found for this delegation.</p>
                 ) : (
                   <>
-                    <EventModeContext.Provider value={eventModeValue}>
-                      <EventList events={drillDownEvents} compact eventMode="advanced" />
-                    </EventModeContext.Provider>
+                      <EventList events={drillDownEvents} compact />
                     {drillDownTotal > drillDownEvents.length && (
                       <div className="flex justify-center py-3 border-t border-border">
                         <button
@@ -630,9 +624,7 @@ const DelegationLogsPopup: React.FC<DelegationLogsPopupProps> = ({
                       <p className="text-xs text-muted-foreground p-3 text-center">No events found for this session.</p>
                     ) : (
                       <>
-                        <EventModeContext.Provider value={eventModeValue}>
-                          <EventList events={mainAgentEvents} compact eventMode="advanced" />
-                        </EventModeContext.Provider>
+                          <EventList events={mainAgentEvents} compact />
                         {mainAgentTotal > mainAgentEvents.length && (
                           <div className="flex justify-center py-3 border-t border-border">
                             <button

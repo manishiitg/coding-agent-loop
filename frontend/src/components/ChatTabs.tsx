@@ -2,7 +2,6 @@ import React, { useEffect, useMemo } from 'react'
 import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
-import { EventModeToggle, ToolCallToggle } from './events'
 import { shouldShowEventByMode } from './events/eventModeUtils'
 import { logger } from '../utils/logger'
 interface ChatTabsProps {
@@ -184,11 +183,11 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
             // Get all events for this tab's session
             const allEvents = tabEvents[tab.sessionId] || []
 
-            // Filter events by the tab's current event mode
-            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type, tab.eventMode))
+            // Filter events by visibility rules
+            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type))
 
-            // Get the last viewed count for this mode (with fallback for migration)
-            const lastViewedCount = tab.lastViewedEventCounts?.[tab.eventMode] ?? tab.lastViewedEventCount ?? 0
+            // Get the last viewed count (with fallback for migration)
+            const lastViewedCount = tab.lastViewedEventCounts?.micro ?? tab.lastViewedEventCount ?? 0
 
             // New events = current visible count - last viewed count for this mode
             const newCount = Math.max(0, visibleEvents.length - lastViewedCount)
@@ -224,13 +223,6 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
                 </span>
               )}
               
-              {/* Event Mode Toggle - only for fresh (non-restored) sessions */}
-              {isActive && !tab.metadata?.isRestored && (
-                <div className="ml-1 flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
-                  <EventModeToggle />
-                  <ToolCallToggle />
-                </div>
-              )}
               
               {/* Close Button */}
               <button

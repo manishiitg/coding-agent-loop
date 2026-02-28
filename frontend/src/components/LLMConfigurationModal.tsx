@@ -316,7 +316,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     if (provider === 'claude-code' || provider === 'gemini-cli') {
       const newPrimaryConfig: LLMConfiguration = {
         provider,
-        model_id: provider,
+        model_id: llm.model_id || provider,
         fallback_models: [],
         cross_provider_fallback: undefined
       }
@@ -324,7 +324,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       if (modeAgentConfig) {
         setModeAgentConfig({
           ...modeAgentConfig,
-          primary: { provider, model_id: provider }
+          primary: { provider, model_id: llm.model_id || provider }
         })
       }
       refreshAvailableLLMs()
@@ -551,7 +551,25 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {activeTab === 'gemini-cli' && (
-                <GeminiCLISection />
+                <GeminiCLISection 
+                  onModelChange={(modelId) => {
+                    if (modePrimaryConfig.provider === 'gemini-cli') {
+                      const newPrimaryConfig: LLMConfiguration = {
+                        provider: 'gemini-cli',
+                        model_id: modelId,
+                        fallback_models: modePrimaryConfig.fallback_models || [],
+                        cross_provider_fallback: modePrimaryConfig.cross_provider_fallback
+                      }
+                      setModePrimaryConfig(newPrimaryConfig)
+                      if (modeAgentConfig) {
+                        setModeAgentConfig({
+                          ...modeAgentConfig,
+                          primary: { provider: 'gemini-cli', model_id: modelId, options: modeAgentConfig.primary.options }
+                        })
+                      }
+                    }
+                  }}
+                />
               )}
             </div>
           </div>

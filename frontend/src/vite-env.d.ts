@@ -4,7 +4,6 @@
 declare global {
   interface Window {
     toggleAutoScroll?: () => void;
-    cycleEventMode?: () => void;
   }
 }
 

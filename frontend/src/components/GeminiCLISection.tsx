@@ -7,9 +7,10 @@ import { llmConfigService } from '../services/llm-config-api'
 
 interface GeminiCLISectionProps {
   onPublished?: () => void
+  onModelChange?: (modelId: string) => void
 }
 
-export function GeminiCLISection({ onPublished }: GeminiCLISectionProps) {
+export function GeminiCLISection({ onPublished, onModelChange }: GeminiCLISectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
@@ -130,7 +131,10 @@ export function GeminiCLISection({ onPublished }: GeminiCLISectionProps) {
         <div className="relative">
           <select
             value={geminiCliModel}
-            onChange={(e) => setGeminiCliModel(e.target.value)}
+            onChange={(e) => {
+              setGeminiCliModel(e.target.value)
+              onModelChange?.(e.target.value)
+            }}
             className="w-full appearance-none px-3 py-2 pr-8 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary font-mono cursor-pointer"
           >
             <option value="auto">auto (recommended)</option>

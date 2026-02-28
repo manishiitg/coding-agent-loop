@@ -4563,7 +4563,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("[DATABASE DEBUG] Creating database event observer for session %s", sessionID)
 		// Create database event observer to store events in database
-		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB)
+		dbEventObserver := database.NewEventDatabaseObserver(api.chatDB, func(eventType string) bool {
+			return events.ShouldShowEvent(eventType)
+		})
 		log.Printf("[DATABASE DEBUG] Database event observer created successfully for session %s", sessionID)
 
 		// Add event observer directly to the underlying MCP agent since the wrapper's AddEventListener is disabled

@@ -285,25 +285,19 @@ export const agentApi = {
 
   // Get events for a session
   // Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
-  // eventMode: 'advanced' | 'micro' - filters events by mode (defaults to 'micro')
   getSessionEvents: async (
-    sessionId: string, 
+    sessionId: string,
     sinceIndex?: number,
     options?: {
       limit?: number
       offset?: number
-      eventMode?: 'advanced' | 'micro'
     }
   ): Promise<GetEventsResponse> => {
     const params: Record<string, string | number> = {}
-    
+
     // Forward polling mode: use sinceIndex
     if (sinceIndex !== undefined && sinceIndex >= -1) {
       params.since = sinceIndex
-      // Add event mode if specified (for polling mode)
-      if (options?.eventMode) {
-        params.event_mode = options.eventMode
-      }
     }
     // Backward pagination mode: use limit/offset
     else if (options?.limit !== undefined || options?.offset !== undefined) {
@@ -313,14 +307,10 @@ export const agentApi = {
       if (options.offset !== undefined) {
         params.offset = options.offset
       }
-      // Add event mode if specified (for pagination mode)
-      if (options?.eventMode) {
-        params.event_mode = options.eventMode
-      }
     } else {
       throw new Error('Either sinceIndex (for polling) or limit (for pagination) must be provided')
     }
-    
+
     const response = await api.get(`/api/sessions/${sessionId}/events`, { params })
     return response.data
   },
@@ -833,11 +823,8 @@ export const agentApi = {
   },
 
   // Get events from database for a chat session (for completed sessions)
-  getChatSessionEvents: async (sessionId: string, limit: number = 1000, offset: number = 0, eventMode?: string): Promise<GetSessionEventsResponse> => {
+  getChatSessionEvents: async (sessionId: string, limit: number = 1000, offset: number = 0): Promise<GetSessionEventsResponse> => {
     const params: Record<string, string | number> = { limit, offset }
-    if (eventMode) {
-      params.event_mode = eventMode
-    }
     const response = await api.get(`/api/chat-history/sessions/${sessionId}/events`, { params })
     return response.data
   },

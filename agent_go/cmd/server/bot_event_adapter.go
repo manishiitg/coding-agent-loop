@@ -21,7 +21,7 @@ func NewBotEventSubscriberAdapter(es *events.EventStore) *BotEventSubscriberAdap
 // SubscribeBot subscribes to events for a session and returns a channel + unsubscribe func
 func (a *BotEventSubscriberAdapter) SubscribeBot(sessionID string) (<-chan services.BotEventData, func()) {
 	log.Printf("[BOT_EVENT_ADAPTER] SubscribeBot called for session %s", sessionID)
-	sub := a.eventStore.Subscribe(sessionID, "advanced")
+	sub := a.eventStore.Subscribe(sessionID)
 
 	out := make(chan services.BotEventData, 256)
 

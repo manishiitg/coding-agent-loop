@@ -112,8 +112,7 @@ async function doRestoreSession(
     tabId = await chatStore.createChatTab(
       title,
       { mode: tabMode, isRestored: isRestored ?? false },
-      sessionId,
-      'micro'
+      sessionId
     )
     console.log(`${TAG} [${src}] Created tab ${tabId} mode=${tabMode} isRestored=${isRestored}`)
   }
@@ -139,7 +138,7 @@ async function doRestoreSession(
 
   // Step 7: Load events
   try {
-    await hydrateTabEvents(sessionId, 'micro')
+    await hydrateTabEvents(sessionId)
     const eventCount = chatStore.getTabEvents(sessionId).length
     console.log(`${TAG} [${src}] Hydrated ${eventCount} events`)
   } catch (err) {
@@ -239,12 +238,11 @@ export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<Ch
  */
 export async function hydrateTabEvents(
   sessionId: string,
-  eventMode: 'micro' | 'advanced'
 ): Promise<void> {
   const chatStore = useChatStore.getState()
 
   // Try the in-memory polling API first (works for active sessions)
-  const response = await agentApi.getSessionEvents(sessionId, -1, { eventMode })
+  const response = await agentApi.getSessionEvents(sessionId, -1)
 
   if (response.events.length > 0) {
     chatStore.setTabEvents(sessionId, response.events)
@@ -257,8 +255,8 @@ export async function hydrateTabEvents(
   }
 
   // Polling API returned 0 events — session is likely completed/historical.
-  // Fall back to the database API with event mode filtering.
-  const dbResponse = await agentApi.getChatSessionEvents(sessionId, 1000, 0, eventMode)
+  // Fall back to the database API.
+  const dbResponse = await agentApi.getChatSessionEvents(sessionId, 1000, 0)
   if (dbResponse.events.length > 0) {
     chatStore.setTabEvents(sessionId, dbResponse.events)
     chatStore.setTabLastEventIndex(sessionId, dbResponse.events.length - 1)

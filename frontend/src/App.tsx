@@ -21,7 +21,6 @@ import { prepareDomForPdfExport, exportPdfChunked } from "./utils/pdfExport";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
-import { EventModeProvider } from "./components/events";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
 import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
@@ -797,13 +796,6 @@ function App() {
         event.preventDefault()
         toggleWorkspaceMinimize()
       }
-      // Ctrl/Cmd + 8 for event mode cycling
-      if ((event.ctrlKey || event.metaKey) && event.key === '8') {
-        event.preventDefault()
-        if ((window as Window & { cycleEventMode?: () => void }).cycleEventMode) {
-          (window as Window & { cycleEventMode?: () => void }).cycleEventMode!()
-        }
-      }
       // Ctrl/Cmd + N for new chat
       if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
         event.preventDefault()
@@ -853,8 +845,6 @@ function App() {
               }}
             />
             
-            {/* EventModeProvider wraps each tab's content (ChatArea/WorkflowLayout) - per-tab scope */}
-            <EventModeProvider>
               <div className="flex-1 min-h-0 overflow-hidden relative">
                 {/* Both layouts stay mounted to preserve running state across mode switches.
                     Only the active mode is visible; the other is hidden via CSS. */}
@@ -871,7 +861,6 @@ function App() {
                   />
                 </div>
               </div>
-            </EventModeProvider>
 
             {/* Running Workflows Tracking - Global */}
             <RunningWorkflowsDrawer

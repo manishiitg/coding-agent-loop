@@ -218,6 +218,7 @@ export type EventTypeString =
   | 'step_token_usage'
   | 'step_progress_updated'
   | 'decision_evaluated'
+  | 'routing_evaluated'
   | 'prerequisite_navigation'
   | 'pre_validation_completed'
   | 'todo_steps_extracted'
@@ -343,6 +344,7 @@ export interface EventTypeToDataMap {
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
+  'routing_evaluated': Record<string, unknown>;
   'prerequisite_navigation': PrerequisiteNavigationEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;

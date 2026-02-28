@@ -4,10 +4,15 @@ import { EventDispatcher, type DelegationStats, type EventNode } from './EventDi
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
-import { NEVER_DISPLAY_EVENTS, shouldShowEventByMode } from './eventModeUtils';
+import { NEVER_DISPLAY_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useRenderLogger, useMemoLogger } from '../../utils/renderLogger';
 import './EventHierarchy.css';
+
+// Event types that get grouped and collapsed together as "tool calls".
+// llm_generation_end naturally occurs between tool call batches — including it
+// prevents many tiny "+ 1 tool call" groups from forming.
+const TOOL_CALL_TYPES = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error', 'token_usage', 'llm_generation_end']);
 
 interface EventHierarchyProps {
   events: PollingEvent[];
@@ -18,12 +23,21 @@ interface EventHierarchyProps {
   isApproving?: boolean  // Loading state for approve button
   compact?: boolean  // Compact mode for smaller font sizes
   flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
-  eventMode?: 'advanced' | 'micro'  // Override event mode (e.g. for shared sessions with no active tab)
+  tabId?: string  // Specific tab ID — avoids getActiveTab() so multi-chat panels are independent
+}
+
+interface HiddenGroup {
+  count: number;
+  groupKey: string;     // Stable key (first event ID in the group)
+  beforeId?: string;    // Insert sentinel before this event ID (undefined = append)
 }
 
 interface FlattenedItem {
-  node: EventNode;
+  node?: EventNode;
   uniqueKey: string;
+  isToolCallToggle?: boolean;
+  hiddenCount?: number;   // Per-group count for the "+" label
+  groupKey?: string;      // Group key for per-group expand/collapse
 }
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
@@ -35,12 +49,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   isApproving,
   compact = false,
   flatHierarchy = false,
-  eventMode: eventModeProp
+  tabId: tabIdProp,
 }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Track session keys the user manually expanded — don't auto-collapse these again
   const userExpandedSessionsRef = useRef<Set<string>>(new Set());
+  // Per-group expand state for tool call groups (keyed by first event ID in group)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [loadedOlderEvents, setLoadedOlderEvents] = useState<PollingEvent[]>([]);
   const [paginationOffset, setPaginationOffset] = useState<number>(0);
   const [isLoadingOlder, setIsLoadingOlder] = useState<boolean>(false);
@@ -69,11 +85,13 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
   }, []);
 
-  // Get active tab for sessionId, eventMode, and hideToolCalls
-  const activeTab = useChatStore(state => state.getActiveTab())
-  const sessionId = activeTab?.sessionId
-  const eventMode: 'advanced' | 'micro' = eventModeProp || (activeTab?.eventMode || 'micro') as 'advanced' | 'micro'
-  const hideToolCalls = activeTab?.hideToolCalls || false
+  // Look up specific tab (or fall back to active tab for backwards compat)
+  const activeTabId = useChatStore(state => state.activeTabId)
+  const resolvedTabId = tabIdProp || activeTabId
+  const tab = useChatStore(state => resolvedTabId ? state.chatTabs[resolvedTabId] : undefined)
+  // const setTabHideToolCalls = useChatStore(state => state.setTabHideToolCalls) // kept for future "show all / collapse all"
+  const sessionId = tab?.sessionId
+  const hideToolCalls = tab?.hideToolCalls || false
   
   // Merge loaded older events with current events — single-pass filter
   const displayEvents = useMemo(() => {
@@ -83,9 +101,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       : events;
 
     const HIDDEN_STREAMING = new Set(['streaming_start', 'streaming_chunk', 'streaming_end']);
-    const DELEGATE_TOOL_EVENTS = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error']);
     const HIDDEN_DELEGATION_TOOLS = new Set(['delegate', 'confirm_plan_execution', 'query_agent', 'terminate_agent', 'list_agents']);
-    const isMicro = eventMode === 'micro';
 
     // Single-pass: dedup + all filter conditions at once
     const seenIds = new Set<string>();
@@ -106,29 +122,24 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       if (HIDDEN_STREAMING.has(type)) continue;
 
       // Delegation tool events — hide raw tool_call for delegation tools
-      if (DELEGATE_TOOL_EVENTS.has(type)) {
+      if (TOOL_CALL_TYPES.has(type)) {
         const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined;
         const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name;
         if (toolName && HIDDEN_DELEGATION_TOOLS.has(toolName)) continue;
       }
 
-      // Hide all tool call events when toggle is on
-      if (hideToolCalls && DELEGATE_TOOL_EVENTS.has(type)) continue;
-
-      // Micro-mode filters
-      if (isMicro) {
-        if (type === 'token_usage') {
-          const agentEvent = event.data as { data?: Record<string, unknown> } | undefined;
-          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined;
-          if (payload?.context === 'conversation_total') continue;
-        }
-        if (type === 'large_tool_output_detected' || type === 'large_tool_output_file_written') continue;
-        if (type === 'orchestrator_agent_end' || type === 'agent_end' || type === 'agent_start') {
-          const agentEvent = event.data as { data?: Record<string, unknown>; agent_type?: string } | undefined;
-          const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined;
-          const agentType = (payload as Record<string, unknown> | undefined)?.agent_type || agentEvent?.agent_type;
-          if (agentType === 'simple') continue;
-        }
+      // Additional display filters
+      if (type === 'token_usage') {
+        const agentEvent = event.data as { data?: Record<string, unknown> } | undefined;
+        const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined;
+        if (payload?.context === 'conversation_total') continue;
+      }
+      if (type === 'large_tool_output_detected' || type === 'large_tool_output_file_written') continue;
+      if (type === 'orchestrator_agent_end' || type === 'agent_end' || type === 'agent_start') {
+        const agentEvent = event.data as { data?: Record<string, unknown>; agent_type?: string } | undefined;
+        const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined;
+        const agentType = (payload as Record<string, unknown> | undefined)?.agent_type || agentEvent?.agent_type;
+        if (agentType === 'simple') continue;
       }
 
       result.push(event);
@@ -194,16 +205,80 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // Reverse back to chronological order
     capped.reverse();
     return capped;
-  }, [events, loadedOlderEvents, eventMode, hideToolCalls]);
-  
-  // Reset loaded older events when session or event mode changes
+  }, [events, loadedOlderEvents]);
+
+  // Filter tool call / token_usage groups from displayEvents when hide mode is on.
+  // Done at this level (before tree construction) so tool calls that are children of
+  // collapsed parent nodes are also removed — filtering inside flatten() missed those.
+  const { filteredDisplayEvents, hiddenGroups, totalHiddenCount } = useMemo(() => {
+    const emptyResult = { filteredDisplayEvents: displayEvents, hiddenGroups: [] as HiddenGroup[], totalHiddenCount: 0 };
+    if (!hideToolCalls) return emptyResult;
+
+    // Helper: check if event belongs to a sub-agent delegation (not main agent).
+    // Sub-agent events have a correlation_id starting with "delegation-" at
+    // event.data.correlation_id or event.data.data.correlation_id (nested AgentEvent).
+    const isDelegationChild = (event: PollingEvent): boolean => {
+      if (!event.data || typeof event.data !== 'object') return false;
+      const data = event.data as Record<string, unknown>;
+      // Check top-level correlation_id
+      const cid = data.correlation_id as string | undefined;
+      if (cid && cid.startsWith('delegation-')) return true;
+      // Check nested data.data.correlation_id (AgentEvent wrapper)
+      if (data.data && typeof data.data === 'object') {
+        const nested = data.data as Record<string, unknown>;
+        const ncid = nested.correlation_id as string | undefined;
+        if (ncid && ncid.startsWith('delegation-')) return true;
+      }
+      return false;
+    };
+
+    // Identify consecutive groups of TOOL_CALL_TYPES events (main agent only).
+    // Sub-agent events are left alone — the tree builder re-parents them into delegation cards.
+    const groups: { startIdx: number; endIdx: number }[] = [];
+    let i = 0;
+    while (i < displayEvents.length) {
+      const ev = displayEvents[i];
+      if (TOOL_CALL_TYPES.has(ev.type || '') && !isDelegationChild(ev)) {
+        const startIdx = i;
+        while (i < displayEvents.length && TOOL_CALL_TYPES.has(displayEvents[i].type || '') && !isDelegationChild(displayEvents[i])) i++;
+        groups.push({ startIdx, endIdx: i - 1 });
+      } else {
+        i++;
+      }
+    }
+
+    if (groups.length === 0) return emptyResult;
+
+    const hideIds = new Set<string>();
+    const hiddenGroupInfo: HiddenGroup[] = [];
+
+    for (const group of groups) {
+      const groupKey = displayEvents[group.startIdx].id;
+      // Skip groups the user has individually expanded
+      if (expandedGroups.has(groupKey)) continue;
+
+      const count = group.endIdx - group.startIdx + 1;
+      for (let j = group.startIdx; j <= group.endIdx; j++) {
+        hideIds.add(displayEvents[j].id);
+      }
+      // Sentinel goes before the first non-hidden event after this group
+      const afterIdx = group.endIdx + 1;
+      const beforeId = afterIdx < displayEvents.length ? displayEvents[afterIdx].id : undefined;
+      hiddenGroupInfo.push({ count, groupKey, beforeId });
+    }
+
+    const filtered = displayEvents.filter(e => !hideIds.has(e.id));
+    return { filteredDisplayEvents: filtered, hiddenGroups: hiddenGroupInfo, totalHiddenCount: hideIds.size };
+  }, [displayEvents, hideToolCalls, expandedGroups]);
+
+  // Reset loaded older events when session changes
   useEffect(() => {
     setLoadedOlderEvents([])
     setPaginationOffset(0)
     const chatStore = useChatStore.getState()
     const hasMore = sessionId ? chatStore.getTabHasMoreOlderEvents(sessionId) : false
     setHasMoreOlderEvents(hasMore)
-  }, [sessionId, eventMode])
+  }, [sessionId])
   
   // Helpers to extract hierarchy info
   const getParentId = useCallback((event: PollingEvent): string | undefined => {
@@ -387,7 +462,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   const eventTree = useMemo(() => {
     const eventById = new Map<string, PollingEvent>();
-    displayEvents.forEach(event => eventById.set(event.id, event));
+    filteredDisplayEvents.forEach(event => eventById.set(event.id, event));
 
     const eventsToFilter = new Set<string>();
     findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
@@ -401,7 +476,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     });
 
-    const filteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
+    const filteredEvents = filteredDisplayEvents.filter(event => !eventsToFilter.has(event.id));
     const filteredEventIds = new Set(filteredEvents.map(e => e.id));
 
     // Build delegation_id -> delegation_start event ID map for re-parenting orphans.
@@ -486,16 +561,21 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
+  }, [filteredDisplayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
+
+  const hasToolCalls = useMemo(
+    () => displayEvents.some(e => TOOL_CALL_TYPES.has(e.type || '')),
+    [displayEvents]
+  );
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
+
     const flatten = (node: EventNode, key: string, isWithinSubAgent = false) => {
       list.push({ node, uniqueKey: key });
-      
+
       // If this is a delegation_start (sub-agent), we STOP flattening its children into the main list.
       // They will be rendered internally by the sub-agent card's scrollable logs area.
-      // We only do this if we are not ALREADY inside a sub-agent log area (to keep nested ones contained too).
       if (node.event.type === 'delegation_start') {
         return;
       }
@@ -507,8 +587,48 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     };
     eventTree.forEach((node, index) => flatten(node, `${node.event.id}-root-${index}`));
+
+    // Insert per-group sentinels (reverse order to keep indices stable)
+    if (hideToolCalls) {
+      // "+" sentinels for hidden groups
+      for (let g = hiddenGroups.length - 1; g >= 0; g--) {
+        const group = hiddenGroups[g];
+        const sentinel: FlattenedItem = { uniqueKey: `tool-call-expand-${group.groupKey}`, isToolCallToggle: true, hiddenCount: group.count, groupKey: group.groupKey };
+        if (group.beforeId) {
+          const insertIdx = list.findIndex(item => item.node?.event.id === group.beforeId);
+          if (insertIdx >= 0) {
+            list.splice(insertIdx, 0, sentinel);
+          } else {
+            list.push(sentinel);
+          }
+        } else {
+          list.push(sentinel);
+        }
+      }
+
+      // "−" sentinels after each individually expanded group
+      if (expandedGroups.size > 0) {
+        // Find runs of consecutive tool call events and check if they match an expanded group key
+        for (let i = list.length - 1; i >= 0; i--) {
+          const item = list[i];
+          if (!item.node || !TOOL_CALL_TYPES.has(item.node.event.type || '')) continue;
+          // Check if next item is NOT a tool call (end of a group)
+          const nextIsToolCall = i + 1 < list.length && list[i + 1].node && TOOL_CALL_TYPES.has(list[i + 1].node!.event.type || '');
+          if (nextIsToolCall) continue;
+          // Walk backward to find group start
+          let start = i;
+          while (start > 0 && list[start - 1].node && TOOL_CALL_TYPES.has(list[start - 1].node!.event.type || '')) start--;
+          const firstEventId = list[start].node!.event.id;
+          if (expandedGroups.has(firstEventId)) {
+            list.splice(i + 1, 0, { uniqueKey: `tool-call-collapse-${firstEventId}`, isToolCallToggle: true, groupKey: firstEventId });
+          }
+          i = start; // Skip past this group
+        }
+      }
+    }
+
     return list;
-  }, [eventTree]);
+  }, [eventTree, hideToolCalls, hiddenGroups, expandedGroups]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {
@@ -518,7 +638,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     flattenedItems: flattenedItems.length,
     expandedNodes: expandedNodes.size,
     collapsedSessions: collapsedSessions.size,
-    eventMode,
   })
   useMemoLogger('EH.displayEvents', displayEvents, displayEvents.length)
   useMemoLogger('EH.combinedStats', delegationStats, Object.keys(delegationStats).length + ' delegations')
@@ -532,7 +651,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       const response = await agentApi.getSessionEvents(sessionId, undefined, {
         limit: 50,
         offset: paginationOffset,
-        eventMode
       });
       if (response.events.length > 0) {
         setLoadedOlderEvents(prev => [...response.events, ...prev]);
@@ -545,10 +663,39 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     } finally {
       setIsLoadingOlder(false);
     }
-  }, [sessionId, paginationOffset, eventMode, isLoadingOlder]);
+  }, [sessionId, paginationOffset, isLoadingOlder]);
 
   const renderItem = useCallback((_index: number, item: FlattenedItem) => {
+    if (!item) return null;
+
+    // Inline tool-call toggle sentinel
+    if (item.isToolCallToggle) {
+      const count = item.hiddenCount || 0;
+      const key = item.groupKey;
+      return (
+        <div className="flex items-center py-0.5 pl-5">
+          <button
+            onClick={() => {
+              if (!key) return;
+              setExpandedGroups(prev => {
+                const next = new Set(prev);
+                if (next.has(key)) next.delete(key);
+                else next.add(key);
+                return next;
+              });
+            }}
+            className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+          >
+            {count > 0
+              ? `+ ${count} tool call${count !== 1 ? 's' : ''}`
+              : `− collapse`}
+          </button>
+        </div>
+      );
+    }
+
     const { node, uniqueKey } = item;
+    if (!node) return null;
     const { event, children, level, isExpanded } = node;
     const hasChildren = children.length > 0;
     
@@ -641,17 +788,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         followOutput={handleFollowOutput}
         itemContent={renderItem}
         components={{
-          Header: () => hasMoreOlderEvents ? (
-            <div className="flex justify-center py-4">
-              <button
-                onClick={handleLoadMore}
-                disabled={isLoadingOlder}
-                className="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoadingOlder ? 'Loading...' : 'Load Older Events'}
-              </button>
-            </div>
-          ) : null
+          Header: () => {
+            if (!hasMoreOlderEvents) return null;
+            return (
+              <div className="flex items-center justify-center gap-3 py-2">
+                <button
+                  onClick={handleLoadMore}
+                  disabled={isLoadingOlder}
+                  className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted/40 hover:bg-muted/70 border border-border/50 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoadingOlder ? 'Loading...' : 'Load Older Events'}
+                </button>
+              </div>
+            );
+          }
         }}
       />
     </div>

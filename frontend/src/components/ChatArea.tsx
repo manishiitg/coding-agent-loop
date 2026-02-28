@@ -66,7 +66,7 @@ export interface ChatAreaRef {
 // Global flag to ensure auto-restore only happens once per page load
 let globalHasRestored = false
 
-// Inner component that can use the EventMode context
+// Inner component for chat area
 const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
   
@@ -128,7 +128,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   //
   // FIX: Derive a stable string key from tab IDs + session IDs + modes. This key only
   // changes when tabs are created/deleted or sessions are assigned — NOT when tab properties
-  // (isStreaming, isCompleted, eventMode, etc.) are updated. Downstream memos (allTabs,
   // tabsWithSessions, tabsWithActiveSessions) recompute only when this key changes.
   const tabSessionKey = useChatStore(state => {
     const tabs = state.chatTabs
@@ -300,38 +299,29 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   
   // Always use tab events - never fall back to global events to prevent cross-tab mixing
   // If there are no tabs, return empty array (tabs should always exist in multi-tab mode)
-  // Filter out workspace_file_operation events from display in micro mode
+  // Filter out workspace_file_operation events from display
   // (These events are still sent to frontend for workspace store processing, but hidden from chat UI)
   const displayEvents = useMemo(() => {
-    const eventMode = activeTab?.eventMode || 'micro'
-    // In micro mode, hide workspace_file_operation events from display
-    // (they're still processed by useWorkspaceStore for file highlighting)
-    if (eventMode === 'micro') {
-      return tabEvents.filter(event => {
-        if (event.type === 'workspace_file_operation') return false
+    return tabEvents.filter(event => {
+      if (event.type === 'workspace_file_operation') return false
 
-        // In micro mode, also hide Total Token Usage and Context Offloading events
-        if (eventMode === 'micro') {
-          if (event.type === 'token_usage') {
-            const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
-            const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
-            
-            if (payload?.context === 'conversation_total') {
-              return false
-            }
-          }
-          
-          if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
-            return false
-          }
+      // Hide Total Token Usage and Context Offloading events
+      if (event.type === 'token_usage') {
+        const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
+        const payload = agentEvent?.data || event.data as Record<string, unknown> | undefined
+
+        if (payload?.context === 'conversation_total') {
+          return false
         }
-        
-        return true
-      })
-    }
-    // In advanced mode, show all events
-    return tabEvents
-  }, [tabEvents, activeTab?.eventMode])
+      }
+
+      if (event.type === 'large_tool_output_detected' || event.type === 'large_tool_output_file_written') {
+        return false
+      }
+
+      return true
+    })
+  }, [tabEvents])
 
   // --- Render tracking (filter by [Render] in console) ---
   useRenderLogger('ChatArea', {
@@ -841,12 +831,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
     // --- Session status handling ---
     const sessionStatus = response.session_status
-    const streamTextLen = useChatStore.getState().streamingText[actualSessionId]?.length ?? 0
-    console.log(`[STREAM-DEBUG] sessionStatus=${sessionStatus} sid=${actualSessionId} tab=${!!tab} hasBgAgents=${response.has_running_background_agents} streamTextLen=${streamTextLen}`)
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
-        console.log(`[STREAM-DEBUG] session ${sessionStatus} → clearStreamingText (tab path)`)
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
           chatStore.setTabStreaming(tab.tabId, false)
@@ -866,7 +853,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       chatStore.setTabHasRunningBgAgents(tab.tabId, hasBgAgents)
     } else if (!tab && sessionStatus) {
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
-        console.log(`[STREAM-DEBUG] session ${sessionStatus} → clearStreamingText (no-tab path)`)
         setIsStreaming(false)
         setIsCompleted(true)
         setHasActiveChat(false)
@@ -916,7 +902,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       if (event.type === 'streaming_start') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-        console.log(`[STREAM-DEBUG][poll] streaming_start sid=${actualSessionId} isDelegation=${isDelegationStreaming} correlationId=${correlationId}`)
         if (isDelegationStreaming) {
           chatStore.clearDelegationStreamingText(correlationId as string)
         } else {
@@ -947,19 +932,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       if (event.type === 'streaming_end') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-        console.log(`[STREAM-DEBUG][poll] streaming_end sid=${actualSessionId} isDelegation=${isDelegationStreaming}`)
         if (!isDelegationStreaming) {
           chatStore.clearStreamingStatus(actualSessionId)
           const sidForClear = actualSessionId
           const textSnapshot = useChatStore.getState().streamingText[sidForClear]
-          console.log(`[STREAM-DEBUG][poll] scheduling deferred clear, textLen=${textSnapshot?.length ?? 0}`)
           setTimeout(() => {
             const currentText = useChatStore.getState().streamingText[sidForClear]
             const match = currentText === textSnapshot
-            console.log(`[STREAM-DEBUG][poll] deferred clear firing, match=${match}, currentLen=${currentText?.length ?? 0}`)
             if (currentText && match) {
               useChatStore.getState().clearStreamingText(sidForClear)
-              console.log(`[STREAM-DEBUG][poll] clearStreamingText called`)
             }
           }, 500)
         }
@@ -967,12 +948,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       }
       if (event.type === 'user_message') continue
 
-      // Log ALL non-streaming event types for debugging
-      console.log(`[STREAM-DEBUG][poll] event type=${event.type} isSubAgent=${isSubAgentEvent} component=${rawComponent} correlationId=${rawCorrelationId}`)
-
       if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end' || event.type === 'conversation_error' || event.type === 'context_cancelled')) {
         hasCompletionEvent = true
-        console.log(`[STREAM-DEBUG][poll] hasCompletionEvent=true triggered by ${event.type}`)
       }
 
       if (event.type === 'delegation_end') {
@@ -1023,14 +1000,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (hasCompletionEvent) {
       const sid = actualSessionId
       const textBeforeClear = useChatStore.getState().streamingText[sid]
-      console.log(`[STREAM-DEBUG] hasCompletionEvent=true, scheduling RAF clear, textLen=${textBeforeClear?.length ?? 0}`)
       requestAnimationFrame(() => {
         const currentText = useChatStore.getState().streamingText[sid]
-        const match = currentText === textBeforeClear
-        console.log(`[STREAM-DEBUG] RAF clear firing, match=${match}, currentLen=${currentText?.length ?? 0}`)
         if (currentText === textBeforeClear) {
           useChatStore.getState().clearStreamingText(sid)
-          console.log(`[STREAM-DEBUG] RAF clearStreamingText called`)
         }
       })
     }
@@ -1145,7 +1118,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         if (event.type === 'streaming_start') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-          console.log(`[STREAM-DEBUG][sse] streaming_start sid=${actualSessionId} isDelegation=${isDelegation} correlationId=${correlationId}`)
           if (isDelegation) {
             chatStore.clearDelegationStreamingText(correlationId as string)
           } else {
@@ -1170,19 +1142,15 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         } else if (event.type === 'streaming_end') {
           const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
           const isDelegation = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-          console.log(`[STREAM-DEBUG][sse] streaming_end sid=${actualSessionId} isDelegation=${isDelegation}`)
           if (!isDelegation) {
             chatStore.clearStreamingStatus(actualSessionId)
             const sidForClear = actualSessionId
             const textSnapshot = useChatStore.getState().streamingText[sidForClear]
-            console.log(`[STREAM-DEBUG][sse] scheduling deferred clear, textLen=${textSnapshot?.length ?? 0}`)
             setTimeout(() => {
               const currentText = useChatStore.getState().streamingText[sidForClear]
               const match = currentText === textSnapshot
-              console.log(`[STREAM-DEBUG][sse] deferred clear firing, match=${match}, currentLen=${currentText?.length ?? 0}`)
               if (currentText && match) {
                 useChatStore.getState().clearStreamingText(sidForClear)
-                console.log(`[STREAM-DEBUG][sse] clearStreamingText called`)
               }
             }, 500)
           }
@@ -1399,10 +1367,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Track which session is currently being polled (for derived isStreaming)
 
       try {
-        // Get event mode from current tab (defaults to 'micro')
-        const eventMode: 'advanced' | 'micro' = (currentTab?.eventMode || 'micro') as 'advanced' | 'micro'
-        
-        const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { eventMode })
+        const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex)
 
         // If response has a different session ID, update the tab
         if (currentTab && response.session_id && response.session_id !== effectiveSessionId) {
@@ -1602,10 +1567,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       const sid = tab.sessionId
       if (currentSSE[sid]) continue // Already connected
 
-      const eventMode = tab.eventMode || 'micro'
       connectSSE(
         sid,
-        eventMode,
         (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
         (msg: SSEStatusMessage) => handleSSEStatus(msg, sid)
       )
@@ -1624,55 +1587,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sseConnections excluded to prevent infinite loop
   }, [tabsWithActiveSessions, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, pollingInterval, startPolling, stopPolling, pollEvents])
-
-  // Trigger immediate reload when event mode changes
-  // This ensures events are reloaded with the new filter when user switches modes
-  // Events are cleared immediately in the store, so UI will show empty state right away
-  const prevEventModeRef = useRef<string | undefined>(activeTab?.eventMode)
-  useEffect(() => {
-    const currentEventMode = activeTab?.eventMode
-    const prevEventMode = prevEventModeRef.current
-
-    // Only trigger if event mode actually changed and we have a session
-    if (currentEventMode && currentEventMode !== prevEventMode && activeTab?.sessionId) {
-      // Update ref to current value
-      prevEventModeRef.current = currentEventMode
-
-      const sessionId = activeTab.sessionId!
-
-      // If SSE is connected for this session, reconnect with new mode
-      const chatStore = useChatStore.getState()
-      const sseConn = chatStore.sseConnections[sessionId]
-      if (sseConn) {
-        sseConn.reconnectWithMode(currentEventMode)
-      }
-
-      // Also fetch from beginning to backfill events with new filter
-      const fetchFromBeginning = async () => {
-        const eventMode = currentEventMode
-
-        try {
-          const response = await agentApi.getSessionEvents(sessionId, 0, { eventMode })
-
-          if (response.events.length > 0) {
-            chatStore.addTabEvents(sessionId, response.events)
-            if (response.last_processed_index !== undefined) {
-              chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
-            }
-            if (response.has_more !== undefined) {
-              chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
-            }
-          }
-        } catch (error) {
-          logger.error('ChatArea', 'Failed to fetch events from beginning:', error)
-        }
-      }
-
-      fetchFromBeginning()
-    } else if (currentEventMode !== prevEventMode) {
-      prevEventModeRef.current = currentEventMode
-    }
-  }, [activeTab?.eventMode, activeTab?.sessionId])
 
   // Cleanup polling and SSE on unmount
   useEffect(() => {
@@ -1954,12 +1868,10 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         const connectAfterRefresh = () => {
           const store = useChatStore.getState()
           const sid = responseSessionId
-          const eventMode = (currentTab.eventMode || 'micro') as string
           // Connect SSE for the new session immediately
           if (!store.sseConnections[sid]) {
             connectSSE(
               sid,
-              eventMode,
               (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
               (msg: SSEStatusMessage) => handleSSEStatus(msg, sid)
             )
@@ -2206,7 +2118,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             )}
             
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </WorkflowModeHandler>
         ) : (
@@ -2217,7 +2129,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
             )}
 
             {activeTab?.sessionId && (
-              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} />
+              <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}
           </>
         )}
@@ -2243,7 +2155,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
 ChatAreaInner.displayName = 'ChatAreaInner'
 
-// Main ChatArea component (EventModeProvider should be provided by parent)
+// Main ChatArea component
 const ChatArea = ChatAreaInner
 
 ChatArea.displayName = 'ChatArea'

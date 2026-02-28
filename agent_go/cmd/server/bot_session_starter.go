@@ -27,7 +27,7 @@ func (api *StreamingAPI) startSessionInternal(
 ) error {
 	// Subscribe to events BEFORE starting the session to avoid race conditions
 	// where the session errors out before the subscription is set up.
-	sub := api.eventStore.Subscribe(sessionID, "advanced")
+	sub := api.eventStore.Subscribe(sessionID)
 	defer api.eventStore.Unsubscribe(sessionID, sub)
 
 	// Marshal the request map to JSON

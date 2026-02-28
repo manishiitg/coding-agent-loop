@@ -994,7 +994,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return (
       <CompactWrapper>
         <RoutingEvaluatedEventDisplay
-          event={getEventData(event)}
+          event={getEventData(event) as Record<string, unknown>}
           compact={compact}
         />
       </CompactWrapper>
@@ -1634,7 +1634,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 })
 
 // Event list component for displaying multiple events
-// NOTE: Event filtering is now done on the backend based on event_mode
+// NOTE: Event filtering is now done on the backend
 // Frontend no longer filters events - backend returns pre-filtered events
 export const EventList: React.FC<{
   events: PollingEvent[]
@@ -1645,8 +1645,8 @@ export const EventList: React.FC<{
   isApproving?: boolean
   compact?: boolean
   flatHierarchy?: boolean
-  eventMode?: 'advanced' | 'micro'
-}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact = false, flatHierarchy = false, eventMode }) => {
+  tabId?: string
+}> = React.memo(({ events, onApproveWorkflow, onSubmitFeedback, onFeedbackSubmitted, onSendMessage, isApproving, compact = false, flatHierarchy = false, tabId }) => {
   if (events.length === 0) {
     return <div className={`${compact ? 'text-xs' : 'text-sm'} text-gray-500 text-center ${compact ? 'py-2' : 'py-4'}`}>No events to display</div>
   }
@@ -1661,7 +1661,7 @@ export const EventList: React.FC<{
       isApproving={isApproving}
       compact={compact}
       flatHierarchy={flatHierarchy}
-      eventMode={eventMode}
+      tabId={tabId}
     />
   )
 })

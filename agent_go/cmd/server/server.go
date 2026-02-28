@@ -1206,6 +1206,37 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Tool execution APIs - handlers provided by mcpagent/executor library
 	// Pass server logger for proper debugging of session registry usage
 	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, api.logger)
+
+	// [BROWSER_UPLOAD] Register path transformer on the HTTP executor handler (backup path).
+	// The primary interception happens on the Agent itself (see ~line 4615 and ~line 7086),
+	// but this covers any direct HTTP /api/mcp/execute calls that bypass the agent.
+	// Resolves workspace-relative paths (e.g. "Downloads/file.pdf") to absolute host paths
+	// so Playwright MCP can find them — Playwright requires absolute paths for browser_file_upload.
+	workspaceAbsPath, wpErr := filepath.Abs("../workspace-docs/_users/default")
+	if wpErr != nil {
+		log.Printf("[BROWSER_UPLOAD] Warning: failed to resolve workspace-docs abs path: %v", wpErr)
+	} else {
+		log.Printf("[BROWSER_UPLOAD] Registered browser_file_upload transformer, workspace=%s", workspaceAbsPath)
+		executorHandlers.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
+			paths, ok := args["paths"].([]interface{})
+			if !ok || len(paths) == 0 {
+				log.Printf("[BROWSER_UPLOAD] No paths in args or wrong type, skipping transform")
+				return
+			}
+			for i, p := range paths {
+				pathStr, ok := p.(string)
+				if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
+					log.Printf("[BROWSER_UPLOAD] Skipping path[%d]=%q (abs or empty)", i, p)
+					continue
+				}
+				// Join with absolute workspace path to produce host-resolvable path
+				resolved := filepath.Join(workspaceAbsPath, pathStr)
+				log.Printf("[BROWSER_UPLOAD] Resolved path[%d]: %q -> %q", i, pathStr, resolved)
+				paths[i] = resolved
+			}
+		})
+	}
+
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
@@ -3872,6 +3903,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// User ID for per-user OAuth token isolation
 			// This ensures MCP servers with OAuth use user-specific token files
 			UserID: currentUserID,
+			// [BROWSER_UPLOAD] Dynamically override Playwright MCP server config per user.
+			// Playwright restricts file access to its working_dir (cwd). By default the static
+			// config points to ../workspace-docs/Downloads, but per-user files live at
+			// _users/{userId}/Downloads, _users/{userId}/Chats, etc. This override sets:
+			//   working_dir  → _users/{userId}/       (allows access to all user subfolders)
+			//   --output-dir → _users/{userId}/Downloads (browser downloads go to user's folder)
+			// Without this, Playwright rejects uploads with "outside allowed roots" errors.
+			RuntimeOverrides: func() mcpclient.RuntimeOverrides {
+				userFolder := currentUserID
+				if userFolder == "" {
+					userFolder = "default"
+				}
+				userWorkspacePath := filepath.Join("..", "workspace-docs", "_users", userFolder)
+				userDownloadsPath := filepath.Join(userWorkspacePath, "Downloads")
+				log.Printf("[BROWSER_UPLOAD] Playwright runtime override: working_dir=%s, output-dir=%s", userWorkspacePath, userDownloadsPath)
+				return mcpclient.RuntimeOverrides{
+					"playwright": {
+						WorkingDir:  userWorkspacePath,
+						ArgsReplace: map[string]string{"--output-dir": userDownloadsPath},
+					},
+				}
+			}(),
 		}
 
 		// Set agent mode based on request
@@ -4659,6 +4712,49 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if req.Provider == "gemini-cli" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[GEMINI CLI] Added human tool HTTP API override instructions")
+			}
+
+			// [BROWSER_UPLOAD] Inject file upload instructions into the agent's system prompt
+			// and register the path transformer on the agent itself (primary interception point).
+			// Two conditions trigger this: headless browser (agent_browser) or Playwright MCP.
+			// The system prompt tells the LLM to use workspace-relative paths; the transformer
+			// then resolves those to absolute host paths before they reach Playwright MCP.
+			hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+			hasPlaywright := false
+			for _, s := range req.EnabledServers {
+				if s == "playwright" {
+					hasPlaywright = true
+					break
+				}
+			}
+			if hasBrowserAccess || hasPlaywright {
+				underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
+				log.Printf("[BROWSER_UPLOAD] Added browser upload instructions (browser=%v, playwright=%v)", hasBrowserAccess, hasPlaywright)
+
+				// Register transformer on the agent (primary path for LLM-driven tool calls).
+				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
+				// the HTTP /api/mcp/execute handler. Without this, the transformer never fires.
+				wsAbsPath, err := filepath.Abs("../workspace-docs/_users/default")
+				if err == nil {
+					underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
+						paths, ok := args["paths"].([]interface{})
+						if !ok || len(paths) == 0 {
+							log.Printf("[BROWSER_UPLOAD] No paths in args or wrong type, skipping transform")
+							return
+						}
+						for i, p := range paths {
+							pathStr, ok := p.(string)
+							if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
+								log.Printf("[BROWSER_UPLOAD] Skipping path[%d]=%q (abs or empty)", i, p)
+								continue
+							}
+							resolved := filepath.Join(wsAbsPath, pathStr)
+							log.Printf("[BROWSER_UPLOAD] Resolved path[%d]: %q -> %q", i, pathStr, resolved)
+							paths[i] = resolved
+						}
+					})
+					log.Printf("[BROWSER_UPLOAD] Registered agent-level browser_file_upload transformer, workspace=%s", wsAbsPath)
+				}
 			}
 		}
 
@@ -7095,6 +7191,44 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		api.activeSessionsMux.RUnlock()
 		underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(subAgentMemFolder))
 		log.Printf("[DELEGATION] Added memory instructions to sub-agent")
+
+		// [BROWSER_UPLOAD] Same browser upload setup as the parent chat agent (see ~line 4600).
+		// Sub-agents need their own transformer registration because each Agent instance has
+		// its own toolArgTransformers map — the parent's transformer doesn't propagate.
+		hasBrowserAccess := parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess
+		hasPlaywright := false
+		for _, s := range parentReq.EnabledServers {
+			if s == "playwright" {
+				hasPlaywright = true
+				break
+			}
+		}
+		if hasBrowserAccess || hasPlaywright {
+			underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
+			log.Printf("[BROWSER_UPLOAD] Added browser upload instructions to sub-agent (browser=%v, playwright=%v)", hasBrowserAccess, hasPlaywright)
+
+			// Register transformer on the sub-agent (same logic as parent, separate instance)
+			wsAbsPath, err := filepath.Abs("../workspace-docs/_users/default")
+			if err == nil {
+				underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
+					paths, ok := args["paths"].([]interface{})
+					if !ok || len(paths) == 0 {
+						log.Printf("[BROWSER_UPLOAD] Sub-agent: no paths in args, skipping transform")
+						return
+					}
+					for i, p := range paths {
+						pathStr, ok := p.(string)
+						if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
+							continue
+						}
+						resolved := filepath.Join(wsAbsPath, pathStr)
+						log.Printf("[BROWSER_UPLOAD] Sub-agent resolved path[%d]: %q -> %q", i, pathStr, resolved)
+						paths[i] = resolved
+					}
+				})
+				log.Printf("[BROWSER_UPLOAD] Registered sub-agent browser_file_upload transformer, workspace=%s", wsAbsPath)
+			}
+		}
 	}
 
 	// Register the same workspace tools as parent (if workspace access is enabled)

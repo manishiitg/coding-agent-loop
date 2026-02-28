@@ -36,6 +36,8 @@ interface FlattenedItem {
   isToolCallToggle?: boolean;
   hiddenCount?: number;   // Per-group count for the "+" label
   groupKey?: string;      // Group key for per-group expand/collapse
+  latestToolName?: string;  // Latest tool_call_start tool name in collapsed group
+  latestToolArgs?: string;  // Compact summary of latest tool args
 }
 
 export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
@@ -570,11 +572,45 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         } else {
           // Replace entire group with a single "+ N tool calls" sentinel
           const count = group.endIdx - group.startIdx + 1;
+          // Find the latest tool_call_start in the group for preview info
+          let latestToolName: string | undefined;
+          let latestToolArgs: string | undefined;
+          for (let idx = group.endIdx; idx >= group.startIdx; idx--) {
+            const n = list[idx].node;
+            if (n && n.event.type === 'tool_call_start') {
+              const d = n.event.data as Record<string, unknown> | undefined;
+              const payload = (d?.data && typeof d.data === 'object') ? d.data as Record<string, unknown> : d;
+              latestToolName = (payload?.tool_name as string) || undefined;
+              // Build compact args summary
+              const rawArgs = (payload as Record<string, unknown> | undefined)?.tool_params as Record<string, unknown> | undefined;
+              const argsStr = rawArgs?.arguments as string | undefined;
+              if (argsStr) {
+                try {
+                  const parsed = JSON.parse(argsStr);
+                  if (typeof parsed === 'object' && parsed !== null) {
+                    latestToolArgs = Object.entries(parsed)
+                      .map(([k, v]) => {
+                        const val = typeof v === 'string' ? v : JSON.stringify(v);
+                        return `${k}: ${val}`;
+                      })
+                      .join(', ');
+                  } else {
+                    latestToolArgs = String(parsed);
+                  }
+                } catch {
+                  latestToolArgs = argsStr;
+                }
+              }
+              break;
+            }
+          }
           list.splice(group.startIdx, count, {
             uniqueKey: `tool-call-expand-${group.groupKey}`,
             isToolCallToggle: true,
             hiddenCount: count,
             groupKey: group.groupKey,
+            latestToolName,
+            latestToolArgs,
           });
         }
       }
@@ -626,7 +662,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       const count = item.hiddenCount || 0;
       const key = item.groupKey;
       return (
-        <div className="flex items-center py-0.5 pl-5">
+        <div className="flex items-center py-0.5 pl-5 min-w-0">
           <button
             onClick={() => {
               if (!key) return;
@@ -637,11 +673,18 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
                 return next;
               });
             }}
-            className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+            className="flex items-center gap-1.5 min-w-0 max-w-full px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
           >
-            {count > 0
-              ? `+ ${count} tool call${count !== 1 ? 's' : ''}`
-              : `− collapse`}
+            <span className="flex-shrink-0">
+              {count > 0
+                ? `+ ${count} tool call${count !== 1 ? 's' : ''}`
+                : `− collapse`}
+            </span>
+            {count > 0 && item.latestToolName && (
+              <span className="truncate opacity-70">
+                — {item.latestToolName}{item.latestToolArgs ? `(${item.latestToolArgs})` : ''}
+              </span>
+            )}
           </button>
         </div>
       );

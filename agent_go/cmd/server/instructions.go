@@ -111,6 +111,35 @@ Use this access to create and update custom skills. You can read other folders t
 	return instructions
 }
 
+// GetBrowserUploadInstructions returns system prompt instructions for browser file upload.
+// Appended to the agent's system prompt when browser access or Playwright is active.
+// Tells the LLM to use workspace-relative paths (e.g. "Downloads/file.pdf") — these are
+// automatically resolved to absolute host paths by the toolArgTransformer before reaching
+// the Playwright MCP server. For agent_browser (headless/CDP), relative paths work natively
+// since the CLI runs inside the Docker container with workspace as its working directory.
+func GetBrowserUploadInstructions() string {
+	return `
+
+## Browser File Upload
+
+When a website has a file upload input (e.g. file picker, drag-and-drop zone), use these tools to upload workspace files:
+
+### Using agent_browser (Headless/CDP mode)
+1. Snapshot to find the file input: agent_browser(command="snapshot", args=["-i"])
+2. Upload using the ref: agent_browser(command="upload", args=["@ref", "Downloads/report.pdf"])
+
+### Using browser_file_upload (Playwright mode)
+1. First use browser_snapshot to find the file input element
+2. Upload: browser_file_upload(paths=["Downloads/report.pdf"], selector="input[type=file]")
+
+### Path Rules
+- Always use **workspace-relative paths** (e.g. "Downloads/report.pdf", "Chats/output.csv")
+- Paths are automatically resolved to absolute paths — do NOT construct absolute paths yourself
+- Files in "Downloads/" are user-uploaded files; files in "Chats/" are created during the conversation
+- If you need to create a file first, save it to "Chats/" using execute_shell_command, then upload it
+`
+}
+
 // buildSkillPrompt builds the system prompt section for selected skills
 // It provides paths to skills and instructions for the agent to discover them using workspace tools
 func buildSkillPrompt(selectedSkills []string) string {

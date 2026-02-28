@@ -16,7 +16,7 @@ func GetToolDefinition() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Command to execute. Common commands: open (navigate to URL), snapshot (get page elements with refs like @e1), click (click element by ref), fill (clear and type text), type (type without clearing), press (keyboard key), screenshot (capture image), wait (wait for element/text/URL/network), get (get text/html/value/attr/title/url/count), scroll (scroll page/element into view), select (dropdown option), hover (hover over element), close (close browser), eval (run JavaScript), back, forward, reload.",
+						"description": "Command to execute. Common commands: open (navigate to URL), snapshot (get page elements with refs like @e1), click (click element by ref), fill (clear and type text), type (type without clearing), press (keyboard key), screenshot (capture image), wait (wait for element/text/URL/network), get (get text/html/value/attr/title/url/count), scroll (scroll page/element into view), select (dropdown option), hover (hover over element), upload (file to input), download (file by clicking), close (close browser), eval (run JavaScript), back, forward, reload.",
 					},
 					"args": map[string]interface{}{
 						"type": "array",

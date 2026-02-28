@@ -17,13 +17,16 @@
  * ```
  */
 
-// Re-export all event types from generated file
-export * from './events-bridge';
+// NOTE: We do NOT use `export * from './events-bridge'` because the generated
+// EventDataUnion / AgentEventForSchema types are misleading — the Go backend
+// serializes event.data.data flat, not wrapped in EventDataUnion.
+// Instead we selectively re-export individual event types (see bottom of file)
+// and define corrected wrapper types below.
 
 import type {
-  // Event wrapper types
-  PollingEventSchema,
-  AgentEventForSchema,
+  // Event wrapper types (aliased — we override these below)
+  PollingEventSchema as _RawPollingEventSchema,
+  AgentEventForSchema as _RawAgentEventForSchema,
   
   // Individual event types
   AgentStartEvent,
@@ -128,6 +131,21 @@ import type {
   BatchGroupEndEvent,
   BatchExecutionEndEvent,
 } from './events-bridge';
+
+// =============================================================================
+// CORRECTED WRAPPER TYPES
+// =============================================================================
+// The generated EventDataUnion wraps typed data in named fields (e.g. { token_usage?: ... })
+// but the Go backend serializes event.data.data FLAT — it IS the typed event directly.
+// These corrected types make data opaque, forcing use of isEventType()/getEventData().
+
+export interface AgentEventForSchema extends Omit<_RawAgentEventForSchema, 'data'> {
+  data?: unknown;
+}
+
+export interface PollingEventSchema extends Omit<_RawPollingEventSchema, 'data'> {
+  data?: AgentEventForSchema;
+}
 
 export interface BatchExecutionCanceledEvent {
   timestamp?: string;
@@ -860,6 +878,36 @@ export type {
   StructuredOutputStartEvent,
   StructuredOutputEndEvent,
   StructuredOutputErrorEvent,
+  // Streaming Events
+  StreamingStartEvent,
+  StreamingChunkEvent,
+  StreamingEndEvent,
+  StreamingErrorEvent,
+  StreamingProgressEvent,
+  StreamingConnectionLostEvent,
+  // Cache Detail Events
+  CacheHitEvent,
+  CacheMissEvent,
+  CacheWriteEvent,
+  CacheExpiredEvent,
+  CacheCleanupEvent,
+  CacheErrorEvent,
+  CacheOperationStartEvent,
+  // MCP Server Connection Detail Events
+  MCPServerConnectionStartEvent,
+  MCPServerConnectionEndEvent,
+  MCPServerConnectionErrorEvent,
+  // JSON Validation Events
+  JSONValidationStartEvent,
+  JSONValidationEndEvent,
+  // Other Events
+  ConversationThinkingEvent,
+  LLMMessagesEvent,
+  ToolCallProgressEvent,
+  DebugEvent,
+  PerformanceEvent,
+  LLMTokenUsageEvent,
+  AgentProcessingEvent,
   // Batch Execution Events
   BatchExecutionStartEvent,
   BatchGroupStartEvent,
@@ -869,6 +917,7 @@ export type {
 
 // Export nested types from events.ts (used by event types but not in events-bridge.ts)
 export type {
+  PreValidationCompletedEvent,
   FileCheckResultForEvent,
   JSONCheckResultForEvent,
   ValidationErrorForEvent,

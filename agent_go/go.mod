@@ -27,6 +27,10 @@ require (
 
 replace github.com/manishiitg/mcp-agent-builder-go/workspace => ../workspace
 
+replace github.com/manishiitg/mcpagent v1.6.0 => ../../mcpagent
+
+replace github.com/manishiitg/multi-llm-provider-go v0.5.1 => ../../multi-llm-provider-go
+
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.18.0 // indirect

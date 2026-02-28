@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
 
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
@@ -96,6 +98,12 @@ type LLMAgentConfig struct {
 	// When set, OAuth tokens for MCP servers are stored at user-specific paths
 	// This enables multi-user deployments where each user's OAuth credentials are isolated
 	UserID string
+
+	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.
+	// Used to dynamically set Playwright's working_dir and --output-dir to the user-specific
+	// workspace folder (e.g., _users/{userId}/), so Playwright's file access guard permits
+	// uploads from Downloads/, Chats/, Plans/, etc. Built from currentUserID at agent creation time.
+	RuntimeOverrides mcpclient.RuntimeOverrides
 }
 
 // FallbackModel represents a fallback model configuration
@@ -287,6 +295,15 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.UserID != "" {
 		agentOptions = append(agentOptions, mcpagent.WithUserID(config.UserID))
 		logger.Info(fmt.Sprintf("👤 User ID configured for per-user OAuth isolation: %s", config.UserID))
+	}
+
+	// Pass runtime overrides to mcpagent so it can modify MCP server config at startup.
+	// For Playwright: overrides working_dir to the user's workspace root and --output-dir
+	// to their Downloads folder. This ensures Playwright's file access guard accepts paths
+	// under the user's workspace (not just the static default from mcp_servers_clean.json).
+	if len(config.RuntimeOverrides) > 0 {
+		agentOptions = append(agentOptions, mcpagent.WithRuntimeOverrides(config.RuntimeOverrides))
+		logger.Info(fmt.Sprintf("[BROWSER_UPLOAD] Runtime overrides configured for %d servers", len(config.RuntimeOverrides)))
 	}
 
 	// Add parallel tool execution if enabled
@@ -805,7 +822,11 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 
 	// Start streaming in a goroutine
 	go func() {
-		defer close(textChan)
+		var chanClosed atomic.Bool
+		defer func() {
+			chanClosed.Store(true)
+			close(textChan)
+		}()
 
 		// Set up real-time streaming callback to forward content chunks as they arrive.
 		// This is critical for CLI providers (Gemini CLI, Claude Code) where the entire
@@ -816,7 +837,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		w.mu.Lock()
 		prevCallback := w.agent.StreamingCallback
 		w.agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
-			if chunk.Type == llmtypes.StreamChunkTypeContent && chunk.Content != "" {
+			if chunk.Type == llmtypes.StreamChunkTypeContent && chunk.Content != "" && !chanClosed.Load() {
 				if !streamedAny {
 					w.logger.Info(fmt.Sprintf("[STREAMING] First real-time chunk received (len=%d), streaming callback active", len(chunk.Content)))
 				}

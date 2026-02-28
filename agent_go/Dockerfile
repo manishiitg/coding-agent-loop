@@ -36,6 +36,9 @@ COPY agent_go/ ./agent_go/
 # Build from /app so go.work is found; output binary to agent_go dir (glibc-linked for Debian runtime)
 RUN cd /app && CGO_ENABLED=1 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcp-agent ./agent_go
 
+# Build mcpbridge binary (Gemini CLI MCP bridge - proxies tool calls to our API)
+RUN cd /app && CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/agent_go/mcpbridge github.com/manishiitg/mcpagent/cmd/mcpbridge
+
 # Runtime stage - Debian bookworm-slim (glibc, good package availability)
 FROM debian:bookworm-slim
 
@@ -91,8 +94,9 @@ RUN groupadd -g 1001 appgroup && useradd -m -u 1001 -g appgroup appuser
 # Set working directory
 WORKDIR /app
 
-# Copy the binary from builder stage
+# Copy the binaries from builder stage
 COPY --from=builder /app/agent_go/mcp-agent .
+COPY --from=builder /app/agent_go/mcpbridge /usr/local/bin/mcpbridge
 
 # Copy Python scripts (PDF extraction, etc.)
 COPY agent_go/scripts/extract_pdf_text.py /app/scripts/

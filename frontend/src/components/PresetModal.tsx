@@ -1021,6 +1021,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   <li>Unzip, move &quot;Chrome CDP.app&quot; to Applications, then open it from Spotlight or LaunchPad.</li>
                                   <li>Click Check above to verify connection.</li>
                                 </ol>
+                                <p className="text-xs text-amber-600 dark:text-amber-400/90 mt-1">
+                                  If macOS says &quot;package is damaged&quot;, run in Terminal: <code className="bg-gray-900 dark:bg-gray-950 px-1 rounded font-mono text-[11px]">xattr -c &apos;~/Downloads/Chrome CDP.app&apos;</code> (or the path where you put the app), or right-click the app → Open.
+                                </p>
                               </div>
                             )}
                             <div className="flex items-center gap-1.5">

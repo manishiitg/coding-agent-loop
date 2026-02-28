@@ -266,6 +266,20 @@ if ! command -v go &> /dev/null; then
     exit 1
 fi
 
+# Build mcpbridge binary (required for Gemini CLI MCP bridge)
+MCPBRIDGE_SRC="${SCRIPT_DIR}/../../mcpagent/cmd/mcpbridge"
+if [ -d "$MCPBRIDGE_SRC" ]; then
+    echo "🔨 Building mcpbridge binary..."
+    go build -o ~/go/bin/mcpbridge "$MCPBRIDGE_SRC" 2>&1
+    if [ $? -eq 0 ]; then
+        echo "✅ mcpbridge binary built: ~/go/bin/mcpbridge"
+    else
+        echo "⚠️  Failed to build mcpbridge (Gemini CLI MCP bridge will not work)"
+    fi
+else
+    echo "⚠️  mcpbridge source not found at $MCPBRIDGE_SRC (skipping)"
+fi
+
 # Run the server with all the enhanced configuration
 echo "🚀 Starting server with 'go run'..."
 

@@ -114,6 +114,7 @@ export interface ChatTabConfig {
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
+  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'  // Browser access mode (default: 'none')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)
@@ -190,6 +191,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' | 'code-p
     fileContext: [],
     enableContextSummarization: false,
     enableWorkspaceAccess: true,  // Enable workspace access by default
+    browserMode: 'none',  // No browser access by default
     enableBrowserAccess: false,  // Disable browser access by default (user must enable via checkbox)
     delegationTierConfig: (mode === 'multi-agent' || mode === 'code-prototype') ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
     queuedMessages: [],  // No queued messages by default
@@ -2043,6 +2045,17 @@ export const useChatStore = create<ChatState>()(
           if (removedCount > 0) {
             logger.debug('ChatStore', `Cleaned up ${removedCount} stale tabs on rehydrate`)
             useChatStore.setState({ chatTabs: freshTabs })
+          }
+
+          // Migrate tabs: compute browserMode from enableBrowserAccess/useCdp if missing
+          for (const tab of Object.values(freshTabs)) {
+            if (tab.config && tab.config.browserMode === undefined) {
+              if (tab.config.enableBrowserAccess) {
+                tab.config.browserMode = tab.config.useCdp ? 'cdp' : 'headless'
+              } else {
+                tab.config.browserMode = 'none'
+              }
+            }
           }
 
           // Auto-select first tab if activeTabId is null or points to a removed tab

@@ -174,6 +174,19 @@ or
 
 ## Troubleshooting
 
+### macOS: "Package is damaged" or app won't open (Chrome CDP launcher)
+
+If you downloaded the Chrome CDP launcher zip and macOS says the app is damaged or can't be opened:
+
+1. **Remove quarantine** — In Terminal, run (e.g. if the app is in Downloads; adjust the path if you moved it):
+   ```bash
+   xattr -c ~/Downloads/Chrome\ CDP.app
+   ```
+   (Use `-c` only; `-r` is not supported on all macOS versions.)
+   Then open the app again from Spotlight or LaunchPad.
+
+2. **Or use Right-click → Open** — Right-click "Chrome CDP.app" → **Open** → click **Open** in the dialog. You may only need to do this once.
+
 ### "Chrome is not reachable on port 9222"
 
 1. **Chrome not running with CDP**: Close all Chrome windows and relaunch with `--remote-debugging-port=9222`

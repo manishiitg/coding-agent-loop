@@ -1,5 +1,5 @@
 import React from 'react'
-import { MessageCircle, Workflow, Users } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Code } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 export interface ModeInfo {
@@ -47,6 +47,18 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
       'Multi-LLM tier support',
       'Auto tool mode per task',
       'Sub-agent tracking in Plans/ folder'
+    ],
+    examples: [],
+    tips: []
+  },
+  'code-prototype': {
+    icon: <Code className="w-16 h-16 text-emerald-500" />,
+    title: 'Code Prototype',
+    description: 'Build and deploy React/Vite + Node.js prototypes with AI',
+    features: [
+      'AI writes all code to your project folder',
+      'File tree shows live project structure',
+      'Deploy to Vercel or Railway in one click',
     ],
     examples: [],
     tips: []

@@ -3,8 +3,6 @@ export interface SubAgentFrontmatter {
   description: string;
   default_reasoning_level?: string;
   default_tool_mode?: string;
-  skills?: string;  // Comma-separated skill folder names
-  servers?: string; // Comma-separated MCP server names
 }
 
 export interface SubAgent {
@@ -21,4 +19,28 @@ export interface UpdateSubAgentRequest {
 export interface ListSubAgentsResponse {
   subagents: SubAgent[];
   total: number;
+}
+
+export interface ValidateSubAgentRequest {
+  github_url: string;
+  github_token?: string;
+}
+
+export interface ValidateSubAgentResponse {
+  valid: boolean;
+  frontmatter?: SubAgentFrontmatter;
+  error?: string;
+  files?: string[];
+  exists: boolean;
+}
+
+export interface ImportSubAgentRequest {
+  github_url: string;
+  github_token?: string;
+}
+
+export interface ImportSubAgentResponse {
+  success: boolean;
+  subagent_name?: string;
+  error?: string;
 }

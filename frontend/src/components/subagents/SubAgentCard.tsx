@@ -42,18 +42,6 @@ export default function SubAgentCard({ subagent, onDelete }: SubAgentCardProps) 
                 {frontmatter.default_tool_mode}
               </span>
             )}
-
-            {frontmatter.skills && (
-              <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded">
-                skills: {frontmatter.skills}
-              </span>
-            )}
-
-            {frontmatter.servers && (
-              <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded">
-                servers: {frontmatter.servers}
-              </span>
-            )}
           </div>
         </div>
 

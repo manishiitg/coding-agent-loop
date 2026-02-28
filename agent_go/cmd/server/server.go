@@ -347,9 +347,13 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 	// Only _users/ is blocked to prevent direct access to internal user directory structure
 	protectedFolders := []string{"_users"}
 
-	// Build the list of allowed write folders from per-user folders
+	// Build the list of allowed write folders from per-user folders.
+	// Exclude Projects/ — it is only writable in code-prototype mode (scoped to Projects/{name}/).
 	allowedWriteFolders := make([]string, 0, len(common.PerUserFolders))
 	for _, f := range common.PerUserFolders {
+		if f == "Projects" {
+			continue
+		}
 		allowedWriteFolders = append(allowedWriteFolders, f+"/")
 	}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
@@ -629,6 +633,7 @@ type ActiveSessionInfo struct {
 	CreatedAt    time.Time `json:"created_at"`
 	Query        string    `json:"query,omitempty"`
 	LLMGuidance  string    `json:"llm_guidance,omitempty"` // LLM guidance message for this session
+	MemoryFolder string    `json:"memory_folder,omitempty"` // Override memory folder (default: Plans/memories)
 	UserID       string    `json:"-"`                      // User ID for session isolation (not exposed in JSON)
 }
 
@@ -815,6 +820,8 @@ type QueryRequest struct {
 	SelectedGlobalSecrets *[]string `json:"selected_global_secrets,omitempty"`
 	// Workspace paths of workflows to inject context for (via # selector in chat)
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
+	ChatMode         string `json:"chat_mode,omitempty"`         // UI mode: "code-prototype", "multi-agent", "chat", etc.
+	PrototypeProject string `json:"prototype_project,omitempty"` // For code-prototype mode: project name (backend builds guidance)
 
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
@@ -844,8 +851,9 @@ type QueryResponse struct {
 
 // LLMGuidanceRequest represents a request to set LLM guidance for a session
 type LLMGuidanceRequest struct {
-	SessionID string `json:"session_id"`
-	Guidance  string `json:"guidance"`
+	SessionID    string `json:"session_id"`
+	Guidance     string `json:"guidance"`
+	MemoryFolder string `json:"memory_folder,omitempty"` // Optional override for memory folder path
 }
 
 // LLMGuidanceResponse represents the response for LLM guidance operations
@@ -1409,6 +1417,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// User-defined command routes (from command_routes.go)
 	RegisterCommandRoutes(apiRouter, api)
+
+	// Code Prototype routes
+	RegisterCodePrototypeRoutes(apiRouter, api)
 
 	// Public file sharing routes — filepath passed as base64 query param
 	apiRouter.HandleFunc("/public/file", api.handlePublicFile).Methods("GET")
@@ -2687,6 +2698,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
+	log.Printf("[QUERY] chat_mode=%q delegation_mode=%q plan_phase=%q session=%s llm_guidance_len=%d query=%q", req.ChatMode, req.DelegationMode, req.PlanPhase, sessionID, len(req.LLMGuidance), req.Query)
 	log.Printf("[LATENCY_DEBUG] T+%dms | Session setup complete | sessionID=%s", time.Since(startTime).Milliseconds(), sessionID)
 
 	// Create fresh agent for this request
@@ -4017,9 +4029,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Apply folder guard to restrict writes based on mode
+				// Code-prototype mode: primary write folder is Projects/{name}/
 				// Multi-agent (plan) mode: primary write folder is Plans/, Chats/ also writable
 				// Chat mode: writes go to Chats/
-				if req.DelegationMode == "plan" {
+				if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
+					projectFolder := "Projects/" + req.PrototypeProject
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, projectFolder)
+					log.Printf("[PROTOTYPE FOLDER GUARD] Applied %s/ folder restriction", projectFolder)
+				} else if req.DelegationMode == "plan" {
 					additionalFolders := []string{"Chats/"}
 					if hasSkillCreator {
 						additionalFolders = append(additionalFolders, "skills/custom/")
@@ -4189,13 +4206,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						return api.executeDelegatedTask(subCtx, req, sessionID, instruction)
 					}
 
-					// Create workspace client for plan file I/O (Plans/)
-					// Include user ID for per-user folder routing (Plans/ is a per-user folder)
+					// Create workspace client for plan file I/O.
+					// For code-prototype mode, scope writes to Projects/{name}/plans/ instead of Plans/.
+					planWriteFolder := "Plans"
+					if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
+						planWriteFolder = "Projects/" + req.PrototypeProject + "/plans"
+					}
 					planWorkspaceClient := workspace.NewClient(
 						getWorkspaceAPIURL(),
 						workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 							Enabled:      true,
-							WritePaths:   []string{"Plans"},
+							WritePaths:   []string{planWriteFolder},
 							BlockedPaths: []string{"_users"},
 						}),
 						workspace.WithUserID(currentUserID),
@@ -4412,11 +4433,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			memoryTools := virtualtools.CreateMemoryTools()
 			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 			memoryCategory := virtualtools.GetDelegationToolCategory()
+			// Memory workspace client write scope:
+			// - code-prototype: scoped to Projects/{name}/ only
+			// - all other modes: Plans/ and Projects/ (broad, memories can live in either)
+			var memoryWritePaths []string
+			if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
+				memoryWritePaths = []string{"Projects/" + req.PrototypeProject}
+			} else {
+				memoryWritePaths = []string{"Plans"}
+			}
 			memoryWorkspaceClient := workspace.NewClient(
 				getWorkspaceAPIURL(),
 				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 					Enabled:      true,
-					WritePaths:   []string{"Plans"},
+					WritePaths:   memoryWritePaths,
 					BlockedPaths: []string{"_users"},
 				}),
 				workspace.WithUserID(currentUserID),
@@ -4444,12 +4474,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					params = make(map[string]interface{})
 				}
 
+				execCopy := exec
 				wrappedMemoryExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 					ctx = context.WithValue(ctx, virtualtools.WorkspaceClientKey, memoryWorkspaceClient)
 					if memoryBgDelegate != nil {
 						ctx = context.WithValue(ctx, virtualtools.BackgroundDelegateKey, memoryBgDelegate)
 					}
-					return exec(ctx, args)
+					// Inject per-session memory folder override (e.g. Projects/{name}/memories for code-prototype)
+					api.activeSessionsMux.RLock()
+					sess, sessExists := api.activeSessions[sessionID]
+					api.activeSessionsMux.RUnlock()
+					if sessExists && sess.MemoryFolder != "" {
+						ctx = context.WithValue(ctx, virtualtools.MemoryFolderKey, sess.MemoryFolder)
+					}
+					return execCopy(ctx, args)
 				}
 
 				if err := underlyingAgent.RegisterCustomToolWithTimeout(
@@ -4468,16 +4506,68 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
 
-			// Update code execution registry to rebuild system prompt with newly registered tools
-			// This ensures human_feedback and workspace tools appear in the system prompt
-			if err := underlyingAgent.UpdateCodeExecutionRegistry(); err != nil {
-				log.Printf("[CUSTOM TOOLS] Warning: Failed to update code execution registry: %v", err)
+			// Read session state early so we can inject code-prototype guidance as the
+			// primary system prompt (before delegation / memory instructions).
+			// NOTE: UpdateCodeExecutionRegistry is called AFTER all AppendSystemPrompt calls
+			// so that AppendedSystemPrompts is fully populated before the registry rebuild
+			// re-assembles the final system prompt.
+			api.activeSessionsMux.RLock()
+			memFolderForPrompt := ""
+			llmGuidance := ""
+			if sess, ok := api.activeSessions[sessionID]; ok {
+				memFolderForPrompt = sess.MemoryFolder
+				llmGuidance = sess.LLMGuidance
+			}
+			api.activeSessionsMux.RUnlock()
+
+			// For code-prototype mode, build project guidance from the prototype_project name.
+			// The backend owns guidance construction — the frontend only passes the project name.
+			// First query: reads .prototype.json, builds guidance, caches in session.
+			// Subsequent queries: reads from session cache (llmGuidance already set).
+			if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
+				if llmGuidance == "" {
+					// Build guidance from project metadata.
+					// Use a fresh context — this runs inside the SSE goroutine where r.Context()
+					// is already canceled by the time we get here.
+					metaPath := prototypeMetaPath(currentUserID, req.PrototypeProject)
+					readCtx, readCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					content, err := readPrototypeFile(readCtx, metaPath, currentUserID)
+					readCancel()
+					if err == nil && content != "" {
+						var meta PrototypeProjectMeta
+						if json.Unmarshal([]byte(content), &meta) == nil {
+							llmGuidance = BuildPrototypeGuidance(meta)
+							projectMemFolder := "Projects/" + req.PrototypeProject + "/memories"
+							// Cache in session so sub-agents and future queries don't re-read
+							api.activeSessionsMux.Lock()
+							if sess, ok := api.activeSessions[sessionID]; ok {
+								sess.LLMGuidance = llmGuidance
+								sess.MemoryFolder = projectMemFolder
+							}
+							api.activeSessionsMux.Unlock()
+							memFolderForPrompt = projectMemFolder
+							log.Printf("[LLM_GUIDANCE] Built prototype guidance from .prototype.json (%d chars) project=%s", len(llmGuidance), req.PrototypeProject)
+						}
+					} else {
+						log.Printf("[LLM_GUIDANCE] Warning: could not read .prototype.json for %s: %v", req.PrototypeProject, err)
+					}
+				} else {
+					// Ensure memFolderForPrompt is set correctly when using cached guidance
+					if memFolderForPrompt == "" {
+						memFolderForPrompt = "Projects/" + req.PrototypeProject + "/memories"
+					}
+				}
+				if llmGuidance != "" {
+					underlyingAgent.AppendSystemPrompt(llmGuidance)
+					log.Printf("[LLM_GUIDANCE] Set code-prototype primary system prompt (%d chars)", len(llmGuidance))
+				}
 			}
 
 			// Add base instructions — skip for plan mode (multi-agent) since the
 			// main agent is an orchestrator, not a file writer. The Chats/ folder
 			// rules don't apply; background sub-agents get their own instructions.
-			if req.DelegationMode != "plan" {
+			// Also skip for code-prototype — its identity comes entirely from the guidance above.
+			if req.DelegationMode != "plan" && req.ChatMode != "code-prototype" {
 				underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
 			}
 
@@ -4513,7 +4603,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Add delegation instructions based on mode
 			if req.DelegationMode == "plan" {
-				if req.PlanPhase == "execution" {
+				if req.ChatMode == "code-prototype" {
+					// Code-prototype uses spawn-style delegation: the agent writes code directly
+					// and can spawn focused sub-agents for subtasks. The plan→approve→execute
+					// orchestrator workflow is not appropriate for a code-writing assistant.
+					underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
+					log.Printf("[DELEGATION] Added spawn delegation instructions for code-prototype (mode: plan)")
+				} else if req.PlanPhase == "execution" {
 					// Execution-only mode: skip planning, use spawn-style delegation with exec override
 					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
 					log.Printf("[DELEGATION] Added execution-only instructions to system prompt (mode: plan, phase: execution)")
@@ -4540,7 +4636,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Memory tools are available in all chat modes.
-			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions())
+			// Use per-session memory folder if set (e.g. code-prototype projects store memories in Projects/{name}/memories).
+			// Session state (memFolderForPrompt, llmGuidance) was already read above for early guidance injection.
+			underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(memFolderForPrompt))
+
+			// Update code execution registry AFTER all AppendSystemPrompt calls so that
+			// AppendedSystemPrompts is fully populated. rebuildSystemPromptWithUpdatedToolStructure
+			// will then re-assemble the final prompt as: (clean base with tool structure) + all appended prompts.
+			if err := underlyingAgent.UpdateCodeExecutionRegistry(); err != nil {
+				log.Printf("[CUSTOM TOOLS] Warning: Failed to update code execution registry: %v", err)
+			}
+
+			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.SystemPrompt), req.LLMGuidance != "" || llmGuidance != "")
 
 			// Add CLI-specific human tool override when using CLI-based providers.
 			// This covers delegation tools, memory tools, and human interaction tools —
@@ -6913,39 +7020,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		underlyingAgent.AddEventListener(subAgentObserver)
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
-		// Merge template skills/servers into parent request if a template is loaded
-		if loadedTemplate != nil {
-			templateSkills := subagents.ParseCSV(loadedTemplate.Frontmatter.Skills)
-			for _, ts := range templateSkills {
-				found := false
-				for _, ps := range parentReq.SelectedSkills {
-					if ps == ts {
-						found = true
-						break
-					}
-				}
-				if !found {
-					parentReq.SelectedSkills = append(parentReq.SelectedSkills, ts)
-				}
-			}
-			templateServers := subagents.ParseCSV(loadedTemplate.Frontmatter.Servers)
-			for _, ts := range templateServers {
-				found := false
-				for _, ps := range parentReq.EnabledServers {
-					if ps == ts {
-						found = true
-						break
-					}
-				}
-				if !found {
-					parentReq.EnabledServers = append(parentReq.EnabledServers, ts)
-				}
-			}
-			if len(templateSkills) > 0 || len(templateServers) > 0 {
-				log.Printf("[DELEGATION] Merged template skills=%v servers=%v into sub-agent config", templateSkills, templateServers)
-			}
-		}
-
 		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
 		if len(parentReq.SelectedSkills) > 0 {
 			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills)
@@ -6987,6 +7061,40 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			underlyingAgent.AppendSystemPrompt(secretPrompt)
 			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
 		}
+
+		// For code-prototype mode, inject the project guidance into sub-agents so they
+		// know the project path, stack, and coding guidelines — same as the main agent.
+		// Guidance is always read from session cache (built on first query from .prototype.json).
+		if parentReq.ChatMode == "code-prototype" {
+			api.activeSessionsMux.RLock()
+			cachedGuidance := ""
+			if sess, ok := api.activeSessions[sessionID]; ok {
+				cachedGuidance = sess.LLMGuidance
+			}
+			api.activeSessionsMux.RUnlock()
+			if cachedGuidance != "" {
+				underlyingAgent.AppendSystemPrompt(cachedGuidance)
+				log.Printf("[DELEGATION] Injected code-prototype project guidance into sub-agent (%d chars)", len(cachedGuidance))
+			}
+		} else {
+			// For all other modes (multi-agent, chat), give sub-agents the workspace folder
+			// structure so they know where to read/write files (Chats/, Plans/, skills/, etc.).
+			// The main agent skips this in plan mode (it's an orchestrator), but sub-agents
+			// are actual file workers that need this orientation.
+			underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+			log.Printf("[DELEGATION] Added workspace folder instructions to sub-agent")
+		}
+
+		// Give sub-agents access to memory tools so they can persist key discoveries
+		// across tasks (reads from Plans/memories/ by default).
+		api.activeSessionsMux.RLock()
+		subAgentMemFolder := ""
+		if sess, ok := api.activeSessions[sessionID]; ok {
+			subAgentMemFolder = sess.MemoryFolder
+		}
+		api.activeSessionsMux.RUnlock()
+		underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(subAgentMemFolder))
+		log.Printf("[DELEGATION] Added memory instructions to sub-agent")
 	}
 
 	// Register the same workspace tools as parent (if workspace access is enabled)
@@ -7036,9 +7144,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 
 			// Apply folder guards
-			// If executing a plan task, restrict writes to the plan's specific folder
+			// Code-prototype sub-agents: restrict writes to Projects/{name}/ only
+			// Plan sub-agents: restrict to the plan folder
+			// All others: default Chats/ guard
 			planFolder, _ := ctx.Value(virtualtools.PlanFolderKey).(string)
-			if planFolder != "" {
+			if parentReq.ChatMode == "code-prototype" && parentReq.PrototypeProject != "" {
+				projectFolder := "Projects/" + parentReq.PrototypeProject
+				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, projectFolder)
+				log.Printf("[DELEGATION] Applied prototype folder guard: writes restricted to %s/", projectFolder)
+			} else if planFolder != "" {
 				// Tighter restriction: only allow writes to plan folder (e.g. Plans/{planID}/)
 				additionalFolders := []string{}
 				if hasSkillCreator {
@@ -7145,6 +7259,14 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
 			// This prevents runaway delegation chains
 
+			// Apply CLI provider override to sub-agents when the parent uses a CLI-based provider.
+			// Without this, sub-agents spawned by a claude-code/gemini-cli main agent would try to
+			// call workspace/delegation tools as native Bash/Read/Write — which are blocked.
+			if parentReq.Provider == "claude-code" || parentReq.Provider == "gemini-cli" {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
+				log.Printf("[DELEGATION] Applied CLI provider override to sub-agent (provider: %s)", parentReq.Provider)
+			}
+
 			// Add plan update instructions to worker sub-agents
 			// Workers update plan.md as they work — adding findings, marking progress, noting issues
 			if planFolder != "" {
@@ -7169,6 +7291,16 @@ Use execute_shell_command or diff_patch_workspace_file to update the file.
 `, planFolder, planFolder, planFolder, planFolder)
 				underlyingAgent.AppendSystemPrompt(planUpdatePrompt)
 				log.Printf("[DELEGATION] Added plan update instructions for plan folder: %s", planFolder)
+			} else {
+				// No plan folder — ad-hoc delegate. Give the sub-agent a minimal worker context
+				// so it knows to return a clear result rather than asking follow-up questions.
+				underlyingAgent.AppendSystemPrompt(`## Your Role
+You are a focused background worker. Complete the assigned task using available tools and return a clear, concise result.
+- You cannot spawn further sub-agents
+- You have no shared memory with the caller — all context is in the instruction you received
+- Save any output files to Chats/ unless the instruction specifies otherwise
+- Return a summary of what you did and what you found`)
+				log.Printf("[DELEGATION] Added ad-hoc worker context to sub-agent (no plan folder)")
 			}
 		}
 	}
@@ -7739,8 +7871,6 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 			FolderName:            folderName,
 			DefaultReasoningLevel: sa.Frontmatter.DefaultReasoningLevel,
 			DefaultToolMode:       sa.Frontmatter.DefaultToolMode,
-			Skills:                subagents.ParseCSV(sa.Frontmatter.Skills),
-			Servers:               subagents.ParseCSV(sa.Frontmatter.Servers),
 		})
 	}
 
@@ -8100,6 +8230,10 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 	// Update guidance in activeSessions
 	api.activeSessionsMux.Lock()
 	session.LLMGuidance = req.Guidance
+	if req.MemoryFolder != "" {
+		session.MemoryFolder = req.MemoryFolder
+		log.Printf("[LLM_GUIDANCE] Set memory folder for session %s: %s", sessionID, req.MemoryFolder)
+	}
 	session.LastActivity = time.Now()
 	api.activeSessionsMux.Unlock()
 

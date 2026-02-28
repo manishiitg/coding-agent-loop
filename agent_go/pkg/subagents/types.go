@@ -65,8 +65,6 @@ type SubAgentFrontmatter struct {
 	Description           string     `yaml:"description" json:"description"`
 	DefaultReasoningLevel string     `yaml:"default_reasoning_level,omitempty" json:"default_reasoning_level,omitempty"`
 	DefaultToolMode       string     `yaml:"default_tool_mode,omitempty" json:"default_tool_mode,omitempty"`
-	Skills                FlexString `yaml:"skills,omitempty" json:"skills,omitempty"`   // Comma-separated skill folder names or array
-	Servers               FlexString `yaml:"servers,omitempty" json:"servers,omitempty"` // Comma-separated MCP server names or array
 }
 
 // SubAgent represents a complete sub-agent template with parsed content
@@ -102,3 +100,32 @@ func ParseCSV(s FlexString) []string {
 	}
 	return result
 }
+
+// ImportSubAgentRequest represents a request to import a subagent from GitHub
+type ImportSubAgentRequest struct {
+	GitHubURL   string `json:"github_url"`              // e.g., https://github.com/user/repo/tree/main/subagents/my-agent
+	GitHubToken string `json:"github_token,omitempty"`  // Optional PAT for private repos
+}
+
+// ImportSubAgentResponse represents the response from importing a subagent
+type ImportSubAgentResponse struct {
+	Success      bool   `json:"success"`
+	SubAgentName string `json:"subagent_name,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// ValidateSubAgentRequest represents a request to validate a subagent URL
+type ValidateSubAgentRequest struct {
+	GitHubURL   string `json:"github_url"`
+	GitHubToken string `json:"github_token,omitempty"` // Optional PAT for private repos
+}
+
+// ValidateSubAgentResponse represents the response from validating a subagent URL
+type ValidateSubAgentResponse struct {
+	Valid       bool                 `json:"valid"`
+	Frontmatter *SubAgentFrontmatter `json:"frontmatter,omitempty"`
+	Error       string               `json:"error,omitempty"`
+	Files       []string             `json:"files,omitempty"` // List of files in the subagent folder
+	Exists      bool                 `json:"exists"`          // True if a subagent with this name already exists
+}
+

@@ -21,10 +21,9 @@ import { prepareDomForPdfExport, exportPdfChunked } from "./utils/pdfExport";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
+import { CodePrototypeLayout } from "./components/code-prototype/CodePrototypeLayout";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
-import { RunningWorkflowsDrawer } from "./components/workflow/RunningWorkflowsDrawer";
-import { type RunningWorkflow } from "./stores/useRunningWorkflowsStore";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { restoreSession } from "./utils/sessionRestore";
 import { useModeStore } from "./stores/useModeStore";
@@ -453,8 +452,9 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat and multi-agent modes (workflow tabs are created by WorkflowLayout)
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
+    // Only create default tab for chat, multi-agent, and code-prototype modes
+    // (workflow tabs are created by WorkflowLayout)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent' && selectedModeCategory !== 'code-prototype') {
       return
     }
     
@@ -488,8 +488,8 @@ function App() {
       )
       if (currentModeTabs.length === 0) {
         try {
-          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
-          await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
+          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : selectedModeCategory === 'code-prototype' ? 'Prototype 1' : 'Chat 1'
+          await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'chat' | 'workflow' | 'multi-agent' | 'code-prototype' })
         } catch (error) {
           console.error('Failed to create default tab:', error)
           // Reset flag on error so it can retry
@@ -507,8 +507,8 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only run for chat and multi-agent modes (workflow handles its own tab selection)
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
+    // Only run for chat, multi-agent, and code-prototype modes (workflow handles its own tab selection)
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent' && selectedModeCategory !== 'code-prototype') {
       return
     }
     
@@ -662,104 +662,6 @@ function App() {
     }
   }, [setSidebarMinimized, setShowFileContent]);
 
-  // Handle restoring a workflow from running list
-  const handleRestoreWorkflow = useCallback(async (workflow: RunningWorkflow) => {
-    console.log('[App] Restoring workflow from running list:', workflow)
-
-    // Ensure we're in workflow mode
-    const { setModeCategory } = useModeStore.getState()
-    const currentMode = useModeStore.getState().selectedModeCategory
-    if (currentMode !== 'workflow') {
-      setModeCategory('workflow')
-    }
-
-    // If this workflow is for a different preset, switch to it
-    const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
-    if (workflow.presetId !== activePresetId) {
-      console.log('[App] Switching to preset:', workflow.presetId)
-      useGlobalPresetStore.getState().applyPreset(workflow.presetId, 'workflow')
-      // Small delay to let preset switch settle
-      await new Promise(resolve => setTimeout(resolve, 50))
-    }
-
-    // Load run folders to find the latest iteration
-    const { loadRunFolders, setSelectedRunFolder, setSelectedGroupIds } = useWorkflowStore.getState()
-
-    if (workflow.workspacePath) {
-      try {
-        // Load run folders for this workspace
-        await loadRunFolders(workflow.workspacePath)
-
-        // Get the updated run folders from state
-        const folders = useWorkflowStore.getState().runFolders
-
-        if (folders.length > 0) {
-          // Folders are already sorted by iteration number descending (newest first)
-          const latestFolder = folders[0]
-          console.log('[App] Latest iteration:', latestFolder.name, 'Stored iteration:', workflow.runFolder)
-
-          // Always use the latest iteration
-          setSelectedRunFolder(latestFolder.name)
-        } else if (workflow.runFolder && workflow.runFolder !== 'new') {
-          // No folders found, use the stored run folder
-          setSelectedRunFolder(workflow.runFolder)
-        }
-      } catch (error) {
-        console.error('[App] Failed to load run folders during restore:', error)
-        // Fallback to stored run folder
-        if (workflow.runFolder && workflow.runFolder !== 'new') {
-          setSelectedRunFolder(workflow.runFolder)
-        }
-      }
-    } else if (workflow.runFolder && workflow.runFolder !== 'new') {
-      // No workspace path, just use stored run folder
-      setSelectedRunFolder(workflow.runFolder)
-    }
-
-    // Restore selected group IDs if they exist
-    if (workflow.selectedGroupIds && workflow.selectedGroupIds.length > 0) {
-      console.log('[App] Restoring selected groups:', workflow.selectedGroupIds)
-      setSelectedGroupIds(workflow.selectedGroupIds)
-    }
-
-    // Create a new tab connected to the restored session
-    const { createChatTab, switchTab } = useChatStore.getState()
-    const { getPhaseById } = useWorkflowStore.getState()
-
-    // Get phase info
-    const phase = getPhaseById(workflow.phaseId)
-    const phaseName = phase?.title || workflow.phaseName
-
-    // Check if a tab with this sessionId already exists
-    const existingTabs = Object.values(useChatStore.getState().chatTabs)
-    const existingTab = existingTabs.find(tab =>
-      tab.sessionId === workflow.sessionId &&
-      tab.metadata?.mode === 'workflow'
-    )
-
-    if (existingTab) {
-      // Tab already exists, just switch to it
-      console.log('[App] Found existing tab for session, switching to it:', existingTab.tabId)
-      switchTab(existingTab.tabId)
-    } else {
-      // Create a new tab connected to the session
-      console.log('[App] Creating new tab for restored session:', workflow.sessionId)
-      const tabId = await createChatTab(phaseName, {
-        mode: 'workflow',
-        phaseId: workflow.phaseId,
-        phaseName,
-        presetQueryId: workflow.presetId
-      }, workflow.sessionId)  // Pass sessionId to connect to existing session
-
-      switchTab(tabId)
-    }
-
-    // Show the chat area so user can see the logs
-    useWorkflowStore.getState().setShowChatArea(true)
-
-    console.log('[App] Workflow restored, sessionId:', workflow.sessionId)
-  }, []);
-
   // Minimize toggle functions
   const toggleSidebarMinimize = useCallback(() => {
     setSidebarMinimized(!sidebarMinimized)
@@ -771,20 +673,30 @@ function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ctrl/Cmd + 1 for Simple agent mode
+      // Ctrl/Cmd + 1 for Multi-agent mode
       if ((event.ctrlKey || event.metaKey) && event.key === '1') {
         event.preventDefault()
-        setAgentMode('simple')
+        const { setModeCategory } = useModeStore.getState()
+        setModeCategory('multi-agent')
       }
-      // Ctrl/Cmd + 3 removed (orchestrator mode removed)
+      // Ctrl/Cmd + 2 for Workflow mode
+      if ((event.ctrlKey || event.metaKey) && event.key === '2') {
+        event.preventDefault()
+        const { setModeCategory } = useModeStore.getState()
+        setModeCategory('workflow')
+      }
+      // Ctrl/Cmd + 3 for Code-prototype mode
       if ((event.ctrlKey || event.metaKey) && event.key === '3') {
         event.preventDefault()
+        const { setModeCategory } = useModeStore.getState()
+        setModeCategory('code-prototype')
       }
-        // Ctrl/Cmd + 4 for Workflow agent mode
-        if ((event.metaKey || event.ctrlKey) && event.key === '4') {
-          event.preventDefault()
-          setAgentMode('workflow')
-        }
+      // Ctrl/Cmd + 4 for Chat mode
+      if ((event.metaKey || event.ctrlKey) && event.key === '4') {
+        event.preventDefault()
+        const { setModeCategory } = useModeStore.getState()
+        setModeCategory('chat')
+      }
 
       // Ctrl/Cmd + 5 for sidebar minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '5') {
@@ -854,7 +766,10 @@ function App() {
                     onNewChat={startNewChat}
                   />
                 </div>
-                <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
+                <div className={selectedModeCategory === 'code-prototype' ? 'h-full' : 'hidden'}>
+                  <CodePrototypeLayout onNewChat={startNewChat} />
+                </div>
+                <div className={selectedModeCategory !== 'workflow' && selectedModeCategory !== 'code-prototype' ? 'h-full' : 'hidden'}>
                   <ChatAreaWithObserverId
                     ref={chatAreaRef}
                     onNewChat={startNewChat}
@@ -863,10 +778,6 @@ function App() {
               </div>
 
             {/* Running Workflows Tracking - Global */}
-            <RunningWorkflowsDrawer
-              onRestoreWorkflow={handleRestoreWorkflow}
-            />
-            
             {/* File Content View - overlay when showing file content */}
             {showFileContent && (
               <div className="absolute inset-0 bg-white dark:bg-gray-900 z-10 flex flex-col">
@@ -922,11 +833,12 @@ function App() {
                   {!isEditMode ? (
                     <>
                       <div className="flex items-center gap-0.5">
-                        {/* Hide edit/revisions for binary files (xls, xlsx, docx, pdf) */}
+                        {/* Hide edit for binary files and code files (code is written by the agent) */}
                         {!selectedFile?.path?.toLowerCase().endsWith('.xls') &&
                          !selectedFile?.path?.toLowerCase().endsWith('.xlsx') &&
                          !selectedFile?.path?.toLowerCase().endsWith('.docx') &&
-                         !selectedFile?.path?.toLowerCase().endsWith('.pdf') && (
+                         !selectedFile?.path?.toLowerCase().endsWith('.pdf') &&
+                         !isCodeFile(selectedFile?.path || '') && (
                           <>
                             <button
                               onClick={handleEdit}
@@ -1135,6 +1047,15 @@ function App() {
                           height="100%"
                         />
                       </div>
+                    ) : (selectedFile?.path && isCodeFile(selectedFile.path)) ? (
+                      <div className="h-full overflow-hidden">
+                        <FileEditor
+                          value={fileContent}
+                          filepath={selectedFile.path}
+                          readOnly={true}
+                          height="100%"
+                        />
+                      </div>
                     ) : (
                       <div className={(selectedFile?.path?.toLowerCase().endsWith('.pdf') || selectedFile?.path?.toLowerCase().endsWith('.html') || selectedFile?.path?.toLowerCase().endsWith('.htm')) ? "" : "p-6"}>
                         {(() => {
@@ -1211,37 +1132,7 @@ function App() {
                               </div>
                             )
                           } 
-                          // Check for code files
-                          else if (selectedFile?.path && isCodeFile(selectedFile.path)) {
-                            const language = getCodeFileLanguage(selectedFile.path)
-                            const fileName = selectedFile.path.split('/').pop() || selectedFile.path
-                            
-                            // Wrap content in markdown code block for syntax highlighting
-                            const codeBlockContent = `\`\`\`${language}\n${fileContent}\n\`\`\``
-                            
-                            return (
-                              <div className="space-y-2">
-                                <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                                  <span className="font-medium">💻 Code File</span>
-                                  <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded font-mono">
-                                    {language}
-                                  </span>
-                                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                                    {fileName}
-                                  </span>
-                                </div>
-                                <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                                  <div className="text-xs prose prose-sm max-w-none dark:prose-invert [&_*]:text-xs">
-                                    <MarkdownRenderer 
-                                      content={codeBlockContent} 
-                                      className="max-w-none"
-                                      showScrollbar={true}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          } 
+ 
                           // Default: render as markdown
                           else {
                             return (

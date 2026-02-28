@@ -14,6 +14,10 @@ import './EventHierarchy.css';
 // prevents many tiny "+ 1 tool call" groups from forming.
 const TOOL_CALL_TYPES = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error', 'token_usage', 'llm_generation_end']);
 
+// Delegation events appear in the flat list between tool_call_start and tool_call_end in workflow/multi-agent mode.
+// Including them in the scan prevents them from breaking consecutive tool call groups.
+const DELEGATION_BRIDGE_TYPES = new Set(['delegation_start', 'delegation_end']);
+
 interface EventHierarchyProps {
   events: PollingEvent[];
   onApproveWorkflow?: (requestId: string) => void
@@ -525,7 +529,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // Tool call grouping — operates on the flat list so only main-agent events are affected.
     // Sub-agent events were excluded above (flattening stops at delegation_start).
     if (hideToolCalls) {
-      // Identify consecutive runs of TOOL_CALL_TYPES in the flat list
+      // Identify consecutive runs of TOOL_CALL_TYPES in the flat list.
+      // DELEGATION_BRIDGE_TYPES (delegation_start/end) are allowed inside a group so they
+      // don't break runs in workflow/multi-agent mode — they appear between tool_call_start
+      // and tool_call_end when a sub-agent is spawned. A group must start and end on a
+      // TOOL_CALL_TYPE event (not a bridge event).
       const groups: { startIdx: number; endIdx: number; groupKey: string }[] = [];
       let i = 0;
       while (i < list.length) {
@@ -533,8 +541,16 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         if (item.node && TOOL_CALL_TYPES.has(item.node.event.type || '')) {
           const startIdx = i;
           const groupKey = item.node.event.id;
-          while (i < list.length && list[i].node && TOOL_CALL_TYPES.has(list[i].node!.event.type || '')) i++;
-          groups.push({ startIdx, endIdx: i - 1, groupKey });
+          let lastToolCallIdx = i;
+          i++;
+          while (i < list.length && list[i].node) {
+            const t = list[i].node!.event.type || '';
+            if (TOOL_CALL_TYPES.has(t)) { lastToolCallIdx = i; i++; }
+            else if (DELEGATION_BRIDGE_TYPES.has(t)) { i++; } // bridge — continue scanning
+            else break;
+          }
+          groups.push({ startIdx, endIdx: lastToolCallIdx, groupKey });
+          i = lastToolCallIdx + 1;
         } else {
           i++;
         }

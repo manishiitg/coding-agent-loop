@@ -24,10 +24,11 @@ import {
   restoreExpandedFolders,
   getOriginalPath,
   isPathWithinFolder,
-  adjustFilePathsRecursive
+  adjustFilePathsRecursive,
+  findIterationFolders
 } from '../utils/workspacePathUtils'
-import { isTextBasedFile } from '../utils/fileUtils'
 import { useIterationExpansion } from './workspace/useIterationExpansion'
+import { useCodePrototypeStore } from '../stores/useCodePrototypeStore'
 
 interface WorkspaceProps {
   minimized: boolean
@@ -249,6 +250,10 @@ export default function Workspace({
   const autoExpandedChatRef = useRef(false)
   // Track whether we've auto-expanded Plans/ for multi-agent mode
   const autoExpandedMultiAgentRef = useRef(false)
+  // Tracks which iterations have been lazy-loaded, keyed by workflowFolder
+  const loadedIterationsRef = useRef<Map<string, Set<string>>>(new Map())
+  // Prevents repeated recovery fetches when wrong files appear in code-prototype mode
+  const protoRecoveryInFlightRef = useRef(false)
   
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
@@ -277,14 +282,26 @@ export default function Workspace({
     return null
   }, [activeWorkflowPreset])
 
+  const currentPrototypeProject = useCodePrototypeStore(s => s.currentProject)
+  const codePrototypeFolderPath = useMemo(() => {
+    if (selectedModeCategory === 'code-prototype' && currentPrototypeProject) {
+      const path = `Projects/${currentPrototypeProject.name}`
+      return path
+    }
+    return null
+  }, [selectedModeCategory, currentPrototypeProject])
+
   // Determine which folder to pass to the API based on mode
   const activeFolder = useMemo(() => {
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
       return workflowFolderPath
     }
+    if (selectedModeCategory === 'code-prototype' && codePrototypeFolderPath) {
+      return codePrototypeFolderPath
+    }
     // For chat mode and default, fetch root (Chats + skills are at root level)
     return undefined
-  }, [selectedModeCategory, workflowFolderPath])
+  }, [selectedModeCategory, workflowFolderPath, codePrototypeFolderPath])
 
   // Helper function to apply filtering and path adjustment to files
   // This matches the logic in filteredFiles useMemo to ensure paths are consistent
@@ -297,6 +314,23 @@ export default function Workspace({
       // Files are already scoped to the workflow folder by the API (folder param)
       // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, workflowFolderPath)
+    } else if (selectedModeCategory === 'code-prototype' && codePrototypeFolderPath) {
+      const hasProjectFiles = result.some(f =>
+        f.filepath === codePrototypeFolderPath ||
+        f.filepath === codePrototypeFolderPath + '/' ||
+        f.filepath.startsWith(codePrototypeFolderPath + '/')
+      )
+      if (!hasProjectFiles) return []
+      const contentsOfFolder = result.filter(f =>
+        f.filepath.replace(/\/$/, '') !== codePrototypeFolderPath.replace(/\/$/, '')
+      )
+      result = adjustFilePathsRecursive(contentsOfFolder, codePrototypeFolderPath)
+    } else if (selectedModeCategory === 'multi-agent') {
+      // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
+      result = filesToProcess.filter(f => {
+        const topFolder = f.filepath.split('/')[0]
+        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
+      })
     } else if (selectedModeCategory === 'chat') {
       // Chat mode: show Chats/, Downloads/, skills/ and subagents/ top-level folders
       result = filesToProcess.filter(f => {
@@ -306,7 +340,7 @@ export default function Workspace({
     }
 
     return result
-  }, [selectedModeCategory, workflowFolderPath])
+  }, [selectedModeCategory, workflowFolderPath, codePrototypeFolderPath])
   
   // Restore expanded folders when files change
   // This runs after store's fetchFiles completes and handles workflow mode filtering
@@ -316,7 +350,8 @@ export default function Workspace({
     
     // In workflow mode, completely skip restore effect to let auto-expand handle it
     // This prevents any interference with the auto-expansion logic
-    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+    if ((selectedModeCategory === 'workflow' && workflowFolderPath) ||
+        (selectedModeCategory === 'code-prototype' && codePrototypeFolderPath)) {
       return
     }
     
@@ -393,6 +428,20 @@ export default function Workspace({
   // Legacy function name for backward compatibility
   const getFullFilePath = getOriginalFilePath
 
+  // Recursively prune the runs/ subtree to only show the specified iteration
+  const pruneRunsToIteration = (node: PlannerFile, iterationName: string): PlannerFile => {
+    if (node.filepath === 'runs' && node.children) {
+      const matching = node.children.find(c =>
+        c.filepath === `runs/${iterationName}` || c.filepath.endsWith(`/${iterationName}`)
+      )
+      return { ...node, children: matching ? [matching] : [] }
+    }
+    if (node.children && node.children.length > 0) {
+      return { ...node, children: node.children.map(c => pruneRunsToIteration(c, iterationName)) }
+    }
+    return node
+  }
+
   // Filter by query: match file names and folder names; hide folders with no match and no matching descendants
   const filterFiles = (files: PlannerFile[], query: string): PlannerFile[] => {
     if (!query.trim()) return files
@@ -424,6 +473,52 @@ export default function Workspace({
     return filterRecursive(files)
   }
   
+  // Iteration display filter — which iteration to show in the workspace
+  // Gets selectedRunFolder from workflow store early (also used at line ~569 via hook)
+  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const [workspaceDisplayedIteration, setWorkspaceDisplayedIteration] = useState<string | null>(null)
+  const [showIterationDropdown, setShowIterationDropdown] = useState(false)
+
+  // Reset workspace iteration choice when switching workflows
+  const prevActiveFolderForIterRef = useRef<string | undefined>(undefined)
+  if (prevActiveFolderForIterRef.current !== activeFolder) {
+    prevActiveFolderForIterRef.current = activeFolder
+    if (activeFolder) loadedIterationsRef.current.delete(activeFolder)
+    // Don't reset workspaceDisplayedIteration — preserve user's selection across minor re-mounts
+  }
+
+  // Compute available iterations from the raw file tree (populated even from shallow fetch)
+  const availableIterations = useMemo(() => {
+    if (selectedModeCategory !== 'workflow' || !workflowFolderPath) return []
+    const workflowItem = files.find(f => f.filepath.replace(/\/$/, '') === workflowFolderPath)
+    if (!workflowItem?.children) return []
+    const runsFolder = workflowItem.children.find(c =>
+      c.filepath === workflowFolderPath + '/runs' || c.filepath === workflowFolderPath + '/runs/'
+    )
+    if (!runsFolder?.children) return []
+    return runsFolder.children
+      .filter(c => /iteration-\d+/.test(c.filepath))
+      .map(c => c.filepath.split('/').pop() ?? '')
+      .filter(Boolean)
+      .sort((a, b) => {
+        const numA = parseInt(a.match(/iteration-(\d+)/)?.[1] ?? '0')
+        const numB = parseInt(b.match(/iteration-(\d+)/)?.[1] ?? '0')
+        return numA - numB
+      })
+  }, [files, selectedModeCategory, workflowFolderPath])
+
+  const latestIteration = availableIterations[availableIterations.length - 1] ?? null
+
+  // Effective iteration to display: user override → selectedRunFolder (top-level only) → latest
+  const effectiveDisplayedIteration = useMemo(() => {
+    if (workspaceDisplayedIteration) return workspaceDisplayedIteration
+    if (selectedRunFolder && selectedRunFolder !== 'new') {
+      // selectedRunFolder can be "iteration-N" or "iteration-N/group-X" — take top-level only
+      return selectedRunFolder.split('/')[0]
+    }
+    return latestIteration
+  }, [workspaceDisplayedIteration, selectedRunFolder, latestIteration])
+
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
     let result = files
@@ -449,6 +544,28 @@ export default function Workspace({
         // Fallback: no hierarchical folder found, adjust all items
         result = adjustFilePathsRecursive(result, workflowFolderPath)
       }
+
+      // Filter runs/ to only show the selected/latest iteration (not all iterations)
+      if (effectiveDisplayedIteration) {
+        result = result.map(node => pruneRunsToIteration(node, effectiveDisplayedIteration))
+      }
+    } else if (selectedModeCategory === 'code-prototype') {
+      if (!codePrototypeFolderPath) return []
+
+      // Guard: if the store's files are from a root/stale fetch (no file belongs to this project),
+      // return empty. The recovery effect below will re-fetch the correct project folder.
+      const hasProjectFiles = result.some(f =>
+        f.filepath === codePrototypeFolderPath ||
+        f.filepath === codePrototypeFolderPath + '/' ||
+        f.filepath.startsWith(codePrototypeFolderPath + '/')
+      )
+      if (!hasProjectFiles) return []
+
+      // Exclude the folder node itself; show all contents with paths stripped of the prefix.
+      const contentsOfFolder = result.filter(f =>
+        f.filepath.replace(/\/$/, '') !== codePrototypeFolderPath.replace(/\/$/, '')
+      )
+      result = adjustFilePathsRecursive(contentsOfFolder, codePrototypeFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
       // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
       result = files.filter(f => {
@@ -467,8 +584,8 @@ export default function Workspace({
     result = filterFiles(result, searchQuery)
 
     return result
-  }, [files, workflowFolderPath, searchQuery, selectedModeCategory])
-  
+  }, [files, workflowFolderPath, codePrototypeFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration])
+
   // Refresh file tree from server (re-fetch all files so local filter can find them)
   const handleRefreshAndSearch = useCallback(async () => {
     setServerSearchLoading(true)
@@ -518,10 +635,10 @@ export default function Workspace({
             ? workflowFolder.children 
             : filteredFiles
           
-          // Expand children up to 3 levels deep (e.g., runs/ → iteration-1/ → group-1/)
+          // Expand top-level workflow structure only — exclude runs/ to avoid expanding all iterations
           const additionalFolders = workflowFolder ? [workflowFolder.filepath] : undefined
-          const excludeFolders = ['planning', 'variables', 'learnings', 'logs']
-          expandFoldersToLevel(filesToExpand, 3, additionalFolders, excludeFolders)
+          const excludeFolders = ['planning', 'variables', 'learnings', 'logs', 'runs']
+          expandFoldersToLevel(filesToExpand, 1, additionalFolders, excludeFolders)
           
           // Mark this workflow as auto-expanded
           autoExpandedWorkflowRef.current = workflowPresetId
@@ -533,7 +650,8 @@ export default function Workspace({
       // Reset the auto-expanded ref when switching away
       autoExpandedWorkflowRef.current = null
     }
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id, expandedFolders, setExpandedFolders])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id])
 
   // In chat mode, auto-expand Chats/ folder by default (skills/ stays closed)
   useEffect(() => {
@@ -561,10 +679,6 @@ export default function Workspace({
     }
   }, [selectedModeCategory, filteredFiles, setExpandedFolders])
   
-  // Auto-collapse other iterations when an iteration is selected
-  // Get selected iteration from workflow store
-  const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
-  
   // Use custom hook to handle iteration expansion logic
   useIterationExpansion({
     selectedModeCategory,
@@ -574,7 +688,21 @@ export default function Workspace({
     expandedFolders,
     setExpandedFolders
   })
-  
+
+  // Lazy-load the selected/latest iteration's full files when it changes
+  useEffect(() => {
+    if (selectedModeCategory !== 'workflow' || !activeFolder || !effectiveDisplayedIteration) return
+
+    const loaded = loadedIterationsRef.current.get(activeFolder)
+    if (loaded?.has(effectiveDisplayedIteration)) return // Already fetched this session
+
+    if (!loadedIterationsRef.current.has(activeFolder)) {
+      loadedIterationsRef.current.set(activeFolder, new Set())
+    }
+    loadedIterationsRef.current.get(activeFolder)!.add(effectiveDisplayedIteration)
+    fetchFiles(activeFolder + '/runs/' + effectiveDisplayedIteration)
+  }, [selectedModeCategory, activeFolder, effectiveDisplayedIteration, fetchFiles])
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -583,6 +711,9 @@ export default function Workspace({
         if (!target.closest('.actions-dropdown')) {
           setShowActionsDropdown(false)
         }
+        if (!target.closest('.iteration-filter-dropdown')) {
+          setShowIterationDropdown(false)
+        }
       }
     }
 
@@ -590,7 +721,7 @@ export default function Workspace({
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showActionsDropdown, setShowActionsDropdown])
+  }, [showActionsDropdown, setShowActionsDropdown, showIterationDropdown])
 
   // Load files on component mount and re-fetch when active folder changes.
   // Optimization: skip the fetch when workspace panel is minimized to avoid wasting bandwidth
@@ -603,11 +734,43 @@ export default function Workspace({
 
   // on data the user can't see. When the user opens the panel (minimized transitions false → true),
   // this effect re-runs and triggers the fetch automatically.
+  // In workflow mode, use max_depth=1 for the initial fetch to avoid loading all iteration files
+  // (which can be slow with many iterations). The selected/latest iteration is loaded separately.
   useEffect(() => {
     if (!minimized) {
-      fetchFiles(activeFolder)
+      if (selectedModeCategory === 'workflow') {
+        fetchFiles(activeFolder, { maxDepth: 1 })
+      } else {
+        fetchFiles(activeFolder)
+      }
     }
-  }, [activeFolder, fetchFiles, minimized])
+  }, [activeFolder, fetchFiles, minimized, selectedModeCategory])
+
+  // Recovery effect for code-prototype mode: if something replaces the store's files with
+  // root-level files (race condition from another component's fetchFiles() call), re-fetch
+  // the project folder so the workspace doesn't stay blank.
+  useEffect(() => {
+    if (selectedModeCategory !== 'code-prototype' || !codePrototypeFolderPath || minimized) {
+      protoRecoveryInFlightRef.current = false
+      return
+    }
+    if (files.length === 0) return // Initial empty state — normal, no recovery needed
+
+    const hasProjectFiles = files.some(f =>
+      f.filepath === codePrototypeFolderPath ||
+      f.filepath === codePrototypeFolderPath + '/' ||
+      f.filepath.startsWith(codePrototypeFolderPath + '/')
+    )
+    if (!hasProjectFiles && !protoRecoveryInFlightRef.current) {
+      protoRecoveryInFlightRef.current = true
+      console.log('[PROTO-WORKSPACE] Wrong files detected, re-fetching project folder')
+      fetchFiles(codePrototypeFolderPath).then(() => {
+        protoRecoveryInFlightRef.current = false
+      })
+    } else if (hasProjectFiles) {
+      protoRecoveryInFlightRef.current = false
+    }
+  }, [files, selectedModeCategory, codePrototypeFolderPath, minimized, fetchFiles])
 
   // Check if a file is a viewable binary format (xlsx, docx, pdf) that we can render
   const isViewableBinaryFile = (fileName: string): boolean => {
@@ -621,12 +784,6 @@ export default function Workspace({
       // Reconstruct the original full path if we're in workflow mode with filtered files
       const fullFilePath = getOriginalFilePath(file)
       const fileName = fullFilePath.split('/').pop() || fullFilePath
-
-      // Check if file is viewable (text, image, or viewable binary like xlsx/docx)
-      if (!isTextBasedFile(fileName) && !file.is_image && !isViewableBinaryFile(fileName)) {
-        setError(`File "${fileName}" is a binary file and cannot be viewed in the editor.`)
-        return
-      }
 
       try {
         setLoadingFileContent(true)
@@ -696,6 +853,14 @@ export default function Workspace({
                 }
               }
             }
+          }
+
+          // Backend returns "[Binary file: N bytes]" for non-text files — single source of truth
+          if (typeof processedContent === 'string' && processedContent.startsWith('[Binary file:')) {
+            setError(`File "${fileName}" is a binary file and cannot be viewed in the editor.`)
+            setLoadingFileContent(false)
+            setShowFileContent(false)
+            return
           }
 
           // Store both original content and formatted JSON (if applicable)
@@ -1989,6 +2154,40 @@ export default function Workspace({
               </button>
             </div>
           )}
+          {/* Iteration filter badge — shown in workflow mode when iterations exist */}
+          {selectedModeCategory === 'workflow' && availableIterations.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border-b border-blue-500/20 text-xs">
+              <span className="text-blue-600 dark:text-blue-400 font-medium shrink-0">Filters workspace as per workflow</span>
+              <div className="relative ml-auto iteration-filter-dropdown">
+                <button
+                  onClick={() => setShowIterationDropdown(prev => !prev)}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-700 dark:text-blue-300 font-medium"
+                >
+                  {effectiveDisplayedIteration ?? 'Select iteration'}
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+                {showIterationDropdown && (
+                  <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg min-w-[140px] max-h-48 overflow-y-auto">
+                    {availableIterations.map(iter => (
+                      <button
+                        key={iter}
+                        onClick={() => {
+                          setWorkspaceDisplayedIteration(iter)
+                          setShowIterationDropdown(false)
+                        }}
+                        className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 ${
+                          iter === effectiveDisplayedIteration ? 'font-semibold text-blue-600 dark:text-blue-400' : 'text-gray-700 dark:text-gray-300'
+                        }`}
+                      >
+                        {iter}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Folder Structure - Full Width */}
           <div ref={workspaceScrollRef} className="h-full overflow-y-auto">
             <div className="p-4">

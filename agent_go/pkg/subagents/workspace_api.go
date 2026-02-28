@@ -175,3 +175,36 @@ func (c *WorkspaceAPIClient) DeleteFolder(folderPath string) error {
 
 	return nil
 }
+
+// CreateFolder creates a folder via workspace API
+func (c *WorkspaceAPIClient) CreateFolder(folderPath string) error {
+	reqURL := fmt.Sprintf("%s/api/folders", c.BaseURL)
+
+	body := map[string]string{
+		"folder_path": folderPath,
+	}
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, reqURL, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to create folder: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to create folder: status %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+

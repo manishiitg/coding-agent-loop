@@ -182,8 +182,6 @@ type SubAgentTemplateSummary struct {
 	FolderName            string   `json:"folder_name"`
 	DefaultReasoningLevel string   `json:"default_reasoning_level,omitempty"`
 	DefaultToolMode       string   `json:"default_tool_mode,omitempty"`
-	Skills                []string `json:"skills,omitempty"`  // Skill folder names to auto-activate
-	Servers               []string `json:"servers,omitempty"` // MCP server names to enable
 }
 
 // ExecuteDelegatedTaskFunc is the function signature for executing delegated tasks
@@ -840,7 +838,7 @@ Write the plan as a structured markdown document with these sections:
 				}
 				sb.WriteString(line + "\n")
 			}
-			sb.WriteString("\nWhen a template matches a task, pass `agent_template: \"<folder_name>\"` in the delegate call. The template's instructions, default reasoning level, tool mode, skills, and MCP servers are automatically applied.\n")
+			sb.WriteString("\nWhen a template matches a task, pass `agent_template: \"<folder_name>\"` in the delegate call. The template's instructions, default reasoning level, and tool mode are automatically applied.\n")
 		}
 
 		sb.WriteString("\nConsider these capabilities when designing tasks — reference specific servers, tools, skills, or sub-agent templates where relevant.\n")
@@ -1361,6 +1359,8 @@ func GetPlanWithBackgroundAgentsInstructions() string {
 ## How You Work
 
 You are an intelligent assistant that breaks complex tasks into steps, plans them, and executes them efficiently. Your workflow has two phases:
+
+> **Before anything else — Conversational Filter:** Ask yourself: *"Does this message actually require research, planning, or tool use to answer?"* If the answer is no — greetings, acknowledgements, simple questions you can answer from knowledge, clarifications, reactions, or any message where a plain text reply is sufficient — respond directly and naturally **without calling any tools or checking any folders**. Only enter the planning workflow when the user is genuinely asking you to perform a task that requires it.
 
 ### Phase 1 — Planning
 

@@ -220,6 +220,9 @@ interface EventDispatcherProps {
  */
 const MAX_SUBAGENT_CHILDREN = 20
 
+// Event types grouped and collapsed inside sub-agent logs (mirrors EventHierarchy's TOOL_CALL_TYPES)
+const SUB_AGENT_TOOL_CALL_TYPES = new Set(['tool_call_start', 'tool_call_end', 'tool_call_error', 'token_usage', 'llm_generation_end'])
+
 const SubAgentHierarchy: React.FC<{
   nodes: EventNode[]
   onToggleNode: (eventId: string) => void
@@ -232,11 +235,78 @@ const SubAgentHierarchy: React.FC<{
   compact?: boolean
 }> = ({ nodes, onToggleNode, ...props }) => {
   const [showAll, setShowAll] = React.useState(false)
+  const [expandedGroups, setExpandedGroups] = React.useState<Set<string>>(new Set())
+
+  // Read hideToolCalls from active tab
+  const hideToolCalls = useChatStore(state => {
+    const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
+    return tab?.hideToolCalls ?? true
+  })
 
   // Cap to most recent children to prevent unbounded DOM growth
   const isCapped = !showAll && nodes.length > MAX_SUBAGENT_CHILDREN
   const visibleNodes = isCapped ? nodes.slice(-MAX_SUBAGENT_CHILDREN) : nodes
   const hiddenCount = nodes.length - visibleNodes.length
+
+  // Build grouped render list when hideToolCalls is on
+  type RenderItem = { type: 'node'; node: EventNode } | { type: 'group'; groupKey: string; count: number; nodes: EventNode[] }
+  const renderItems: RenderItem[] = React.useMemo(() => {
+    if (!hideToolCalls) return visibleNodes.map(n => ({ type: 'node' as const, node: n }))
+
+    const items: RenderItem[] = []
+    let i = 0
+    while (i < visibleNodes.length) {
+      const node = visibleNodes[i]
+      if (SUB_AGENT_TOOL_CALL_TYPES.has(node.event.type || '')) {
+        const groupKey = node.event.id
+        const groupNodes: EventNode[] = []
+        let lastToolIdx = i
+        let j = i
+        while (j < visibleNodes.length) {
+          const t = visibleNodes[j].event.type || ''
+          if (SUB_AGENT_TOOL_CALL_TYPES.has(t)) { groupNodes.push(visibleNodes[j]); lastToolIdx = j; j++ }
+          else break
+        }
+        items.push({ type: 'group', groupKey, count: groupNodes.length, nodes: groupNodes })
+        i = lastToolIdx + 1
+      } else {
+        items.push({ type: 'node', node })
+        i++
+      }
+    }
+    return items
+  }, [visibleNodes, hideToolCalls])
+
+  const renderNode = (node: EventNode) => (
+    <div key={node.event.id} className="relative group/node">
+      <div className="flex items-start gap-1">
+        {node.children.length > 0 ? (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleNode(node.event.id) }}
+            className="mt-1.5 p-0.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors flex-shrink-0"
+          >
+            {node.isExpanded ? <ChevronDown className="w-3 h-3 text-gray-400" /> : <ChevronRight className="w-3 h-3 text-gray-400" />}
+          </button>
+        ) : (
+          <div className="w-4 flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <EventDispatcher
+            event={node.event}
+            compact={true}
+            {...props}
+            onToggleNode={onToggleNode}
+            childrenNodes={node.isExpanded ? node.children : undefined}
+          />
+        </div>
+      </div>
+      {node.isExpanded && node.children.length > 0 && node.event.type !== 'delegation_start' && (
+        <div className="ml-2 pl-3 mt-1">
+          <SubAgentHierarchy nodes={node.children} onToggleNode={onToggleNode} {...props} />
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div className="space-y-2">
@@ -248,53 +318,28 @@ const SubAgentHierarchy: React.FC<{
           Show {hiddenCount} older events...
         </button>
       )}
-      {visibleNodes.map((node) => (
-        <div key={node.event.id} className="relative group/node">
-          <div className="flex items-start gap-1">
-            {/* Minimal toggle for nested items inside sub-agent logs */}
-            {node.children.length > 0 ? (
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onToggleNode(node.event.id)
-                }}
-                className="mt-1.5 p-0.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors flex-shrink-0"
-              >
-                {node.isExpanded ? (
-                  <ChevronDown className="w-3 h-3 text-gray-400" />
-                ) : (
-                  <ChevronRight className="w-3 h-3 text-gray-400" />
-                )}
-              </button>
-            ) : (
-              <div className="w-4 flex-shrink-0" />
-            )}
+      {renderItems.map((item) => {
+        if (item.type === 'node') return renderNode(item.node)
 
-            <div className="flex-1 min-w-0">
-              <EventDispatcher
-                event={node.event}
-                compact={true}
-                {...props}
-                onToggleNode={onToggleNode}
-                childrenNodes={node.isExpanded ? node.children : undefined}
-              />
-            </div>
+        // Tool call group sentinel
+        const isExpanded = expandedGroups.has(item.groupKey)
+        return (
+          <div key={item.groupKey}>
+            <button
+              onClick={() => setExpandedGroups(prev => {
+                const next = new Set(prev)
+                if (next.has(item.groupKey)) next.delete(item.groupKey)
+                else next.add(item.groupKey)
+                return next
+              })}
+              className="px-1.5 py-px text-[10px] leading-tight text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30 rounded transition-colors"
+            >
+              {isExpanded ? `− collapse` : `+ ${item.count} tool call${item.count !== 1 ? 's' : ''}`}
+            </button>
+            {isExpanded && item.nodes.map(n => renderNode(n))}
           </div>
-
-          {/* Recursion for expanded children (e.g. nested sub-agents) */}
-          {/* Skip recursion for delegation_start because it handles its own children via the internal SubAgentHierarchy */}
-          {node.isExpanded && node.children.length > 0 && node.event.type !== 'delegation_start' && (
-            <div className="ml-2 pl-3 mt-1">
-              <SubAgentHierarchy
-                nodes={node.children}
-                onToggleNode={onToggleNode}
-                {...props}
-              />
-            </div>
-          )}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

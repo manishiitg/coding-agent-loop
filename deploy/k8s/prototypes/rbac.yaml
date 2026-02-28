@@ -1,0 +1,38 @@
+# RBAC for Code Prototype deployments
+# Gives the agent pod (default ServiceAccount in prod-mcpagent) permission to
+# create/update/delete Deployment, Service, Ingress, ConfigMap, Secret
+# resources with the label app.kubernetes.io/managed-by=mcpagent-prototype.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prototype-deployer
+  namespace: prod-mcpagent
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services", "configmaps", "secrets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments/status", "deployments/rollback"]
+  verbs: ["get", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prototype-deployer-binding
+  namespace: prod-mcpagent
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: prod-mcpagent
+roleRef:
+  kind: Role
+  name: prototype-deployer
+  apiGroup: rbac.authorization.k8s.io

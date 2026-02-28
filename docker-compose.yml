@@ -12,6 +12,8 @@ services:
       - apparmor:unconfined  # Allow mount operations in namespace
     ports:
       - "8081:8080"
+      # Prototype dev server ports (one per project, hash-mapped to 15000-15019)
+      - "15000-15019:15000-15019"
     env_file:
       - ./workspace/.env
     environment:

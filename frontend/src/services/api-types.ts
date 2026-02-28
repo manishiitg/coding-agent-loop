@@ -126,6 +126,10 @@ export interface AgentQueryRequest {
   selected_global_secrets?: string[]
   // Workspace paths of workflows to inject context for (via # selector in chat)
   workflow_context_paths?: string[]
+  // UI mode identifier — lets the server apply mode-specific system prompts (e.g. 'code-prototype')
+  chat_mode?: string
+  // For code-prototype mode: project name — backend builds and caches the full system prompt
+  prototype_project?: string
 }
 
 // Delegation tier configuration for multi-LLM support
@@ -208,6 +212,7 @@ export interface APIKeyValidationResponse {
 export interface LLMGuidanceRequest {
   session_id: string
   guidance: string
+  memory_folder?: string  // Optional override for memory storage path
 }
 
 export interface LLMGuidanceResponse {

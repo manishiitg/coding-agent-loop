@@ -65,7 +65,7 @@ func SanitizeInputPath(inputPath, docsDir string) string {
 // - Shared folders (skills/, Workflow/) remain at root level
 
 // PerUserFolders defines folders that are isolated per-user
-var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
+var PerUserFolders = []string{"Chats", "Downloads", "Plans", "Projects"}
 
 // SharedFolders defines folders that are shared across all users
 var SharedFolders = []string{"skills", "Workflow"}

@@ -7,7 +7,6 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAppStore } from '../../stores/useAppStore'
 import { workspaceApi, agentApi } from '../../services/api'
-import { isTextBasedFile } from '../../utils/fileUtils'
 import mermaid from 'mermaid'
 
 interface MarkdownRendererProps {
@@ -168,12 +167,6 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf'].includes(ext)
       // Check if image file (workspace API returns base64 data URL for these)
       const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)
-
-      // Reject non-viewable binary files early
-      if (!isTextBasedFile(fileName) && !isImage && !isViewableBinary) {
-        console.warn(`[MarkdownRenderer] Cannot view binary file: ${fileName}`)
-        return
-      }
 
       // 1. Ensure workspace is visible
       setWorkspaceMinimized(false)

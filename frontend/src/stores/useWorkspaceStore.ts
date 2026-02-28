@@ -109,7 +109,7 @@ interface WorkspaceState {
   // so that unscoped fetchFiles() calls from other components don't replace the scoped tree
   activeFolder: string | null
   setActiveFolder: (folder: string | null) => void
-  fetchFiles: (folder?: string) => Promise<void>
+  fetchFiles: (folder?: string, options?: { maxDepth?: number }) => Promise<void>
   
   // File highlighting
   highlightedFile: string | null
@@ -343,6 +343,19 @@ const initialState = {
 
 // Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder
 let inflightFetch: { folder: string | undefined; promise: Promise<void> } | null = null
+
+// Merge a fetched subfolder node into an existing file tree (replaces the matching stub node)
+function mergeSubfolderIntoTree(tree: PlannerFile[], targetPath: string, replacement: PlannerFile): PlannerFile[] {
+  return tree.map(node => {
+    if (node.filepath === targetPath) {
+      return replacement
+    }
+    if (node.children && node.children.length > 0 && targetPath.startsWith(node.filepath + '/')) {
+      return { ...node, children: mergeSubfolderIntoTree(node.children, targetPath, replacement) }
+    }
+    return node
+  })
+}
 
 export const useWorkspaceStore = create<WorkspaceState>()(
     (set, get) => ({
@@ -665,7 +678,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       // File fetching — uses activeFolder as fallback when no folder is explicitly passed,
       // so that unscoped fetchFiles() calls from StepNode, WorkflowCanvas, etc. stay scoped.
-      fetchFiles: async (folder?: string) => {
+      fetchFiles: async (folder?: string, options?: { maxDepth?: number }) => {
         // Use activeFolder as fallback so unscoped calls stay scoped to the workflow folder.
         // When an explicit folder IS passed (including undefined from Workspace.tsx chat mode),
         // callers who want to update the scope should call setActiveFolder() separately.
@@ -679,7 +692,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const promise = (async () => {
           try {
             set({ loading: true, error: null })
-            const response = await agentApi.getPlannerFiles(effectiveFolder)
+            const response = await agentApi.getPlannerFiles(effectiveFolder, -1, options?.maxDepth)
             if (response.success && response.data) {
               // Guard against mount race condition: if this fetch was unscoped (effectiveFolder
               // was undefined) but by the time the response arrived, activeFolder has been set,
@@ -694,8 +707,23 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
               // Process hierarchical structure from API
               const processedFiles = processHierarchicalFiles(allFiles)
-              const index = buildFileIndex(processedFiles)
-              set({ files: processedFiles, fileIndex: index, needsRefresh: false })
+
+              // If fetching a subfolder of activeFolder, merge into the existing tree
+              // instead of replacing — used for lazy-loading iteration contents
+              if (effectiveFolder && currentActiveFolder &&
+                  effectiveFolder !== currentActiveFolder &&
+                  effectiveFolder.startsWith(currentActiveFolder + '/')) {
+                const rootNode = processedFiles.length === 1 ? processedFiles[0] : processedFiles.find(f => f.filepath === effectiveFolder)
+                if (rootNode) {
+                  const mergedFiles = mergeSubfolderIntoTree(get().files, effectiveFolder, rootNode)
+                  const index = buildFileIndex(mergedFiles)
+                  set({ files: mergedFiles, fileIndex: index, needsRefresh: false })
+                }
+                // If rootNode not found (e.g., iteration doesn't exist), silently skip
+              } else {
+                const index = buildFileIndex(processedFiles)
+                set({ files: processedFiles, fileIndex: index, needsRefresh: false })
+              }
 
               // NOTE: Expansion restoration is now handled by the Workspace component
               // which has the necessary context about workflow mode and filtered files

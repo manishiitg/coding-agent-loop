@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Code, Settings, Trash2, Copy, DollarSign, Keyboard } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -21,6 +21,8 @@ const getModeIcon = (category: string) => {
       return <Workflow className="w-3 h-3" />
     case 'multi-agent':
       return <Users className="w-3 h-3" />
+    case 'code-prototype':
+      return <Code className="w-3 h-3" />
     default:
       return <MessageCircle className="w-3 h-3" />
   }
@@ -34,6 +36,8 @@ const getModeName = (category: string) => {
       return 'Workflow Mode'
     case 'multi-agent':
       return 'Multi Agent Chat'
+    case 'code-prototype':
+      return 'Code Prototype'
     default:
       return 'Chat Mode'
   }
@@ -52,6 +56,13 @@ const MODE_PILLS = [
     label: 'Workflow',
     icon: Workflow,
     activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
+    inactiveClasses: 'text-gray-500 dark:text-gray-400',
+  },
+  {
+    key: 'code-prototype' as const,
+    label: 'Prototype',
+    icon: Code,
+    activeClasses: 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-100 dark:ring-emerald-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
   {
@@ -105,6 +116,24 @@ export const ModePresetBar: React.FC = () => {
   const [editingPreset, setEditingPreset] = useState<CustomPreset | null>(null)
   const [showCostsPopup, setShowCostsPopup] = useState(false)
   const [showDelegationLogs, setShowDelegationLogs] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+
+  // Handle ESC and Enter keys for shortcuts modal
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (showShortcuts) {
+        if (event.key === 'Escape' || event.key === 'Enter') {
+          event.preventDefault()
+          setShowShortcuts(false)
+        }
+      }
+    }
+
+    if (showShortcuts) {
+      window.addEventListener('keydown', handleKeyDown)
+      return () => window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showShortcuts])
 
   const runningWorkflows = useRunningWorkflows()
   const chatTabsForBadge = useChatStore(state => state.chatTabs)
@@ -501,6 +530,13 @@ export const ModePresetBar: React.FC = () => {
 
           {/* Right: Cost Analysis / Execution Logs */}
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowShortcuts(true)}
+              className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+              title="Keyboard Shortcuts"
+            >
+              <Keyboard className="w-4 h-4" />
+            </button>
             {selectedModeCategory === 'multi-agent' && (
               <button
                 onClick={() => { setWorkspaceMinimized(true); setShowDelegationLogs(true) }}
@@ -522,6 +558,84 @@ export const ModePresetBar: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Keyboard Shortcuts Modal */}
+      {showShortcuts && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                Keyboard Shortcuts
+              </h3>
+              <button
+                onClick={() => setShowShortcuts(false)}
+                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Multi-Agent Mode</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+1
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Workflow Mode</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+2
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Prototype Mode</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+3
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Chat Mode</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+4
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Minimize Sidebar</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+5
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Minimize Workspace</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+6
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Toggle Auto-scroll</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Ctrl+7
+                </kbd>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-700 dark:text-gray-300">Close Shortcuts</span>
+                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
+                  Esc
+                </kbd>
+              </div>
+            </div>
+            
+            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Use Ctrl on Windows/Linux or Cmd on Mac
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Preset Modal */}
       <PresetModal

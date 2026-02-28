@@ -4,6 +4,10 @@ import type {
   SubAgent,
   UpdateSubAgentRequest,
   ListSubAgentsResponse,
+  ValidateSubAgentRequest,
+  ValidateSubAgentResponse,
+  ImportSubAgentRequest,
+  ImportSubAgentResponse
 } from '../types/subagents';
 
 const API_BASE_URL = getApiBaseUrl();
@@ -47,6 +51,18 @@ export const subagentsApi = {
   deleteSubAgent: async (name: string): Promise<void> => {
     await api.delete(`/api/subagents/${encodeURIComponent(name)}`);
   },
+
+  // Validate a sub-agent from GitHub URL
+  validateSubAgent: async (request: ValidateSubAgentRequest): Promise<ValidateSubAgentResponse> => {
+    const response = await api.post('/api/subagents/validate', request);
+    return response.data;
+  },
+
+  // Import a sub-agent from GitHub URL
+  importSubAgent: async (request: ImportSubAgentRequest): Promise<ImportSubAgentResponse> => {
+    const response = await api.post('/api/subagents/import', request);
+    return response.data;
+  }
 };
 
 export default subagentsApi;

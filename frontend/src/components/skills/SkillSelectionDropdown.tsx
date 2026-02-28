@@ -13,6 +13,7 @@ interface SkillSelectionDropdownProps {
   onSelectAll: (allSkillNames: string[]) => void;
   onClearAll: () => void;
   disabled?: boolean;
+  onImportClick?: () => void;
 }
 
 export default function SkillSelectionDropdown({
@@ -20,7 +21,8 @@ export default function SkillSelectionDropdown({
   onSkillToggle,
   onSelectAll,
   onClearAll,
-  disabled = false
+  disabled = false,
+  onImportClick
 }: SkillSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -217,11 +219,25 @@ export default function SkillSelectionDropdown({
                   </div>
 
                   {/* Instructions */}
-                  <div className="text-xs text-gray-500">
-                    {skills.length === 0
-                      ? 'Import skills from Skills Manager'
-                      : `${selectedSkills.length}/${skills.length} selected`
-                    }
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500">
+                      {skills.length === 0
+                        ? 'Import skills to get started'
+                        : `${selectedSkills.length}/${skills.length} selected`
+                      }
+                    </span>
+                    {onImportClick && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsOpen(false);
+                          onImportClick();
+                        }}
+                        className="text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 hover:underline font-medium"
+                      >
+                        Import Skill
+                      </button>
+                    )}
                   </div>
                 </div>
               </Card>

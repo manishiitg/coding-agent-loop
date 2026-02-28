@@ -14,7 +14,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/t
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
 import { Layers, LogOut, User, Bell, BellOff, Play, Download } from 'lucide-react'
-import { RunningWorkflowsIndicator } from './workflow/RunningWorkflowsIndicator'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { playNotificationSound } from '../utils/sound'
@@ -41,7 +40,6 @@ export default function WorkspaceSidebar({
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showDelegationTiersDialog = useCommandDialogStore(state => state.showDelegationTiers)
   const closeDialog = useCommandDialogStore(state => state.closeDialog)
-  const [showShortcuts, setShowShortcuts] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
   const [isElectron, setIsElectron] = useState(false)
   const [osPermission, setOsPermission] = useState<NotificationPermission>('default')
@@ -133,23 +131,6 @@ export default function WorkspaceSidebar({
     }
   }, [selectedModeCategory, delegationTierConfig])
 
-  // Handle ESC and Enter keys for shortcuts modal
-  React.useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (showShortcuts) {
-        if (event.key === 'Escape' || event.key === 'Enter') {
-          event.preventDefault()
-          setShowShortcuts(false)
-        }
-      }
-    }
-
-    if (showShortcuts) {
-      window.addEventListener('keydown', handleKeyDown)
-      return () => window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [showShortcuts])
-
   return (
     <TooltipProvider>
       <div className="w-full h-full bg-gray-50 dark:bg-slate-900 border-r border-gray-200 dark:border-slate-700 flex flex-col shadow-lg dark:shadow-2xl relative z-30">
@@ -157,18 +138,6 @@ export default function WorkspaceSidebar({
       <div className="px-4 py-3 border-b border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex items-center justify-between h-16">
         {!minimized && <SidebarHeader />}
         <div className="flex items-center gap-1">
-          {!minimized && (
-            <button
-              onClick={() => setShowShortcuts(true)}
-              className="p-1 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
-              title="Keyboard Shortcuts"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2z" />
-              </svg>
-            </button>
-          )}
-          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -252,11 +221,6 @@ export default function WorkspaceSidebar({
 
             {/* Sub-Agent Templates */}
             <SubAgentsSection />
-
-            {/* Running Workflows */}
-            <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700 p-1">
-              <RunningWorkflowsIndicator variant="sidebar" minimized={false} />
-            </div>
 
             {/* Chat History */}
             <ChatHistorySection
@@ -439,9 +403,6 @@ export default function WorkspaceSidebar({
             </TooltipContent>
           </Tooltip>
 
-          {/* Running Workflows Icon */}
-          <RunningWorkflowsIndicator variant="sidebar" minimized={true} />
-
           {/* Chat History Icon */}
           <ChatHistorySection minimized={true} />
 
@@ -530,90 +491,6 @@ export default function WorkspaceSidebar({
                 </Tooltip>
               </>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Keyboard Shortcuts Modal */}
-      {showShortcuts && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Keyboard Shortcuts
-              </h3>
-              <button
-                onClick={() => setShowShortcuts(false)}
-                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Simple Agent</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+1
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Simple Agent</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+2
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Deep Search Agent</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+3
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Switch to Workflow Agent</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+4
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Minimize Sidebar</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+5
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Minimize Workspace</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+6
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Toggle Auto-scroll</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+7
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Cycle Event Mode</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Ctrl+8
-                </kbd>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-700 dark:text-gray-300">Close Shortcuts</span>
-                <kbd className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs rounded font-mono">
-                  Esc
-                </kbd>
-              </div>
-            </div>
-            
-            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                Use Ctrl on Windows/Linux or Cmd on Mac
-              </p>
-            </div>
           </div>
         </div>
       )}

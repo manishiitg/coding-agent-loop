@@ -23,6 +23,7 @@ import type {
   ReconnectSessionResponse,
   SessionStatusResponse,
   LLMGuidanceResponse,
+  LLMGuidanceRequest,
   HumanFeedbackResponse,
   SummarizeConversationRequest,
   SummarizeConversationResponse,
@@ -397,14 +398,11 @@ export const agentApi = {
 
   // LLM Guidance Management
   // Set LLM guidance for a session
-  setLLMGuidance: async (sessionId: string, guidance: string): Promise<LLMGuidanceResponse> => {
-    const response = await api.post(`/api/sessions/${sessionId}/llm-guidance`, {
-      session_id: sessionId,
-      guidance: guidance
-    }, {
-      headers: {
-        'X-Session-ID': sessionId
-      }
+  setLLMGuidance: async (sessionId: string, guidance: string, memoryFolder?: string): Promise<LLMGuidanceResponse> => {
+    const body: LLMGuidanceRequest = { session_id: sessionId, guidance }
+    if (memoryFolder) body.memory_folder = memoryFolder
+    const response = await api.post(`/api/sessions/${sessionId}/llm-guidance`, body, {
+      headers: { 'X-Session-ID': sessionId }
     })
     return response.data
   },
@@ -594,11 +592,11 @@ export const agentApi = {
   },
 
   // Planner API - File Management
-  getPlannerFiles: async (folder?: string, limit: number = 100) => {
-    const params: Record<string, string | number> = { limit }
-    if (folder) {
-      params.folder = folder
-    }
+  getPlannerFiles: async (folder?: string, limit: number = -1, maxDepth?: number) => {
+    const params: Record<string, string | number> = {}
+    if (limit >= 0) params.limit = limit
+    if (folder) params.folder = folder
+    if (maxDepth !== undefined) params.max_depth = maxDepth
     const response = await workspaceApi.get('/api/documents', { params })
     return response.data
   },

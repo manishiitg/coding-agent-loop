@@ -31,7 +31,7 @@ const (
 
 // PerUserFolders are folders isolated per-user in the workspace.
 // Must stay in sync with workspace/utils/path.go PerUserFolders.
-var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
+var PerUserFolders = []string{"Chats", "Downloads", "Plans", "Projects"}
 
 // QuoteShellArg quotes a shell argument if it contains special characters
 func QuoteShellArg(arg string) string {

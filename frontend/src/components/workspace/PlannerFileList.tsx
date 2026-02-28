@@ -3,7 +3,6 @@ import { FileText, Folder, AlertCircle, Loader2, ChevronRight, ChevronDown, Tras
 import type { PlannerFile } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
-import { isTextBasedFile } from '../../utils/fileUtils'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { copyToClipboard } from '../../utils/textUtils'
 
@@ -84,10 +83,7 @@ export default function PlannerFileList({
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
     const isExpanded = expandedFolders.has(file.filepath)
     const isLoadingChildren = loadingChildren.has(file.filepath)
-    const fileExt = file.filepath.split('.').pop()?.toLowerCase() || ''
-    const isViewableBinary = ['xls', 'xlsx', 'docx', 'pdf'].includes(fileExt)
-    const isViewable = file.type === 'folder' || file.is_image || isTextBasedFile(file.filepath) || isViewableBinary
-    const isClickable = file.type === 'folder' || isViewable
+    const isClickable = true // backend determines if content is viewable; binary files show error after fetch
     const fileName = file.filepath.split('/').pop() || file.filepath
     // Check both filepath (adjusted for display) and originalFilepath (original path)
     // This ensures workspace tool events can highlight files even when paths are adjusted in workflow mode
@@ -116,7 +112,7 @@ export default function PlannerFileList({
             } else {
               if (file.type === 'folder') {
                 onFolderClick(file)
-              } else if (isViewable) {
+              } else {
                 onFileClick(file)
               }
             }
@@ -151,8 +147,8 @@ export default function PlannerFileList({
 
           {/* File Name - with reserved space for icons */}
           <div className="flex-1 min-w-0 max-w-[calc(100%-80px)]">
-            <span className={`text-sm font-medium truncate block ${!isViewable ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100'}`}>
-              {fileName} {!isViewable && <span className="text-[10px] font-normal italic ml-1">(Binary)</span>}
+            <span className="text-sm font-medium truncate block text-gray-900 dark:text-gray-100">
+              {fileName}
             </span>
           </div>
 

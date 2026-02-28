@@ -63,7 +63,7 @@ export const builtinCommands: CommandDefinition[] = [
       expanded.add('subagents')
       expanded.add('subagents/custom')
       wsStore.setExpandedFolders(expanded)
-      const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode, skills, servers) and markdown instructions.'
+      const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode) and markdown instructions.'
       const message = ctx.beforeSlash
         ? `${ctx.beforeSlash}\n\n${saContext}`
         : `I want to build a sub-agent template. ${saContext}`

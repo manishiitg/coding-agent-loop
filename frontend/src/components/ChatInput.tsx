@@ -21,6 +21,7 @@ import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import InlineSelectionPopup from './InlineSelectionPopup'
 import type { InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
+import SubAgentImportDialog from './subagents/SubAgentImportDialog'
 import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
@@ -115,8 +116,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     delegationMode
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
-  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
-  // For plan features, treat multi-agent as always 'plan'
+  const isMultiAgentMode = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype'
+  // For plan features, treat multi-agent and code-prototype as always 'plan'
   const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
 
   // Detect plan phase from events (planning → execution after confirm_plan_execution succeeds)
@@ -569,7 +570,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
-  const { showSkillImport, showMCPDetails, showMCPConfig, showModels, showResume, showWorkflowBuilder, openDialog, closeDialog } = useCommandDialogStore()
+  const { showSkillImport, showSubAgentImport, showMCPDetails, showMCPConfig, showModels, showResume, showWorkflowBuilder, openDialog, closeDialog } = useCommandDialogStore()
 
   // LLM selection (always update tab config)
   const onPrimaryLLMSelect = useCallback((llm: LLMOption) => {
@@ -1290,7 +1291,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
 
         // Submit with sub-agent builder context
-        const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode, skills, servers) and markdown instructions.'
+        const saContext = 'You are in Sub-Agent Builder mode. Create a new sub-agent template in subagents/custom/. Follow the SUBAGENT.md format with YAML frontmatter (name, description, default_reasoning_level, default_tool_mode) and markdown instructions.'
         const message = textAfterCommand
           ? `${textAfterCommand}\n\n${saContext}`
           : `I want to build a sub-agent template. ${saContext}`
@@ -2087,6 +2088,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           onSelectAll={onSelectAllSkills}
                           onClearAll={onClearAllSkills}
                           disabled={isStreaming || isSummarizing}
+                          onImportClick={() => openDialog('skillImport')}
                         />
                         {(effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
                           <SubAgentSelectionDropdown
@@ -2095,6 +2097,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             onSelectAll={onSelectAllSubAgents}
                             onClearAll={onClearAllSubAgents}
                             disabled={isStreaming || isSummarizing}
+                            onImportClick={() => openDialog('subAgentImport')}
                           />
                         )}
                       </>
@@ -2168,24 +2171,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                    {/* Workspace Access Toggle - Icon Button with expand on hover */}
-                    <button
-                      type="button"
-                      onClick={() => setEnableWorkspaceAccess(!enableWorkspaceAccess)}
-                      disabled={isStreaming || isSummarizing || enableBrowserAccess}
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        enableWorkspaceAccess
-                          ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
-                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                      } ${(isStreaming || isSummarizing || enableBrowserAccess) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <FolderOpen className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
-                        Workspace
-                      </span>
-                    </button>
-                    {/* Browser Access Toggle - Icon Button with expand on hover */}
-                    <button
+                    {/* Workspace Access Toggle - always on in multi-agent/code-prototype, toggleable in chat */}
+                    {isMultiAgentMode ? (
+                      <div className="flex items-center gap-1 p-1.5 rounded-md border bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400">
+                        <FolderOpen className="w-4 h-4 flex-shrink-0" />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEnableWorkspaceAccess(!enableWorkspaceAccess)}
+                        disabled={isStreaming || isSummarizing || enableBrowserAccess}
+                        className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                          enableWorkspaceAccess
+                            ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
+                            : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
+                        } ${(isStreaming || isSummarizing || enableBrowserAccess) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                      >
+                        <FolderOpen className="w-4 h-4 flex-shrink-0" />
+                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
+                          Workspace
+                        </span>
+                      </button>
+                    )}
+                    {/* Browser Access Toggle - hidden in code prototype mode */}
+                    {selectedModeCategory !== 'code-prototype' && <button
                       type="button"
                       onClick={() => {
                         if (!enableBrowserAccess) {
@@ -2228,7 +2237,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           Browser
                         </span>
                       )}
-                    </button>
+                    </button>}
                   </div>
                 )}
 
@@ -2623,6 +2632,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         <SkillImportDialog
           onClose={() => closeDialog('skillImport')}
           onSuccess={() => closeDialog('skillImport')}
+        />
+      )}
+
+      {showSubAgentImport && (
+        <SubAgentImportDialog
+          onClose={() => closeDialog('subAgentImport')}
+          onSuccess={() => closeDialog('subAgentImport')}
         />
       )}
       {showMCPDetails && (

@@ -11,6 +11,7 @@ import { useLLMStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useCodePrototypeStore } from '../stores/useCodePrototypeStore'
 import { logger } from './logger'
 
 // ---------------------------------------------------------------------------
@@ -120,7 +121,7 @@ export function buildQueryRequestPayload(params: {
   } = params
 
   const isChatMode = selectedModeCategory === 'chat'
-  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  const isMultiAgentMode = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype'
   const isChatLikeMode = isChatMode || isMultiAgentMode
 
   // Context editing from workflow preset
@@ -186,6 +187,10 @@ export function buildQueryRequestPayload(params: {
     selected_global_secrets: selectedGlobalSecrets,
     workflow_context_paths: isChatLikeMode && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
+      : undefined,
+    chat_mode: selectedModeCategory ?? undefined,
+    prototype_project: selectedModeCategory === 'code-prototype'
+      ? (useCodePrototypeStore.getState().currentProject?.name ?? undefined)
       : undefined,
   }
 }

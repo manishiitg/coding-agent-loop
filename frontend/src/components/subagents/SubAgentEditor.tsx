@@ -30,14 +30,6 @@ export default function SubAgentEditor({ subagent, onClose, onSave }: SubAgentEd
       frontmatterYaml.push(`default_tool_mode: ${subagent.frontmatter.default_tool_mode}`)
     }
 
-    if (subagent.frontmatter.skills) {
-      frontmatterYaml.push(`skills: ${subagent.frontmatter.skills}`)
-    }
-
-    if (subagent.frontmatter.servers) {
-      frontmatterYaml.push(`servers: ${subagent.frontmatter.servers}`)
-    }
-
     frontmatterYaml.push('---')
     frontmatterYaml.push('')
 
@@ -128,8 +120,6 @@ name: my-subagent
 description: A specialized sub-agent for...
 default_reasoning_level: medium
 default_tool_mode: simple
-skills: skill-1, skill-2
-servers: server-1
 ---
 
 # Instructions
@@ -146,9 +136,7 @@ You are a specialized agent for...`}
               <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">description</span> are required.
               Optional:{' '}
               <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">default_reasoning_level</span>,{' '}
-              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">default_tool_mode</span>,{' '}
-              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">skills</span>,{' '}
-              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">servers</span>
+              <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">default_tool_mode</span>
             </p>
           </div>
         </div>

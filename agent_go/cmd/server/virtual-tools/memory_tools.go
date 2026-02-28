@@ -13,11 +13,24 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// MemoryFolderPath is the workspace folder for agent memories
+// MemoryFolderPath is the default workspace folder for agent memories
 const MemoryFolderPath = "Plans/memories"
 
-// MemoryPromptFile is the optional user-editable file for custom memory instructions
-const MemoryPromptFile = "Plans/memories/prompt.md"
+// MemoryFolderKey is the context key for overriding the memory folder (e.g. per-project memories)
+const MemoryFolderKey delegationContextKey = "memory_folder"
+
+// getMemoryFolder returns the effective memory folder from context, falling back to the default.
+func getMemoryFolder(ctx context.Context) string {
+	if folder, ok := ctx.Value(MemoryFolderKey).(string); ok && folder != "" {
+		return folder
+	}
+	return MemoryFolderPath
+}
+
+// getMemoryPromptFile returns the prompt.md path for the effective memory folder.
+func getMemoryPromptFile(ctx context.Context) string {
+	return getMemoryFolder(ctx) + "/prompt.md"
+}
 
 // CreateMemoryTools creates the save_memory and recall_memory virtual tools
 func CreateMemoryTools() []llmtypes.Tool {
@@ -98,7 +111,7 @@ func CreateMemoryToolExecutors() map[string]func(ctx context.Context, args map[s
 	return executors
 }
 
-// loadCustomMemoryPrompt reads Plans/memories/prompt.md via the workspace client.
+// loadCustomMemoryPrompt reads {memoryFolder}/prompt.md via the workspace client.
 // Returns empty string if the file doesn't exist or can't be read.
 func loadCustomMemoryPrompt(ctx context.Context, wsClient *workspace.Client) string {
 	if wsClient == nil {
@@ -106,7 +119,7 @@ func loadCustomMemoryPrompt(ctx context.Context, wsClient *workspace.Client) str
 	}
 
 	resultJSON, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{
-		Filepath: MemoryPromptFile,
+		Filepath: getMemoryPromptFile(ctx),
 	})
 	if err != nil {
 		// File doesn't exist — this is expected and normal
@@ -145,10 +158,11 @@ func handleSaveMemory(ctx context.Context, args map[string]interface{}) (string,
 		sb.WriteString("\n\n")
 	}
 
+	memoryFolder := getMemoryFolder(ctx)
 	now := time.Now()
 	currentDate := now.Format("2006-01-02")
 	currentTimestamp := now.Format("2006-01-02 15:04")
-	dateDir := fmt.Sprintf("Plans/memories/%s", currentDate)
+	dateDir := fmt.Sprintf("%s/%s", memoryFolder, currentDate)
 
 	sb.WriteString(`## Your Task: Save a Memory
 
@@ -157,7 +171,7 @@ You are a memory management agent. Save the following information to the persist
 ### Folder Structure
 Memories are organized by date and category:
 ` + "```" + `
-Plans/memories/
+` + memoryFolder + `/
   prompt.md              ← Custom instructions (do not modify)
   ` + currentDate + `/        ← Current date folder
     general.md           ← General memories
@@ -258,23 +272,24 @@ func handleRecallMemory(ctx context.Context, args map[string]interface{}) (strin
 		sb.WriteString("\n\n")
 	}
 
+	memoryFolder := getMemoryFolder(ctx)
 	sb.WriteString(`## Your Task: Recall Memories
 
-You are a memory retrieval agent. Search the persistent memory system at Plans/memories/ and return relevant information.
+You are a memory retrieval agent. Search the persistent memory system at ` + memoryFolder + `/ and return relevant information.
 
 ### Folder Structure
 Memories are organized by date (YYYY-MM-DD/) with category files inside each folder.
 ` + "```" + `
-Plans/memories/
+` + memoryFolder + `/
   2026-02-19/general.md, decisions.md, ...
   2026-02-18/general.md, ...
   ...
 ` + "```" + `
 
 ### Steps:
-1. List date folders: execute_shell_command(command: "ls -d Plans/memories/*/ 2>/dev/null | sort -r || echo 'no memories'", working_directory: ".")
-2. Search across ALL dates for matching content: execute_shell_command(command: "grep -ril '{keyword}' Plans/memories/ 2>/dev/null", working_directory: ".")
-3. Read matching files: execute_shell_command(command: "cat Plans/memories/{date}/{file}.md", working_directory: ".")
+1. List date folders: execute_shell_command(command: "ls -d ` + memoryFolder + `/*/ 2>/dev/null | sort -r || echo 'no memories'", working_directory: ".")
+2. Search across ALL dates for matching content: execute_shell_command(command: "grep -ril '{keyword}' ` + memoryFolder + `/ 2>/dev/null", working_directory: ".")
+3. Read matching files: execute_shell_command(command: "cat ` + memoryFolder + `/{date}/{file}.md", working_directory: ".")
 4. Synthesize findings into a clear summary
 5. If no relevant memories found, say so clearly
 
@@ -341,14 +356,15 @@ func handleCompressMemory(ctx context.Context, args map[string]interface{}) (str
 		sb.WriteString("\n\n")
 	}
 
+	memoryFolder := getMemoryFolder(ctx)
 	sb.WriteString(`## Your Task: Compress and Consolidate Memories
 
 You are a memory compression agent. Your job is to read all memory files, identify redundancies, and rewrite them cleanly.
 
 ### Phase 1 — Inventory
-1. List all date folders: execute_shell_command(command: "ls -d Plans/memories/*/ 2>/dev/null | sort || echo 'no memories'", working_directory: ".")
-2. For each date folder, list files: execute_shell_command(command: "ls Plans/memories/{date}/ 2>/dev/null", working_directory: ".")
-3. Read ALL .md files (skip prompt.md): execute_shell_command(command: "cat Plans/memories/{date}/{file}.md", working_directory: ".")
+1. List all date folders: execute_shell_command(command: "ls -d ` + memoryFolder + `/*/ 2>/dev/null | sort || echo 'no memories'", working_directory: ".")
+2. For each date folder, list files: execute_shell_command(command: "ls ` + memoryFolder + `/{date}/ 2>/dev/null", working_directory: ".")
+3. Read ALL .md files (skip prompt.md): execute_shell_command(command: "cat ` + memoryFolder + `/{date}/{file}.md", working_directory: ".")
 
 ### Phase 2 — Analyze
 Review all entries and identify:
@@ -369,13 +385,13 @@ Review all entries and identify:
 ### Phase 3 — Rewrite
 For each file that needs changes:
 1. Rewrite the entire file with consolidated content:
-   execute_shell_command(command: "cat > Plans/memories/{date}/{category}.md << 'MEMEOF'\n# {Category Title}\n\n## {timestamp}\n{consolidated content}\nMEMEOF", working_directory: ".")
-2. Remove empty files: execute_shell_command(command: "rm Plans/memories/{date}/{file}.md", working_directory: ".")
-3. Remove empty date folders: execute_shell_command(command: "rmdir Plans/memories/{date} 2>/dev/null", working_directory: ".")
+   execute_shell_command(command: "cat > ` + memoryFolder + `/{date}/{category}.md << 'MEMEOF'\n# {Category Title}\n\n## {timestamp}\n{consolidated content}\nMEMEOF", working_directory: ".")
+2. Remove empty files: execute_shell_command(command: "rm ` + memoryFolder + `/{date}/{file}.md", working_directory: ".")
+3. Remove empty date folders: execute_shell_command(command: "rmdir ` + memoryFolder + `/{date} 2>/dev/null", working_directory: ".")
 
 ### Rules
 - **NEVER modify prompt.md** — it contains user-editable instructions
-- **Preserve the daily folder structure** (Plans/memories/YYYY-MM-DD/)
+- **Preserve the daily folder structure** (` + memoryFolder + `/YYYY-MM-DD/)
 - **Preserve the timestamp heading format**: ## YYYY-MM-DD HH:MM
 - **When merging entries across dates**, place in the most recent relevant date
 - **When in doubt, keep the information** — it's better to be slightly verbose than to lose data
@@ -418,8 +434,12 @@ For each file that needs changes:
 	return string(resultJSON), nil
 }
 
-// GetMemoryInstructions returns system prompt instructions for the memory system
-func GetMemoryInstructions() string {
+// GetMemoryInstructions returns system prompt instructions for the memory system.
+// Pass memoryFolder="" to use the default (Plans/memories).
+func GetMemoryInstructions(memoryFolder string) string {
+	if memoryFolder == "" {
+		memoryFolder = MemoryFolderPath
+	}
 	return `
 ## Memory System
 
@@ -431,9 +451,9 @@ You have a persistent memory system that survives across sessions. Use it to bui
 - **compress_memory(focus?)** — Starts a background agent to consolidate, deduplicate, and compress memories. Optionally focus on a specific topic.
 
 ### Storage Structure
-Memories are organized by date in Plans/memories/:
-- Plans/memories/YYYY-MM-DD/{category}.md — e.g., Plans/memories/2026-02-19/decisions.md
-- Plans/memories/prompt.md — Optional user-editable custom instructions for memory agents
+Memories are organized by date in ` + memoryFolder + `/:
+- ` + memoryFolder + `/YYYY-MM-DD/{category}.md — e.g., ` + memoryFolder + `/2026-02-19/decisions.md
+- ` + memoryFolder + `/prompt.md — Optional user-editable custom instructions for memory agents
 - Each day naturally separates memories over time, making history easier to scan
 
 ### Recall Guidelines

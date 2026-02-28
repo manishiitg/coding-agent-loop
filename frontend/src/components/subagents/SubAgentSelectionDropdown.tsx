@@ -13,6 +13,7 @@ interface SubAgentSelectionDropdownProps {
   onSelectAll: (allNames: string[]) => void;
   onClearAll: () => void;
   disabled?: boolean;
+  onImportClick?: () => void;
 }
 
 export default function SubAgentSelectionDropdown({
@@ -20,7 +21,8 @@ export default function SubAgentSelectionDropdown({
   onSubAgentToggle,
   onSelectAll,
   onClearAll,
-  disabled = false
+  disabled = false,
+  onImportClick
 }: SubAgentSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [subagents, setSubAgents] = useState<SubAgent[]>([]);
@@ -221,11 +223,25 @@ export default function SubAgentSelectionDropdown({
                   </div>
 
                   {/* Instructions */}
-                  <div className="text-xs text-gray-500">
-                    {subagents.length === 0
-                      ? 'Use /build-subagent to create templates'
-                      : `${selectedSubAgents.length}/${subagents.length} selected`
-                    }
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-500">
+                      {subagents.length === 0
+                        ? 'Use /build-subagent or import'
+                        : `${selectedSubAgents.length}/${subagents.length} selected`
+                      }
+                    </span>
+                    {onImportClick && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsOpen(false);
+                          onImportClick();
+                        }}
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline font-medium"
+                      >
+                        Import Sub-Agent
+                      </button>
+                    )}
                   </div>
                 </div>
               </Card>

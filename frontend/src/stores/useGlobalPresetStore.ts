@@ -74,7 +74,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       activePresetIds: {
         'chat': null,
         'workflow': null,
-        'multi-agent': null
+        'multi-agent': null,
+        'code-prototype': null
       },
       
       currentPresetServers: [],
@@ -746,7 +747,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             activePresetIds: {
               chat: state.activePresetIds.chat === id ? null : state.activePresetIds.chat,
               workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow,
-              'multi-agent': state.activePresetIds['multi-agent'] === id ? null : state.activePresetIds['multi-agent']
+              'multi-agent': state.activePresetIds['multi-agent'] === id ? null : state.activePresetIds['multi-agent'],
+              'code-prototype': state.activePresetIds['code-prototype'] === id ? null : state.activePresetIds['code-prototype']
             }
           }))
         } catch (error) {
@@ -1164,7 +1166,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           activePresetIds: {
             'chat': null,
             'workflow': null,
-            'multi-agent': null
+            'multi-agent': null,
+            'code-prototype': null
           }
         })
       },

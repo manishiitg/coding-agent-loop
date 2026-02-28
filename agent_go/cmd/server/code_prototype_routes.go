@@ -339,7 +339,7 @@ func deletePrototypeFolder(ctx context.Context, folderPath, userID string) error
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return err

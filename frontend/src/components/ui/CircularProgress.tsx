@@ -26,10 +26,11 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
   className = '',
   tokenUsage
 }) => {
+  const [pinned, setPinned] = React.useState(false)
   const radius = (size - strokeWidth) / 2
   const circumference = 2 * Math.PI * radius
   const offset = circumference - (percentage / 100) * circumference
-  
+
 
   // Helper function to format token count
   const formatTokenCount = (tokens: number): string => {
@@ -280,10 +281,16 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
     return '' // Low: 0-30% (default color)
   }
 
+  // Format percentage for display next to circle
+  const displayPercent = percentage >= 10 ? `${Math.round(percentage)}%` : `${percentage.toFixed(1)}%`
+
   return (
-    <Tooltip>
+    <Tooltip open={pinned || undefined}>
       <TooltipTrigger asChild>
-        <div className={`relative inline-flex items-center justify-center cursor-pointer ${className}`}>
+        <div
+          className={`relative inline-flex items-center gap-1 cursor-pointer select-none ${className}`}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPinned(p => !p) }}
+        >
           <svg
             width={size}
             height={size}
@@ -321,13 +328,17 @@ export const CircularProgress: React.FC<CircularProgressProps> = ({
               }}
             />
           </svg>
+          <span className={`text-[10px] font-medium leading-none ${getPercentageTextColor() || 'text-gray-500 dark:text-gray-400'}`}>
+            {displayPercent}
+          </span>
         </div>
       </TooltipTrigger>
-      <TooltipContent 
+      <TooltipContent
         className="max-w-md min-w-[320px]"
         side="left"
         align="end"
         sideOffset={8}
+        onPointerDownOutside={() => setPinned(false)}
       >
         {getTooltipContent()}
       </TooltipContent>

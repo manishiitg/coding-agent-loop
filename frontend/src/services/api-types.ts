@@ -1,5 +1,5 @@
 // API-specific types (separate from event types)
-import type { PollingEventSchema } from '../generated/events-bridge'
+import type { PollingEventSchema } from '../generated/event-types'
 import type { EventTypeString } from '../generated/event-types'
 import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching'
 

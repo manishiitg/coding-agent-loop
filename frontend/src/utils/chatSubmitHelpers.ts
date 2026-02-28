@@ -157,11 +157,9 @@ export function buildQueryRequestPayload(params: {
       ? (currentTab?.config?.enableWorkspaceAccess ?? true)
       : undefined,
     enable_browser_access: isChatLikeMode
-      ? (currentTab?.config?.enableBrowserAccess ?? false)
+      ? ((currentTab?.config?.browserMode ?? 'none') === 'headless' || (currentTab?.config?.browserMode ?? 'none') === 'cdp')
       : undefined,
-    cdp_port: isChatLikeMode
-      && (currentTab?.config?.enableBrowserAccess ?? false)
-      && (currentTab?.config?.useCdp ?? false)
+    cdp_port: isChatLikeMode && (currentTab?.config?.browserMode ?? 'none') === 'cdp'
       ? (currentTab?.config?.cdpPort || 9222)
       : undefined,
     delegation_mode: isMultiAgentMode

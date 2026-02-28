@@ -133,12 +133,14 @@ export interface EventDataUnion {
   step_token_usage?: StepTokenUsageEvent;
   step_progress_updated?: StepProgressUpdatedEvent;
   decision_evaluated?: DecisionEvaluatedEvent;
+  routing_evaluated?: RoutingEvaluatedEvent;
   pre_validation_completed?: PreValidationCompletedEvent;
   todo_steps_extracted?: TodoStepsExtractedEvent;
   variables_extracted?: VariablesExtractedEvent;
   independent_steps_selected?: IndependentStepsSelectedEvent;
   request_human_feedback?: RequestHumanFeedbackEvent;
   blocking_human_feedback?: BlockingHumanFeedbackEvent;
+  blocking_human_questions?: BlockingHumanQuestionsEvent;
   human_verification_response?: HumanVerificationResponseEvent;
   structured_output_start?: StructuredOutputStartEvent;
   structured_output_end?: StructuredOutputEndEvent;
@@ -446,6 +448,7 @@ export interface ToolCallStartEvent {
   tool_params?: ToolParams;
   server_name?: string;
   is_parallel?: boolean;
+  tool_call_id?: string;
 }
 export interface ToolParams {
   arguments?: string;
@@ -469,6 +472,7 @@ export interface ToolCallEndEvent {
   result?: string;
   duration?: number;
   server_name?: string;
+  tool_call_id?: string;
   context_usage_percent?: number;
   model_context_window?: number;
   context_window_usage?: number;
@@ -493,6 +497,7 @@ export interface ToolCallErrorEvent {
   error?: string;
   server_name?: string;
   duration?: number;
+  tool_call_id?: string;
 }
 export interface ToolExecutionEvent {
   timestamp?: string;
@@ -1690,6 +1695,27 @@ export interface BlockingHumanFeedbackEvent {
   no_label?: string;
   options?: string[];
 }
+export interface BlockingHumanQuestionsEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  request_id?: string;
+  questions?: BlockingHumanQuestionsQuestion[];
+}
+export interface BlockingHumanQuestionsQuestion {
+  id?: string;
+  question?: string;
+}
 export interface HumanVerificationResponseEvent {
   timestamp?: string;
   trace_id?: string;
@@ -1818,6 +1844,9 @@ export interface StreamingEndEvent {
   total_tokens?: number;
   finish_reason?: string;
   duration?: string;
+  resolved_model?: string;
+  cache_tokens?: number;
+  tool_calls?: number;
 }
 export interface StreamingErrorEvent {
   timestamp?: string;

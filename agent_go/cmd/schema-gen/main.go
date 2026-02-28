@@ -142,6 +142,7 @@ type EventDataUnion struct {
 	StepTokenUsage         *todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage,omitempty"`
 	StepProgressUpdated    *todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated,omitempty"`
 	DecisionEvaluated      *todo_creation_human.DecisionEvaluatedEvent      `json:"decision_evaluated,omitempty"`
+	RoutingEvaluated       *todo_creation_human.RoutingEvaluatedEvent        `json:"routing_evaluated,omitempty"`
 	PreValidationCompleted *todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed,omitempty"`
 
 	// Todo/Planning Events
@@ -297,6 +298,7 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.StepTokenUsage:         "step_token_usage",
 	orchestrator_events.StepProgressUpdated:    "step_progress_updated",
 	orchestrator_events.DecisionEvaluated:      "decision_evaluated",
+	orchestrator_events.RoutingEvaluated:       "routing_evaluated",
 	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
 	events.PrerequisiteNavigation:              "prerequisite_navigation",
 

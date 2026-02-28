@@ -9,12 +9,20 @@ interface ClaudeCodeSectionProps {
   onPublished?: () => void
 }
 
+const CLAUDE_CODE_MODELS = [
+  { id: 'claude-code', label: 'Auto (default)', description: 'Uses the CLI default model' },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6 — High Reasoning', description: 'Most capable, best for complex tasks' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — Medium', description: 'Balanced speed and capability' },
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — Fast', description: 'Fastest, best for simple tasks' },
+]
+
 export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
   const [publishStatus, setPublishStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [publishError, setPublishError] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState('claude-code')
   const { saveLLM, savedLLMs } = useLLMStore()
 
   // Test connection state
@@ -22,7 +30,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
   const [testMessage, setTestMessage] = useState<string | null>(null)
 
   const alreadyPublished = savedLLMs.some(
-    llm => llm.provider === 'claude-code' && llm.model_id === 'claude-code'
+    llm => llm.provider === 'claude-code' && llm.model_id === selectedModel
   )
 
   const handleTestConnection = async () => {
@@ -56,7 +64,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
     try {
       const llmModel = {
         provider: 'claude-code' as const,
-        model_id: 'claude-code',
+        model_id: selectedModel,
       }
 
       saveLLM(llmModel, publishName.trim(), 'Claude Code CLI', 'none')
@@ -97,12 +105,20 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
 
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Model</h4>
-        <div className="flex items-center gap-2">
-          <div className="flex-1 bg-secondary/50 border border-border/50 rounded px-3 py-2 text-sm text-muted-foreground font-mono">
-            claude-code
-          </div>
-          <span className="text-xs text-muted-foreground">(fixed)</span>
-        </div>
+        <select
+          value={selectedModel}
+          onChange={e => setSelectedModel(e.target.value)}
+          className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+        >
+          {CLAUDE_CODE_MODELS.map(m => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+        {selectedModel !== 'claude-code' && (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Passes <code className="bg-secondary px-1 py-0.5 rounded">--model {selectedModel}</code> to the CLI.
+          </p>
+        )}
       </Card>
 
       {/* Test Connection */}
@@ -178,7 +194,8 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
             size="sm"
             onClick={() => {
               setIsPublishing(true)
-              setPublishName('Claude Code')
+              const modelEntry = CLAUDE_CODE_MODELS.find(m => m.id === selectedModel)
+              setPublishName(modelEntry ? `Claude Code (${modelEntry.label.split(' —')[0]})` : 'Claude Code')
               setPublishError(null)
             }}
           >

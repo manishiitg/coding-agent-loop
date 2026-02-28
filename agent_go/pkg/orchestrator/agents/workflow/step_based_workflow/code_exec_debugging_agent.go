@@ -656,6 +656,20 @@ func (agent *WorkflowCodeExecDebuggingAgent) Execute(ctx context.Context, templa
 		return "", nil, err
 	}
 
+	// Update code execution registry to include newly registered plan modification tools
+	// Without this, CLI providers (claude-code, gemini-cli) won't see the plan modification tools
+	if agent.GetConfig().UseCodeExecutionMode {
+		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to update code execution registry with plan modification tools: %v", err))
+			}
+		} else {
+			if logger != nil {
+				logger.Info("✅ Code execution registry updated with plan modification tools for CLI provider")
+			}
+		}
+	}
+
 	// Prepare prompts
 	systemPrompt := agent.codeExecDebuggingSystemPromptProcessor(templateVars)
 	userMessage := agent.codeExecDebuggingUserMessageProcessor(templateVars)

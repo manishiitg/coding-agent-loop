@@ -124,6 +124,38 @@ func wrapReadImageExecutor(executors map[string]func(ctx context.Context, args m
 	}
 }
 
+// SetReadImageFallbackLLMConfig re-wraps the read_image executor so that when the
+// context doesn't carry ToolExecutionLLMConfigKey (e.g. HTTP calls from claude CLI),
+// the provided fallbackConfig is injected before the inner executor runs.
+// Call this after both CreateWorkspaceAdvancedToolExecutors* AND the agent have been
+// created, so the real LLM config is known.
+func SetReadImageFallbackLLMConfig(
+	executors map[string]func(ctx context.Context, args map[string]any) (string, error),
+	fallback mcpagent.LLMModel,
+) {
+	if existing, ok := executors["read_image"]; ok {
+		executors["read_image"] = injectLLMConfigFallback(existing, fallback)
+		log.Printf("[READ_IMAGE_DEBUG] read_image executor wrapped with LLM fallback (provider=%s, model=%s)",
+			fallback.Provider, fallback.ModelID)
+	}
+}
+
+// injectLLMConfigFallback wraps an executor: if the context has no ToolExecutionLLMConfigKey,
+// the fallback config is injected before calling the inner executor.
+func injectLLMConfigFallback(
+	inner func(ctx context.Context, args map[string]any) (string, error),
+	fallback mcpagent.LLMModel,
+) func(ctx context.Context, args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
+		if ctx.Value(mcpagent.ToolExecutionLLMConfigKey) == nil {
+			log.Printf("[READ_IMAGE_DEBUG] No LLM config in context, injecting fallback (provider=%s, model=%s)",
+				fallback.Provider, fallback.ModelID)
+			ctx = context.WithValue(ctx, mcpagent.ToolExecutionLLMConfigKey, fallback)
+		}
+		return inner(ctx, args)
+	}
+}
+
 // wrapReadImageWithLLM wraps the base read_image executor (which returns base64 data)
 // with a dedicated LLM call that analyzes the image and returns a text response.
 // The LLM config (provider, model, API key) is read from context at execution time.

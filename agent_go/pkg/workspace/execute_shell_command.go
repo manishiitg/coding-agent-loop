@@ -24,8 +24,13 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		return "", fmt.Errorf("working_directory is required for execute_shell_command; specify the step execution folder path (e.g., 'execution/step-1/') so commands run in the correct directory")
 	}
 
-	// Validate working directory against folder guard (read operation — cd is not a write;
-	// actual write restrictions are enforced container-side via FolderGuard mount config)
+	// Validate working_directory as a READ operation (isWrite=false).
+	// Rationale: setting working_directory is just a "cd" — it doesn't write anything.
+	// Using isWrite=true was rejecting valid paths like "." when FolderGuard had
+	// restricted WritePaths (e.g., ["Chats/abc/"]), even though "." is in ReadPaths.
+	// Actual write restrictions are enforced container-side: the FolderGuard config
+	// (populated below, lines 35-48) is sent to the workspace API, which sets up
+	// tmpfs overlays and bind mounts to physically prevent writes outside allowed paths.
 	if params.WorkingDirectory != "" {
 		if err := c.ValidatePath(params.WorkingDirectory, false); err != nil {
 			return "", err

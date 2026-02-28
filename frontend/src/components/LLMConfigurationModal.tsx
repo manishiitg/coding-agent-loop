@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { X, Settings, Layers, Lock } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
-import { useLLMStore, useAppStore } from '../stores'
+import { useLLMStore, useAppStore, useChatStore } from '../stores'
 import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration, SavedLLM } from '../services/api-types'
 import { AnthropicSection } from './AnthropicSection'
 import { OpenRouterSection } from './OpenRouterSection'
@@ -37,6 +37,10 @@ type APIKeyStatus = Record<APIKeyProviderType, APIKeyStatusValue>
 type APIKeyError = Record<APIKeyProviderType, string | null>
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
+  const activeTabId = useChatStore(state => state.activeTabId)
+  const setTabConfig = useChatStore(state => state.setTabConfig)
+  const getTabConfig = useChatStore(state => state.getTabConfig)
+
   // Get current mode from app store
   const agentMode = useAppStore(state => state.agentMode)
   // Map 'simple' to 'chat' for our mode-specific configs
@@ -309,6 +313,19 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [providerConfigMap, modeAgentConfig, setModeAgentConfig, setModePrimaryConfig, refreshAvailableLLMs])
 
   // Handle library selection
+  // Sync the active tab's llmConfig so ChatInput + sidebar pick up the change immediately
+  const syncActiveTabLLM = useCallback((provider: string, model_id: string) => {
+    if (!activeTabId) return
+    const existing = getTabConfig(activeTabId)
+    setTabConfig(activeTabId, {
+      llmConfig: {
+        ...(existing?.llmConfig ?? {}),
+        provider,
+        model_id,
+      } as ExtendedLLMConfiguration,
+    })
+  }, [activeTabId, getTabConfig, setTabConfig])
+
   const handleLibrarySelect = useCallback((llm: SavedLLM) => {
     const provider = llm.provider
 
@@ -316,7 +333,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     if (provider === 'claude-code' || provider === 'gemini-cli') {
       const newPrimaryConfig: LLMConfiguration = {
         provider,
-        model_id: llm.model_id || provider,
+        model_id: llm.model_id,
         fallback_models: [],
         cross_provider_fallback: undefined
       }
@@ -324,9 +341,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       if (modeAgentConfig) {
         setModeAgentConfig({
           ...modeAgentConfig,
-          primary: { provider, model_id: llm.model_id || provider }
+          primary: { provider, model_id: llm.model_id }
         })
       }
+      syncActiveTabLLM(provider, llm.model_id)
       refreshAvailableLLMs()
       return
     }
@@ -341,7 +359,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       cross_provider_fallback: undefined
     })
     handleSetPrimaryProvider(provider)
-  }, [providerConfigMap, handleSetPrimaryProvider])
+    syncActiveTabLLM(provider, llm.model_id)
+  }, [providerConfigMap, handleSetPrimaryProvider, syncActiveTabLLM])
 
   if (!isOpen) return null
 

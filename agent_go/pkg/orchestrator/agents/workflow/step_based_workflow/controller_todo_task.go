@@ -564,10 +564,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	defer agent.Close()
 
 	// Override prompt template var for CLI providers: use normal prompt (not code execution prompt)
+	// Also set ShowToolsSection so CLI providers get an explicit tool listing in the system prompt
 	if agent.GetConfig() != nil {
 		provider := agent.GetConfig().LLMConfig.Primary.Provider
 		if isCliProviderForPrompt(provider) {
 			templateVars["IsCodeExecutionMode"] = "false"
+			templateVars["ShowToolsSection"] = "true"
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 CLI provider '%s' - using normal prompt (code exec mode still enabled for tool routing)", provider))
 		}
 	}

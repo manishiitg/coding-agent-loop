@@ -1496,6 +1496,40 @@ export interface DecisionResponseEvent {
   feedback?: unknown[];
   evidence?: string[];
 }
+export interface RoutingEvaluatedEvent {
+  timestamp?: string;
+  trace_id?: string;
+  span_id?: string;
+  event_id?: string;
+  parent_id?: string;
+  is_end_event?: boolean;
+  correlation_id?: string;
+  hierarchy_level?: number;
+  session_id?: string;
+  component?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  step_id?: string;
+  step_index?: number;
+  step_title?: string;
+  step_path?: string;
+  routing_question?: string;
+  routing_response?: RoutingResponseEvent;
+  routes?: RoutingRouteEvent[];
+  run_folder?: string;
+  workspace_path?: string;
+}
+export interface RoutingResponseEvent {
+  selected_route_id?: string;
+  reasoning?: string;
+}
+export interface RoutingRouteEvent {
+  route_id?: string;
+  route_name?: string;
+  condition?: string;
+  next_step_id?: string;
+}
 export interface PreValidationCompletedEvent {
   timestamp?: string;
   trace_id?: string;

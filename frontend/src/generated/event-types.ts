@@ -81,6 +81,7 @@ import type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  RoutingEvaluatedEvent,
   PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
@@ -344,7 +345,7 @@ export interface EventTypeToDataMap {
   'step_token_usage': StepTokenUsageEvent;
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
-  'routing_evaluated': Record<string, unknown>;
+  'routing_evaluated': RoutingEvaluatedEvent;
   'prerequisite_navigation': PrerequisiteNavigationEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
@@ -848,6 +849,7 @@ export type {
   StepTokenUsageEvent,
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
+  RoutingEvaluatedEvent,
   PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,

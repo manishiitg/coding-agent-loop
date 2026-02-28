@@ -179,7 +179,52 @@ Example: {"summary": "brief", "details_file": "step_X_details.md"}
 - Location: 'evaluation/{{.RunPathRelative}}/evaluation_report.json'
 - Contains: total_score, score_percentage, step_scores[] with reasoning
 - Use low scores (< 50%) to identify steps needing better success criteria
-</details>`)
+</details>
+
+{{if .IsCodeExecutionMode}}
+## 🛠️ AVAILABLE TOOLS
+
+### Plan Modification Tools
+**Always call 'human_feedback' first to confirm changes before using any of these.**
+
+#### Update Steps
+- 'update_regular_step(existing_step_id, ...)' — Update fields of a regular step
+- 'update_conditional_step(existing_step_id, ...)' — Update a conditional step
+- 'update_decision_step(existing_step_id, ...)' — Update a decision step
+- 'update_routing_step(existing_step_id, ...)' — Update a routing step
+- 'update_human_input_step(existing_step_id, ...)' — Update a human input step
+- 'update_todo_task_step(existing_step_id, ...)' — Update a todo task step
+- 'update_validation_schema(existing_step_id, validation_schema)' — Update a step's validation schema
+- 'update_success_criteria(existing_step_id, success_criteria)' — Update a step's success criteria
+
+#### Add Steps
+- 'add_regular_step' — Add a standard execution step
+- 'add_conditional_step' — Add an if/else branch step
+- 'add_decision_step' — Add an execute-then-route step
+- 'add_loop_step' — Add a repeating step
+- 'add_human_input_step' — Add a step that blocks for user input
+- 'add_routing_step' — Add an N-way LLM routing step
+- 'add_todo_task_step' — Add a todo-task orchestration step
+
+#### Delete Steps
+- 'delete_plan_steps(step_ids[])' — Delete steps by their IDs
+
+#### Conditional Branch Tools
+- 'convert_step_to_conditional(step_id, condition_question, if_true_steps, if_false_steps)'
+- 'convert_conditional_to_regular(step_id)'
+- 'add_branch_steps(parent_step_id, branch_type, new_steps[])'
+- 'update_branch_steps(parent_step_id, branch_type, updated_steps[])'
+- 'delete_branch_steps(parent_step_id, branch_type, deleted_step_ids[])'
+
+#### Todo Task Route Tools
+- 'add_todo_task_route(parent_step_id, new_route)'
+- 'update_todo_task_route(parent_step_id, existing_route_id, ...)'
+- 'delete_todo_task_route(parent_step_id, deleted_route_id)'
+
+### Workspace Tools
+- 'execute_shell_command(command, working_directory)' — Run shell commands to read logs/files
+- 'human_feedback(question, response_type)' — Ask user for approval or input (**call before any plan change**)
+{{end}}`)
 
 var improvementUserTemplate = MustRegisterTemplate("improvementUser", `{{if .UserImprovementRequest}}{{.UserImprovementRequest}}{{else}}What would you like help with regarding the plan?{{end}}`)
 
@@ -192,6 +237,7 @@ type WorkflowPlanImprovementTemplate struct {
 	ExecutionResultsSummary string
 	AllowedPaths            string
 	UserImprovementRequest  string
+	IsCodeExecutionMode     bool
 }
 
 // WorkflowPlanImprovementAgent analyzes execution results and provides feedback for plan improvement
@@ -612,6 +658,7 @@ Evaluation data (LLM-scored quality assessments) - ACCESS SCOPED TO THIS ITERATI
 		"SessionID":               pim.sessionID,
 		"WorkflowID":              pim.workflowID,
 		"UserImprovementRequest":  userImprovementRequest, // User's improvement goal from blocking feedback
+		"IsCodeExecutionMode":     fmt.Sprintf("%v", requiresCodeExecutionForProvider(pim.presetPhaseLLM)),
 	}
 
 	// Execute plan improvement agent
@@ -1031,6 +1078,7 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 	}
 
 	// Prepare template variables
+	isCodeExecutionMode := agent.GetConfig().UseCodeExecutionMode
 	planImprovementTemplateVars := map[string]string{
 		"WorkspacePath":           workspacePath,
 		"RunPathRelative":         runPathRelative,
@@ -1042,6 +1090,7 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 		"SessionID":               templateVars["SessionID"],
 		"WorkflowID":              templateVars["WorkflowID"],
 		"UserImprovementRequest":  templateVars["UserImprovementRequest"],
+		"IsCodeExecutionMode":     fmt.Sprintf("%v", isCodeExecutionMode),
 	}
 
 	// Create template data for plan improvement
@@ -1053,6 +1102,7 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 		ExecutionResultsSummary: executionResultsSummary,
 		AllowedPaths:            allowedPaths,
 		UserImprovementRequest:  templateVars["UserImprovementRequest"],
+		IsCodeExecutionMode:     isCodeExecutionMode,
 	}
 
 	// Get logger and MCP agent from base agent
@@ -1136,6 +1186,21 @@ func (agent *WorkflowPlanImprovementAgent) Execute(ctx context.Context, template
 	}
 	if err := registerPlanModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, moveFile, "plan improvement agent", unlockLearningsFunc); err != nil {
 		return "", nil, err
+	}
+
+	// Update code execution registry to include newly registered plan modification tools
+	// Without this, CLI providers (claude-code, gemini-cli) won't see the plan modification tools
+	// because the registry was already built during CreateAndSetupStandardAgentWithConfig with only the initial tools
+	if agent.GetConfig().UseCodeExecutionMode {
+		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+			if logger != nil {
+				logger.Warn(fmt.Sprintf("⚠️ Failed to update code execution registry with plan modification tools: %v", err))
+			}
+		} else {
+			if logger != nil {
+				logger.Info("✅ Code execution registry updated with plan modification tools for CLI provider")
+			}
+		}
 	}
 
 	// Generate system prompt and user message separately

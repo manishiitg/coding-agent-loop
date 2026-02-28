@@ -56,14 +56,6 @@ export const OrchestratorEndEventDisplay: React.FC<OrchestratorEndEventDisplayPr
         )}
       </div>
 
-      {/* Objective content - always visible with markdown rendering */}
-      {event.objective && (
-        <div className="mt-3">
-          <div className="text-xs font-medium text-yellow-600 dark:text-yellow-400 mb-2">Objective:</div>
-          <ConversationMarkdownRenderer content={event.objective} maxHeight="400px" />
-        </div>
-      )}
-
       {/* Result content - always visible with markdown rendering */}
       {event.result && (
         <div className="mt-3">

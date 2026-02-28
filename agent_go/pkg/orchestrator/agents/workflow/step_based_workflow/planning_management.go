@@ -170,8 +170,9 @@ func validateBranchStepIDs(steps []PlanStepInterface, parentTitle, branchType st
 // Returns the generated PlanningResponse and updated conversation history
 func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context, iteration int, humanFeedback string, conversationHistory []llmtypes.MessageContent, existingPlan *PlanningResponse) (*PlanningResponse, []llmtypes.MessageContent, error) {
 	planningTemplateVars := map[string]string{
-		"Objective":     hcpo.GetObjective(),
-		"WorkspacePath": hcpo.GetWorkspacePath(),
+		"Objective":           hcpo.GetObjective(),
+		"WorkspacePath":       hcpo.GetWorkspacePath(),
+		"IsCodeExecutionMode": fmt.Sprintf("%v", requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)),
 		// Human feedback is passed directly as userMessage parameter to the planning agent
 		// It will be included in the update prompt template when in UPDATE mode
 	}
@@ -377,6 +378,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 	// Register variable extraction tools (extract_variables, update_variable)
 	if err := registerVariableExtractionTools(mcpAgent, workspacePath, hcpo.GetLogger(), hcpo.ReadWorkspaceFile, hcpo.WriteWorkspaceFile, "planning agent"); err != nil {
 		return nil, nil, err
+	}
+
+	// Update code execution registry to include all late-registered tools (plan modification + variable extraction)
+	// Without this, CLI providers (claude-code, gemini-cli) won't see these tools via the HTTP bridge
+	if requiresCodeExecutionForProvider(hcpo.presetPhaseLLM) {
+		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry with plan modification tools: %v", err))
+		} else {
+			hcpo.GetLogger().Info("✅ Code execution registry updated with plan modification and variable extraction tools for CLI provider")
+		}
 	}
 
 	// Always use UPDATE mode prompt (handles both CREATE and UPDATE scenarios)

@@ -4004,6 +4004,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 				workspaceExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
 				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
+				// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
+				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
+					virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
+				}
 				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (advanced only)
 
 				// Extract @context file paths for additional write access
@@ -7001,6 +7005,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 			workspaceExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
 			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
+			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
+			if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
+				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
+			}
 			_, _, toolCategories := createCustomTools(false)
 
 			// Check for skill-creator

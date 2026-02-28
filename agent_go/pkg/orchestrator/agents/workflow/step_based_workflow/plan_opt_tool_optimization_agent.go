@@ -642,6 +642,16 @@ func (ptom *PlanToolOptimizationManager) PlanToolOptimizationOnly(ctx context.Co
 		return "", fmt.Errorf("failed to register update_step_config_tools tool: %w", err)
 	}
 
+	// Update code execution registry to include the newly registered update_step_config_tools
+	// Without this, CLI providers (claude-code, gemini-cli) won't see this tool via the HTTP bridge
+	if toolOptimizationAgent.(*WorkflowPlanToolOptimizationAgent).GetConfig().UseCodeExecutionMode {
+		if err := mcpAgent.UpdateCodeExecutionRegistry(); err != nil {
+			ptom.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update code execution registry with update_step_config_tools: %v", err))
+		} else {
+			ptom.GetLogger().Info("✅ Code execution registry updated with update_step_config_tools for CLI provider")
+		}
+	}
+
 	// Create mapping of step IDs to their learnings folder paths (excluding code exec mode steps)
 	stepLearningsFolderMapping := createStepLearningsFolderMapping(stepConfigs, existingPlan, presetCodeExecMode, ptom.GetWorkspacePath())
 	stepLearningsFolderMappingJSONBytes, err := json.MarshalIndent(stepLearningsFolderMapping, "", "  ")

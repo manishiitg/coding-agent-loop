@@ -88,30 +88,30 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
 				Options:     []WorkflowPhaseOption{}, // No options for plan debugger phase
 			},
-			{
-				ID:          "plan-tool-optimization",
-				Title:       "Plan Tool Optimization",
-				Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json. Compares configured tools vs actually used tools and updates step_config.json to include only tools that were used.",
-				Options:     []WorkflowPhaseOption{}, // No options for tool optimization phase
-			},
-			{
-				ID:          "learning-anonymization",
-				Title:       "Learning Anonymization",
-				Description: "Scan learnings folder and replace actual values with variable placeholders. For .md files: replace with {{VARIABLE_NAME}} placeholders. For .py files: refactor to accept variables as parameters (argparse/env vars). Makes learnings reusable across different environments.",
-				Options:     []WorkflowPhaseOption{}, // No options for anonymization phase
-			},
-			{
-				ID:          "plan-learnings-alignment",
-				Title:       "Plan-Learnings Alignment",
-				Description: "Analyze alignment between plan.json and learnings folders to identify and categorize learning files. Checks if files match steps, are in correct folders, and identifies orphaned or mismatched files.",
-				Options:     []WorkflowPhaseOption{}, // No options for alignment phase
-			},
-			{
-				ID:          "learning-consolidation",
-				Title:       "Learning Consolidation",
-				Description: "Analyze and consolidate learning files to identify duplicate patterns, similar patterns, and outdated patterns. Merges redundant patterns and optimizes learning structure for better future execution efficiency.",
-				Options:     []WorkflowPhaseOption{}, // No options for consolidation phase
-			},
+			// Deprecated: plan-tool-optimization, learning-anonymization, plan-learnings-alignment,
+			// and learning-consolidation phases are hidden from the UI until they are updated
+			// to properly support CLI providers. The underlying agents still exist and can be
+			// re-enabled by uncommenting these entries.
+			// {
+			// 	ID:          "plan-tool-optimization",
+			// 	Title:       "Plan Tool Optimization",
+			// 	Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json.",
+			// },
+			// {
+			// 	ID:          "learning-anonymization",
+			// 	Title:       "Learning Anonymization",
+			// 	Description: "Scan learnings folder and replace actual values with variable placeholders.",
+			// },
+			// {
+			// 	ID:          "plan-learnings-alignment",
+			// 	Title:       "Plan-Learnings Alignment",
+			// 	Description: "Analyze alignment between plan.json and learnings folders.",
+			// },
+			// {
+			// 	ID:          "learning-consolidation",
+			// 	Title:       "Learning Consolidation",
+			// 	Description: "Analyze and consolidate learning files.",
+			// },
 			{
 				ID:          "code-exec-debugging",
 				Title:       "Code Debugger",

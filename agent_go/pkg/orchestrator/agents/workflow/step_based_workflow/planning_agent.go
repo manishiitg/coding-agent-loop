@@ -111,6 +111,55 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 
 ---
 
+{{if .IsCodeExecutionMode}}
+## 🛠️ AVAILABLE TOOLS
+
+### Workflow Tools (use these to modify the plan)
+**Always call 'human_feedback' first to confirm changes before using any of these.**
+
+#### Add Steps
+- 'add_regular_step' — Add a standard execution step
+- 'add_conditional_step' — Add an if/else branch step (evaluation only, no execution)
+- 'add_decision_step' — Add an execute-then-route step
+- 'add_loop_step' — Add a step that repeats until a condition is met
+- 'add_human_input_step' — Add a step that asks the user a question and blocks for input
+- 'add_routing_step' — Add an N-way LLM routing step
+- 'add_todo_task_step' — Add a todo-task orchestration step with sub-agents
+
+#### Update Steps
+- 'update_regular_step(existing_step_id, ...)' — Update fields of a regular step
+- 'update_conditional_step(existing_step_id, ...)' — Update a conditional step
+- 'update_decision_step(existing_step_id, ...)' — Update a decision step
+- 'update_routing_step(existing_step_id, ...)' — Update a routing step
+- 'update_human_input_step(existing_step_id, ...)' — Update a human input step
+- 'update_todo_task_step(existing_step_id, ...)' — Update a todo task step
+- 'update_validation_schema(existing_step_id, validation_schema)' — Update a step's validation schema
+- 'update_success_criteria(existing_step_id, success_criteria)' — Update a step's success criteria
+
+#### Delete Steps
+- 'delete_plan_steps(step_ids[])' — Delete steps by their IDs
+
+#### Conditional Branch Tools
+- 'convert_step_to_conditional(step_id, condition_question, if_true_steps, if_false_steps)' — Convert a regular step to conditional
+- 'convert_conditional_to_regular(step_id)' — Convert a conditional step back to regular
+- 'add_branch_steps(parent_step_id, branch_type, new_steps[])' — Add steps to a branch
+- 'update_branch_steps(parent_step_id, branch_type, updated_steps[])' — Update steps in a branch
+- 'delete_branch_steps(parent_step_id, branch_type, deleted_step_ids[])' — Delete steps from a branch
+
+#### Todo Task Route Tools
+- 'add_todo_task_route(parent_step_id, new_route)' — Add a sub-agent route to a todo task step
+- 'update_todo_task_route(parent_step_id, existing_route_id, ...)' — Update a sub-agent route
+- 'delete_todo_task_route(parent_step_id, deleted_route_id)' — Remove a sub-agent route
+
+#### Variable Tools
+- 'extract_variables(text)' — Identify hard-coded values (URLs, IDs, credentials) to extract as variables
+- 'update_variable(action, existing_variable_name, ...)' — Add, update, or delete a variable in variables.json
+
+### Workspace Tools
+- 'execute_shell_command(command, working_directory)' — Run shell commands to read files
+- 'human_feedback(question, response_type)' — Ask user for approval or input (**call before any plan change**)
+{{end}}
+
 ## 📤 OUTPUT RULES
 - **Feedback**: 'human_feedback' -> Proposal -> User Approval -> Execute tools.
 - **Questions**: Respond conversationally if clarification is needed.
@@ -7705,6 +7754,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 		"ExecutionWorkspacePath": fmt.Sprintf("%s/execution", templateVars["WorkspacePath"]),
 		"ExistingPlanJSON":       templateVars["ExistingPlanJSON"],
 		"VariableNames":          templateVars["VariableNames"],
+		"IsCodeExecutionMode":    templateVars["IsCodeExecutionMode"] == "true",
 		"CurrentDate":            now.Format("2006-01-02"),
 		"CurrentTime":            now.Format("15:04:05"),
 	}

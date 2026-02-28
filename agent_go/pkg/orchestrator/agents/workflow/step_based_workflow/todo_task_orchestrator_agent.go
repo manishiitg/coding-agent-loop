@@ -324,6 +324,21 @@ Adaptation:
 
 ---
 
+{{if .ShowToolsSection}}
+## 🛠️ AVAILABLE TOOLS (CLI Provider Reference)
+
+### Delegation Tools
+- 'call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}})' — Execute a predefined sub-agent
+{{if .EnableGenericAgent}}- 'call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}})' — Execute a generic agent for any ad-hoc task
+{{end}}
+### Task Tracking Tools
+- 'save_learning(category, insight)' — Save an actionable insight for future runs
+- 'mark_step_complete(reason)' — Signal that the step objective is fully achieved
+
+### Workspace Tools
+- 'execute_shell_command(command, working_directory)' — Run shell commands to manage tasks.md and read files
+{{end}}
+
 *Manage tasks via shell commands (tasks.md), delegate work via sub-agent tools, and continuously refine your task list based on learnings.*`)
 
 var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `# Todo Task: {{.StepTitle}}
@@ -490,6 +505,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"StepExecutionPath":          templateVars["StepExecutionPath"],
 		"ShellWorkingDirectory":      templateVars["ShellWorkingDirectory"],
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],
+		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
 	}
 
 	var result strings.Builder

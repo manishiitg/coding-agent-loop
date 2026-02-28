@@ -1198,6 +1198,32 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Tool execution APIs - handlers provided by mcpagent/executor library
 	// Pass server logger for proper debugging of session registry usage
 	executorHandlers := executor.NewExecutorHandlers(api.mcpConfigPath, api.logger)
+
+	// [BROWSER_UPLOAD] Resolve workspace-relative paths to absolute for Playwright browser_file_upload
+	workspaceAbsPath, wpErr := filepath.Abs("../workspace-docs")
+	if wpErr != nil {
+		log.Printf("[BROWSER_UPLOAD] Warning: failed to resolve workspace-docs abs path: %v", wpErr)
+	} else {
+		log.Printf("[BROWSER_UPLOAD] Registered browser_file_upload transformer, workspace=%s", workspaceAbsPath)
+		executorHandlers.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
+			paths, ok := args["paths"].([]interface{})
+			if !ok || len(paths) == 0 {
+				log.Printf("[BROWSER_UPLOAD] No paths in args or wrong type, skipping transform")
+				return
+			}
+			for i, p := range paths {
+				pathStr, ok := p.(string)
+				if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
+					log.Printf("[BROWSER_UPLOAD] Skipping path[%d]=%q (abs or empty)", i, p)
+					continue
+				}
+				resolved := filepath.Join(workspaceAbsPath, pathStr)
+				log.Printf("[BROWSER_UPLOAD] Resolved path[%d]: %q -> %q", i, pathStr, resolved)
+				paths[i] = resolved
+			}
+		})
+	}
+
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/virtual/execute", executorHandlers.HandleVirtualExecute).Methods("POST", "OPTIONS")
@@ -4552,6 +4578,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if req.Provider == "gemini-cli" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[GEMINI CLI] Added human tool HTTP API override instructions")
+			}
+
+			// [BROWSER_UPLOAD] Add browser upload instructions when browser access is active
+			hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+			hasPlaywright := false
+			for _, s := range req.EnabledServers {
+				if s == "playwright" {
+					hasPlaywright = true
+					break
+				}
+			}
+			if hasBrowserAccess || hasPlaywright {
+				underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
+				log.Printf("[BROWSER_UPLOAD] Added browser upload instructions (browser=%v, playwright=%v)", hasBrowserAccess, hasPlaywright)
 			}
 		}
 

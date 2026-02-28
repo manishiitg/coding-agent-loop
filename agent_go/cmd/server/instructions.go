@@ -111,6 +111,23 @@ Use this access to create and update custom skills. You can read other folders t
 	return instructions
 }
 
+// GetBrowserUploadInstructions returns system prompt instructions for browser file upload.
+// Informs the agent how to upload workspace files via both agent_browser and Playwright modes.
+func GetBrowserUploadInstructions() string {
+	return `
+
+## Browser File Upload
+
+To upload workspace files to a website via browser:
+- **agent_browser**: Use upload command with workspace-relative paths:
+  agent_browser(command="upload", args=["@ref", "Downloads/report.pdf"])
+- **browser_file_upload** (Playwright): Pass workspace-relative paths in the paths array:
+  browser_file_upload(paths=["Downloads/report.pdf"])
+
+Workspace-relative paths like "Downloads/file.pdf" or "Chats/output.csv" are automatically resolved.
+`
+}
+
 // buildSkillPrompt builds the system prompt section for selected skills
 // It provides paths to skills and instructions for the agent to discover them using workspace tools
 func buildSkillPrompt(selectedSkills []string) string {

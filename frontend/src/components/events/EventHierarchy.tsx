@@ -4,7 +4,7 @@ import { EventDispatcher, type DelegationStats, type EventNode } from './EventDi
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
-import { NEVER_DISPLAY_EVENTS } from './eventModeUtils';
+import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useRenderLogger, useMemoLogger } from '../../utils/renderLogger';
 import './EventHierarchy.css';
@@ -24,12 +24,6 @@ interface EventHierarchyProps {
   compact?: boolean  // Compact mode for smaller font sizes
   flatHierarchy?: boolean  // If true, removes left padding/indentation for hierarchy levels
   tabId?: string  // Specific tab ID — avoids getActiveTab() so multi-chat panels are independent
-}
-
-interface HiddenGroup {
-  count: number;
-  groupKey: string;     // Stable key (first event ID in the group)
-  beforeId?: string;    // Insert sentinel before this event ID (undefined = append)
 }
 
 interface FlattenedItem {
@@ -117,6 +111,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       // Never-display events
       if (NEVER_DISPLAY_EVENTS.has(type)) continue;
+
+      // Hidden events — never rendered, filtering here prevents them from
+      // breaking consecutive tool-call groups into tiny fragments.
+      if (HIDDEN_EVENTS.has(type)) continue;
 
       // Hidden streaming events
       if (HIDDEN_STREAMING.has(type)) continue;
@@ -207,69 +205,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     return capped;
   }, [events, loadedOlderEvents]);
 
-  // Filter tool call / token_usage groups from displayEvents when hide mode is on.
-  // Done at this level (before tree construction) so tool calls that are children of
-  // collapsed parent nodes are also removed — filtering inside flatten() missed those.
-  const { filteredDisplayEvents, hiddenGroups, totalHiddenCount } = useMemo(() => {
-    const emptyResult = { filteredDisplayEvents: displayEvents, hiddenGroups: [] as HiddenGroup[], totalHiddenCount: 0 };
-    if (!hideToolCalls) return emptyResult;
-
-    // Helper: check if event belongs to a sub-agent delegation (not main agent).
-    // Sub-agent events have a correlation_id starting with "delegation-" at
-    // event.data.correlation_id or event.data.data.correlation_id (nested AgentEvent).
-    const isDelegationChild = (event: PollingEvent): boolean => {
-      if (!event.data || typeof event.data !== 'object') return false;
-      const data = event.data as Record<string, unknown>;
-      // Check top-level correlation_id
-      const cid = data.correlation_id as string | undefined;
-      if (cid && cid.startsWith('delegation-')) return true;
-      // Check nested data.data.correlation_id (AgentEvent wrapper)
-      if (data.data && typeof data.data === 'object') {
-        const nested = data.data as Record<string, unknown>;
-        const ncid = nested.correlation_id as string | undefined;
-        if (ncid && ncid.startsWith('delegation-')) return true;
-      }
-      return false;
-    };
-
-    // Identify consecutive groups of TOOL_CALL_TYPES events (main agent only).
-    // Sub-agent events are left alone — the tree builder re-parents them into delegation cards.
-    const groups: { startIdx: number; endIdx: number }[] = [];
-    let i = 0;
-    while (i < displayEvents.length) {
-      const ev = displayEvents[i];
-      if (TOOL_CALL_TYPES.has(ev.type || '') && !isDelegationChild(ev)) {
-        const startIdx = i;
-        while (i < displayEvents.length && TOOL_CALL_TYPES.has(displayEvents[i].type || '') && !isDelegationChild(displayEvents[i])) i++;
-        groups.push({ startIdx, endIdx: i - 1 });
-      } else {
-        i++;
-      }
-    }
-
-    if (groups.length === 0) return emptyResult;
-
-    const hideIds = new Set<string>();
-    const hiddenGroupInfo: HiddenGroup[] = [];
-
-    for (const group of groups) {
-      const groupKey = displayEvents[group.startIdx].id;
-      // Skip groups the user has individually expanded
-      if (expandedGroups.has(groupKey)) continue;
-
-      const count = group.endIdx - group.startIdx + 1;
-      for (let j = group.startIdx; j <= group.endIdx; j++) {
-        hideIds.add(displayEvents[j].id);
-      }
-      // Sentinel goes before the first non-hidden event after this group
-      const afterIdx = group.endIdx + 1;
-      const beforeId = afterIdx < displayEvents.length ? displayEvents[afterIdx].id : undefined;
-      hiddenGroupInfo.push({ count, groupKey, beforeId });
-    }
-
-    const filtered = displayEvents.filter(e => !hideIds.has(e.id));
-    return { filteredDisplayEvents: filtered, hiddenGroups: hiddenGroupInfo, totalHiddenCount: hideIds.size };
-  }, [displayEvents, hideToolCalls, expandedGroups]);
+  // Tool call grouping is done in flattenedItems (after tree building + flattening),
+  // so sub-agent events — which are excluded from the flat list at delegation_start nodes —
+  // are never mixed into main agent tool call groups.
 
   // Reset loaded older events when session changes
   useEffect(() => {
@@ -462,7 +400,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   const eventTree = useMemo(() => {
     const eventById = new Map<string, PollingEvent>();
-    filteredDisplayEvents.forEach(event => eventById.set(event.id, event));
+    displayEvents.forEach(event => eventById.set(event.id, event));
 
     const eventsToFilter = new Set<string>();
     findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
@@ -476,7 +414,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     });
 
-    const filteredEvents = filteredDisplayEvents.filter(event => !eventsToFilter.has(event.id));
+    const filteredEvents = displayEvents.filter(event => !eventsToFilter.has(event.id));
     const filteredEventIds = new Set(filteredEvents.map(e => e.id));
 
     // Build delegation_id -> delegation_start event ID map for re-parenting orphans.
@@ -561,74 +499,73 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     });
 
     return rootEvents.map(event => buildTreeRecursive(event, 0));
-  }, [filteredDisplayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
-
-  const hasToolCalls = useMemo(
-    () => displayEvents.some(e => TOOL_CALL_TYPES.has(e.type || '')),
-    [displayEvents]
-  );
+  }, [displayEvents, collapsedSessions, findEventsBetweenStartEnd, expandedNodes, getParentId]);
 
   const flattenedItems = useMemo(() => {
     const list: FlattenedItem[] = [];
 
-    const flatten = (node: EventNode, key: string, isWithinSubAgent = false) => {
+    const flatten = (node: EventNode, key: string) => {
       list.push({ node, uniqueKey: key });
 
       // If this is a delegation_start (sub-agent), we STOP flattening its children into the main list.
       // They will be rendered internally by the sub-agent card's scrollable logs area.
+      // This is also what guarantees sub-agent tool calls never appear in main agent groups.
       if (node.event.type === 'delegation_start') {
         return;
       }
 
       if (node.isExpanded && node.children.length > 0) {
         node.children.forEach((child, index) => {
-          flatten(child, `${key}-child-${index}`, isWithinSubAgent || node.event.type === 'delegation_start');
+          flatten(child, `${key}-child-${index}`);
         });
       }
     };
     eventTree.forEach((node, index) => flatten(node, `${node.event.id}-root-${index}`));
 
-    // Insert per-group sentinels (reverse order to keep indices stable)
+    // Tool call grouping — operates on the flat list so only main-agent events are affected.
+    // Sub-agent events were excluded above (flattening stops at delegation_start).
     if (hideToolCalls) {
-      // "+" sentinels for hidden groups
-      for (let g = hiddenGroups.length - 1; g >= 0; g--) {
-        const group = hiddenGroups[g];
-        const sentinel: FlattenedItem = { uniqueKey: `tool-call-expand-${group.groupKey}`, isToolCallToggle: true, hiddenCount: group.count, groupKey: group.groupKey };
-        if (group.beforeId) {
-          const insertIdx = list.findIndex(item => item.node?.event.id === group.beforeId);
-          if (insertIdx >= 0) {
-            list.splice(insertIdx, 0, sentinel);
-          } else {
-            list.push(sentinel);
-          }
+      // Identify consecutive runs of TOOL_CALL_TYPES in the flat list
+      const groups: { startIdx: number; endIdx: number; groupKey: string }[] = [];
+      let i = 0;
+      while (i < list.length) {
+        const item = list[i];
+        if (item.node && TOOL_CALL_TYPES.has(item.node.event.type || '')) {
+          const startIdx = i;
+          const groupKey = item.node.event.id;
+          while (i < list.length && list[i].node && TOOL_CALL_TYPES.has(list[i].node!.event.type || '')) i++;
+          groups.push({ startIdx, endIdx: i - 1, groupKey });
         } else {
-          list.push(sentinel);
+          i++;
         }
       }
 
-      // "−" sentinels after each individually expanded group
-      if (expandedGroups.size > 0) {
-        // Find runs of consecutive tool call events and check if they match an expanded group key
-        for (let i = list.length - 1; i >= 0; i--) {
-          const item = list[i];
-          if (!item.node || !TOOL_CALL_TYPES.has(item.node.event.type || '')) continue;
-          // Check if next item is NOT a tool call (end of a group)
-          const nextIsToolCall = i + 1 < list.length && list[i + 1].node && TOOL_CALL_TYPES.has(list[i + 1].node!.event.type || '');
-          if (nextIsToolCall) continue;
-          // Walk backward to find group start
-          let start = i;
-          while (start > 0 && list[start - 1].node && TOOL_CALL_TYPES.has(list[start - 1].node!.event.type || '')) start--;
-          const firstEventId = list[start].node!.event.id;
-          if (expandedGroups.has(firstEventId)) {
-            list.splice(i + 1, 0, { uniqueKey: `tool-call-collapse-${firstEventId}`, isToolCallToggle: true, groupKey: firstEventId });
-          }
-          i = start; // Skip past this group
+      // Replace each group: expanded → keep items + add collapse sentinel, hidden → replace with expand sentinel
+      // Process in reverse to keep indices stable
+      for (let g = groups.length - 1; g >= 0; g--) {
+        const group = groups[g];
+        if (expandedGroups.has(group.groupKey)) {
+          // Insert "− collapse" sentinel after the expanded group
+          list.splice(group.endIdx + 1, 0, {
+            uniqueKey: `tool-call-collapse-${group.groupKey}`,
+            isToolCallToggle: true,
+            groupKey: group.groupKey,
+          });
+        } else {
+          // Replace entire group with a single "+ N tool calls" sentinel
+          const count = group.endIdx - group.startIdx + 1;
+          list.splice(group.startIdx, count, {
+            uniqueKey: `tool-call-expand-${group.groupKey}`,
+            isToolCallToggle: true,
+            hiddenCount: count,
+            groupKey: group.groupKey,
+          });
         }
       }
     }
 
     return list;
-  }, [eventTree, hideToolCalls, hiddenGroups, expandedGroups]);
+  }, [eventTree, hideToolCalls, expandedGroups]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
@@ -50,6 +51,19 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		} else if c.FolderGuard != nil && c.FolderGuard.Enabled {
 			// Fallback to client-level folder guard
 			params.FolderGuard = c.FolderGuard
+		}
+	}
+
+	// Mode-aware default working directory (safety net).
+	// Prototype mode injects "Projects/{name}" and plan mode injects "Plans" via
+	// DefaultWorkingDirKey in wrapExecutorsWithPlanFolderGuard (server.go).
+	// If the LLM still passes "." despite the system-prompt examples, substitute
+	// the session default so commands run in the right project folder automatically.
+	// Chat and workflow modes do NOT set this key, so "." is left unchanged for them.
+	if params.WorkingDirectory == "." {
+		if defaultDir, ok := ctx.Value(common.DefaultWorkingDirKey).(string); ok && defaultDir != "" && defaultDir != "." {
+			log.Printf("[DEFAULT_WORKING_DIR] Substituted working_directory \".\" → %q for command: %s", defaultDir, params.Command)
+			params.WorkingDirectory = defaultDir
 		}
 	}
 

@@ -19,7 +19,7 @@ const ACTIVE_SESSIONS_CACHE_TTL = 30000
 // Streaming inactivity auto-clear timers (per sessionId)
 // When no new chunk arrives for 3s, streaming text is auto-cleared
 const _streamingInactivityTimers: Record<string, ReturnType<typeof setTimeout>> = {}
-const STREAMING_INACTIVITY_MS = 3000
+const STREAMING_INACTIVITY_MS = 60000
 
 // Per-mode event counts type — kept for backwards compat with persisted state
 export type PerModeEventCounts = { micro: number }
@@ -256,7 +256,6 @@ interface ChatState extends StoreActions {
   
   // Chat UI state
   autoScroll: boolean
-  lastScrollTop: number
   
   // Response state
   finalResponse: string
@@ -343,7 +342,6 @@ interface ChatState extends StoreActions {
   
   // UI actions
   setAutoScroll: (autoScroll: boolean) => void
-  setLastScrollTop: (scrollTop: number) => void
   
   // Response actions
   setFinalResponse: (response: string) => void
@@ -438,7 +436,6 @@ export const useChatStore = create<ChatState>()(
       sessionId: null,
       hasActiveChat: false,
       autoScroll: true,
-      lastScrollTop: 0,
       finalResponse: '',
       isCompleted: false,
       isLoadingHistory: false,
@@ -822,10 +819,6 @@ export const useChatStore = create<ChatState>()(
         set({ autoScroll })
       },
 
-      setLastScrollTop: (scrollTop) => {
-        set({ lastScrollTop: scrollTop })
-      },
-
       // Response actions
       setFinalResponse: (response) => {
         set({ finalResponse: response })
@@ -908,8 +901,8 @@ export const useChatStore = create<ChatState>()(
           let lastIndex = state.lastStreamingChunkIndex[sessionId] ?? -1
           let currentText = state.streamingText[sessionId] || ''
 
-          // Auto-reset if we see chunk 0 (start of new generation)
-          if (chunkIndex === 0) {
+          // Auto-reset if we see chunk 0 or 1 (start of new generation)
+          if (chunkIndex === 0 || chunkIndex === 1) {
              lastIndex = -1
              currentText = ''
           }
@@ -984,8 +977,8 @@ export const useChatStore = create<ChatState>()(
           let lastIndex = state.lastDelegationChunkIndex[delegationId] ?? -1
           let currentText = state.delegationStreamingText[delegationId] || ''
 
-          // Auto-reset if we see chunk 0 (start of new generation)
-          if (chunkIndex === 0) {
+          // Auto-reset if we see chunk 0 or 1 (start of new generation)
+          if (chunkIndex === 0 || chunkIndex === 1) {
             lastIndex = -1
             currentText = ''
           }
@@ -1137,7 +1130,6 @@ export const useChatStore = create<ChatState>()(
           sessionId: null,
           hasActiveChat: false,
           autoScroll: true,
-          lastScrollTop: 0,
           finalResponse: '',
           isCompleted: false,
           isLoadingHistory: false,

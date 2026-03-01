@@ -649,6 +649,7 @@ type DelegationStartEventData struct {
 	ToolMode          string   `json:"tool_mode,omitempty"`
 	Servers           []string `json:"servers,omitempty"`
 	BackgroundAgentID string   `json:"background_agent_id,omitempty"`
+	AgentTemplate     string   `json:"agent_template,omitempty"`
 	Timestamp         string   `json:"timestamp"`
 }
 

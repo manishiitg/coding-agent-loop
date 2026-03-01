@@ -12,7 +12,7 @@ interface ToolCallEndEventProps {
 }
 
 export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event }) => {
-  const { isExpanded, toggle } = useExpandable()
+  const { isExpanded, toggle } = useExpandable(false)
   
   // Check if this is a workspace tool
   const isWorkspaceTool = (toolName: string): boolean => {

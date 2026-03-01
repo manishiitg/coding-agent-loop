@@ -506,25 +506,55 @@ function App() {
   // if activeTabId is null or invalid or belongs to a different mode
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
-    
-    // Only run for chat, multi-agent, and code-prototype modes (workflow handles its own tab selection)
+
+    // When switching back to workflow mode, restore the active workflow execution tab and
+    // ensure the chat panel is visible — otherwise activeTabId stays on whatever mode the
+    // user came from (e.g. multi-agent) and the ChatArea inside WorkflowLayout shows wrong content.
+    if (selectedModeCategory === 'workflow') {
+      const chatStore = useChatStore.getState()
+      const activeTabId = chatStore.activeTabId
+      const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
+      const hasValidActiveTab = activeTab && activeTab.metadata?.mode === 'workflow'
+
+      if (!hasValidActiveTab) {
+        // Find the most recent workflow execution tab (prefer tabs with sessionId)
+        const workflowTabs = Object.values(chatStore.chatTabs)
+          .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
+          .sort((a, b) => b.createdAt - a.createdAt)
+
+        if (workflowTabs.length > 0) {
+          console.log(`[App] Switching to workflow tab on mode restore: ${workflowTabs[0].tabId}`)
+          chatStore.switchTab(workflowTabs[0].tabId)
+          // Ensure the chat panel inside WorkflowLayout is visible
+          useWorkflowStore.getState().setShowChatArea(true)
+        } else {
+          // No active workflow tabs - clear activeTabId so WorkflowLayout's ChatArea
+          // doesn't display content from another mode (e.g. multi-agent chat)
+          useChatStore.setState({ activeTabId: null })
+        }
+      }
+      return
+    }
+
+    // For chat, multi-agent, and code-prototype: select the first tab of the current mode
+    // if activeTabId is null, invalid, or belongs to a different mode
     if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent' && selectedModeCategory !== 'code-prototype') {
       return
     }
-    
+
     const chatStore = useChatStore.getState()
     const activeTabId = chatStore.activeTabId
-    
+
     // Check if activeTabId is null, points to a non-existent tab, or belongs to a different mode
     const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
     const hasValidActiveTab = activeTab && activeTab.metadata?.mode === selectedModeCategory
-    
+
     if (!hasValidActiveTab) {
       // Find the first tab for the current mode
-      const modeTabs = Object.values(chatStore.chatTabs).filter(tab => 
+      const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
         tab.metadata?.mode === selectedModeCategory
       ).sort((a, b) => a.createdAt - b.createdAt)
-      
+
       if (modeTabs.length > 0) {
         // Select the first tab
         console.log(`[App] No valid active tab found for mode ${selectedModeCategory}, selecting first tab: ${modeTabs[0].tabId}`)

@@ -22,7 +22,7 @@ func shellToolDef() llmtypes.Tool {
 					},
 					"working_directory": map[string]interface{}{
 						"type":        "string",
-						"description": "Relative directory path within workspace to execute command. Example: 'scripts' resolves to the scripts/ folder in workspace. Use '.' for workspace root.",
+						"description": "Relative directory path within workspace to execute command. Use the project-specific path (e.g. 'Projects/myapp/frontend') rather than '.' — the session default will be used if omitted, but an explicit path is preferred.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",

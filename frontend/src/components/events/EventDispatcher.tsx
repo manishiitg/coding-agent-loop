@@ -1237,6 +1237,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         model_id?: string
         tool_mode?: string
         servers?: string[]
+        agent_template?: string
       }
       delegation_id?: string
       depth?: number
@@ -1245,6 +1246,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       model_id?: string
       tool_mode?: string
       servers?: string[]
+      agent_template?: string
       timestamp?: string
     }
 
@@ -1255,6 +1257,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const modelId = delegationData?.model_id
     const toolMode = delegationData?.tool_mode
     const servers = delegationData?.servers
+    const agentTemplate = delegationData?.agent_template
 
     const reasoningColors: Record<string, string> = {
       high: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',
@@ -1296,6 +1299,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               {event.timestamp && !isCompleted && (
                 <ElapsedTimer startTimestamp={event.timestamp} className="text-[10px] text-purple-500 dark:text-purple-400 animate-pulse font-mono" />
               )}
+              {agentTemplate && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300" title={`Agent template: ${agentTemplate}`}>
+                  {agentTemplate}
+                </span>
+              )}
               {reasoningLevel && (
                 <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${reasoningColors[reasoningLevel] || 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}`}>
                   {reasoningLevel}
@@ -1325,6 +1333,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               {instruction}
             </div>
             <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400 flex-wrap">
+              {agentTemplate && <span>Template: {agentTemplate}</span>}
               {reasoningLevel && <span>Reasoning: {reasoningLevel}</span>}
               <span>Mode: {!toolMode || toolMode === 'simple' ? 'Simple' : toolMode === 'code_execution' ? 'Code Execution' : 'Tool Search'}</span>
               {modelId && <span>Model: {modelId}</span>}

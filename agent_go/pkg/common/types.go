@@ -27,6 +27,14 @@ const (
 	// BrowserDownloadsPathKey is the context key for the browser downloads folder path (relative to workspace root)
 	// Used by agent-browser executor to set the working directory for screenshot/download commands
 	BrowserDownloadsPathKey ContextKey = "browser_downloads_path"
+	// DefaultWorkingDirKey is the context key for the session-level default working directory.
+	// Used by execute_shell_command as a safety-net: if the LLM passes "." it is replaced
+	// with this value so commands run in the correct project folder.
+	// Set per mode in wrapExecutorsWithPlanFolderGuard (server.go):
+	//   - prototype mode  → "Projects/{name}"
+	//   - plan mode       → "Plans"
+	//   - chat/workflow   → not set (behaviour unchanged, "." stays as-is)
+	DefaultWorkingDirKey ContextKey = "default_working_dir"
 )
 
 // PerUserFolders are folders isolated per-user in the workspace.

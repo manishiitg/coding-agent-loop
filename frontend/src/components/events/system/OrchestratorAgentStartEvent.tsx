@@ -12,7 +12,7 @@ interface OrchestratorAgentStartEventDisplayProps {
 }
 
 export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
-  const { isExpanded: isInputsExpanded, toggle } = useExpandable()
+  const { isExpanded: isInputsExpanded, toggle } = useExpandable(false)
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';

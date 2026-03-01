@@ -17,6 +17,15 @@ services:
     environment:
       - PORT=8000
       - WORKSPACE_API_URL=http://workspace-api:8080
+      # Host-side absolute path of workspace-docs — passed to `docker run -v` for
+      # per-project containers (bind-mount always takes the host path, not the
+      # container-internal path).
+      - WORKSPACE_DOCS_HOST_PATH=${WORKSPACE_DOCS_HOST_PATH:-/app/workspace-docs-host}
+      # Docker network so project containers can reach workspace-api by name.
+      - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-mcp-agent-builder-go}_default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # DooD: manage sibling project containers
+      - ${WORKSPACE_DOCS_HOST_PATH:-./workspace-docs}:/app/workspace-docs-host:ro  # host path reference
     depends_on:
       workspace-api:
         condition: service_healthy

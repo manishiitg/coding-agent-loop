@@ -1295,6 +1295,42 @@ You have access to sub-agent delegation tools. You are a fully capable agent —
 `
 }
 
+// BuildSpawnCapabilitiesSection returns a prompt section listing available sub-agent templates and skills.
+// Appended to the spawn-mode (and code-prototype) agent's system prompt so it knows what templates
+// are available when calling delegate().
+func BuildSpawnCapabilitiesSection(caps *CapabilitiesContext) string {
+	if caps == nil || (len(caps.SubAgentTemplates) == 0 && len(caps.Skills) == 0) {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n## Available Capabilities\n")
+
+	if len(caps.Skills) > 0 {
+		sb.WriteString("\n### Skills\n")
+		sb.WriteString("The following skills are activated. Read each skill file before using it:\n")
+		for _, skill := range caps.Skills {
+			sb.WriteString(fmt.Sprintf("- **%s** (`skills/%s/SKILL.md`): %s\n", skill.Name, skill.FolderName, skill.Description))
+		}
+	}
+
+	if len(caps.SubAgentTemplates) > 0 {
+		sb.WriteString("\n### Sub-Agent Templates\n")
+		sb.WriteString("Pass `agent_template: \"<folder_name>\"` in delegate() to apply a template's specialized instructions:\n")
+		for _, tmpl := range caps.SubAgentTemplates {
+			line := fmt.Sprintf("- **%s** (`subagents/%s/`): %s", tmpl.Name, tmpl.FolderName, tmpl.Description)
+			if tmpl.DefaultReasoningLevel != "" {
+				line += fmt.Sprintf(" [reasoning: %s]", tmpl.DefaultReasoningLevel)
+			}
+			if tmpl.DefaultToolMode != "" {
+				line += fmt.Sprintf(" [tool_mode: %s]", tmpl.DefaultToolMode)
+			}
+			sb.WriteString(line + "\n")
+		}
+	}
+
+	return sb.String()
+}
+
 // handleConfirmPlanExecution handles the confirm_plan_execution tool — blocks until user approves or rejects
 func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Try PlanSessionStateKey first, fall back to PlanTrackerKey

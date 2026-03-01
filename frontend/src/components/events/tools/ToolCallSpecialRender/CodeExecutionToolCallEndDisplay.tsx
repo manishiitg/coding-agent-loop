@@ -28,7 +28,7 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndDisplayProps> = ({ event }) => {
-  const { isExpanded: isOutputExpanded, toggle } = useExpandable()
+  const { isExpanded: isOutputExpanded, toggle } = useExpandable(false)
 
   // Extract context usage information for CircularProgress
   const contextUsagePercent = event.context_usage_percent
@@ -117,7 +117,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
               <div className="text-xs font-medium text-indigo-700 dark:text-indigo-300 flex items-center gap-2">
                 <span>📋</span> API Spec Retrieved{' '}
                 <span className="text-xs font-normal text-indigo-600 dark:text-indigo-400">
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {(serverName || event.server_name) && ` • Server: ${serverName || event.server_name}`}
                   {endpointCount > 0 && ` • ${endpointCount} endpoint${endpointCount !== 1 ? 's' : ''}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
@@ -195,7 +195,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
               <div className={`text-xs font-medium ${textColor} flex items-center gap-2`}>
                 {statusIcon} {statusText}{' '}
                 <span className={`text-xs font-normal ${secondaryTextColor}`}>
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
                 {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
@@ -256,7 +256,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
             <div className="text-sm font-medium text-red-700 dark:text-red-300">
               ❌ Discovery Error{' '}
               <span className="text-xs font-normal text-red-600 dark:text-red-400">
-                {event.turn && `• Turn: ${event.turn}`}
+                {event.turn !== undefined && `• Turn: ${event.turn}`}
                 {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
               </span>
             </div>
@@ -287,7 +287,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
                 <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                   ✅ Code Structure Discovered{' '}
                   <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                    {event.turn && `• Turn: ${event.turn}`}
+                    {event.turn !== undefined && `• Turn: ${event.turn}`}
                     {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                   </span>
                   {/* Context completion indicator */}
@@ -436,7 +436,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
                 <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                   ✅ Discovery Complete{' '}
                   <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                    {event.turn && `• Turn: ${event.turn}`}
+                    {event.turn !== undefined && `• Turn: ${event.turn}`}
                     {event.tool_name && ` • Tool: ${event.tool_name}`}
                     {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                   </span>
@@ -564,7 +564,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
                 <div className="text-xs font-medium text-blue-700 dark:text-blue-300 flex items-center gap-2">
                   ✅ Go Code Retrieved{' '}
                   <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                    {event.turn && `• Turn: ${event.turn}`}
+                    {event.turn !== undefined && `• Turn: ${event.turn}`}
                     {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                   </span>
                   {/* Context completion indicator */}
@@ -648,7 +648,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
               <div className={`text-xs font-medium ${textColor} flex items-center gap-2`}>
                 {statusIcon} {statusText}{' '}
                 <span className={`text-xs font-normal ${secondaryTextColor}`}>
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {event.duration && ` • Duration: ${formatDuration(event.duration)}`}
                 </span>
                 {/* Context completion indicator */}

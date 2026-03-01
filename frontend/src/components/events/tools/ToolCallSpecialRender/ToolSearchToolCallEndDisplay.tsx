@@ -23,7 +23,7 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const ToolSearchToolCallEndDisplay: React.FC<ToolSearchToolCallEndDisplayProps> = ({ event }) => {
-  const { isExpanded: isOutputExpanded, toggle } = useExpandable()
+  const { isExpanded: isOutputExpanded, toggle } = useExpandable(false)
 
   const contextUsagePercent = event.context_usage_percent
   const modelContextWindow = event.model_context_window

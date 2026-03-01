@@ -1,16 +1,21 @@
 import React, { useState, useEffect } from 'react'
 import { RefreshCw, ExternalLink, X } from 'lucide-react'
 import { useCodePrototypeStore } from '../../stores/useCodePrototypeStore'
+import { getApiBaseUrl } from '../../services/api'
 
 export const PreviewPanel: React.FC = () => {
   const { previewUrl, setPreviewUrl, setShowPreview, currentProject } = useCodePrototypeStore()
-  const proxyUrl = currentProject ? `/api/code-prototype/preview/${currentProject.name}/` : ''
+  const apiBase = getApiBaseUrl()
+  const proxyUrl = currentProject ? `${apiBase}/api/code-prototype/preview/${currentProject.name}/` : ''
   const [urlInput, setUrlInput] = useState(proxyUrl || previewUrl || '')
   const [reloadKey, setReloadKey] = useState(0)
+
+  console.log('[PREVIEW] PreviewPanel mount — project:', currentProject?.name ?? 'none', 'proxyUrl:', proxyUrl)
 
   // When project changes, reset to the proxy URL for that project
   useEffect(() => {
     if (proxyUrl) {
+      console.log('[PREVIEW] project changed → resetting to proxy URL:', proxyUrl)
       setUrlInput(proxyUrl)
       setPreviewUrl(proxyUrl)
     }
@@ -19,7 +24,10 @@ export const PreviewPanel: React.FC = () => {
 
   // When a deploy succeeds, the store sets a new previewUrl — sync it
   useEffect(() => {
-    if (previewUrl && previewUrl !== proxyUrl) setUrlInput(previewUrl)
+    if (previewUrl && previewUrl !== proxyUrl) {
+      console.log('[PREVIEW] deploy URL updated:', previewUrl)
+      setUrlInput(previewUrl)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewUrl])
 

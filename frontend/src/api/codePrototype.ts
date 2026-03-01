@@ -72,6 +72,92 @@ export const codePrototypeApi = {
     await api.delete(`/api/code-prototype/deploy/${encodeURIComponent(projectName)}`)
     console.log('[CODE-PROTOTYPE] undeploy done')
   },
+
+  stopDevServers: async (): Promise<void> => {
+    console.log('[CODE-PROTOTYPE] stopDevServers()')
+    await api.post('/api/code-prototype/stop-dev')
+    console.log('[CODE-PROTOTYPE] stopDevServers done')
+  },
+
+  // --- GitHub version control ---
+
+  githubConnect: async (projectName: string, repoUrl: string, pat: string): Promise<void> => {
+    await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/connect`, {
+      repo_url: repoUrl,
+      pat,
+    })
+  },
+
+  githubDisconnect: async (projectName: string): Promise<void> => {
+    await api.delete(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github`)
+  },
+
+  githubStatus: async (projectName: string): Promise<GitHubStatus> => {
+    const r = await api.get(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/status`)
+    return r.data
+  },
+
+  githubSaveCheckpoint: async (projectName: string, message: string): Promise<CheckpointResult> => {
+    const r = await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/checkpoint`, { message })
+    return r.data
+  },
+
+  githubHistory: async (projectName: string): Promise<Checkpoint[]> => {
+    const r = await api.get(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/history`)
+    return r.data
+  },
+
+  githubRestore: async (projectName: string, hash: string, label: string): Promise<void> => {
+    await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/restore`, { hash, label })
+  },
+
+  githubPublish: async (projectName: string): Promise<{ branch: string }> => {
+    const r = await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/publish`, {}, { timeout: 60_000 })
+    return r.data
+  },
+
+  githubListExperiments: async (projectName: string): Promise<Experiment[]> => {
+    const r = await api.get(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/experiments`)
+    return r.data
+  },
+
+  githubStartExperiment: async (projectName: string, label: string): Promise<{ branch: string; label: string }> => {
+    const r = await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/experiments`, { label })
+    return r.data
+  },
+
+  githubKeepExperiment: async (projectName: string): Promise<void> => {
+    await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/experiments/keep`)
+  },
+
+  githubDiscardExperiment: async (projectName: string): Promise<void> => {
+    await api.delete(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/experiments/current`)
+  },
+}
+
+export interface GitHubStatus {
+  connected: boolean
+  repo_url?: string
+  current_branch?: string
+  is_experiment?: boolean
+  experiment_label?: string
+}
+
+export interface Checkpoint {
+  hash: string
+  message: string
+  timestamp: string
+}
+
+export interface CheckpointResult {
+  hash?: string
+  message: string
+}
+
+export interface Experiment {
+  branch: string
+  label: string
+  timestamp: string
 }
 
 export type { PrototypeProject, PrototypeProjectConfig, DeploymentRecord }

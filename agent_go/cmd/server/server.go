@@ -554,6 +554,12 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if toolNameCopy == "execute_shell_command" {
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
+				// Inject the session-level default working directory so execute_shell_command
+				// can substitute it when the LLM passes ".".
+				// planFolder is "Projects/{name}" for prototype mode, "Plans" for plan mode.
+				// execute_shell_command reads this via DefaultWorkingDirKey (execute_shell_command.go).
+				defaultDir := strings.TrimSuffix(planFolder, "/")
+				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, defaultDir)
 			}
 
 			if writeTools[toolNameCopy] {
@@ -1472,6 +1478,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		Handler:      router,
 	}
 
+	// Initialize tool cache BEFORE starting HTTP server so the first getTools()
+	// request from the frontend gets real data instead of an empty list.
+	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
+	api.initializeToolCache()
+
 	// Start server in a goroutine
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -1482,10 +1493,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Printf("✅ Server started on %s:%d\n", config.Host, config.Port)
 	fmt.Printf("🔗 API endpoint: http://%s:%d/api/query\n", config.Host, config.Port)
 	fmt.Printf("📡 Polling API: http://%s:%d/api/sessions/{session_id}/events\n", config.Host, config.Port)
-
-	// Initialize tool cache on server startup
-	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
-	api.initializeToolCache()
 
 	// Wait for interrupt signal to gracefully shutdown
 	c := make(chan os.Signal, 1)
@@ -4661,6 +4668,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// and can spawn focused sub-agents for subtasks. The plan→approve→execute
 					// orchestrator workflow is not appropriate for a code-writing assistant.
 					underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
+					if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
+						underlyingAgent.AppendSystemPrompt(section)
+					}
 					log.Printf("[DELEGATION] Added spawn delegation instructions for code-prototype (mode: plan)")
 				} else if req.PlanPhase == "execution" {
 					// Execution-only mode: skip planning, use spawn-style delegation with exec override
@@ -4679,6 +4689,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			} else if req.DelegationMode == "spawn" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
+				if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
+					underlyingAgent.AppendSystemPrompt(section)
+				}
 				// Inject custom tier descriptions into system prompt so the manager knows about them
 				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
 					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
@@ -5141,12 +5154,13 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// Update active session status to stopped
 	api.updateSessionStatus(sessionID, "stopped")
 
-	// NOTE: Do NOT clean up sessionAgents or cancel background agents here.
-	// handleStopSession is called when the user sends a new message (to stop the current turn)
-	// or presses the stop button. Background agents and stored agents must survive across turns
-	// so that synthetic turns can fire when background agents complete.
-	// Background agents are only canceled explicitly via terminate_agent tool or when the
-	// session is fully closed/deleted.
+	// Cancel background agents if explicitly requested (e.g. user pressed the stop button).
+	// When called before sending a new message, cancelAgents is NOT set so agents survive
+	// across turns and synthetic turns can still fire when they complete.
+	if r.URL.Query().Get("cancelAgents") == "true" {
+		api.bgAgentRegistry.CancelAll(sessionID)
+		log.Printf("[SESSION DEBUG] Canceled all background agents for session %s", sessionID)
+	}
 
 	// Cancel all workflow orchestrator contexts for this session
 	// Since we now use queryID as the key, we need to look up all queryIDs for this session
@@ -6850,7 +6864,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	backgroundAgentID, _ := ctx.Value(virtualtools.BackgroundAgentIDKey).(string)
 
 	// Emit delegation_start event (after model and server resolution so we can include all info)
-	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList, backgroundAgentID)
+	api.emitDelegationStartEvent(sessionID, delegationID, currentDepth, instruction, reasoningLevel, modelID, toolMode, serversList, backgroundAgentID, agentTemplateName)
 
 	// Convert API keys from parent request to LLM format (respecting locked providers)
 	var apiKeys *llm.ProviderAPIKeys = &llm.ProviderAPIKeys{}
@@ -8013,7 +8027,7 @@ func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContex
 
 // emitDelegationStartEvent emits an event when delegation starts
 // This event serves as the parent for all sub-agent events (via parent_id linking)
-func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string, servers []string, backgroundAgentID string) {
+func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string, depth int, instruction, reasoningLevel, modelID, toolMode string, servers []string, backgroundAgentID, agentTemplate string) {
 	now := time.Now()
 	eventID := fmt.Sprintf("%s_delegation_start_%s", sessionID, delegationID)
 	eventData := &events.DelegationStartEventData{
@@ -8025,6 +8039,7 @@ func (api *StreamingAPI) emitDelegationStartEvent(sessionID, delegationID string
 		ToolMode:          toolMode,
 		Servers:           servers,
 		BackgroundAgentID: backgroundAgentID,
+		AgentTemplate:     agentTemplate,
 		Timestamp:         now.Format(time.RFC3339),
 	}
 	event := events.Event{

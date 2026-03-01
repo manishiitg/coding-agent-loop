@@ -14,13 +14,19 @@ import { logger } from '../../utils/logger'
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
-const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { 
+const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   onNewChat: () => void
   hideHeader?: boolean
   hideInput?: boolean
   compact?: boolean
 }>(({ onNewChat, hideHeader, hideInput, compact }, ref) => {
-  // Always render ChatArea - it will handle the case when sessionId is undefined
+  // Only pass tabId if the active tab belongs to workflow mode,
+  // so we never bleed multi-agent / chat content into WorkflowLayout.
+  const workflowTabId = useChatStore(state => {
+    const tabId = state.activeTabId
+    const tab = tabId ? state.chatTabs[tabId] : null
+    return tab?.metadata?.mode === 'workflow' ? tabId : undefined
+  })
   return (
     <ChatArea
       ref={ref}
@@ -28,7 +34,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
       hideHeader={hideHeader}
       hideInput={hideInput}
       compact={compact}
-      tabId={useChatStore.getState().activeTabId || undefined}
+      tabId={workflowTabId ?? undefined}
     />
   )
 })

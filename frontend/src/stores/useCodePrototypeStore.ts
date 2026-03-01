@@ -10,6 +10,11 @@ export interface PrototypeProjectConfig {
   llm_config?: { model: string; provider: string }
 }
 
+export interface PrototypeGitHub {
+  repo_url: string
+  pat_secret_name: string
+}
+
 export interface PrototypeProject {
   name: string
   type: 'frontend-only' | 'backend-only' | 'fullstack'
@@ -17,6 +22,7 @@ export interface PrototypeProject {
   created_at: string
   config: PrototypeProjectConfig
   deployments?: DeploymentRecord[]
+  github?: PrototypeGitHub
 }
 
 export interface DeploymentRecord {
@@ -37,6 +43,7 @@ interface CodePrototypeState {
   selectedProvider: 'k8s' | 'vercel' | 'railway'
   showPreview: boolean
   previewUrl: string | null
+  showLogs: boolean
 
   setCurrentProject: (p: PrototypeProject | null) => void
   setProjectList: (list: PrototypeProject[]) => void
@@ -47,6 +54,7 @@ interface CodePrototypeState {
   setSelectedProvider: (p: 'k8s' | 'vercel' | 'railway') => void
   setShowPreview: (v: boolean) => void
   setPreviewUrl: (url: string | null) => void
+  setShowLogs: (v: boolean) => void
 }
 
 export const useCodePrototypeStore = create<CodePrototypeState>()(
@@ -60,6 +68,7 @@ export const useCodePrototypeStore = create<CodePrototypeState>()(
       selectedProvider: 'k8s',
       showPreview: false,
       previewUrl: null,
+      showLogs: false,
 
       setCurrentProject: (p) => set({ currentProject: p }),
       setProjectList: (list) => set({ projectList: list }),
@@ -74,6 +83,7 @@ export const useCodePrototypeStore = create<CodePrototypeState>()(
       setSelectedProvider: (p) => set({ selectedProvider: p }),
       setShowPreview: (v) => set({ showPreview: v }),
       setPreviewUrl: (url) => set({ previewUrl: url }),
+      setShowLogs: (v) => set({ showLogs: v }),
     }),
     {
       name: 'code-prototype-store',
@@ -82,6 +92,7 @@ export const useCodePrototypeStore = create<CodePrototypeState>()(
         selectedProvider: s.selectedProvider,
         showPreview: s.showPreview,
         previewUrl: s.previewUrl,
+        showLogs: s.showLogs,
       }),
     }
   )

@@ -50,7 +50,7 @@ const formatDuration = (durationNs: number) => {
 }
 
 export const WorkspaceToolCallEndDisplay: React.FC<WorkspaceToolCallEndDisplayProps> = ({ event }) => {
-  const { isExpanded: showContent, toggle } = useExpandable()
+  const { isExpanded: showContent, toggle } = useExpandable(false)
   
   if (!event.result) {
     return null

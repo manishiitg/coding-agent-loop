@@ -229,8 +229,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setHasActiveChat,
     autoScroll,
     setAutoScroll,
-    lastScrollTop,
-    setLastScrollTop,
     finalResponse,
     setIsCompleted,
     isLoadingHistory,
@@ -264,8 +262,6 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     setHasActiveChat: state.setHasActiveChat,
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
-    lastScrollTop: state.lastScrollTop,
-    setLastScrollTop: state.setLastScrollTop,
     finalResponse: state.finalResponse,
     setIsCompleted: state.setIsCompleted,
     isLoadingHistory: state.isLoadingHistory,
@@ -470,6 +466,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   // Ref to track if we're currently performing programmatic scrolling
   const isProgrammaticScrollRef = useRef<boolean>(false)
   const programmaticScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  // Local ref for scroll position — avoids Zustand re-renders on every scroll event
+  const lastScrollTopRef = useRef<number>(0)
 
   // Ref to track currentWorkflowPhase without causing callback re-renders
   const currentWorkflowPhaseRef = useRef<string>(currentWorkflowPhase)
@@ -479,67 +477,37 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
   // Observer initialization removed - no longer needed
 
-  // Immediate scroll handler for better responsiveness
+  // Re-enable auto-scroll when user scrolls back to the bottom.
+  // The wheel handler below covers the disable-on-scroll-up path.
   const handleScroll = useCallback(() => {
     if (!chatContentRef.current) return;
-    
-    // If this is a programmatic scroll, ignore it entirely (don't disable auto-scroll,
-    // don't update lastScrollTop via Zustand — that would trigger ~60 re-renders/sec)
-    if (isProgrammaticScrollRef.current) {
-      return;
-    }
-    
+    if (isProgrammaticScrollRef.current) return;
     const element = chatContentRef.current;
-    const currentScrollTop = element.scrollTop;
-    const scrollDistance = Math.abs(currentScrollTop - lastScrollTop);
-    const isScrollingUp = currentScrollTop < lastScrollTop;
-    const isScrollingDown = currentScrollTop > lastScrollTop;
-    
-    // Check if user is at bottom
-    const wasAtBottom = isAtBottom(element);
-    
-    // Only disable auto-scroll if user actively scrolls up significantly
-    // Don't show toast - user can see the toggle in header and floating button
-    if (isScrollingUp && scrollDistance > 150 && autoScroll) {
-      setAutoScroll(false);
-    }
-    // Re-enable auto-scroll when user scrolls back to bottom
-    // Don't show toast - user can see the toggle in header
-    else if (wasAtBottom && !autoScroll) {
-      setAutoScroll(true);
-    }
-    // Re-enable auto-scroll if user scrolled down significantly and is near bottom
-    else if (isScrollingDown && scrollDistance > 30 && !wasAtBottom && !autoScroll) {
-      // Check if user is close to bottom (within 100px)
-      const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
-      if (distanceFromBottom < 100) {
-        setAutoScroll(true);
-      }
-    }
-    
-    // Update last scroll position immediately
-    setLastScrollTop(currentScrollTop);
-  }, [autoScroll, isAtBottom, lastScrollTop, setAutoScroll, setLastScrollTop]);
+    if (isAtBottom(element) && !autoScroll) setAutoScroll(true);
+  }, [autoScroll, isAtBottom, setAutoScroll]);
 
-
-  // Set up scroll event listener
+  // Set up scroll + wheel event listeners
   useEffect(() => {
     const element = chatContentRef.current;
     if (!element) return;
 
-    // Initialize lastScrollTop with current position
-    setLastScrollTop(element.scrollTop);
+    lastScrollTopRef.current = element.scrollTop;
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) setAutoScroll(false); // user scrolling up → disable auto-scroll
+    };
 
     element.addEventListener('scroll', handleScroll);
+    element.addEventListener('wheel', onWheel, { passive: true });
     return () => {
       element.removeEventListener('scroll', handleScroll);
-      // Cleanup programmatic scroll timeout on unmount
+      element.removeEventListener('wheel', onWheel);
       if (programmaticScrollTimeoutRef.current) {
         clearTimeout(programmaticScrollTimeoutRef.current);
         programmaticScrollTimeoutRef.current = null;
       }
     };
-  }, [handleScroll, setLastScrollTop]);
+  }, [handleScroll, setAutoScroll]);
 
   // Reset auto-scroll when starting new conversation (events go from 0 to > 0)
   // Use displayEvents (tabEvents) instead of events to track the actual displayed events
@@ -918,11 +886,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
         if (isDelegationStreaming) {
           if (content) {
-            if (chunkIndex === 0) chatStore.clearDelegationStreamingText(correlationId as string)
+            if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
             chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
           }
         } else if (content) {
-          if (chunkIndex === 0) {
+          if (chunkIndex === 0 || chunkIndex === 1) {
             chatStore.clearStreamingText(actualSessionId)
           }
           chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
@@ -1132,11 +1100,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           const chunkIndex = typeof rawIndex === 'number' ? rawIndex : -1
           if (isDelegation) {
             if (content) {
-              if (chunkIndex === 0) chatStore.clearDelegationStreamingText(correlationId as string)
+              if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
               chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
             }
           } else if (content) {
-            if (chunkIndex === 0) chatStore.clearStreamingText(actualSessionId)
+            if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearStreamingText(actualSessionId)
             chatStore.appendStreamingChunk(actualSessionId, chunkIndex, content)
           }
         } else if (event.type === 'streaming_end') {
@@ -1626,7 +1594,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
 
     try {
-      await agentApi.stopSession(sessionIdToStop)
+      await agentApi.stopSession(sessionIdToStop, true)
     } catch (error) {
       logger.error('ChatArea', 'Failed to stop session:', error)
     }

@@ -200,6 +200,14 @@ export const useMCPStore = create<MCPState>()(
               // Update expandedServers to remove deleted servers
               expandedServers: filteredExpandedServers
             })
+
+            // If any server is still being discovered, poll again after 2s.
+            // This handles the race where initializeToolCache() hasn't finished
+            // by the time the first getTools() response arrives.
+            const hasLoadingServers = toolList.some((t: ToolDefinition) => t.status === 'loading')
+            if (hasLoadingServers) {
+              setTimeout(() => get().refreshTools(), 2000)
+            }
           } catch (error) {
             set({
               toolsError: error instanceof Error ? error.message : 'Failed to load tools',

@@ -6,6 +6,7 @@ import { CodePrototypeHeader } from './CodePrototypeHeader'
 import { DeployDrawer } from './DeployDrawer'
 import { NewProjectWizard } from './NewProjectWizard'
 import { PreviewPanel } from './PreviewPanel'
+import { LogsPanel } from './LogsPanel'
 import { useAuthStore } from '../../stores/useAuthStore'
 
 const CodeChatArea: React.FC<{ onNewChat: () => void }> = ({ onNewChat }) => {
@@ -24,15 +25,20 @@ interface Props {
 }
 
 export const CodePrototypeLayout: React.FC<Props> = ({ onNewChat }) => {
-  const { currentProject, showPreview } = useCodePrototypeStore()
+  const { currentProject, showPreview, showLogs } = useCodePrototypeStore()
   const authUser = useAuthStore(s => s.user)
+
+  console.log('[PROTOTYPE] CodePrototypeLayout mount — project:', currentProject?.name ?? 'none', 'showPreview:', showPreview)
 
   // Show wizard when there is no current project
   const [showWizard, setShowWizard] = useState(!currentProject)
 
   // If project was restored from localStorage, don't show wizard
   useEffect(() => {
-    if (currentProject) setShowWizard(false)
+    if (currentProject) {
+      console.log('[PROTOTYPE] project restored from localStorage:', currentProject.name)
+      setShowWizard(false)
+    }
   }, [currentProject])
 
   // Apply project config (servers/secrets/skills) to the active chat tab when project changes
@@ -41,6 +47,7 @@ export const CodePrototypeLayout: React.FC<Props> = ({ onNewChat }) => {
     const activeTabId = useChatStore.getState().activeTabId
     if (!activeTabId) return
     if (currentProject.config) {
+      console.log('[PROTOTYPE] applying project config to tab', activeTabId, '— project:', currentProject.name, currentProject.config)
       useChatStore.getState().setTabConfig(activeTabId, {
         selectedServers: currentProject.config.selected_servers ?? [],
         selectedSecrets: currentProject.config.selected_secrets ?? [],
@@ -62,12 +69,21 @@ export const CodePrototypeLayout: React.FC<Props> = ({ onNewChat }) => {
       <CodePrototypeHeader onNewChat={handleNewChat} />
 
       <div className="flex-1 min-h-0 overflow-hidden flex">
-        <div className={showPreview ? 'w-1/2 min-w-0' : 'flex-1 min-w-0'}>
+        <div className={(showPreview || showLogs) ? 'w-1/2 min-w-0' : 'flex-1 min-w-0'}>
           <CodeChatArea onNewChat={onNewChat} />
         </div>
-        {showPreview && (
+        {(showPreview || showLogs) && (
           <div className="w-1/2 min-w-0 flex flex-col">
-            <PreviewPanel />
+            {showPreview && (
+              <div className={showLogs ? 'h-1/2 min-h-0 flex-shrink-0' : 'flex-1 min-h-0'}>
+                <PreviewPanel />
+              </div>
+            )}
+            {showLogs && (
+              <div className={showPreview ? 'h-1/2 min-h-0' : 'flex-1 min-h-0'}>
+                <LogsPanel />
+              </div>
+            )}
           </div>
         )}
       </div>

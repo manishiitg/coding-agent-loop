@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { X, Trash2, Loader2 } from 'lucide-react'
+import { X, Trash2, Loader2, Plus } from 'lucide-react'
 import { codePrototypeApi, type PrototypeProject } from '../../api/codePrototype'
 import { useCodePrototypeStore } from '../../stores/useCodePrototypeStore'
+import { NewProjectWizard } from './NewProjectWizard'
 
 interface Props {
   onClose: () => void
@@ -13,6 +14,7 @@ export const ProjectListModal: React.FC<Props> = ({ onClose }) => {
   const [projects, setProjects] = useState<PrototypeProject[]>(projectList)
   const [loading, setLoading] = useState(projectList.length === 0)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [showNewProject, setShowNewProject] = useState(false)
 
   useEffect(() => {
     codePrototypeApi.listProjects()
@@ -43,13 +45,22 @@ export const ProjectListModal: React.FC<Props> = ({ onClose }) => {
   }
 
   return (
+    <>
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700">
           <h2 className="text-base font-semibold text-gray-900 dark:text-white">Projects</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowNewProject(true)}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 rounded-md transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" /> New project
+            </button>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="max-h-72 overflow-y-auto">
@@ -89,15 +100,12 @@ export const ProjectListModal: React.FC<Props> = ({ onClose }) => {
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 text-right">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
-          >
-            Close
-          </button>
-        </div>
       </div>
     </div>
+
+    {showNewProject && (
+      <NewProjectWizard onClose={() => setShowNewProject(false)} />
+    )}
+  </>
   )
 }

@@ -36,7 +36,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               <div className="text-sm font-medium text-indigo-700 dark:text-indigo-300 flex items-center">
                 <span className="mr-1">📋</span> Get API Spec{parallelBadge}{' '}
                 <span className="text-xs font-normal text-indigo-600 dark:text-indigo-400">
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {serverName && ` • Server: ${serverName}`}
                   {specificToolName && ` • Tool: ${specificToolName}`}
                 </span>
@@ -78,7 +78,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               <div className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center">
                 <span className="mr-1">▶</span> Execute Shell Command{parallelBadge}{' '}
                 <span className="text-xs font-normal text-slate-500 dark:text-slate-400">
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                 </span>
               </div>
             </div>
@@ -141,7 +141,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center">
                 🔍 Discover Code Structure{parallelBadge}{' '}
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
                 </span>
               </div>
@@ -191,7 +191,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               <div className="text-sm font-medium text-blue-700 dark:text-blue-300 flex items-center">
                 🔍 Discover Code Files{parallelBadge}{' '}
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {serverName && ` • Server: ${serverName}`}
                 </span>
               </div>
@@ -277,7 +277,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
               <div className="text-sm font-medium text-purple-700 dark:text-purple-300 flex items-center">
                 ✍️ Write Code{parallelBadge}{' '}
                 <span className="text-xs font-normal text-purple-600 dark:text-purple-400">
-                  {event.turn && `• Turn: ${event.turn}`}
+                  {event.turn !== undefined && `• Turn: ${event.turn}`}
                   {event.server_name && ` • Server: ${event.server_name}`}
                 </span>
               </div>

@@ -270,7 +270,7 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 		folderInfos = append(folderInfos, RunFolderInfo{Name: folderName})
 	}
 
-	// Sort by iteration number descending (highest first)
+	// Sort by iteration number descending (highest first), then by group name ascending within the same iteration
 	// Supports both formats: iteration-X and iteration-X/group-Y
 	sort.Slice(folderInfos, func(i, j int) bool {
 		iterI := extractIterationNumber(folderInfos[i].Name)
@@ -278,11 +278,12 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 		if iterI != iterJ {
 			return iterI > iterJ
 		}
-		return folderInfos[i].Name > folderInfos[j].Name
+		// Same iteration: sort group names ascending so alphabetically early names (e.g. "atul") aren't pushed to the end
+		return folderInfos[i].Name < folderInfos[j].Name
 	})
 
-	// Limit to 10 most recent folders
-	const maxFolders = 10
+	// Limit to 50 most recent folders/groups
+	const maxFolders = 50
 	if len(folderInfos) > maxFolders {
 		folderInfos = folderInfos[:maxFolders]
 	}

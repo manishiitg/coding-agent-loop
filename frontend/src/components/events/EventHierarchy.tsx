@@ -69,7 +69,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // Sub-agent events change displayEvents → eventTree rebuilds → new object refs, but
   // flattenedItems.length stays the same because delegation_start children aren't flattened.
   const prevFlattenedCountRef = useRef(0);
-  
+  const userScrolledUpRef = useRef(false);
+
   // Find the scrollable parent on mount
   useEffect(() => {
     if (containerRef.current) {
@@ -84,6 +85,29 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
     }
   }, []);
+
+  // Track user scroll-up intent via wheel events (never fires from programmatic scrollTo)
+  useEffect(() => {
+    const target = scrollParent || containerRef.current;
+    if (!target) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) userScrolledUpRef.current = true;
+    };
+    const onScroll = () => {
+      const el = target;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
+        userScrolledUpRef.current = false;
+      }
+    };
+
+    target.addEventListener('wheel', onWheel, { passive: true });
+    target.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      target.removeEventListener('wheel', onWheel);
+      target.removeEventListener('scroll', onScroll);
+    };
+  }, [scrollParent]);
 
   // Look up specific tab (or fall back to active tab for backwards compat)
   const activeTabId = useChatStore(state => state.activeTabId)
@@ -359,26 +383,6 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     return { delegationStats: dStats, backgroundAgentStats: bgStats, findEventsBetweenStartEnd: sessionEvents }
   }, [displayEvents, getAgentSessionKey]);
 
-  // Fix 5: Auto-collapse completed workflow steps.
-  // When orchestrator_agent_end fires for a session, auto-add it to collapsedSessions
-  // (unless the user manually expanded it).
-  useEffect(() => {
-    const completedKeys: string[] = []
-    for (const event of displayEvents) {
-      if (event.type !== 'orchestrator_agent_end') continue
-      const sessionKey = getAgentSessionKey(event)
-      if (sessionKey && !userExpandedSessionsRef.current.has(sessionKey) && !collapsedSessions.has(sessionKey)) {
-        completedKeys.push(sessionKey)
-      }
-    }
-    if (completedKeys.length > 0) {
-      setCollapsedSessions(prev => {
-        const next = new Set(prev)
-        for (const k of completedKeys) next.add(k)
-        return next
-      })
-    }
-  }, [displayEvents, getAgentSessionKey, collapsedSessions]);
 
   const toggleNode = useCallback((eventId: string) => {
     setExpandedNodes(prev => {
@@ -765,7 +769,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const current = flattenedItems.length;
     const prev = prevFlattenedCountRef.current;
     prevFlattenedCountRef.current = current;
-    if (current > prev && isAtBottom) return 'smooth';
+    if (current > prev && isAtBottom && !userScrolledUpRef.current) return 'smooth';
     return false;
   }, [flattenedItems.length]);
 

@@ -862,6 +862,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Ref for debounced file removal check
   const fileRemovalTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Guard: prevent form submit from firing when Stop button click causes a button swap
+  // (React re-renders Stop→Send mid-click, causing the browser to dispatch submit on the new button)
+  const justStoppedStreamingRef = useRef(false)
+
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
@@ -1480,6 +1484,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
+
+    // Guard: ignore form submit triggered by Stop→Send button swap during a click
+    if (justStoppedStreamingRef.current) {
+      return
+    }
 
     // Check for slash commands
     const trimmedQuery = queryToSubmit?.trim() || ''
@@ -2628,7 +2637,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <Button
                               type="button"
                               variant="destructive"
-                              onClick={onStopStreaming}
+                              onClick={() => {
+                                justStoppedStreamingRef.current = true
+                                setTimeout(() => { justStoppedStreamingRef.current = false }, 300)
+                                onStopStreaming()
+                              }}
                               size="sm"
                               className="px-3"
                               data-testid="chat-stop-button"

@@ -362,10 +362,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig, setWorkspaceMinimized])
 
-  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright') => {
+  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => {
     if (!activeTabId) return
 
-    if (mode === 'playwright') {
+    if (mode === 'stealth') {
+      // Stealth: uses code execution (no virtual browser tool, no MCP server)
+      // Auto-select stealth-browser skill, enable workspace access
+      const currentSkills = tabConfig?.selectedSkills || []
+      const newSkills = currentSkills.includes('stealth-browser') ? currentSkills : [...currentSkills, 'stealth-browser']
+      const currentServers = tabConfig?.selectedServers || []
+      const newServers = currentServers.filter(s => s !== 'playwright')
+      setTabConfig(activeTabId, {
+        browserMode: 'stealth',
+        enableBrowserAccess: false,
+        useCdp: false,
+        enableWorkspaceAccess: true,
+        selectedServers: newServers,
+        selectedSkills: newSkills,
+      })
+      setChatSelectedServers(newServers)
+      setWorkspaceMinimized(false)
+    } else if (mode === 'playwright') {
       // Playwright: no virtual tool, add 'playwright' to selectedServers, enable workspace
       const currentServers = tabConfig?.selectedServers || []
       const newServers = currentServers.includes('playwright') ? currentServers : [...currentServers, 'playwright']
@@ -403,7 +420,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       })
       setChatSelectedServers(newServers)
     }
-  }, [activeTabId, tabConfig?.selectedServers, setTabConfig, setChatSelectedServers, setWorkspaceMinimized])
+  }, [activeTabId, tabConfig?.selectedServers, tabConfig?.selectedSkills, setTabConfig, setChatSelectedServers, setWorkspaceMinimized])
 
   const setCdpPort = useCallback((port: number) => {
     if (activeTabId) {
@@ -2245,7 +2262,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       }}
                       disabled={isStreaming || isSummarizing}
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        browserMode === 'cdp'
+                        browserMode === 'stealth'
+                          ? 'bg-orange-900/40 border-orange-600 text-orange-400'
+                          : browserMode === 'cdp'
                           ? cdpConnected === false
                             ? 'bg-red-900/40 border-red-600 text-red-400'
                             : cdpChecking || cdpConnected === null
@@ -2263,7 +2282,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       <Globe className="w-4 h-4 flex-shrink-0" />
                       {browserMode !== 'none' ? (
                         <span className={`text-[10px] font-semibold px-1 rounded ${
-                          browserMode === 'cdp'
+                          browserMode === 'stealth'
+                            ? 'bg-orange-800 text-orange-200'
+                            : browserMode === 'cdp'
                             ? cdpConnected === false
                               ? 'bg-red-800 text-red-200'
                               : cdpChecking || cdpConnected === null
@@ -2275,7 +2296,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 : 'bg-purple-800 text-purple-200'
                               : 'bg-blue-800 text-blue-200'
                         }`}>
-                          {browserMode === 'cdp' ? 'CDP' : browserMode === 'playwright' ? 'Playwright' : 'Headless'}
+                          {browserMode === 'stealth' ? 'Stealth' : browserMode === 'cdp' ? 'CDP' : browserMode === 'playwright' ? 'Playwright' : 'Headless'}
                         </span>
                       ) : (
                         <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
@@ -2386,6 +2407,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                   Playwright server has errors &mdash; check MCP Settings
                                 </div>
                               )}
+                            </div>
+                          </label>
+
+                          {/* Stealth (Camoufox) mode option */}
+                          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            browserMode === 'stealth'
+                              ? 'border-orange-500 bg-orange-950/40'
+                              : 'border-gray-700 hover:bg-gray-800'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="browserMode"
+                              checked={browserMode === 'stealth'}
+                              onChange={() => setBrowserMode('stealth')}
+                              className="mt-0.5 w-4 h-4 text-orange-500 accent-orange-500"
+                            />
+                            <div>
+                              <div className="text-sm font-medium text-gray-100">Stealth Browser (Camoufox)</div>
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                Anti-detect Firefox for sites that block bots. Screenshots saved to Chats/.
+                              </div>
                             </div>
                           </label>
                         </div>

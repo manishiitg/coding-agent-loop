@@ -142,7 +142,7 @@ When a website has a file upload input (e.g. file picker, drag-and-drop zone), u
 
 // buildSkillPrompt builds the system prompt section for selected skills
 // It provides paths to skills and instructions for the agent to discover them using workspace tools
-func buildSkillPrompt(selectedSkills []string) string {
+func buildSkillPrompt(selectedSkills []string, workspaceAPIURL ...string) string {
 	if len(selectedSkills) == 0 {
 		return ""
 	}
@@ -162,7 +162,11 @@ The following skills are available for this conversation. Each skill extends you
 
 	// List each skill with its path
 	for _, folderName := range selectedSkills {
-		skill, err := skills.GetSkill("", folderName)
+		wsURL := ""
+		if len(workspaceAPIURL) > 0 {
+			wsURL = workspaceAPIURL[0]
+		}
+		skill, err := skills.GetSkill(wsURL, folderName)
 		if err != nil {
 			log.Printf("[SKILLS] Warning: Failed to load skill metadata %s: %v", folderName, err)
 			// Still add the path even if we can't get metadata

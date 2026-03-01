@@ -4645,7 +4645,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Add skill instructions if skills are selected
 			if len(req.SelectedSkills) > 0 {
-				skillPrompt := buildSkillPrompt(req.SelectedSkills)
+				skillPrompt := buildSkillPrompt(req.SelectedSkills, getWorkspaceAPIURL())
 				if skillPrompt != "" {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
@@ -7132,7 +7132,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
 		if len(parentReq.SelectedSkills) > 0 {
-			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills)
+			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills, getWorkspaceAPIURL())
 			if skillPrompt != "" {
 				underlyingAgent.AppendSystemPrompt(skillPrompt)
 				log.Printf("[DELEGATION] Added skill instructions to sub-agent (%d skills)", len(parentReq.SelectedSkills))

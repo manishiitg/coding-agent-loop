@@ -775,7 +775,7 @@ export default function Workspace({
   // Check if a file is a viewable binary format (xlsx, docx, pdf) that we can render
   const isViewableBinaryFile = (fileName: string): boolean => {
     const ext = fileName.split('.').pop()?.toLowerCase() || ''
-    return ['xls', 'xlsx', 'docx', 'pdf'].includes(ext)
+    return ['xls', 'xlsx', 'docx', 'pdf', 'webm', 'mp4'].includes(ext)
   }
 
   // Handle file click - fetch content and show in chat area
@@ -1525,8 +1525,8 @@ export default function Workspace({
     if (blockedExtensions.includes(fileExt)) {
       return 'Blocked file type (executable/system file)'
     }
-    if (file.size > 10 * 1024 * 1024) {
-      return 'File exceeds 10MB limit'
+    if (file.size > 5 * 1024 * 1024) {
+      return 'File exceeds 5MB limit'
     }
     return null
   }, [blockedExtensions])
@@ -2413,7 +2413,7 @@ export default function Workspace({
                     Drag files here or click to browse
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Text-based files only, 10MB max each
+                    Any files, 5MB max each
                   </p>
                 </div>
                 <input
@@ -2421,7 +2421,6 @@ export default function Workspace({
                   type="file"
                   multiple
                   onChange={handleFileSelect}
-                  accept=".txt,.md,.json,.csv,.yaml,.yml,.xml,.html,.css,.js,.py,.go,.java,.c,.cpp,.cs,.php,.rb,.sql,.ts,.vue,.svelte"
                   className="hidden"
                 />
               </div>

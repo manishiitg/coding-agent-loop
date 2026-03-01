@@ -114,7 +114,7 @@ export interface ChatTabConfig {
   fileContext: FileContextItem[]  // Files/folders in context
   enableContextSummarization?: boolean  // Context summarization setting
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
-  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright'  // Browser access mode (default: 'none')
+  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'  // Browser access mode (default: 'none')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)

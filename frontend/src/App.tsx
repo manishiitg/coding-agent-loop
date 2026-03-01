@@ -1085,6 +1085,23 @@ function App() {
                             )
                           }
 
+                          // Video files (webm, mp4)
+                          if ((filePath.endsWith('.webm') || filePath.endsWith('.mp4')) && binaryFileData) {
+                            const mimeType = filePath.endsWith('.webm') ? 'video/webm' : 'video/mp4'
+                            const blob = new Blob([binaryFileData], { type: mimeType })
+                            const url = URL.createObjectURL(blob)
+                            return (
+                              <div className="h-[calc(100vh-120px)] w-full flex items-center justify-center bg-black rounded-lg">
+                                <video
+                                  controls
+                                  autoPlay
+                                  className="max-h-full max-w-full"
+                                  src={url}
+                                />
+                              </div>
+                            )
+                          }
+
                           // HTML files
                           if (filePath.endsWith('.html') || filePath.endsWith('.htm')) {
                             return (

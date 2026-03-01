@@ -3,7 +3,7 @@ import { Terminal, X, Trash2, RefreshCw } from 'lucide-react'
 import { useCodePrototypeStore } from '../../stores/useCodePrototypeStore'
 import { getApiBaseUrl } from '../../services/api'
 
-type StreamStatus = 'connecting' | 'streaming' | 'stopped' | 'error'
+type StreamStatus = 'connecting' | 'streaming' | 'stopped' | 'not-started' | 'error'
 
 export const LogsPanel: React.FC = () => {
   const { currentProject, setShowLogs } = useCodePrototypeStore()
@@ -36,7 +36,15 @@ export const LogsPanel: React.FC = () => {
       } catch {}
     })
 
-    es.addEventListener('done', () => {
+    es.addEventListener('done', (e: MessageEvent) => {
+      try {
+        const { message } = JSON.parse(e.data) as { message: string }
+        if (message === 'not-started') {
+          setStatus('not-started' as StreamStatus)
+          es.close()
+          return
+        }
+      } catch {}
       console.log('[LOGS] container stopped')
       setStatus('stopped')
       es.close()
@@ -69,10 +77,11 @@ export const LogsPanel: React.FC = () => {
   }, [lines])
 
   const statusDot: Record<StreamStatus, string> = {
-    connecting: 'bg-yellow-400',
-    streaming:  'bg-emerald-400',
-    stopped:    'bg-gray-500',
-    error:      'bg-red-400',
+    connecting:  'bg-yellow-400',
+    streaming:   'bg-emerald-400',
+    stopped:     'bg-gray-500',
+    'not-started': 'bg-gray-500',
+    error:       'bg-red-400',
   }
 
   return (
@@ -111,6 +120,9 @@ export const LogsPanel: React.FC = () => {
       <div className="flex-1 min-h-0 overflow-y-auto font-mono text-xs text-gray-300 p-2 leading-5">
         {lines.length === 0 && status === 'connecting' && (
           <span className="text-gray-600">Connecting to container logs…</span>
+        )}
+        {status === 'not-started' && (
+          <span className="text-gray-500">Dev server not started yet. Ask the agent to start it, or run the dev command manually.</span>
         )}
         {lines.length === 0 && status === 'error' && (
           <span className="text-red-500">Container not running or not found.</span>

@@ -4240,6 +4240,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
 				}
 
+				// Register prototype git tool (code-prototype mode only)
+				if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
+					gitName, gitDesc, gitParams := createPrototypeGitToolDef()
+					gitExecutor := api.createPrototypeGitExecutor(currentUserID)
+					if err := underlyingAgent.RegisterCustomTool(
+						gitName, gitDesc, gitParams, gitExecutor, "prototype",
+					); err != nil {
+						log.Printf("[PROTOTYPE GIT] Failed to register tool: %v", err)
+					} else {
+						log.Printf("[PROTOTYPE GIT] Registered prototype_git tool for project %s", req.PrototypeProject)
+					}
+				}
+
 			} else {
 				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
 			}
@@ -7415,6 +7428,17 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 							log.Printf("[DELEGATION] Warning: Failed to register browser tool %s for sub-agent: %v", toolName, err)
 						}
 					}
+				}
+			}
+
+			// Register prototype git tool for code-prototype sub-agents
+			if parentReq.ChatMode == "code-prototype" && parentReq.PrototypeProject != "" {
+				gitName, gitDesc, gitParams := createPrototypeGitToolDef()
+				gitExecutor := api.createPrototypeGitExecutor(subAgentUserID)
+				if err := underlyingAgent.RegisterCustomTool(
+					gitName, gitDesc, gitParams, gitExecutor, "prototype",
+				); err != nil {
+					log.Printf("[DELEGATION] Warning: Failed to register prototype_git for sub-agent: %v", err)
 				}
 			}
 

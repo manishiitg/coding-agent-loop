@@ -27,9 +27,11 @@ FROM debian:bookworm-slim
 # ripgrep, git, patch, python3, util-linux (unshare), jq, nodejs, npm, chromium, build tools, curl, wget, bash
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep git patch python3 python3-pip python3-venv python3-dev \
-    util-linux jq nodejs npm chromium chromium-driver \
+    util-linux jq chromium chromium-driver \
     python3-matplotlib python3-pandas \
     build-essential curl wget bash ca-certificates \
+    && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install agent-browser globally for browser automation

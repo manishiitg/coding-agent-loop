@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Code, ChevronDown, Rocket, ExternalLink, Loader2,
-  Monitor, Terminal, SquarePen, StopCircle, Save, History, Upload, FlaskConical,
+  Monitor, SquarePen, Save, History, Upload, FlaskConical,
   Check, X,
 } from 'lucide-react'
 import { useCodePrototypeStore } from '../../stores/useCodePrototypeStore'
@@ -21,21 +21,17 @@ export const CodePrototypeHeader: React.FC<{ onNewChat: () => void }> = ({ onNew
     lastDeployedUrl,
     selectedProvider,
     showPreview,
-    showLogs,
     setSelectedProvider,
     setDeploying,
     appendDeployLog,
     clearDeployLog,
     setLastDeployedUrl,
     setShowPreview,
-    setShowLogs,
   } = useCodePrototypeStore()
 
   const { setWorkspaceMinimized } = useAppStore()
 
   const [showProjectList, setShowProjectList] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
-
   const [gitStatus, setGitStatus] = useState<GitHubStatus | null>(null)
   const [showSave, setShowSave] = useState(false)
   const [showPublish, setShowPublish] = useState(false)
@@ -61,14 +57,6 @@ export const CodePrototypeHeader: React.FC<{ onNewChat: () => void }> = ({ onNew
     setGitStatus(null)
     fetchGitStatus()
   }, [fetchGitStatus])
-
-  const handleStopDevServers = async () => {
-    if (isStopping) return
-    setIsStopping(true)
-    try { await codePrototypeApi.stopDevServers() }
-    catch (e) { console.error('[CODE-PROTOTYPE] stop error:', e) }
-    finally { setIsStopping(false) }
-  }
 
   const handleDeploy = async () => {
     if (!currentProject || isDeploying) return
@@ -203,19 +191,6 @@ export const CodePrototypeHeader: React.FC<{ onNewChat: () => void }> = ({ onNew
           <span className="font-medium">Preview</span>
         </button>
 
-        {/* ── Logs ──────────────────────────────────────────────── */}
-        <button
-          onClick={() => { const next = !showLogs; setShowLogs(next); if (next) setWorkspaceMinimized(true) }}
-          title="Toggle container logs"
-          className={`flex items-center gap-1 px-2 py-1 text-xs rounded-md border transition-colors ${
-            showLogs
-              ? 'bg-gray-800 dark:bg-gray-900 border-gray-500 dark:border-gray-600 text-gray-100 dark:text-gray-200'
-              : 'border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          }`}
-        >
-          <Terminal className="w-3.5 h-3.5" />
-          <span className="font-medium">Logs</span>
-        </button>
 
         {/* ── GitHub: Save / Versions / Publish (icon-only) ─────── */}
         {currentProject && (
@@ -291,17 +266,6 @@ export const CodePrototypeHeader: React.FC<{ onNewChat: () => void }> = ({ onNew
           </a>
         )}
 
-        {/* ── Secondary: config + stop (icon-only, far right) ───── */}
-        <div className="w-px h-4 bg-gray-200 dark:bg-gray-600 mx-0.5" />
-
-        <button
-          onClick={handleStopDevServers}
-          disabled={isStopping}
-          title="Stop all dev servers"
-          className={`${iconBtn} hover:text-red-500`}
-        >
-          {isStopping ? <Loader2 className="w-4 h-4 animate-spin" /> : <StopCircle className="w-4 h-4" />}
-        </button>
       </div>
 
       {/* Modals */}

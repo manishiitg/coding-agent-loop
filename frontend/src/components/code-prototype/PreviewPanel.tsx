@@ -1,14 +1,32 @@
 import React, { useState, useEffect } from 'react'
-import { RefreshCw, ExternalLink, X } from 'lucide-react'
+import { RefreshCw, X, StopCircle, Loader2, Terminal } from 'lucide-react'
 import { useCodePrototypeStore } from '../../stores/useCodePrototypeStore'
+import { useAppStore } from '../../stores/useAppStore'
 import { getApiBaseUrl } from '../../services/api'
+import { codePrototypeApi } from '../../api/codePrototype'
 
 export const PreviewPanel: React.FC = () => {
-  const { previewUrl, setPreviewUrl, setShowPreview, currentProject } = useCodePrototypeStore()
+  const { previewUrl, setPreviewUrl, setShowPreview, setShowLogs, showLogs, currentProject } = useCodePrototypeStore()
+  const { setWorkspaceMinimized } = useAppStore()
   const apiBase = getApiBaseUrl()
   const proxyUrl = currentProject ? `${apiBase}/api/code-prototype/preview/${currentProject.name}/` : ''
   const [urlInput, setUrlInput] = useState(proxyUrl || previewUrl || '')
   const [reloadKey, setReloadKey] = useState(0)
+  const [isStopping, setIsStopping] = useState(false)
+
+  const handleStop = async () => {
+    if (isStopping) return
+    setIsStopping(true)
+    try { await codePrototypeApi.stopDevServers() }
+    catch (e) { console.error('[PREVIEW] stop error:', e) }
+    finally { setIsStopping(false) }
+  }
+
+  const handleToggleLogs = () => {
+    const next = !showLogs
+    setShowLogs(next)
+    if (next) setWorkspaceMinimized(true)
+  }
 
   console.log('[PREVIEW] PreviewPanel mount — project:', currentProject?.name ?? 'none', 'proxyUrl:', proxyUrl)
 
@@ -59,17 +77,26 @@ export const PreviewPanel: React.FC = () => {
           </button>
         </form>
 
-        {previewUrl && (
-          <a
-            href={previewUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="p-1 text-gray-400 hover:text-emerald-500 flex-shrink-0"
-            title="Open in new tab"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        )}
+        <button
+          onClick={handleToggleLogs}
+          className={`p-1 flex-shrink-0 rounded transition-colors ${
+            showLogs
+              ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/40'
+              : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+          }`}
+          title="Toggle logs"
+        >
+          <Terminal className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={handleStop}
+          disabled={isStopping}
+          className="p-1 text-gray-400 hover:text-red-500 flex-shrink-0 disabled:opacity-40"
+          title="Stop dev server"
+        >
+          {isStopping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <StopCircle className="w-3.5 h-3.5" />}
+        </button>
 
         <button
           onClick={() => setShowPreview(false)}

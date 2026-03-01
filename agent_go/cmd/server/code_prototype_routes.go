@@ -65,7 +65,7 @@ type DeploymentRecord struct {
 // Scaffold templates (Go string constants)
 // ---------------------------------------------------------------------------
 
-// Frontend scaffold — React 19 + Vite 7 + TypeScript 5.9 (2026 best practices)
+// Frontend scaffold — React 19 + Vite 7 + TypeScript 5.9 + Tailwind v4 + shadcn/ui (2026 best practices)
 const scaffoldFrontendPackageJSON = `{
   "name": "{{PROJECT_NAME}}-frontend",
   "version": "0.0.1",
@@ -77,13 +77,19 @@ const scaffoldFrontendPackageJSON = `{
     "preview": "vite preview"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.511.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^3.3.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react-swc": "^3.10.0",
+    "tailwindcss": "^4.1.0",
     "typescript": "~5.9.0",
     "vite": "^7.0.0"
   }
@@ -92,6 +98,8 @@ const scaffoldFrontendPackageJSON = `{
 
 const scaffoldViteConfig = `import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 
 // Writes the actual bound port to .devport so the Go preview proxy can find it
@@ -107,7 +115,10 @@ const writeDevPort = {
 }
 
 export default defineConfig({
-  plugins: [react(), writeDevPort],
+  plugins: [react(), tailwindcss(), writeDevPort],
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   // In dev mode, VITE_BASE is set automatically by the dev command in .prototype.json
   // so assets are served through the Go preview proxy at /api/code-prototype/preview/{name}/
   // For production K8s deploys, the build step sets VITE_BASE to /prototypes/{name}/
@@ -150,7 +161,11 @@ const scaffoldFrontendTsConfigApp = `{
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src"]
 }
@@ -192,6 +207,7 @@ const scaffoldIndexHTML = `<!DOCTYPE html>
 const scaffoldMainTsx = `import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
@@ -206,12 +222,57 @@ export default function App() {
   const [count, setCount] = useState(0)
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: '2rem' }}>
-      <h1>{{PROJECT_NAME}}</h1>
-      <p>Count: {count}</p>
-      <button onClick={() => setCount(c => c + 1)}>Increment</button>
+    <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="text-center space-y-4">
+        <h1 className="text-3xl font-bold text-slate-900">{{PROJECT_NAME}}</h1>
+        <p className="text-slate-500">Count: {count}</p>
+        <button
+          onClick={() => setCount(c => c + 1)}
+          className="px-4 py-2 bg-slate-900 text-white rounded-md hover:bg-slate-700 transition-colors"
+        >
+          Increment
+        </button>
+      </div>
     </div>
   )
+}
+`
+
+// Tailwind v4 global CSS — @import replaces the old @tailwind directives
+const scaffoldIndexCSS = `@import "tailwindcss";
+`
+
+// shadcn/ui cn utility — merges Tailwind classes safely
+const scaffoldLibUtils = `import { clsx, type ClassValue } from 'clsx'
+import { twMerge } from 'tailwind-merge'
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs))
+}
+`
+
+// components.json — tells the shadcn CLI where to put components and how the project is configured.
+// Run: npx shadcn@latest add <component>  (e.g. button, card, input, dialog)
+const scaffoldComponentsJSON = `{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "default",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/index.css",
+    "baseColor": "slate",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "aliases": {
+    "components": "@/components",
+    "utils": "@/lib/utils",
+    "ui": "@/components/ui",
+    "lib": "@/lib",
+    "hooks": "@/hooks"
+  },
+  "iconLibrary": "lucide"
 }
 `
 
@@ -480,6 +541,9 @@ func scaffoldPrototypeFiles(ctx context.Context, userID string, meta PrototypePr
 		files[base+"/frontend/index.html"] = replacer.Replace(scaffoldIndexHTML)
 		files[base+"/frontend/src/main.tsx"] = replacer.Replace(scaffoldMainTsx)
 		files[base+"/frontend/src/App.tsx"] = replacer.Replace(scaffoldAppTsx)
+		files[base+"/frontend/src/index.css"] = scaffoldIndexCSS
+		files[base+"/frontend/src/lib/utils.ts"] = scaffoldLibUtils
+		files[base+"/frontend/components.json"] = scaffoldComponentsJSON
 	}
 
 	if meta.Type == "backend-only" || meta.Type == "fullstack" {
@@ -608,6 +672,23 @@ func (api *StreamingAPI) handleCreatePrototypeProject(w http.ResponseWriter, r *
 		log.Printf("[CODE-PROTOTYPE] Scaffold error: %v", err)
 		// Non-fatal: meta was written, scaffold partially failed
 	}
+
+	// Initialize a git repo immediately so git commands are always scoped to this
+	// project folder. Without this, git walks up the workspace tree and finds the
+	// workspace root's own .git, producing completely wrong status/log output.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		initCmd := `git init -b main 2>/dev/null || git init && ` +
+			`git config --local user.email "prototype@mcpagent.io" && ` +
+			`git config --local user.name "MCP Agent"`
+		if out, err := runProjectGit(ctx, userID, req.Name, initCmd); err != nil {
+			log.Printf("[CODE-PROTOTYPE] git init error for %s: %v — %s", req.Name, err, out)
+		} else {
+			gitAutoSave(ctx, userID, req.Name, "Initial scaffold")
+			log.Printf("[CODE-PROTOTYPE] git init done for %s", req.Name)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1347,11 +1428,38 @@ func BuildPrototypeGuidance(meta PrototypeProjectMeta) string {
 		"- Keep changes minimal; summarize what changed after each task",
 		"- Update README.md and relevant docs/ files after each meaningful change",
 		"",
+	)
+
+	if hasFrontend {
+		lines = append(lines,
+			"## UI — Tailwind CSS + shadcn/ui",
+			"The project is pre-configured with Tailwind v4 and shadcn/ui infrastructure:",
+			fmt.Sprintf("  - Tailwind v4:   %s/frontend/src/index.css  (@import \"tailwindcss\")", projectFolder),
+			fmt.Sprintf("  - cn utility:    %s/frontend/src/lib/utils.ts", projectFolder),
+			fmt.Sprintf("  - shadcn config: %s/frontend/components.json", projectFolder),
+			"  - Path alias @/ → src/  (e.g. import { cn } from '@/lib/utils')",
+			"",
+			"Add shadcn/ui components with the CLI (run from the frontend directory):",
+			fmt.Sprintf(`  execute_shell_command(command: "npx shadcn@latest add button card input dialog", working_directory: "%s/frontend")`, projectFolder),
+			"Components install into src/components/ui/ — import and use them directly.",
+			"Full component list: https://ui.shadcn.com/docs/components",
+			"Use lucide-react for icons (already installed): import { Plus, Trash2 } from 'lucide-react'",
+			"",
+		)
+	}
+
+	lines = append(lines,
 		"## Coding guidelines",
 		"- TypeScript only",
 	)
 	if hasFrontend {
-		lines = append(lines, "- React: functional components + hooks")
+		lines = append(lines,
+			"- React: functional components + hooks",
+			"- Use Tailwind utility classes for all styling — no inline styles",
+			"- Use shadcn/ui components for UI; add them with: npx shadcn@latest add <component>",
+			"- Use lucide-react for icons",
+			"- Use cn() from @/lib/utils to merge conditional classes",
+		)
 	}
 	if hasBackend {
 		lines = append(lines, "- Express 5: async/await, errors auto-forwarded to error middleware")
@@ -1380,6 +1488,40 @@ func BuildPrototypeGuidance(meta PrototypeProjectMeta) string {
 		"When the user mentions an API key or secret value, add it to .env and reference process.env.KEY in code.",
 	)
 
+	lines = append(lines, "", "## Git version control",
+		"ALWAYS use `prototype_git` for ALL git operations — status, log, diff, add, commit, push, pull, branch, checkout, merge, everything.",
+		"NEVER use `execute_shell_command` for git. The workspace container root has its own git repo — without the correct working_directory it operates on the WRONG repo. `prototype_git` always runs inside Projects/" + meta.Name + "/ and injects credentials automatically.",
+		"",
+		fmt.Sprintf(`  Check status:  prototype_git(project_name: %q, command: "git status")`, meta.Name),
+		fmt.Sprintf(`  Save progress: prototype_git(project_name: %q, command: "git add . && git commit -m 'description'")`, meta.Name),
+		fmt.Sprintf(`  View history:  prototype_git(project_name: %q, command: "git log --oneline -10")`, meta.Name),
+		fmt.Sprintf(`  New branch:    prototype_git(project_name: %q, command: "git checkout -b experiment-dark-theme")`, meta.Name),
+		fmt.Sprintf(`  Merge branch:  prototype_git(project_name: %q, command: "git checkout main && git merge --no-ff experiment-dark-theme")`, meta.Name),
+	)
+	if meta.GitHub != nil {
+		lines = append(lines,
+			fmt.Sprintf(`  Push to GitHub: prototype_git(project_name: %q, command: "git push origin main")`, meta.Name),
+		)
+	}
+	lines = append(lines,
+		"Save a checkpoint BEFORE making large changes.",
+		"",
+		"### Git best practices",
+		"Follow these habits to keep the project history clean and recoverable:",
+		"- Commit after every meaningful change — don't batch unrelated edits into one commit.",
+		"- Use a descriptive commit message: what changed and why, not just 'update'.",
+		"- Before starting a large refactor or new feature, commit the current state first.",
+		"- For work spanning multiple steps, create a branch first (`git checkout -b ...`), then merge when done.",
+		"- Keep branches focused — one feature or experiment per branch.",
+		"- Merge branches back to main promptly once the work is verified; don't let them diverge.",
+	)
+	if meta.GitHub != nil {
+		lines = append(lines,
+			"- Push to GitHub after each commit or group of related commits so work is backed up.",
+			"- Push branches too before merging, so the full history is on GitHub.",
+		)
+	}
+
 	return strings.Join(lines, "\n")
 }
 
@@ -1393,6 +1535,21 @@ func BuildPrototypeGuidance(meta PrototypeProjectMeta) string {
 // The Vite dev server must be started with VITE_BASE matching the proxy path:
 //   VITE_BASE=/api/code-prototype/preview/{name}/ npm run dev
 // ---------------------------------------------------------------------------
+
+// isSafePathSegment returns true if s contains only alphanumerics, hyphens,
+// underscores, and dots — no slashes or other path-traversal characters.
+func isSafePathSegment(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
 
 // projectDevPort returns a stable port in the range 15000–15099 for a given
 // project name using FNV-32a hashing. These 100 ports are mapped in docker-compose
@@ -1436,7 +1593,7 @@ func getContainerImage() string {
 	if img := os.Getenv("PROTOTYPE_CONTAINER_IMAGE"); img != "" {
 		return img
 	}
-	return "node:20-alpine"
+	return "node:24-alpine"
 }
 
 // projectContainerName returns the Docker container name for a given user+project.
@@ -1510,7 +1667,28 @@ func proxyWebSocketToDevServer(w http.ResponseWriter, r *http.Request, backendHo
 	}
 	go bridge(backendConn, clientConn)
 	go bridge(clientConn, backendConn)
-	<-errc
+
+	// Send periodic pings to both sides to keep the connection alive through
+	// proxy/load-balancer idle timeouts (typically 60–75 s). Without this,
+	// an idle HMR connection is silently closed, Vite detects the drop and
+	// forces a full page reload instead of staying on the hot-reload path.
+	pingTicker := time.NewTicker(30 * time.Second)
+	defer pingTicker.Stop()
+	for {
+		select {
+		case err := <-errc:
+			_ = err
+			return
+		case <-pingTicker.C:
+			deadline := time.Now().Add(5 * time.Second)
+			if err := clientConn.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
+				return
+			}
+			if err := backendConn.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
+				return
+			}
+		}
+	}
 }
 
 // containerStartOnce returns true and records a start timestamp if no start was attempted
@@ -1535,6 +1713,11 @@ func containerStartOnce(startKey string) bool {
 // config are never stale. Named node_modules volumes are preserved so npm install is
 // fast on subsequent starts.
 func startProjectContainer(userID, projectName string) {
+	if !isSafePathSegment(userID) || !isSafePathSegment(projectName) {
+		log.Printf("[PREVIEW] startProjectContainer: unsafe userID=%q or projectName=%q — aborting", userID, projectName)
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -1595,7 +1778,7 @@ func startProjectContainer(userID, projectName string) {
 			"-e", "VITE_BASE="+previewBase,
 			"-e", "PORT=8080",
 		)
-		startCmd = "npm install --prefix /app/frontend && npm install --prefix /app/backend && (VITE_BASE=$VITE_BASE npm run dev --prefix /app/frontend &) && (npm run dev --prefix /app/backend &) && wait"
+		startCmd = "npm install --prefix /app/frontend && npm install --prefix /app/backend && VITE_BASE=$VITE_BASE npm run dev --prefix /app/frontend & npm run dev --prefix /app/backend & wait"
 	case "frontend-only":
 		args = append(args,
 			"-v", projectHostPath+"/frontend:/app/frontend",
@@ -1620,7 +1803,7 @@ func startProjectContainer(userID, projectName string) {
 // spinnerHTML renders the "starting…" page. Auto-refreshes every 5 seconds.
 func spinnerHTML(w http.ResponseWriter, projectName, containerName string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusServiceUnavailable)
+	w.Header().Set("Cache-Control", "no-store")
 	fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="5"><style>
 body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f172a;color:#94a3b8}
 .box{text-align:center}.spinner{width:32px;height:32px;border:3px solid #334155;border-top-color:#10b981;border-radius:50%%;animation:spin 0.8s linear infinite;margin:0 auto 1rem}
@@ -1644,6 +1827,10 @@ func (api *StreamingAPI) handlePreviewProxy(w http.ResponseWriter, r *http.Reque
 	}
 
 	userID := GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	containerName := projectContainerName(userID, projectName)
 	startKey := userID + "/" + projectName
 
@@ -1744,6 +1931,21 @@ func (api *StreamingAPI) handleContainerLogsStream(w http.ResponseWriter, r *htt
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+
+	// Check container status before attaching — avoids surfacing raw Docker error messages
+	// when the container simply hasn't been started yet.
+	statusOut, _ := exec.CommandContext(ctx, "docker", "inspect",
+		"--format", "{{.State.Status}}", containerName).Output()
+	containerStatus := strings.TrimSpace(string(statusOut))
+	if containerStatus != "running" {
+		msg := "not-started"
+		if containerStatus == "exited" || containerStatus == "created" || containerStatus == "paused" {
+			msg = "stopped"
+		}
+		fmt.Fprintf(w, "event: done\ndata: {\"message\":%q}\n\n", msg)
+		flusher.Flush()
+		return
+	}
 
 	cmd := exec.CommandContext(ctx, "docker", "logs", "-f", "--tail="+tail, "--timestamps", containerName)
 	stdout, err := cmd.StdoutPipe()

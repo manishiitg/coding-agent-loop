@@ -68,6 +68,8 @@ const (
 	BackgroundDelegateKey delegationContextKey = "background_delegate_func"
 	// BackgroundAgentIDKey is the context key for linking background agents to their delegation
 	BackgroundAgentIDKey delegationContextKey = "background_agent_id"
+	// ShareBrowserKey is the context key for controlling browser session isolation in sub-agents
+	ShareBrowserKey delegationContextKey = "share_browser"
 )
 
 // PlanEventEmitter is the interface for emitting workspace file events when plans are saved
@@ -319,6 +321,10 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 						},
 						"description": "Optional list of MCP server names for this sub-agent. When specified, the sub-agent only connects to these servers instead of all available ones. Use this to give the worker only the tools it needs, reducing noise and improving efficiency.",
 					},
+					"share_browser": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether the sub-agent shares the parent's browser session (Playwright) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
+					},
 				},
 				"required": func() []string {
 				if requireReasoningLevel {
@@ -500,6 +506,12 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		}
 	}
 
+	// Extract share_browser param (defaults to true — shared browser)
+	shareBrowser := true
+	if sb, ok := args["share_browser"].(bool); ok {
+		shareBrowser = sb
+	}
+
 	// Check delegation depth to prevent infinite recursion
 	currentDepth := 0
 	if depth, ok := ctx.Value(DelegationDepthKey).(int); ok {
@@ -532,6 +544,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 		}
 		if len(delegationServers) > 0 {
 			bgCtx = context.WithValue(bgCtx, DelegationServersKey, delegationServers)
+		}
+		if !shareBrowser {
+			bgCtx = context.WithValue(bgCtx, ShareBrowserKey, false)
 		}
 
 		agentID, err := bgDelegate(bgCtx, name, instruction)
@@ -579,6 +594,9 @@ func handleDelegate(ctx context.Context, args map[string]interface{}) (string, e
 	}
 	if len(delegationServers) > 0 {
 		subCtx = context.WithValue(subCtx, DelegationServersKey, delegationServers)
+	}
+	if !shareBrowser {
+		subCtx = context.WithValue(subCtx, ShareBrowserKey, false)
 	}
 
 	// Execute the delegated task
@@ -1465,21 +1483,27 @@ After the user approves, execute the plan:
 **` + "`human_feedback`" + `** — Ask a single question or present choices to the user
 
 ### Plan Folder Structure
-All plans in a conversation share the same folder (` + "`Plans/{plan_id}/`" + `). You can organize work using sub-folders:
+All plans in a conversation share the same folder (` + "`Plans/{plan_id}/`" + `). **ALWAYS organize outputs into sub-folders** — never let workers dump files at the plan root.
 
 ` + "```" + `
 Plans/{plan_id}/
-  plan.md              ← Current active plan (always here)
+  plan.md              ← Current active plan (ONLY this + plan_tracking.md at root)
   plan_tracking.md     ← Auto-generated: archived previous plans with timestamps
-  research/            ← Sub-folder for research outputs
-  phase-1/             ← Sub-folder for phase 1 deliverables
-  reports/             ← Sub-folder for generated reports
+  research/            ← Research and analysis outputs
+  reports/             ← Generated reports and summaries
+  scripts/             ← Code, scripts, automation
+  data/                ← Data files, exports, datasets
+  config/              ← Configuration files
 ` + "```" + `
 
-- **plan.md** is always the active plan at the folder root
+- **plan.md** is always the active plan at the folder root — nothing else belongs at root except plan_tracking.md
 - When you create a new plan, the previous plan.md is automatically archived to **plan_tracking.md** with a timestamp. Review this file to reference past plans, progress, and learnings.
-- Create sub-folders to organize outputs by phase, topic, or task type
-- Tell sub-agents to write their outputs to specific sub-folders via their instructions (e.g., "Save your analysis to Plans/{plan_id}/research/analysis.md")
+- **In every delegate instruction, specify the exact output path** with a sub-folder. Examples:
+  - "Save your research to Plans/{plan_id}/research/market-analysis.md"
+  - "Write the report to Plans/{plan_id}/reports/quarterly-summary.md"
+  - "Save the script to Plans/{plan_id}/scripts/data-pipeline.py"
+- Pick sub-folder names that match the task type (research/, reports/, scripts/, data/, etc.)
+- Workers will create the sub-folder automatically if it doesn't exist
 
 ### Task Granularity — Keep Tasks Small
 - **Prefer many small tasks over few large ones**. Smaller tasks complete faster, giving the user more frequent progress updates. Each completed task triggers an update to the user, so more tasks = better visibility.
@@ -1501,7 +1525,7 @@ Plans/{plan_id}/
 - **Relay learnings**: Include relevant findings in the next delegate instruction
 - **Review plan_tracking.md** when creating follow-up plans — it contains archived plans and progress from earlier in the conversation
 - **Check existing plans first**: Before creating a new plan, list Plans/ and review relevant existing plans. Reuse a plan folder when the objective is related — this preserves prior research, outputs, and learnings.
-- **Save large outputs as workspace files**: For reports, analyses, or any output longer than a few paragraphs, instruct sub-agents to save their work as files in the plan folder (e.g., Plans/{plan_id}/reports/analysis.md). In your final summary to the user, reference the workspace file path so they can access the full document. Example: "The full report is saved at Plans/{plan_id}/reports/quarterly-analysis.md". The system will automatically convert these paths to clickable links.
+- **Save large outputs as workspace files**: For reports, analyses, or any output longer than a few paragraphs, instruct sub-agents to save their work in an appropriate sub-folder (e.g., Plans/{plan_id}/reports/analysis.md, Plans/{plan_id}/research/findings.md). NEVER instruct workers to save directly to the plan root. In your final summary to the user, reference the workspace file path so they can access the full document. Example: "The full report is saved at Plans/{plan_id}/reports/quarterly-analysis.md". The system will automatically convert these paths to clickable links.
 
 ### Tool Mode (optional, for delegate):
 - **"simple"** (default): Best for most tasks, including writing Python/Bash scripts via shell tools.

@@ -6943,6 +6943,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	}
 	log.Printf("[USER_ID_DEBUGGING] Sub-agent: subAgentUserID=%q (from parent context UserIDKey)", subAgentUserID)
 
+	// Determine sub-agent session ID: isolated when share_browser=false, shared otherwise
+	subAgentSessionID := sessionID
+	if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
+		subAgentSessionID = fmt.Sprintf("%s-isolated-%d", sessionID, time.Now().UnixNano())
+		log.Printf("[DELEGATION] Browser isolation: sub-agent gets new session ID %s (parent: %s)", subAgentSessionID, sessionID)
+	}
+
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
 		Name:       fmt.Sprintf("%s-sub-%d-%d", sessionID, currentDepth, time.Now().UnixNano()),
@@ -6992,7 +6999,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			return preDiscovered
 		}(),
 		APIKeys:   apiKeys,
-		SessionID: sessionID,      // Reuse parent session's MCP connections via registry
+		SessionID: subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
 		UserID:    subAgentUserID, // Per-user OAuth token isolation
 		// Context offloading: inherit from environment
 		LargeOutputThreshold: func() int {
@@ -7243,6 +7250,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				log.Printf("[BROWSER_UPLOAD] Registered sub-agent browser_file_upload transformer, workspace=%s", wsAbsPath)
 			}
 		}
+
+		// Browser isolation: when share_browser=false, tell the sub-agent to use a unique
+		// session name with the agent_browser tool to avoid sharing browser state.
+		if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
+			underlyingAgent.AppendSystemPrompt(fmt.Sprintf("## Browser Isolation\nYou have an isolated browser session. When using the agent_browser tool, use a unique session name (e.g., \"isolated-%d\") instead of \"default\" to avoid sharing browser state with other agents.", time.Now().UnixNano()))
+			log.Printf("[DELEGATION] Added browser isolation guidance to sub-agent system prompt")
+		}
 	}
 
 	// Register the same workspace tools as parent (if workspace access is enabled)
@@ -7421,7 +7435,19 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				planUpdatePrompt := fmt.Sprintf(`
 ## Workspace Rules
 Your workspace folder is: %s/
-Save ALL output files (scripts, data, reports, etc.) inside this folder. Do NOT write to Chats/ or any other folder.
+Save ALL output files inside this folder. Do NOT write to Chats/ or any other folder.
+
+**File Organization — ALWAYS use sub-folders:**
+- Organize outputs into sub-folders by type — NEVER dump files at the plan folder root
+- Use descriptive sub-folder names: research/, reports/, scripts/, data/, config/, analysis/, etc.
+- Match the sub-folder to your task type. Examples:
+  - Research/analysis outputs → %s/research/topic-name.md
+  - Generated reports → %s/reports/report-name.md
+  - Scripts or code → %s/scripts/script-name.py
+  - Data files → %s/data/dataset-name.json
+- If your instruction specifies a path, use that exact path
+- Create the sub-folder if it doesn't exist (mkdir -p via execute_shell_command)
+- Only plan.md and plan_tracking.md belong at the folder root
 
 ## Plan Update Protocol
 You are working on a task from the plan at %s/plan.md.
@@ -7436,7 +7462,7 @@ This is critical — the manager reads plan.md after you finish and passes your 
 Use execute_shell_command or diff_patch_workspace_file to update the file.
 - For appending: execute_shell_command(command: "echo '\n- [task-N result]: Summary of findings' >> %s/plan.md", working_directory: ".")
 - For precise edits (marking checkboxes, updating sections): diff_patch_workspace_file with filepath "%s/plan.md"
-`, planFolder, planFolder, planFolder, planFolder)
+`, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder)
 				underlyingAgent.AppendSystemPrompt(planUpdatePrompt)
 				log.Printf("[DELEGATION] Added plan update instructions for plan folder: %s", planFolder)
 			} else {
@@ -7458,6 +7484,14 @@ You are a focused background worker. Complete the assigned task using available 
 	// Notify caller that the sub-agent wrapper is ready (used by background agents)
 	if len(onCreated) > 0 && onCreated[0] != nil {
 		onCreated[0](subAgent)
+	}
+
+	// Clean up isolated browser session when sub-agent finishes
+	if subAgentSessionID != sessionID {
+		defer func() {
+			mcpagent.CloseSession(subAgentSessionID)
+			log.Printf("[DELEGATION] Closed isolated browser session %s", subAgentSessionID)
+		}()
 	}
 
 	// Run the sub-agent with the instruction
@@ -7621,6 +7655,9 @@ func (api *StreamingAPI) executeBackgroundDelegatedTask(
 	}
 	if ds, ok := ctx.Value(virtualtools.DelegationServersKey).([]string); ok {
 		bgCtx = context.WithValue(bgCtx, virtualtools.DelegationServersKey, ds)
+	}
+	if sb, ok := ctx.Value(virtualtools.ShareBrowserKey).(bool); ok && !sb {
+		bgCtx = context.WithValue(bgCtx, virtualtools.ShareBrowserKey, false)
 	}
 	// Pass user ID for per-user OAuth
 	if userID, ok := ctx.Value(common.UserIDKey).(string); ok {

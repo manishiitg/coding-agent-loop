@@ -51,6 +51,39 @@ services:
       retries: 3
       start_period: 40s
 
+  # Workspace Projects API (lightweight — code-prototype only, no browser/Python)
+  workspace-projects-api:
+    build:
+      context: ./workspace
+      dockerfile: Dockerfile.projects
+    # SYS_ADMIN optional — lighter shell isolation for project containers
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    ports:
+      - "9145:8080"
+    env_file:
+      - ./workspace/.env
+    environment:
+      - PORT=8080
+      - DOCS_DIR=/app/workspace-projects
+      - DEBUG=${DEBUG:-false}
+      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=false
+      - WORKSPACE_ENABLE_GITHUB_SYNC=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./workspace-projects:/app/workspace-projects
+      - workspace_projects_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   # Frontend
   frontend:
     build:
@@ -76,6 +109,7 @@ services:
       - NODE_ENV=development
       - VITE_API_BASE_URL=http://localhost:8000
       - VITE_WORKSPACE_API_URL=http://localhost:8081
+      - VITE_WORKSPACE_PROJECTS_API_URL=http://localhost:9145
     depends_on:
       workspace-api:
         condition: service_healthy
@@ -87,4 +121,5 @@ volumes:
   # neo4j_logs: # Removed - using cloud AuraDB instead
   workspace-docs:
   workspace_data:
+  workspace_projects_data:
   qdrant_data:

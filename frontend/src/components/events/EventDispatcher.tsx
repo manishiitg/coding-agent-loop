@@ -344,6 +344,13 @@ const SubAgentHierarchy: React.FC<{
   )
 }
 
+// Stable compact styling wrapper — defined outside EventDispatcher to prevent
+// component identity changes on re-render (which would unmount children and lose state).
+const CompactWrapper: React.FC<{ compact?: boolean; children: React.ReactNode }> = ({ compact, children }) => {
+  if (!compact) return <>{children}</>
+  return <div className="text-xs [&>*]:text-xs [&_h1]:!text-sm [&_h2]:!text-xs [&_h3]:!text-[11px] [&_p]:!text-xs [&_code]:!text-[10px] [&_span]:!text-xs [&_div]:!text-xs">{children}</div>
+}
+
 // Helper function to wrap event component with orchestrator context
 function WithContext<T extends { metadata?: Record<string, unknown> }>({
   Component,
@@ -434,12 +441,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     }
   }, [childrenNodes, handleScroll]) // Re-attach if childrenNodes causes re-render of the div
 
-  // Wrapper component to apply compact styling
-  const CompactWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    if (!compact) return <>{children}</>
-    return <div className="text-xs [&>*]:text-xs [&_h1]:!text-sm [&_h2]:!text-xs [&_h3]:!text-[11px] [&_p]:!text-xs [&_code]:!text-[10px] [&_span]:!text-xs [&_div]:!text-xs">{children}</div>
-  }
-
   // Invalid event check
   if (!event.type || !event.data) {
     return (
@@ -456,46 +457,46 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Agent Events
   if (isEventType(event, 'agent_error')) {
-    return <CompactWrapper><AgentErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><AgentErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'llm_generation_with_retry')) {
-    return <CompactWrapper><LLMGenerationWithRetryEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><LLMGenerationWithRetryEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'agent_start')) {
-    return <CompactWrapper><WithContext Component={AgentStartEventComponent} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={AgentStartEventComponent} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'agent_end')) {
-    return <CompactWrapper><WithContext Component={AgentEndEventComponent} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={AgentEndEventComponent} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // MCP Server Events
   if (isEventType(event, 'mcp_server_selection')) {
-    return <CompactWrapper><WithContext Component={MCPServerSelectionEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={MCPServerSelectionEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'mcp_server_discovery')) {
-    return <CompactWrapper><WithContext Component={MCPServerDiscoveryEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={MCPServerDiscoveryEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'mcp_server_connection')) {
-    return <CompactWrapper><WithContext Component={MCPServerConnectionEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={MCPServerConnectionEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'mcp_server_connection_error')) {
-    return <CompactWrapper><WithContext Component={MCPServerConnectionEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={MCPServerConnectionEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Conversation Events
   if (isEventType(event, 'conversation_start')) {
-    return <CompactWrapper><WithContext Component={ConversationStartEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={ConversationStartEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'conversation_end')) {
-    return <CompactWrapper><WithContext Component={ConversationEndEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={ConversationEndEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'conversation_error')) {
-    return <CompactWrapper><WithContext Component={ConversationErrorEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={ConversationErrorEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'conversation_turn')) {
     const data = getEventData(event)
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <EventWithOrchestratorContext metadata={data.metadata}>
           <ConversationTurnEventDisplay event={data} compact={compact} />
         </EventWithOrchestratorContext>
@@ -507,7 +508,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'llm_generation_start')) {
     const data = getEventData(event)
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <EventWithOrchestratorContext metadata={data.metadata}>
           <LLMGenerationStartEventDisplay event={data} mode={compact ? 'compact' : mode} />
         </EventWithOrchestratorContext>
@@ -515,12 +516,12 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
   if (isEventType(event, 'llm_generation_end')) {
-    return <CompactWrapper><WithContext Component={LLMGenerationEndEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={LLMGenerationEndEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'llm_generation_error')) {
     const data = getEventData(event)
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <EventWithOrchestratorContext metadata={data.metadata}>
           <LLMGenerationErrorEventDisplay event={data} mode={compact ? 'compact' : mode} />
         </EventWithOrchestratorContext>
@@ -531,18 +532,18 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Tool Events
   // Note: delegate tool events are filtered out at EventHierarchy level
   if (isEventType(event, 'tool_call_start')) {
-    return <CompactWrapper><WithContext Component={ToolCallStartEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={ToolCallStartEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'tool_call_end')) {
-    return <CompactWrapper><WithContext Component={ToolCallEndEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={ToolCallEndEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'tool_call_error')) {
-    return <CompactWrapper><WithContext Component={ToolCallErrorEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={ToolCallErrorEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // System Events
   if (isEventType(event, 'system_prompt')) {
-    return <CompactWrapper><WithContext Component={SystemPromptEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={SystemPromptEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'user_message')) {
     const data = getEventData(event)
@@ -551,7 +552,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     if (!data.content) {
       console.warn('USERMSG_DEBUG - EventDispatcher - user_message event has no content, but rendering anyway', data)
     }
-    return <CompactWrapper><WithContext Component={UserMessageEventDisplay} data={data} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WithContext Component={UserMessageEventDisplay} data={data} compact={compact} /></CompactWrapper>
   }
   
   // Fallback: Try to handle user_message events even if type check fails
@@ -563,7 +564,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       const eventData = (agentEvent?.data || event.data) as UserMessageEvent
       if (eventData) {
         console.log('USERMSG_DEBUG - EventDispatcher - Using fallback for user_message event', eventData)
-        return <CompactWrapper><WithContext Component={UserMessageEventDisplay} data={eventData} compact={compact} /></CompactWrapper>
+        return <CompactWrapper compact={compact}><WithContext Component={UserMessageEventDisplay} data={eventData} compact={compact} /></CompactWrapper>
       }
     } catch (error) {
       console.error('USERMSG_DEBUG - EventDispatcher - Error in fallback handler', error, event)
@@ -572,17 +573,17 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Orchestrator Events
   if (isEventType(event, 'orchestrator_start')) {
-    return <CompactWrapper><OrchestratorStartEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><OrchestratorStartEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'orchestrator_end')) {
-    return <CompactWrapper><OrchestratorEndEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><OrchestratorEndEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'orchestrator_error')) {
-    return <CompactWrapper><OrchestratorErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><OrchestratorErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'orchestrator_agent_start')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <OrchestratorAgentStartEventDisplay 
           event={getEventData(event)} 
           isCollapsed={isCollapsed}
@@ -593,10 +594,10 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
   if (isEventType(event, 'orchestrator_agent_end')) {
-    return <CompactWrapper><OrchestratorAgentEndEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><OrchestratorAgentEndEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'orchestrator_agent_error')) {
-    return <CompactWrapper><OrchestratorAgentErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><OrchestratorAgentErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Human Verification Events
@@ -687,32 +688,32 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Workflow Events
   if (isEventType(event, 'workflow_start')) {
-    return <CompactWrapper><WorkflowStartEvent event={getEventData(event) as WorkflowStartEventData} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WorkflowStartEvent event={getEventData(event) as WorkflowStartEventData} /></CompactWrapper>
   }
   if (isEventType(event, 'workflow_progress')) {
-    return <CompactWrapper><WorkflowProgressEvent event={getEventData(event) as WorkflowProgressEventData} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WorkflowProgressEvent event={getEventData(event) as WorkflowProgressEventData} /></CompactWrapper>
   }
   if (isEventType(event, 'workflow_end')) {
-    return <CompactWrapper><WorkflowEndEvent event={getEventData(event) as WorkflowEndEventData} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><WorkflowEndEvent event={getEventData(event) as WorkflowEndEventData} /></CompactWrapper>
   }
   if (isEventType(event, 'prerequisite_navigation')) {
-    return <CompactWrapper><PrerequisiteNavigationEventDisplay event={getEventData(event) as PrerequisiteNavigationEvent} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><PrerequisiteNavigationEventDisplay event={getEventData(event) as PrerequisiteNavigationEvent} compact={compact} /></CompactWrapper>
   }
   // Batch execution events
   if (isEventType(event, 'batch_group_start')) {
-    return <CompactWrapper><BatchGroupStartEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><BatchGroupStartEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'batch_group_end')) {
-    return <CompactWrapper><BatchGroupEndEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><BatchGroupEndEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'batch_execution_start')) {
-    return <CompactWrapper><BatchExecutionStartEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><BatchExecutionStartEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'batch_execution_end')) {
-    return <CompactWrapper><BatchExecutionEndEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><BatchExecutionEndEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'batch_execution_canceled')) {
-    return <CompactWrapper><BatchExecutionCanceledEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><BatchExecutionCanceledEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Todo Task Events
@@ -724,7 +725,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       continue: 'text-yellow-600 dark:text-yellow-400',
     }
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2 mb-2">
             <span className="text-lg">📋</span>
@@ -777,7 +778,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'todo_task_item_created')) {
     const data = getEventData(event) as TodoTaskItemCreatedEvent
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-lg">➕</span>
@@ -807,7 +808,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'todo_task_item_updated')) {
     const data = getEventData(event) as TodoTaskItemUpdatedEvent
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2">
             <span className="text-lg">🔄</span>
@@ -831,7 +832,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'todo_task_item_completed')) {
     const data = getEventData(event) as TodoTaskItemCompletedEvent
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2">
             <span className="text-lg">✅</span>
@@ -852,7 +853,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'todo_task_step_completed')) {
     const data = getEventData(event) as TodoTaskStepCompletedEvent
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2 mb-2">
             <span className="text-lg">🎉</span>
@@ -884,82 +885,82 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Debug Events
   if (isEventType(event, 'token_usage')) {
-    return <CompactWrapper><TokenUsageEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><TokenUsageEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'throttling_detected')) {
-    return <CompactWrapper><ThrottlingDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ThrottlingDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'fallback_model_used')) {
-    return <CompactWrapper><FallbackModelUsedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><FallbackModelUsedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'fallback_attempt')) {
-    return <CompactWrapper><FallbackAttemptEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><FallbackAttemptEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'token_limit_exceeded')) {
-    return <CompactWrapper><TokenLimitExceededEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><TokenLimitExceededEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'large_tool_output_detected')) {
-    return <CompactWrapper><LargeToolOutputDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><LargeToolOutputDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'large_tool_output_file_written')) {
-    return <CompactWrapper><LargeToolOutputFileWrittenEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><LargeToolOutputFileWrittenEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'model_change')) {
-    return <CompactWrapper><ModelChangeEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ModelChangeEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'max_turns_reached')) {
-    return <CompactWrapper><MaxTurnsReachedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><MaxTurnsReachedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'context_cancelled')) {
-    return <CompactWrapper><ContextCancelledEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ContextCancelledEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Cache Events
   if (isEventType(event, 'cache_event')) {
-    return <CompactWrapper><CacheEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><CacheEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'comprehensive_cache_event')) {
-    return <CompactWrapper><ComprehensiveCacheEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ComprehensiveCacheEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Smart Routing Events
   if (isEventType(event, 'smart_routing_start')) {
-    return <CompactWrapper><SmartRoutingStartEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><SmartRoutingStartEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'smart_routing_end')) {
-    return <CompactWrapper><SmartRoutingEndEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><SmartRoutingEndEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Unified Completion Events
   if (isEventType(event, 'unified_completion')) {
-    return <CompactWrapper><UnifiedCompletionEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><UnifiedCompletionEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Structured Output Events
   if (isEventType(event, 'structured_output_start')) {
-    return <CompactWrapper><StructuredOutputStartEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><StructuredOutputStartEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'structured_output_end')) {
-    return <CompactWrapper><StructuredOutputEndEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><StructuredOutputEndEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Context Summarization Events
   if (isEventType(event, 'context_summarization_started')) {
-    return <CompactWrapper><ContextSummarizationStartedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ContextSummarizationStartedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'context_summarization_completed')) {
-    return <CompactWrapper><ContextSummarizationCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ContextSummarizationCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'context_summarization_error')) {
-    return <CompactWrapper><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Context Editing Events
   if (isEventType(event, 'context_editing_completed')) {
-    return <CompactWrapper><ContextEditingCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ContextEditingCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
   if (isEventType(event, 'context_editing_error')) {
-    return <CompactWrapper><ContextEditingErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><ContextEditingErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
   // Temp LLM Skipped Event
@@ -986,7 +987,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       workspace_path?: string
     }
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <EventWithOrchestratorContext metadata={data?.metadata}>
           <TempLLMSkippedEventDisplay event={data || {}} compact={compact} />
         </EventWithOrchestratorContext>
@@ -996,24 +997,24 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Planning Events
   if (isEventType(event, 'independent_steps_selected')) {
-    return <CompactWrapper><IndependentStepsSelectedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><IndependentStepsSelectedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'todo_steps_extracted')) {
-    return <CompactWrapper><TodoStepsExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><TodoStepsExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'variables_extracted')) {
-    return <CompactWrapper><VariablesExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><VariablesExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Step Token Usage Events
   if (isEventType(event, 'step_token_usage')) {
-    return <CompactWrapper><StepTokenUsageEventDisplay event={getEventData(event)} /></CompactWrapper>
+    return <CompactWrapper compact={compact}><StepTokenUsageEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Step Progress Updated Event
   if (isEventType(event, 'step_progress_updated')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <StepProgressUpdatedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1025,7 +1026,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Decision Evaluated Event
   if (isEventType(event, 'decision_evaluated')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <DecisionEvaluatedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1037,7 +1038,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Routing Evaluated Event
   if (isEventType(event, 'routing_evaluated')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <RoutingEvaluatedEventDisplay
           event={getEventData(event) as Record<string, unknown>}
           compact={compact}
@@ -1049,7 +1050,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Todo Task Events
   if (isEventType(event, 'todo_task_route_selected')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <TodoTaskRouteSelectedEventDisplay
           event={getEventData(event)}
           compact={compact}
@@ -1059,7 +1060,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'todo_task_item_created')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <TodoTaskItemCreatedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1069,7 +1070,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'todo_task_item_updated')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <TodoTaskItemUpdatedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1079,7 +1080,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'todo_task_item_completed')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <TodoTaskItemCompletedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1089,7 +1090,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'todo_task_step_completed')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <TodoTaskStepCompletedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1101,7 +1102,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Pre-Validation Completed Event
   if (isEventType(event, 'pre_validation_completed')) {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <PreValidationCompletedEventDisplay 
           event={getEventData(event)} 
           compact={compact}
@@ -1144,7 +1145,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const hasFullChain = fullErrorChain && fullErrorChain !== rootCauseError
     
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg ${compact ? 'p-2' : 'p-3'}`}>
           <div className="space-y-2">
             {/* Header */}
@@ -1271,7 +1272,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const isCompleted = liveStats?.completed
 
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <details className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded px-2 py-1.5 group">
           <summary className="flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
             <span className="text-sm">🔀</span>
@@ -1439,7 +1440,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
       : { bg: 'bg-red-50 dark:bg-red-900/20', border: 'border-red-200 dark:border-red-800', text: 'text-red-700 dark:text-red-300', muted: 'text-red-500 dark:text-red-400', divider: 'border-red-200 dark:border-red-700' }
 
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <details className={`${colorClasses.bg} border ${colorClasses.border} rounded px-2 py-1.5 group`}>
           <summary className="flex items-center gap-2 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
             <span className="text-sm">{isSuccess ? '✅' : '❌'}</span>
@@ -1519,7 +1520,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const liveStats = agentId ? backgroundAgentStats?.get(agentId) : undefined
     const hasLiveStats = liveStats && (liveStats.toolCalls > 0 || liveStats.inputTokens > 0)
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
@@ -1585,7 +1586,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const statusLabel = isSuccess ? 'completed' : isFailed ? 'failed' : status
 
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <details className={`${bgColor} border rounded-md ${compact ? 'p-2' : 'p-3'}`}>
           <summary className="cursor-pointer flex items-center gap-2">
             <span className={`inline-block w-2 h-2 rounded-full ${dotColor}`} />
@@ -1621,7 +1622,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     const displayName = rawName.replace(/^Planner:\s*/i, '').trim() || 'Task'
 
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-gray-50 dark:bg-gray-900/20 border border-gray-200 dark:border-gray-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-gray-400" />
@@ -1640,7 +1641,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // Synthetic Turn Ready Event (shown when a background task has completed and results are being processed)
   if (event.type === 'synthetic_turn_ready') {
     return (
-      <CompactWrapper>
+      <CompactWrapper compact={compact}>
         <div className={`bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md ${compact ? 'p-2' : 'p-3'}`}>
           <div className="flex items-center gap-2">
             <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />

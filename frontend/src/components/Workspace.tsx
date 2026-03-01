@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
 import { Plus, Upload, FolderPlus, ChevronDown, Filter, CheckSquare, X, Trash2 } from 'lucide-react'
-import { agentApi, workspaceApi } from '../services/api'
+import { agentApi, workspaceApi, workspaceProjectsApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
@@ -302,6 +302,37 @@ export default function Workspace({
     // For chat mode and default, fetch root (Chats + skills are at root level)
     return undefined
   }, [selectedModeCategory, workflowFolderPath, codePrototypeFolderPath])
+
+  // Route file operations to workspace-projects-api when in code-prototype mode
+  const setUseProjectsApi = useWorkspaceStore(s => s.setUseProjectsApi)
+  const isPrototypeMode = selectedModeCategory === 'code-prototype'
+  useEffect(() => {
+    setUseProjectsApi(isPrototypeMode)
+  }, [isPrototypeMode, setUseProjectsApi])
+
+  // Raw workspace axios instance — routes to projects-api in code-prototype mode
+  const wsRawApi = useMemo(() => isPrototypeMode ? workspaceProjectsApi : workspaceApi, [isPrototypeMode])
+
+  // Workspace file API — routes to projects-api in code-prototype mode
+  const wsFileApi = useMemo(() => isPrototypeMode ? {
+    getFileContent: agentApi.getProjectsFileContent,
+    updateFile: agentApi.updateProjectsFile,
+    deleteFile: agentApi.deleteProjectsFile,
+    deleteFolder: agentApi.deleteProjectsFolder,
+    uploadFile: agentApi.uploadProjectsFile,
+    createFolder: agentApi.createProjectsFolder,
+    moveFile: agentApi.movePlannerFile,
+    deleteAllFilesInFolder: agentApi.deleteAllFilesInFolder,
+  } : {
+    getFileContent: agentApi.getPlannerFileContent,
+    updateFile: agentApi.updatePlannerFile,
+    deleteFile: agentApi.deletePlannerFile,
+    deleteFolder: agentApi.deletePlannerFolder,
+    uploadFile: agentApi.uploadPlannerFile,
+    createFolder: agentApi.createPlannerFolder,
+    moveFile: agentApi.movePlannerFile,
+    deleteAllFilesInFolder: agentApi.deleteAllFilesInFolder,
+  }, [isPrototypeMode])
 
   // Helper function to apply filtering and path adjustment to files
   // This matches the logic in filteredFiles useMemo to ensure paths are consistent
@@ -792,7 +823,7 @@ export default function Workspace({
 
         // For viewable binary files (xlsx, docx), fetch as raw binary
         if (isViewableBinaryFile(fileName)) {
-          const response = await workspaceApi.get(
+          const response = await wsRawApi.get(
             `/api/documents/${encodeURIComponent(fullFilePath)}`,
             { params: { download: 'true' }, responseType: 'arraybuffer' }
           )
@@ -806,7 +837,7 @@ export default function Workspace({
         setBinaryFileData(null)
 
         // Use the reconstructed full filepath for the API call
-        const response = await agentApi.getPlannerFileContent(fullFilePath)
+        const response = await wsFileApi.getFileContent(fullFilePath)
 
         if (response.success && response.data) {
           // Check if content exists and is a string
@@ -1082,9 +1113,9 @@ export default function Workspace({
           const fullFilePath = getOriginalFilePath(item)
           console.log(`[BulkDelete] Deleting ${item.type}: "${fullFilePath}" (display: "${item.filepath}")`)
           if (item.type === 'file') {
-            await agentApi.deletePlannerFile(fullFilePath)
+            await wsFileApi.deleteFile(fullFilePath)
           } else {
-            await agentApi.deletePlannerFolder(fullFilePath)
+            await wsFileApi.deleteFolder(fullFilePath)
           }
           console.log(`[BulkDelete] Successfully deleted: "${fullFilePath}"`)
         } catch (err) {
@@ -1152,9 +1183,9 @@ export default function Workspace({
       }
       
       if (deleteDialog.item.type === 'file') {
-        await agentApi.deletePlannerFile(fullFilePath)
+        await wsFileApi.deleteFile(fullFilePath)
       } else {
-        await agentApi.deletePlannerFolder(fullFilePath)
+        await wsFileApi.deleteFolder(fullFilePath)
       }
       
       // Refresh the file list to show updated state
@@ -1184,7 +1215,7 @@ export default function Workspace({
       // Use original filepath if available (when path was adjusted for display)
       const fullFolderPath = getOriginalFilePath(deleteAllFilesDialog.folder)
       
-      await agentApi.deleteAllFilesInFolder(fullFolderPath)
+      await wsFileApi.deleteAllFilesInFolder(fullFolderPath)
       
       // Refresh the file list to show updated state
       await fetchFiles(activeFolder)
@@ -1223,7 +1254,7 @@ export default function Workspace({
         // Use workspaceApi (same as other workspace operations) with blob response type
         // IMPORTANT: responseType must be 'blob' to prevent axios from parsing JSON
         // Also set Accept header to request binary content
-        const response = await workspaceApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {
+        const response = await wsRawApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {
           params: { download: 'true' },
           responseType: 'blob',
           headers: {
@@ -1266,7 +1297,7 @@ export default function Workspace({
         }
       } else {
         // For text files and images, use the regular API
-        const response = await agentApi.getPlannerFileContent(fullFilePath)
+        const response = await wsFileApi.getFileContent(fullFilePath)
         
         if (!response.success || !response.data) {
           setError(response.message || 'Failed to download file')
@@ -1278,7 +1309,7 @@ export default function Workspace({
         if (response.data.content?.startsWith('[Binary file:')) {
           // File is actually binary, use binary download path to get the actual file
           try {
-            const binaryResponse = await workspaceApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {
+            const binaryResponse = await wsRawApi.get(`/api/documents/${encodeURIComponent(fullFilePath)}`, {
               params: { download: 'true' },
               responseType: 'blob',
               headers: {
@@ -1416,7 +1447,7 @@ export default function Workspace({
       // This ensures paths like "HRMS PR Review/itemName" become "Workflow/HRMS PR Review/itemName"
       const fullDestinationPath = getFullFilePath(destinationPath)
       
-      await agentApi.movePlannerFile(fullFilePath, fullDestinationPath, commitMessage)
+      await wsFileApi.moveFile(fullFilePath, fullDestinationPath, commitMessage)
       
       // Refresh the file list to show updated state
       await fetchFiles(activeFolder)
@@ -1460,7 +1491,7 @@ export default function Workspace({
       const parentPath = pathParts.length > 1 ? pathParts.slice(0, -1).join('/') : ''
       const destinationPath = parentPath ? `${parentPath}/${newName}` : newName
       
-      await agentApi.movePlannerFile(fullFilePath, destinationPath, commitMessage)
+      await wsFileApi.moveFile(fullFilePath, destinationPath, commitMessage)
       
       // Refresh the file list to show updated state
       await fetchFiles(activeFolder)
@@ -1576,7 +1607,7 @@ export default function Workspace({
 
       try {
         const commitMessage = uploadDialog.commitMessage || `Upload ${file.name}`
-        await agentApi.uploadPlannerFile(file, folderPath, commitMessage)
+        await wsFileApi.uploadFile(file, folderPath, commitMessage)
         results.push({ name: file.name, success: true })
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Upload failed'
@@ -1670,7 +1701,7 @@ export default function Workspace({
       // Reconstruct folder path using getFullFilePath to handle workflow mode correctly
       // This ensures paths are correct even if parentPath wasn't properly fixed
       const fullFolderPath = getFullFilePath(folderPath)
-      await agentApi.createPlannerFolder(fullFolderPath, commitMessage)
+      await wsFileApi.createFolder(fullFolderPath, commitMessage)
       
       // Refresh file list to show the new folder
       await fetchFiles(activeFolder)

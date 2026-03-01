@@ -3,6 +3,7 @@
 #
 # - agent: MCP Agent (port 8000), env from ./agent_go/.env.
 # - workspace-api: from base compose (env: ./workspace/.env).
+# - workspace-projects-api: lightweight workspace for code-prototype mode.
 # - frontend: uses Dockerfile.prod (build + nginx), no source volumes, no dev server.
 
 services:
@@ -21,15 +22,44 @@ services:
       # per-project containers (bind-mount always takes the host path, not the
       # container-internal path).
       - WORKSPACE_DOCS_HOST_PATH=${WORKSPACE_DOCS_HOST_PATH:-/app/workspace-docs-host}
+      # workspace-projects-api for code-prototype operations
+      - WORKSPACE_PROJECTS_API_URL=http://workspace-projects-api:8080
+      - WORKSPACE_PROJECTS_HOST_PATH=${WORKSPACE_PROJECTS_HOST_PATH:-/app/workspace-projects-host}
       # Docker network so project containers can reach workspace-api by name.
       - DOCKER_NETWORK=${COMPOSE_PROJECT_NAME:-mcp-agent-builder-go}_default
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock  # DooD: manage sibling project containers
       - ${WORKSPACE_DOCS_HOST_PATH:-./workspace-docs}:/app/workspace-docs-host:ro  # host path reference
+      - ${WORKSPACE_PROJECTS_HOST_PATH:-./workspace-projects}:/app/workspace-projects-host:ro  # projects host path reference
     depends_on:
       workspace-api:
         condition: service_healthy
+      workspace-projects-api:
+        condition: service_healthy
     restart: unless-stopped
+
+  workspace-projects-api:
+    build:
+      context: ./workspace
+      dockerfile: Dockerfile.projects
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    environment:
+      - PORT=8080
+      - DOCS_DIR=/app/workspace-projects
+      - WORKSPACE_ENABLE_SEMANTIC_SEARCH=false
+      - WORKSPACE_ENABLE_GITHUB_SYNC=false
+    volumes:
+      - ${WORKSPACE_PROJECTS_HOST_PATH:-./workspace-projects}:/app/workspace-projects
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   frontend:
     build:
@@ -39,6 +69,7 @@ services:
         # Set at build time so Vite bakes these into the bundle (override for your deployment)
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
         VITE_WORKSPACE_API_URL: ${VITE_WORKSPACE_API_URL:-http://localhost:8081}
+        VITE_WORKSPACE_PROJECTS_API_URL: ${VITE_WORKSPACE_PROJECTS_API_URL:-http://localhost:9145}
     ports:
       - "5173:80"
     environment:

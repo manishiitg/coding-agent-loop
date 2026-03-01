@@ -89,6 +89,21 @@ func CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID str
 	return executors, env
 }
 
+// CreateWorkspaceAdvancedToolExecutorsWithURL creates workspace advanced tool executors
+// pointing to a custom workspace API URL (e.g., workspace-projects-api for code-prototype mode).
+func CreateWorkspaceAdvancedToolExecutorsWithURL(wsURL, userID, sessionID string) (map[string]func(ctx context.Context, args map[string]any) (string, error), map[string]string) {
+	env := getMCPExtraEnv(sessionID)
+	client := workspace.NewClient(
+		wsURL,
+		workspace.WithFolderGuard(getDefaultFolderGuard()),
+		workspace.WithUserID(userID),
+		workspace.WithExtraEnv(env),
+	)
+	executors := workspace.NewAdvancedExecutor(client)
+	wrapReadImageExecutor(executors)
+	return executors, env
+}
+
 // getMCPExtraEnv returns MCP-related env vars to inject into shell commands.
 // These are set by server.go at startup for code execution mode.
 // An optional sessionID can be passed to inject MCP_SESSION_ID for connection reuse.

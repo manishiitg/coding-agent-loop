@@ -81,11 +81,12 @@ export const codePrototypeApi = {
 
   // --- GitHub version control ---
 
-  githubConnect: async (projectName: string, repoUrl: string, pat: string): Promise<void> => {
-    await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/connect`, {
+  githubConnect: async (projectName: string, repoUrl: string, pat: string): Promise<GitHubConnectResult> => {
+    const r = await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/connect`, {
       repo_url: repoUrl,
       pat,
     })
+    return r.data
   },
 
   githubDisconnect: async (projectName: string): Promise<void> => {
@@ -116,6 +117,11 @@ export const codePrototypeApi = {
     return r.data
   },
 
+  githubPull: async (projectName: string): Promise<{ output: string }> => {
+    const r = await api.post(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/pull`, {}, { timeout: 60_000 })
+    return r.data
+  },
+
   githubListExperiments: async (projectName: string): Promise<Experiment[]> => {
     const r = await api.get(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/experiments`)
     return r.data
@@ -133,6 +139,11 @@ export const codePrototypeApi = {
   githubDiscardExperiment: async (projectName: string): Promise<void> => {
     await api.delete(`/api/code-prototype/projects/${encodeURIComponent(projectName)}/github/experiments/current`)
   },
+}
+
+export interface GitHubConnectResult {
+  current_branch: string
+  has_remote_content: boolean
 }
 
 export interface GitHubStatus {

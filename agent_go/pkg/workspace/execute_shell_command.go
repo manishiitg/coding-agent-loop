@@ -38,28 +38,61 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}
 	}
 
-	// Populate folder guard configuration from context or client
+	// Populate folder guard configuration from context or client.
+	// Two context key systems exist:
+	//   1. Chat/plan/prototype modes: FolderGuardAllowedWriteFolderKey (from server.go wrappers)
+	//   2. Workflow mode: FolderGuardWritePathsKey + FolderGuardReadPathsKey (from orchestrator)
 	if params.FolderGuard == nil {
-		// Check for chat mode folder guard in context
+		// Read paths from context (shared by both systems)
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+
 		if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+			// System 1: chat/plan/prototype mode
+			readPaths := allowedWrites // at minimum, can read what you can write
+			if hasCtxReads && len(ctxReads) > 0 {
+				readPaths = ctxReads
+			}
 			params.FolderGuard = &FolderGuardConfig{
 				Enabled:    true,
 				WritePaths: allowedWrites,
-				// In chat mode, allow reading everything in the workspace
-				ReadPaths: []string{"."},
+				ReadPaths:  readPaths,
 			}
+			log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, params.Command)
+		} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
+			// System 2: workflow orchestrator
+			readPaths := ctxWrites // at minimum, can read what you can write
+			if hasCtxReads && len(ctxReads) > 0 {
+				readPaths = ctxReads
+			}
+			params.FolderGuard = &FolderGuardConfig{
+				Enabled:    true,
+				WritePaths: ctxWrites,
+				ReadPaths:  readPaths,
+			}
+			log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, params.Command)
 		} else if c.FolderGuard != nil && c.FolderGuard.Enabled {
-			// Fallback to client-level folder guard
+			// Fallback to client-level folder guard — context had NO folder guard keys.
+			// This means the wrapper (wrapExecutorsWithPlanFolderGuard / wrapExecutorsWithChatModeFolderGuard)
+			// did NOT inject context values. This happens when the executor is called from a code path
+			// that bypasses the wrapper (e.g., a stale registry entry or an unwrapped executor).
 			params.FolderGuard = c.FolderGuard
+			log.Printf("[FOLDER_GUARD_RESOLVE] FALLBACK to client-level guard: URL=%s ReadPaths=%v WritePaths=%v BlockedPaths=%v cmd=%s",
+				c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, params.Command)
+		} else {
+			log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, params.Command)
 		}
+	} else {
+		log.Printf("[FOLDER_GUARD_RESOLVE] params.FolderGuard already set (explicit): URL=%s ReadPaths=%v WritePaths=%v cmd=%s",
+			c.BaseURL, params.FolderGuard.ReadPaths, params.FolderGuard.WritePaths, params.Command)
 	}
 
 	// Mode-aware default working directory (safety net).
-	// Prototype mode injects "Projects/{name}" and plan mode injects "Plans" via
-	// DefaultWorkingDirKey in wrapExecutorsWithPlanFolderGuard (server.go).
-	// If the LLM still passes "." despite the system-prompt examples, substitute
-	// the session default so commands run in the right project folder automatically.
-	// Chat and workflow modes do NOT set this key, so "." is left unchanged for them.
+	// Each mode injects its primary folder via DefaultWorkingDirKey:
+	//   - prototype mode → "Projects/{name}"
+	//   - plan mode      → "Plans"
+	//   - chat mode      → "Chats"
+	// If the LLM passes "." it is replaced with the mode's default so commands
+	// run in the correct folder automatically.
 	if params.WorkingDirectory == "." {
 		if defaultDir, ok := ctx.Value(common.DefaultWorkingDirKey).(string); ok && defaultDir != "" && defaultDir != "." {
 			log.Printf("[DEFAULT_WORKING_DIR] Substituted working_directory \".\" → %q for command: %s", defaultDir, params.Command)

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AgentMode } from './types'
 
-export type ModeCategory = 'chat' | 'workflow' | 'multi-agent' | 'code-prototype' | null
+export type ModeCategory = 'chat' | 'workflow' | 'multi-agent' | null
 
 interface ModeState {
   // Core mode selection
@@ -103,8 +103,6 @@ export const useModeStore = create<ModeState>()(
                 return 'workflow'
               case 'multi-agent':
                 return 'multi-agent'
-              case 'code-prototype':
-                return 'code-prototype'
               default:
                 return null
             }
@@ -117,8 +115,6 @@ export const useModeStore = create<ModeState>()(
               case 'workflow':
                 return 'workflow'
               case 'multi-agent':
-                return 'simple'
-              case 'code-prototype':
                 return 'simple'
               default:
                 return 'simple'

@@ -1315,7 +1315,7 @@ You have access to sub-agent delegation tools. You are a fully capable agent —
 }
 
 // BuildSpawnCapabilitiesSection returns a prompt section listing available sub-agent templates and skills.
-// Appended to the spawn-mode (and code-prototype) agent's system prompt so it knows what templates
+// Appended to the spawn-mode agent's system prompt so it knows what templates
 // are available when calling delegate().
 func BuildSpawnCapabilitiesSection(caps *CapabilitiesContext) string {
 	if caps == nil || (len(caps.SubAgentTemplates) == 0 && len(caps.Skills) == 0) {

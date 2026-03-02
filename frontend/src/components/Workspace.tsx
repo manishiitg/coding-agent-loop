@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
 import { Plus, Upload, FolderPlus, ChevronDown, Filter, CheckSquare, X, Trash2 } from 'lucide-react'
-import { agentApi, workspaceApi, workspaceProjectsApi } from '../services/api'
+import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
@@ -28,7 +28,6 @@ import {
   findIterationFolders
 } from '../utils/workspacePathUtils'
 import { useIterationExpansion } from './workspace/useIterationExpansion'
-import { useCodePrototypeStore } from '../stores/useCodePrototypeStore'
 
 interface WorkspaceProps {
   minimized: boolean
@@ -252,9 +251,6 @@ export default function Workspace({
   const autoExpandedMultiAgentRef = useRef(false)
   // Tracks which iterations have been lazy-loaded, keyed by workflowFolder
   const loadedIterationsRef = useRef<Map<string, Set<string>>>(new Map())
-  // Prevents repeated recovery fetches when wrong files appear in code-prototype mode
-  const protoRecoveryInFlightRef = useRef(false)
-  
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
   const emptyLoadingSet = useMemo(() => new Set<string>(), [])
   
@@ -282,48 +278,20 @@ export default function Workspace({
     return null
   }, [activeWorkflowPreset])
 
-  const currentPrototypeProject = useCodePrototypeStore(s => s.currentProject)
-  const codePrototypeFolderPath = useMemo(() => {
-    if (selectedModeCategory === 'code-prototype' && currentPrototypeProject) {
-      const path = `Projects/${currentPrototypeProject.name}`
-      return path
-    }
-    return null
-  }, [selectedModeCategory, currentPrototypeProject])
-
   // Determine which folder to pass to the API based on mode
   const activeFolder = useMemo(() => {
     if (selectedModeCategory === 'workflow' && workflowFolderPath) {
       return workflowFolderPath
     }
-    if (selectedModeCategory === 'code-prototype' && codePrototypeFolderPath) {
-      return codePrototypeFolderPath
-    }
     // For chat mode and default, fetch root (Chats + skills are at root level)
     return undefined
-  }, [selectedModeCategory, workflowFolderPath, codePrototypeFolderPath])
+  }, [selectedModeCategory, workflowFolderPath])
 
-  // Route file operations to workspace-projects-api when in code-prototype mode
-  const setUseProjectsApi = useWorkspaceStore(s => s.setUseProjectsApi)
-  const isPrototypeMode = selectedModeCategory === 'code-prototype'
-  useEffect(() => {
-    setUseProjectsApi(isPrototypeMode)
-  }, [isPrototypeMode, setUseProjectsApi])
+  // Raw workspace axios instance
+  const wsRawApi = workspaceApi
 
-  // Raw workspace axios instance — routes to projects-api in code-prototype mode
-  const wsRawApi = useMemo(() => isPrototypeMode ? workspaceProjectsApi : workspaceApi, [isPrototypeMode])
-
-  // Workspace file API — routes to projects-api in code-prototype mode
-  const wsFileApi = useMemo(() => isPrototypeMode ? {
-    getFileContent: agentApi.getProjectsFileContent,
-    updateFile: agentApi.updateProjectsFile,
-    deleteFile: agentApi.deleteProjectsFile,
-    deleteFolder: agentApi.deleteProjectsFolder,
-    uploadFile: agentApi.uploadProjectsFile,
-    createFolder: agentApi.createProjectsFolder,
-    moveFile: agentApi.movePlannerFile,
-    deleteAllFilesInFolder: agentApi.deleteAllFilesInFolder,
-  } : {
+  // Workspace file API
+  const wsFileApi = useMemo(() => ({
     getFileContent: agentApi.getPlannerFileContent,
     updateFile: agentApi.updatePlannerFile,
     deleteFile: agentApi.deletePlannerFile,
@@ -332,7 +300,7 @@ export default function Workspace({
     createFolder: agentApi.createPlannerFolder,
     moveFile: agentApi.movePlannerFile,
     deleteAllFilesInFolder: agentApi.deleteAllFilesInFolder,
-  }, [isPrototypeMode])
+  }), [])
 
   // Helper function to apply filtering and path adjustment to files
   // This matches the logic in filteredFiles useMemo to ensure paths are consistent
@@ -345,17 +313,6 @@ export default function Workspace({
       // Files are already scoped to the workflow folder by the API (folder param)
       // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, workflowFolderPath)
-    } else if (selectedModeCategory === 'code-prototype' && codePrototypeFolderPath) {
-      const hasProjectFiles = result.some(f =>
-        f.filepath === codePrototypeFolderPath ||
-        f.filepath === codePrototypeFolderPath + '/' ||
-        f.filepath.startsWith(codePrototypeFolderPath + '/')
-      )
-      if (!hasProjectFiles) return []
-      const contentsOfFolder = result.filter(f =>
-        f.filepath.replace(/\/$/, '') !== codePrototypeFolderPath.replace(/\/$/, '')
-      )
-      result = adjustFilePathsRecursive(contentsOfFolder, codePrototypeFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
       // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
       result = filesToProcess.filter(f => {
@@ -371,8 +328,8 @@ export default function Workspace({
     }
 
     return result
-  }, [selectedModeCategory, workflowFolderPath, codePrototypeFolderPath])
-  
+  }, [selectedModeCategory, workflowFolderPath])
+
   // Restore expanded folders when files change
   // This runs after store's fetchFiles completes and handles workflow mode filtering
   useEffect(() => {
@@ -381,8 +338,7 @@ export default function Workspace({
     
     // In workflow mode, completely skip restore effect to let auto-expand handle it
     // This prevents any interference with the auto-expansion logic
-    if ((selectedModeCategory === 'workflow' && workflowFolderPath) ||
-        (selectedModeCategory === 'code-prototype' && codePrototypeFolderPath)) {
+    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
       return
     }
     
@@ -580,23 +536,6 @@ export default function Workspace({
       if (effectiveDisplayedIteration) {
         result = result.map(node => pruneRunsToIteration(node, effectiveDisplayedIteration))
       }
-    } else if (selectedModeCategory === 'code-prototype') {
-      if (!codePrototypeFolderPath) return []
-
-      // Guard: if the store's files are from a root/stale fetch (no file belongs to this project),
-      // return empty. The recovery effect below will re-fetch the correct project folder.
-      const hasProjectFiles = result.some(f =>
-        f.filepath === codePrototypeFolderPath ||
-        f.filepath === codePrototypeFolderPath + '/' ||
-        f.filepath.startsWith(codePrototypeFolderPath + '/')
-      )
-      if (!hasProjectFiles) return []
-
-      // Exclude the folder node itself; show all contents with paths stripped of the prefix.
-      const contentsOfFolder = result.filter(f =>
-        f.filepath.replace(/\/$/, '') !== codePrototypeFolderPath.replace(/\/$/, '')
-      )
-      result = adjustFilePathsRecursive(contentsOfFolder, codePrototypeFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
       // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
       result = files.filter(f => {
@@ -615,7 +554,7 @@ export default function Workspace({
     result = filterFiles(result, searchQuery)
 
     return result
-  }, [files, workflowFolderPath, codePrototypeFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration])
+  }, [files, workflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration])
 
   // Refresh file tree from server (re-fetch all files so local filter can find them)
   const handleRefreshAndSearch = useCallback(async () => {
@@ -776,32 +715,6 @@ export default function Workspace({
       }
     }
   }, [activeFolder, fetchFiles, minimized, selectedModeCategory])
-
-  // Recovery effect for code-prototype mode: if something replaces the store's files with
-  // root-level files (race condition from another component's fetchFiles() call), re-fetch
-  // the project folder so the workspace doesn't stay blank.
-  useEffect(() => {
-    if (selectedModeCategory !== 'code-prototype' || !codePrototypeFolderPath || minimized) {
-      protoRecoveryInFlightRef.current = false
-      return
-    }
-    if (files.length === 0) return // Initial empty state — normal, no recovery needed
-
-    const hasProjectFiles = files.some(f =>
-      f.filepath === codePrototypeFolderPath ||
-      f.filepath === codePrototypeFolderPath + '/' ||
-      f.filepath.startsWith(codePrototypeFolderPath + '/')
-    )
-    if (!hasProjectFiles && !protoRecoveryInFlightRef.current) {
-      protoRecoveryInFlightRef.current = true
-      console.log('[PROTO-WORKSPACE] Wrong files detected, re-fetching project folder')
-      fetchFiles(codePrototypeFolderPath).then(() => {
-        protoRecoveryInFlightRef.current = false
-      })
-    } else if (hasProjectFiles) {
-      protoRecoveryInFlightRef.current = false
-    }
-  }, [files, selectedModeCategory, codePrototypeFolderPath, minimized, fetchFiles])
 
   // Check if a file is a viewable binary format (xlsx, docx, pdf) that we can render
   const isViewableBinaryFile = (fileName: string): boolean => {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { MessageCircle, Workflow, Users, Code, Settings, Trash2, Copy, DollarSign, Keyboard } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -21,8 +21,6 @@ const getModeIcon = (category: string) => {
       return <Workflow className="w-3 h-3" />
     case 'multi-agent':
       return <Users className="w-3 h-3" />
-    case 'code-prototype':
-      return <Code className="w-3 h-3" />
     default:
       return <MessageCircle className="w-3 h-3" />
   }
@@ -36,8 +34,6 @@ const getModeName = (category: string) => {
       return 'Workflow Mode'
     case 'multi-agent':
       return 'Multi Agent Chat'
-    case 'code-prototype':
-      return 'Code Prototype'
     default:
       return 'Chat Mode'
   }
@@ -56,13 +52,6 @@ const MODE_PILLS = [
     label: 'Workflow',
     icon: Workflow,
     activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
-    inactiveClasses: 'text-gray-500 dark:text-gray-400',
-  },
-  {
-    key: 'code-prototype' as const,
-    label: 'Prototype',
-    icon: Code,
-    activeClasses: 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-100 dark:ring-emerald-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
   {

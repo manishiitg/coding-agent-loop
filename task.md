@@ -12,4 +12,4 @@
 
 39. add termporal to agents / workflows
 
-40. add basic code mode for protypes
+41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp

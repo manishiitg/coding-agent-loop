@@ -21,7 +21,6 @@ import { prepareDomForPdfExport, exportPdfChunked } from "./utils/pdfExport";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
-import { CodePrototypeLayout } from "./components/code-prototype/CodePrototypeLayout";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { ChatTabs } from "./components/ChatTabs";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
@@ -452,9 +451,9 @@ function App() {
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat, multi-agent, and code-prototype modes
+    // Only create default tab for chat and multi-agent modes
     // (workflow tabs are created by WorkflowLayout)
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent' && selectedModeCategory !== 'code-prototype') {
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
       return
     }
     
@@ -488,8 +487,8 @@ function App() {
       )
       if (currentModeTabs.length === 0) {
         try {
-          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : selectedModeCategory === 'code-prototype' ? 'Prototype 1' : 'Chat 1'
-          await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'chat' | 'workflow' | 'multi-agent' | 'code-prototype' })
+          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
+          await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'chat' | 'workflow' | 'multi-agent' })
         } catch (error) {
           console.error('Failed to create default tab:', error)
           // Reset flag on error so it can retry
@@ -536,9 +535,9 @@ function App() {
       return
     }
 
-    // For chat, multi-agent, and code-prototype: select the first tab of the current mode
+    // For chat and multi-agent: select the first tab of the current mode
     // if activeTabId is null, invalid, or belongs to a different mode
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent' && selectedModeCategory !== 'code-prototype') {
+    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
       return
     }
 
@@ -715,12 +714,6 @@ function App() {
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('workflow')
       }
-      // Ctrl/Cmd + 3 for Code-prototype mode
-      if ((event.ctrlKey || event.metaKey) && event.key === '3') {
-        event.preventDefault()
-        const { setModeCategory } = useModeStore.getState()
-        setModeCategory('code-prototype')
-      }
       // Ctrl/Cmd + 4 for Chat mode
       if ((event.metaKey || event.ctrlKey) && event.key === '4') {
         event.preventDefault()
@@ -796,10 +789,7 @@ function App() {
                     onNewChat={startNewChat}
                   />
                 </div>
-                <div className={selectedModeCategory === 'code-prototype' ? 'h-full' : 'hidden'}>
-                  <CodePrototypeLayout onNewChat={startNewChat} />
-                </div>
-                <div className={selectedModeCategory !== 'workflow' && selectedModeCategory !== 'code-prototype' ? 'h-full' : 'hidden'}>
+                <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
                   <ChatAreaWithObserverId
                     ref={chatAreaRef}
                     onNewChat={startNewChat}

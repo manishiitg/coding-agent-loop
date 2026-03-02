@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { MessageCircle, Workflow, Users, ArrowRight, Info, Code } from 'lucide-react'
+import { MessageCircle, Workflow, Users, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -134,17 +134,7 @@ const ModeCard: React.FC<ModeCardProps> = ({
                     </ul>
                   </div>
                 )}
-                {category === 'code-prototype' && (
-                  <div>
-                    <p className="font-semibold mb-2">Code Prototype</p>
-                    <p className="mb-2">AI-powered web app scaffolding and deployment. Features:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      <li>Scaffold React/Vite + Express projects</li>
-                      <li>AI writes code directly to workspace</li>
-                      <li>One-click deploy to Vercel or Railway</li>
-                    </ul>
-                  </div>
-                )}
+
               </div>
             </TooltipContent>
           </Tooltip>
@@ -174,7 +164,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
     console.log('[ModeSelectionModal] Selecting mode:', category)
 
-    if (category === 'chat' || category === 'multi-agent' || category === 'code-prototype') {
+    if (category === 'chat' || category === 'multi-agent') {
       // Chat and multi-agent modes don't need preset selection
       // Clear any active presets when switching
       useGlobalPresetStore.getState().clearActivePreset('workflow')
@@ -280,18 +270,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
           </div>
 
           {/* Mode Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 justify-items-center max-w-5xl mx-auto">
-            {/* Code Prototype Mode */}
-            <ModeCard
-              category="code-prototype"
-              title="Code Prototype"
-              description="Scaffold and deploy React/Vite + Node.js apps with AI assistance."
-              icon={<Code className="w-5 h-5 text-emerald-600" />}
-              features={getModeInfoForModal('code-prototype').features}
-              exampleQueries={getModeInfoForModal('code-prototype').examples}
-              onSelect={() => handleModeSelect('code-prototype')}
-            />
-
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 justify-items-center max-w-5xl mx-auto">
             {/* Multi Agent Chat Mode */}
             <ModeCard
               category="multi-agent"

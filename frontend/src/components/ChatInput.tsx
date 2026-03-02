@@ -116,8 +116,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     delegationMode
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
-  const isMultiAgentMode = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype'
-  // For plan features, treat multi-agent and code-prototype as always 'plan'
+  const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  // For plan features, treat multi-agent as always 'plan'
   const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
 
   // Detect plan phase from events (planning → execution after confirm_plan_execution succeeds)
@@ -1221,7 +1221,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    // Handle Shift + Tab to toggle between planning and execution phase in multi-agent or code-prototype mode
+    // Handle Shift + Tab to toggle between planning and execution phase in multi-agent mode
     if (e.key === 'Tab' && e.shiftKey && isMultiAgentMode) {
       e.preventDefault()
       const newPhase = planPhase === 'planning' ? 'execution' : 'planning'
@@ -2252,7 +2252,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                    {/* Workspace Access Toggle - always on in multi-agent/code-prototype, toggleable in chat */}
+                    {/* Workspace Access Toggle - always on in multi-agent mode, toggleable in chat */}
                     {isMultiAgentMode ? (
                       <div className="flex items-center gap-1 p-1.5 rounded-md border bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400">
                         <FolderOpen className="w-4 h-4 flex-shrink-0" />
@@ -2274,8 +2274,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </span>
                       </button>
                     )}
-                    {/* Browser Access Toggle - hidden in code prototype mode */}
-                    {selectedModeCategory !== 'code-prototype' && <button
+                    {/* Browser Access Toggle */}
+                    {<button
                       type="button"
                       onClick={() => {
                         if (browserMode === 'none') {

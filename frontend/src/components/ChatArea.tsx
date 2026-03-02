@@ -148,7 +148,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
     // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
-    const isChatLike = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype'
+    const isChatLike = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
     const tabSelectedServers = (isChatLike && activeTab?.config)
       ? activeTab.config.selectedServers 
       : selectedServers
@@ -182,7 +182,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
     
     // Get workspace access setting from tab config (default: true)
-    const enableWorkspaceAccess = ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype') && activeTab?.config)
+    const enableWorkspaceAccess = ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && activeTab?.config)
       ? (activeTab.config.enableWorkspaceAccess ?? true)
       : true // Default to enabled for workflow mode or if no tab config
     
@@ -1210,9 +1210,9 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         return false
       }
 
-      // Multi-agent/code-prototype tabs always get polled — bg agents can produce events
+      // Multi-agent tabs always get polled — bg agents can produce events
       // after the orchestrator completes (session_status='completed')
-      if (currentTab.metadata?.mode === 'multi-agent' || currentTab.metadata?.mode === 'code-prototype') {
+      if (currentTab.metadata?.mode === 'multi-agent') {
         return true
       }
 
@@ -1493,8 +1493,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         return true
       }
 
-      // In multi-agent/code-prototype mode, always keep polling (background agents can restart session at any time)
-      if (tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'code-prototype') {
+      // In multi-agent mode, always keep polling (background agents can restart session at any time)
+      if (tab.metadata?.mode === 'multi-agent') {
         return true
       }
 
@@ -1644,7 +1644,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
     // Build file context
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
-    if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype') && currentTab?.config) {
+    if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     } else if (selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder) {
       const folderPath = activeWorkflowPreset.selectedFolder.filepath
@@ -1766,7 +1766,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       })
 
       // Build LLM config
-      const isMultiAgentMode = selectedModeCategory === 'multi-agent' || selectedModeCategory === 'code-prototype'
+      const isMultiAgentMode = selectedModeCategory === 'multi-agent'
       const llmStore = useLLMStore.getState()
       const baseLLMConfig = ((selectedModeCategory === 'chat' || isMultiAgentMode) && currentTab?.config)
         ? currentTab.config.llmConfig

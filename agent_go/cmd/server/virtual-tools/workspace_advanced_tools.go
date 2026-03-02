@@ -90,7 +90,7 @@ func CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID str
 }
 
 // CreateWorkspaceAdvancedToolExecutorsWithURL creates workspace advanced tool executors
-// pointing to a custom workspace API URL (e.g., workspace-projects-api for code-prototype mode).
+// pointing to a custom workspace API URL.
 func CreateWorkspaceAdvancedToolExecutorsWithURL(wsURL, userID, sessionID string) (map[string]func(ctx context.Context, args map[string]any) (string, error), map[string]string) {
 	env := getMCPExtraEnv(sessionID)
 	client := workspace.NewClient(

@@ -135,11 +135,6 @@ interface WorkspaceState {
   needsRefresh: boolean
   setNeedsRefresh: (needsRefresh: boolean) => void
 
-  // Projects API flag — when true, file operations route to workspace-projects-api
-  // instead of workspace-api (used in code-prototype mode)
-  useProjectsApi: boolean
-  setUseProjectsApi: (use: boolean) => void
-
   // Reset all state
   resetWorkspaceState: () => void
 }
@@ -343,8 +338,7 @@ const initialState = {
   highlightedFile: null,
   highlightTimeout: null,
   expandedFolders: new Set<string>(),
-  needsRefresh: false,
-  useProjectsApi: false
+  needsRefresh: false
 }
 
 // Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder
@@ -402,8 +396,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         
         set({ isSaving: true })
         try {
-          const saveFn = state.useProjectsApi ? agentApi.updateProjectsFile : agentApi.updatePlannerFile
-          const response = await saveFn(
+          const response = await agentApi.updatePlannerFile(
             state.selectedFile.path,
             state.editedContent,
             commitMessage
@@ -540,10 +533,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({ needsRefresh })
       },
 
-      setUseProjectsApi: (use: boolean) => {
-        set({ useProjectsApi: use })
-      },
-      
       // File Operations
       addFile: (file) => set((state) => {
         const updatedFiles = [...state.files, file]
@@ -703,8 +692,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const promise = (async () => {
           try {
             set({ loading: true, error: null })
-            const fetchFn = get().useProjectsApi ? agentApi.getProjectsFiles : agentApi.getPlannerFiles
-            const response = await fetchFn(effectiveFolder, -1, options?.maxDepth)
+            const response = await agentApi.getPlannerFiles(effectiveFolder, -1, options?.maxDepth)
             if (response.success && response.data) {
               // Guard against mount race condition: if this fetch was unscoped (effectiveFolder
               // was undefined) but by the time the response arrived, activeFolder has been set,

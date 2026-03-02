@@ -31,15 +31,14 @@ const (
 	// Used by execute_shell_command as a safety-net: if the LLM passes "." it is replaced
 	// with this value so commands run in the correct folder.
 	// Set per mode:
-	//   - prototype mode  → "Projects/{name}"  (wrapExecutorsWithPlanFolderGuard)
-	//   - plan mode       → "Plans"            (wrapExecutorsWithPlanFolderGuard)
-	//   - chat mode       → "Chats"            (wrapExecutorsWithChatModeFolderGuard)
+	//   - plan mode  → "Plans"  (wrapExecutorsWithPlanFolderGuard)
+	//   - chat mode  → "Chats"  (wrapExecutorsWithChatModeFolderGuard)
 	DefaultWorkingDirKey ContextKey = "default_working_dir"
 )
 
 // PerUserFolders are folders isolated per-user in the workspace.
 // Must stay in sync with workspace/utils/path.go PerUserFolders.
-var PerUserFolders = []string{"Chats", "Downloads", "Plans", "Projects"}
+var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
 
 // QuoteShellArg quotes a shell argument if it contains special characters
 func QuoteShellArg(arg string) string {

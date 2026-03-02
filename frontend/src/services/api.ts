@@ -117,8 +117,16 @@ function getWorkspaceApiBaseUrl(): string {
   return 'http://localhost:8081'
 }
 
+function getWorkspaceProjectsApiBaseUrl(): string {
+  const env = import.meta.env.VITE_WORKSPACE_PROJECTS_API_URL
+  if (env) return env
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') return `${window.location.origin}/workspace-projects`
+  return 'http://localhost:9145'
+}
+
 const API_BASE_URL = getApiBaseUrl()
 export const WORKSPACE_API_BASE_URL = getWorkspaceApiBaseUrl()
+export const WORKSPACE_PROJECTS_API_BASE_URL = getWorkspaceProjectsApiBaseUrl()
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -129,6 +137,13 @@ const api = axios.create({
 
 export const workspaceApi = axios.create({
   baseURL: WORKSPACE_API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+})
+
+export const workspaceProjectsApi = axios.create({
+  baseURL: WORKSPACE_PROJECTS_API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -272,6 +287,30 @@ workspaceApi.interceptors.request.use((config) => {
 })
 
 workspaceApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      clearAuthToken()
+    }
+    return Promise.reject(error)
+  }
+)
+
+// --- Workspace Projects API interceptors for auth (same as workspace-api) ---
+workspaceProjectsApi.interceptors.request.use((config) => {
+  config.headers = config.headers || {}
+  const authToken = getAuthToken()
+  if (authToken && !config.headers['Authorization']) {
+    config.headers['Authorization'] = `Bearer ${authToken}`
+    const userId = getUserIdFromToken(authToken)
+    if (userId && !config.headers['X-User-ID']) {
+      config.headers['X-User-ID'] = userId
+    }
+  }
+  return config
+})
+
+workspaceProjectsApi.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
@@ -683,6 +722,71 @@ export const agentApi = {
     const response = await workspaceApi.post('/api/folders/copy', {
       source_path: sourcePath,
       destination_path: destinationPath,
+      commit_message: commitMessage
+    })
+    return response.data
+  },
+
+  // --- Projects API (workspace-projects-api for code-prototype mode) ---
+  // These mirror the planner file methods but route to workspace-projects-api.
+
+  getProjectsFiles: async (folder?: string, limit: number = -1, maxDepth?: number) => {
+    const params: Record<string, string | number> = {}
+    if (limit >= 0) params.limit = limit
+    if (folder) params.folder = folder
+    if (maxDepth !== undefined) params.max_depth = maxDepth
+    const response = await workspaceProjectsApi.get('/api/documents', { params })
+    return response.data
+  },
+
+  getProjectsFileContent: async (filepath: string) => {
+    const response = await workspaceProjectsApi.get(`/api/documents/${encodeURIComponent(filepath)}`)
+    return response.data
+  },
+
+  updateProjectsFile: async (filepath: string, content: string, commitMessage?: string) => {
+    const requestBody: { content: string; commit_message?: string } = { content }
+    if (commitMessage) {
+      requestBody.commit_message = commitMessage
+    }
+    const response = await workspaceProjectsApi.put(`/api/documents/${encodeURIComponent(filepath)}`, requestBody)
+    return response.data
+  },
+
+  deleteProjectsFile: async (filepath: string, commitMessage?: string) => {
+    const params: Record<string, string> = { confirm: 'true' }
+    if (commitMessage) {
+      params.commit_message = commitMessage
+    }
+    const response = await workspaceProjectsApi.delete(`/api/documents/${encodeURIComponent(filepath)}`, { params })
+    return response.data
+  },
+
+  deleteProjectsFolder: async (folderPath: string, commitMessage?: string) => {
+    const params: Record<string, string> = { confirm: 'true' }
+    if (commitMessage) {
+      params.commit_message = commitMessage
+    }
+    const response = await workspaceProjectsApi.delete(`/api/folders/${encodeURIComponent(folderPath)}`, { params })
+    return response.data
+  },
+
+  uploadProjectsFile: async (file: File, folderPath: string, commitMessage?: string) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('folder_path', folderPath)
+    if (commitMessage) {
+      formData.append('commit_message', commitMessage)
+    }
+    const response = await workspaceProjectsApi.post('/api/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  },
+
+  createProjectsFolder: async (folderPath: string, commitMessage?: string) => {
+    const response = await workspaceProjectsApi.post('/api/folders', {
+      folder_path: folderPath,
       commit_message: commitMessage
     })
     return response.data

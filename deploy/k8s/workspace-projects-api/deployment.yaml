@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpagent-workspace-projects-api-cs
+  namespace: prod-mcpagent
+  labels:
+    app.kubernetes.io/name: cs
+    app.kubernetes.io/instance: mcpagent-workspace-projects-api
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/managed-by: script
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cs
+      app.kubernetes.io/instance: mcpagent-workspace-projects-api
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+      labels:
+        app.kubernetes.io/name: cs
+        app.kubernetes.io/instance: mcpagent-workspace-projects-api
+    spec:
+      terminationGracePeriodSeconds: 60
+      serviceAccountName: default
+      securityContext:
+        {}
+      containers:
+        - name: workspace-projects-api
+          securityContext:
+            capabilities:
+              add: ["SYS_ADMIN"]
+            allowPrivilegeEscalation: false
+          image: 414085459896.dkr.ecr.ap-south-1.amazonaws.com/mcpagent-workspace-projects-api:latest
+          imagePullPolicy: Always
+          command: ["./planner"]
+          args: ["server", "--port", "8080", "--docs-dir", "/app/workspace-projects"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: WORKSPACE_ENABLE_SEMANTIC_SEARCH
+              value: "false"
+            - name: WORKSPACE_ENABLE_GITHUB_SYNC
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: mcpagent-shared-config
+            - secretRef:
+                name: prod-mcpagent-secret
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+              ephemeral-storage: "5Gi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+              ephemeral-storage: "10Gi"
+          volumeMounts:
+            - name: workspace-projects
+              mountPath: /app/workspace-projects
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: workspace-projects
+          persistentVolumeClaim:
+            claimName: workspace-projects-pvc
+      nodeSelector:
+        karpenter.sh/nodepool: app-services-ondemand
+      tolerations:
+        - effect: NoSchedule
+          key: app-services-ondemand
+          operator: Exists

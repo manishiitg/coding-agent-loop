@@ -147,6 +147,7 @@ func ExecuteShellCommand(c *gin.Context) {
 			WritePathMappings: writePathMappings,
 			BlockedPaths:      req.FolderGuard.BlockedPaths,
 			WorkDir:           workingDir,
+			BaseDir:           docsDir,
 		}
 
 		// Debug: log isolator configuration for troubleshooting mount namespace issues

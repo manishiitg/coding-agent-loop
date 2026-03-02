@@ -468,7 +468,12 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				}
 				// Inject allowed write folders for kernel-level sandboxing
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
-				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%v for %s\n", shellAllowedFolders, toolNameCopy)
+				// Set chat-mode read paths: all standard user folders + shared resources
+				chatReadFolders := []string{"Chats/", "Downloads/", "Plans/", "skills/", "subagents/", "Workflow/"}
+				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, chatReadFolders)
+				// Default working directory for chat mode — "." → "Chats"
+				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, "Chats")
+				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%v ReadPaths=%v for %s\n", shellAllowedFolders, chatReadFolders, toolNameCopy)
 			}
 
 			// For WRITE tools, ONLY allow writes to allowed folders
@@ -554,6 +559,19 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if toolNameCopy == "execute_shell_command" {
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
+				// Set mode-specific read paths so the shell isolator scopes reads
+				// to the relevant folders instead of the entire workspace (".").
+				// The write folder is always readable; add common shared folders
+				// (skills, subagents) for plan mode so sub-agents can read resources.
+				shellReadFolders := make([]string, 0, len(shellAllowedFolders)+2)
+				shellReadFolders = append(shellReadFolders, shellAllowedFolders...)
+				// For plan mode (planFolder starts with "Plans"), add shared resources.
+				// For prototype mode (planFolder starts with "Projects/"), the project
+				// folder is self-contained — no extra reads needed.
+				if strings.HasPrefix(planFolder, "Plans") {
+					shellReadFolders = append(shellReadFolders, "skills/", "subagents/", "Downloads/")
+				}
+				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, shellReadFolders)
 				// Inject the session-level default working directory so execute_shell_command
 				// can substitute it when the LLM passes ".".
 				// planFolder is "Projects/{name}" for prototype mode, "Plans" for plan mode.
@@ -4074,8 +4092,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-				workspaceExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
-				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
+				var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
+				if req.ChatMode == "code-prototype" {
+					// Code-prototype mode: route workspace operations to the lightweight projects-api
+					workspaceExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithURL(getProjectsAPIURL(), currentUserID, sessionID)
+					log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with projects-api URL for code-prototype, userID=%q sessionID=%q", currentUserID, sessionID)
+				} else {
+					workspaceExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
+					log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
+				}
 				// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
 					virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
@@ -4280,13 +4305,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 
 					// Create workspace client for plan file I/O.
-					// For code-prototype mode, scope writes to Projects/{name}/plans/ instead of Plans/.
+					// For code-prototype mode, scope writes to Projects/{name}/plans/ instead of Plans/,
+					// and route to the lightweight workspace-projects-api.
 					planWriteFolder := "Plans"
+					planWSURL := getWorkspaceAPIURL()
 					if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
 						planWriteFolder = "Projects/" + req.PrototypeProject + "/plans"
+						planWSURL = getProjectsAPIURL()
 					}
 					planWorkspaceClient := workspace.NewClient(
-						getWorkspaceAPIURL(),
+						planWSURL,
 						workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 							Enabled:      true,
 							WritePaths:   []string{planWriteFolder},
@@ -4507,16 +4535,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 			memoryCategory := virtualtools.GetDelegationToolCategory()
 			// Memory workspace client write scope:
-			// - code-prototype: scoped to Projects/{name}/ only
+			// - code-prototype: scoped to Projects/{name}/ only, routed to projects-api
 			// - all other modes: Plans/ and Projects/ (broad, memories can live in either)
 			var memoryWritePaths []string
+			memoryWSURL := getWorkspaceAPIURL()
 			if req.ChatMode == "code-prototype" && req.PrototypeProject != "" {
 				memoryWritePaths = []string{"Projects/" + req.PrototypeProject}
+				memoryWSURL = getProjectsAPIURL()
 			} else {
 				memoryWritePaths = []string{"Plans"}
 			}
 			memoryWorkspaceClient := workspace.NewClient(
-				getWorkspaceAPIURL(),
+				memoryWSURL,
 				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
 					Enabled:      true,
 					WritePaths:   memoryWritePaths,
@@ -7286,8 +7316,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		if enableWorkspaceAccess {
 			// Sub-agents get advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-			workspaceExecutors, _ := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
-			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
+			var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
+			if parentReq.ChatMode == "code-prototype" {
+				// Code-prototype sub-agents: route workspace operations to projects-api
+				workspaceExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithURL(getProjectsAPIURL(), subAgentUserID, sessionID)
+				log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with projects-api URL for code-prototype, userID=%q sessionID=%q", subAgentUserID, sessionID)
+			} else {
+				workspaceExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
+				log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
+			}
 			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 			if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
 				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())

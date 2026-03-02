@@ -29,11 +29,11 @@ const (
 	BrowserDownloadsPathKey ContextKey = "browser_downloads_path"
 	// DefaultWorkingDirKey is the context key for the session-level default working directory.
 	// Used by execute_shell_command as a safety-net: if the LLM passes "." it is replaced
-	// with this value so commands run in the correct project folder.
-	// Set per mode in wrapExecutorsWithPlanFolderGuard (server.go):
-	//   - prototype mode  → "Projects/{name}"
-	//   - plan mode       → "Plans"
-	//   - chat/workflow   → not set (behaviour unchanged, "." stays as-is)
+	// with this value so commands run in the correct folder.
+	// Set per mode:
+	//   - prototype mode  → "Projects/{name}"  (wrapExecutorsWithPlanFolderGuard)
+	//   - plan mode       → "Plans"            (wrapExecutorsWithPlanFolderGuard)
+	//   - chat mode       → "Chats"            (wrapExecutorsWithChatModeFolderGuard)
 	DefaultWorkingDirKey ContextKey = "default_working_dir"
 )
 

@@ -18,9 +18,9 @@ import (
 // ---------------------------------------------------------------------------
 
 // runProjectGit runs a git command inside Projects/{projectName} via the
-// workspace execute API, merging stdout+stderr so callers get full git output.
+// workspace-projects-api execute endpoint, merging stdout+stderr so callers get full git output.
 func runProjectGit(ctx context.Context, userID, projectName, gitCmd string) (string, error) {
-	return runWorkspaceShell(ctx, getWorkspaceAPIURL(), userID, gitCmd, "Projects/"+projectName)
+	return runWorkspaceShell(ctx, getProjectsAPIURL(), userID, gitCmd, "Projects/"+projectName)
 }
 
 // getProjectPAT retrieves and decrypts the stored GitHub PAT for a project.
@@ -140,6 +140,12 @@ func (api *StreamingAPI) handleGitHubConnect(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Normalize the repo URL — ensure it starts with https://.
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	if !strings.HasPrefix(req.RepoURL, "https://") && !strings.HasPrefix(req.RepoURL, "http://") {
+		req.RepoURL = "https://" + req.RepoURL
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
@@ -178,9 +184,21 @@ func (api *StreamingAPI) handleGitHubConnect(w http.ResponseWriter, r *http.Requ
 	// Initial commit if there are unstaged files.
 	gitAutoSave(ctx, userID, name, "Initial commit")
 
-	log.Printf("[GITHUB] connected %s → %s", name, req.RepoURL)
+	// Check if the remote repo already has commits (use PAT for private repos).
+	hasRemoteContent := false
+	authURL := injectPAT(req.RepoURL, req.PAT)
+	lsCmd := fmt.Sprintf("GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git ls-remote %s HEAD 2>/dev/null", authURL)
+	lsOut, lsErr := runProjectGit(ctx, userID, name, lsCmd)
+	if lsErr == nil && strings.TrimSpace(lsOut) != "" {
+		hasRemoteContent = true
+	}
+
+	log.Printf("[GITHUB] connected %s → %s (has_remote_content=%v)", name, req.RepoURL, hasRemoteContent)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"current_branch": "main"})
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"current_branch":     "main",
+		"has_remote_content": hasRemoteContent,
+	})
 }
 
 // DELETE /api/code-prototype/projects/{name}/github
@@ -408,6 +426,56 @@ func (api *StreamingAPI) handleGitHubPublish(w http.ResponseWriter, r *http.Requ
 	log.Printf("[GITHUB] published %s → branch %s | %s", name, branch, out)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"branch": branch, "output": out})
+}
+
+// POST /api/code-prototype/projects/{name}/github/pull
+// Fetches the remote repo content and replaces local files with it.
+// Used when connecting to an existing GitHub repo that already has files.
+func (api *StreamingAPI) handleGitHubPull(w http.ResponseWriter, r *http.Request) {
+	userID := GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	name := mux.Vars(r)["name"]
+
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	content, _ := readPrototypeFile(ctx, prototypeMetaPath(userID, name), userID)
+	var meta PrototypeProjectMeta
+	json.Unmarshal([]byte(content), &meta) //nolint:errcheck
+	if meta.GitHub == nil {
+		http.Error(w, "GitHub not connected", http.StatusBadRequest)
+		return
+	}
+
+	pat, err := api.getProjectPAT(ctx, userID, meta.GitHub.PatSecretName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	remoteURL := injectPAT(meta.GitHub.RepoURL, pat)
+	// Fetch from remote and reset local to match remote's main branch.
+	cmd := fmt.Sprintf(
+		"GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=echo git fetch %s main 2>&1 && "+
+			"git reset --hard FETCH_HEAD 2>&1",
+		remoteURL,
+	)
+	log.Printf("[GITHUB] pulling %s ← %s", name, meta.GitHub.RepoURL)
+	out, err := runProjectGit(ctx, userID, name, cmd)
+	out = sanitizeGitOutput(out, pat)
+
+	if err != nil {
+		errMsg := sanitizeGitOutput(err.Error(), pat)
+		log.Printf("[GITHUB] pull error for %s: %s | output: %s", name, errMsg, out)
+		http.Error(w, "pull failed: "+errMsg+"\n"+out, http.StatusInternalServerError)
+		return
+	}
+	log.Printf("[GITHUB] pulled %s ← remote | %s", name, out)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"output": out})
 }
 
 // GET /api/code-prototype/projects/{name}/github/experiments

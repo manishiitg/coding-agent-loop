@@ -74,6 +74,10 @@ spec:
             - name: mcp-config
               mountPath: /app/configs/mcp_servers.json
               subPath: mcp_servers.json
+            # Workspace projects volume (read-only reference for bind-mount paths in code-prototype containers)
+            - name: workspace-projects
+              mountPath: /app/workspace-projects-host
+              readOnly: true
             # Optional: uncomment to allow MCP configs with "command": "docker", "args": ["run", ...]. Requires node to have /var/run/docker.sock (Docker). Most K8s nodes use containerd-only; if so, leave commented.
             # - name: docker-socket
             #   mountPath: /var/run/docker.sock
@@ -96,6 +100,9 @@ spec:
         - name: mcp-config
           configMap:
             name: mcpagent-agent-config
+        - name: workspace-projects
+          persistentVolumeClaim:
+            claimName: workspace-projects-pvc
         # Uncomment when nodes have Docker (see volumeMount above).
         # - name: docker-socket
         #   hostPath:

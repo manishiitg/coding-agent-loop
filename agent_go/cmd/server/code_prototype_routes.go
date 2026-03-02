@@ -400,7 +400,7 @@ func writePrototypeFile(ctx context.Context, filePath, content, userID string) e
 	encodedPath := strings.Join(encodedSegments, "/")
 
 	body, _ := json.Marshal(map[string]string{"content": content})
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	apiURL := getProjectsAPIURL() + "/api/documents/" + encodedPath
 
 	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, strings.NewReader(string(body)))
 	if err != nil {
@@ -436,7 +436,7 @@ func readPrototypeFile(ctx context.Context, filePath, userID string) (string, er
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "/raw"
+	apiURL := getProjectsAPIURL() + "/api/documents/" + encodedPath + "/raw"
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return "", err
@@ -474,7 +474,7 @@ func deletePrototypeFolder(ctx context.Context, folderPath, userID string) error
 	}
 	encodedPath := strings.Join(encodedSegments, "/")
 
-	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
+	apiURL := getProjectsAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
 	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
 	if err != nil {
 		return err
@@ -572,8 +572,8 @@ func (api *StreamingAPI) handleListPrototypeProjects(w http.ResponseWriter, r *h
 		return
 	}
 
-	// List subfolders of Projects/ via workspace API (X-User-ID scopes to this user)
-	wsURL := getWorkspaceAPIURL() + "/api/documents?folder=Projects"
+	// List subfolders of Projects/ via workspace-projects-api (X-User-ID scopes to this user)
+	wsURL := getProjectsAPIURL() + "/api/documents?folder=Projects"
 	req, err := http.NewRequestWithContext(r.Context(), "GET", wsURL, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -933,8 +933,8 @@ func (api *StreamingAPI) handleUndeployPrototype(w http.ResponseWriter, r *http.
 
 func deployToK8s(ctx context.Context, userID string, meta PrototypeProjectMeta) (string, string, error) {
 	var logBuilder strings.Builder
-	wsURL := getWorkspaceAPIURL()
-	baseDir := "/app/workspace-docs/_users/" + userID + "/Projects/" + meta.Name
+	wsURL := getProjectsAPIURL()
+	baseDir := "/app/workspace-projects/_users/" + userID + "/Projects/" + meta.Name
 	namespace := getK8sNamespace()
 	ingressHost := getIngressHost()
 
@@ -977,7 +977,7 @@ func deployToK8s(ctx context.Context, userID string, meta PrototypeProjectMeta) 
 }
 
 func undeployFromK8s(ctx context.Context, userID, projectName string) (string, error) {
-	wsURL := getWorkspaceAPIURL()
+	wsURL := getProjectsAPIURL()
 	namespace := getK8sNamespace()
 	label := "app.kubernetes.io/managed-by=mcpagent-prototype,app=prototype-" + projectName
 	cmd := "kubectl delete deploy,svc,ingress,configmap,secret -n " + namespace + " -l " + label + " --ignore-not-found"
@@ -994,8 +994,8 @@ func deployToVercel(ctx context.Context, userID string, meta PrototypeProjectMet
 	if token == "" {
 		return "", "", fmt.Errorf("VERCEL_TOKEN env var not set")
 	}
-	wsURL := getWorkspaceAPIURL()
-	baseDir := "/app/workspace-docs/_users/" + userID + "/Projects/" + meta.Name + "/frontend"
+	wsURL := getProjectsAPIURL()
+	baseDir := "/app/workspace-projects/_users/" + userID + "/Projects/" + meta.Name + "/frontend"
 	buildCmd := "cd " + baseDir + " && npm install && npm run build"
 	out, err := runWorkspaceShell(ctx, wsURL, userID, buildCmd, ".")
 	if err != nil {
@@ -1024,8 +1024,8 @@ func deployToRailway(ctx context.Context, userID string, meta PrototypeProjectMe
 	if token == "" {
 		return "", "", fmt.Errorf("RAILWAY_TOKEN env var not set")
 	}
-	wsURL := getWorkspaceAPIURL()
-	baseDir := "/app/workspace-docs/_users/" + userID + "/Projects/" + meta.Name + "/backend"
+	wsURL := getProjectsAPIURL()
+	baseDir := "/app/workspace-projects/_users/" + userID + "/Projects/" + meta.Name + "/backend"
 	cmd := "cd " + baseDir + " && RAILWAY_TOKEN=" + token + " railway up --service " + meta.Name + " --detach"
 	out, err := runWorkspaceShell(ctx, wsURL, userID, cmd, ".")
 	if err != nil {
@@ -1583,6 +1583,27 @@ func getWorkspaceDocsHostPath() string {
 	return "../workspace-docs"
 }
 
+// getProjectsAPIURL returns the workspace-projects-api base URL.
+// Code-prototype operations route here instead of workspace-api.
+func getProjectsAPIURL() string {
+	if u := os.Getenv("WORKSPACE_PROJECTS_API_URL"); u != "" {
+		return u
+	}
+	return "http://localhost:9145"
+}
+
+// getProjectsHostPath returns the host-machine absolute path of the workspace-projects
+// directory. Used for bind-mounting project files into per-project containers.
+func getProjectsHostPath() string {
+	if p := os.Getenv("WORKSPACE_PROJECTS_HOST_PATH"); p != "" {
+		return p
+	}
+	if abs, err := filepath.Abs("../workspace-projects"); err == nil {
+		return abs
+	}
+	return "../workspace-projects"
+}
+
 // getDockerNetwork returns the Docker network name for inter-container routing.
 // If set, containers are attached to this network and reached via container name.
 // If empty, host port mapping is used and proxy connects via localhost.
@@ -1750,11 +1771,12 @@ func startProjectContainer(userID, projectName string) {
 	}
 
 	// Container doesn't exist — create and start it.
-	docsHostPath := getWorkspaceDocsHostPath()
+	// Use workspace-projects volume for project files (lighter, separate from workspace-docs).
+	projectsHostPath := getProjectsHostPath()
 	image := getContainerImage()
 	port := projectDevPort(projectName)
 	portStr := strconv.Itoa(port)
-	projectHostPath := docsHostPath + "/_users/" + userID + "/Projects/" + projectName
+	projectHostPath := projectsHostPath + "/_users/" + userID + "/Projects/" + projectName
 	previewBase := "/api/code-prototype/preview/" + projectName + "/"
 
 	args := []string{
@@ -2041,6 +2063,7 @@ func RegisterCodePrototypeRoutes(apiRouter *mux.Router, api *StreamingAPI) {
 	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/history", api.handleGitHubHistory).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/restore", api.handleGitHubRestore).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/publish", api.handleGitHubPublish).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/pull", api.handleGitHubPull).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/experiments", api.handleGitHubListExperiments).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/experiments", api.handleGitHubStartExperiment).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/code-prototype/projects/{name}/github/experiments/keep", api.handleGitHubKeepExperiment).Methods("POST", "OPTIONS")

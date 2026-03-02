@@ -1,6 +1,3 @@
-import html2canvas from 'html2canvas'
-import jsPDF from 'jspdf'
-
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface ImageWithPrev extends HTMLImageElement {
@@ -267,15 +264,7 @@ export async function prepareDomForPdfExport(
     lastChild.style.marginBottom = '0'
   }
 
-  // 7. Prevent page breaks cutting through content
-  const breakFixups: { el: HTMLElement; prevStyle: string }[] = []
-  contentEl.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, pre, table, tr, blockquote, .syntax-highlighter-wrapper').forEach((el) => {
-    const htmlEl = el as HTMLElement
-    breakFixups.push({ el: htmlEl, prevStyle: htmlEl.style.breakInside || '' })
-    htmlEl.style.breakInside = 'avoid'
-  })
-
-  // 8. Wait for repaint
+  // 7. Wait for repaint
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
 
   // ── restore() closure ──────────────────────────────────────────────────────
@@ -322,9 +311,6 @@ export async function prepareDomForPdfExport(
       if (prevStyle) el.setAttribute('style', prevStyle)
       else el.removeAttribute('style')
     }
-    for (const { el, prevStyle } of breakFixups) {
-      el.style.breakInside = prevStyle
-    }
     for (const { el, prevSrc, prevDisplay } of imageFixups) {
       el.src = prevSrc
       el.style.display = prevDisplay
@@ -336,174 +322,3 @@ export async function prepareDomForPdfExport(
   return { restore }
 }
 
-// ── exportPdfChunked ───────────────────────────────────────────────────────
-
-// A4 dimensions in mm
-const A4_WIDTH_MM = 210
-const A4_HEIGHT_MM = 297
-const MARGIN_H_MM = 10 // left + right margin each
-const MARGIN_V_MM = 15 // top + bottom margin each
-const CONTENT_WIDTH_MM = A4_WIDTH_MM - 2 * MARGIN_H_MM   // 190mm
-const CONTENT_HEIGHT_MM = A4_HEIGHT_MM - 2 * MARGIN_V_MM  // 267mm
-
-// Browser canvas height hard limit (stay comfortably under 32767)
-const MAX_CANVAS_PX = 28000
-
-// Fixed render width for PDF — gives clean A4 text density
-const RENDER_WIDTH_PX = 800
-
-/**
- * Renders a large DOM element to PDF by cloning it into an isolated off-screen
- * container (avoiding parent layout interference), chunking it vertically with
- * html2canvas crop options, and assembling pages via jsPDF.
- */
-export async function exportPdfChunked(
-  contentEl: HTMLElement,
-  filename: string,
-  scale: number,
-  onProgress?: (current: number, total: number) => void
-): Promise<void> {
-  // Clone the content into an off-screen container with a controlled width.
-  // This avoids the parent flex/grid layout constraining the render.
-  const offscreen = document.createElement('div')
-  offscreen.style.cssText = `
-    position: fixed; left: -10000px; top: 0;
-    width: ${RENDER_WIDTH_PX}px;
-    background: #ffffff;
-    overflow: visible;
-    z-index: -9999;
-  `
-  const clone = contentEl.cloneNode(true) as HTMLElement
-  clone.style.margin = '0'
-  clone.style.padding = '0'
-  clone.style.maxWidth = 'none'
-  clone.style.width = '100%'
-  clone.style.backgroundColor = '#ffffff'
-  // Remove constraining classes
-  clone.className = clone.className
-    .replace(/\bmax-w-\S+/g, '')
-    .replace(/\bmx-auto\b/g, '')
-    .trim()
-
-  offscreen.appendChild(clone)
-  document.body.appendChild(offscreen)
-
-  // Let the browser lay out the clone
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))
-
-  try {
-    const contentWidth = clone.offsetWidth
-    const contentHeight = clone.scrollHeight
-
-    // How many CSS px correspond to 1mm at our render width
-    const pxPerMm = contentWidth / CONTENT_WIDTH_MM
-    // One PDF page's worth of content in CSS px
-    const pageHeightPx = CONTENT_HEIGHT_MM * pxPerMm
-    // Maximum chunk height that stays within canvas limits
-    const chunkHeightPx = Math.floor(MAX_CANVAS_PX / scale)
-
-    const totalChunks = Math.ceil(contentHeight / chunkHeightPx)
-
-    const pdf = new jsPDF({
-      unit: 'mm',
-      format: 'a4',
-      orientation: 'portrait',
-    })
-
-    // Track how much of the current PDF page has been filled (in CSS px)
-    let pdfPageUsedPx = 0
-    let isFirstPage = true
-
-    for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
-      const chunkY = chunkIdx * chunkHeightPx
-      const thisChunkHeight = Math.min(chunkHeightPx, contentHeight - chunkY)
-
-      onProgress?.(chunkIdx + 1, totalChunks)
-
-      // Render this vertical band of the cloned content
-      const chunkCanvas = await html2canvas(clone, {
-        scale,
-        backgroundColor: '#ffffff',
-        scrollY: 0,
-        x: 0,
-        y: chunkY,
-        width: contentWidth,
-        height: thisChunkHeight,
-        useCORS: true,
-        allowTaint: true,
-        imageTimeout: 30000,
-      })
-
-      // Slice the chunk canvas into page-sized pieces
-      const chunkCanvasHeight = chunkCanvas.height // in device px
-      const chunkCanvasWidth = chunkCanvas.width
-      let canvasOffset = 0 // device px offset within chunkCanvas
-
-      while (canvasOffset < chunkCanvasHeight) {
-        // How much space remains on the current PDF page (in device px)
-        const pageRemainingPx = (pageHeightPx - pdfPageUsedPx) * scale
-        // How much of the chunk canvas is left
-        const chunkRemainingPx = chunkCanvasHeight - canvasOffset
-        // Take the smaller of the two
-        const sliceHeight = Math.min(pageRemainingPx, chunkRemainingPx)
-
-        if (sliceHeight <= 0) break
-
-        // Extract slice from chunk canvas
-        const sliceCanvas = document.createElement('canvas')
-        sliceCanvas.width = chunkCanvasWidth
-        sliceCanvas.height = Math.ceil(sliceHeight)
-        const ctx = sliceCanvas.getContext('2d')!
-        ctx.drawImage(
-          chunkCanvas,
-          0, canvasOffset,
-          chunkCanvasWidth, Math.ceil(sliceHeight),
-          0, 0,
-          chunkCanvasWidth, Math.ceil(sliceHeight)
-        )
-
-        if (!isFirstPage && pdfPageUsedPx === 0) {
-          pdf.addPage()
-        }
-        isFirstPage = false
-
-        // Position on the PDF page (in mm)
-        const yMm = MARGIN_V_MM + pdfPageUsedPx / pxPerMm
-        const sliceHeightMm = (sliceHeight / scale) / pxPerMm
-
-        // Pass canvas directly to jsPDF — avoids giant base64 strings
-        pdf.addImage(
-          sliceCanvas,
-          'JPEG',
-          MARGIN_H_MM,
-          yMm,
-          CONTENT_WIDTH_MM,
-          sliceHeightMm,
-          undefined,
-          'FAST'
-        )
-
-        // Free slice canvas
-        sliceCanvas.width = 0
-        sliceCanvas.height = 0
-
-        canvasOffset += sliceHeight
-        pdfPageUsedPx += sliceHeight / scale
-
-        // If the page is full, reset for next page
-        if (pdfPageUsedPx >= pageHeightPx - 0.5) {
-          pdfPageUsedPx = 0
-        }
-      }
-
-      // Free chunk canvas memory
-      chunkCanvas.width = 0
-      chunkCanvas.height = 0
-    }
-
-    pdf.save(filename)
-  } finally {
-    // Clean up the off-screen container
-    document.body.removeChild(offscreen)
-  }
-}

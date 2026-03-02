@@ -26,7 +26,7 @@ FROM alpine:latest
 # Install system packages
 RUN apk add --no-cache \
     ripgrep git patch py3-pip python3 python3-dev \
-    util-linux jq chromium-browser chromium-chromedriver \
+    util-linux jq chromium chromium-chromedriver \
     py3-matplotlib py3-pandas \
     build-base curl wget bash ca-certificates gcompat nodejs npm
 
@@ -38,7 +38,7 @@ RUN npm install -g agent-browser && \
     rm -rf /root/.cache/ms-playwright /tmp/.cache/ms-playwright
 
 # Set Chromium path for agent-browser (system chromium on Alpine)
-ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Configure pip: allow installs when Python is "externally managed" (PEP 668)
 RUN echo "[global]" > /etc/pip.conf && \

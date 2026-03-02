@@ -155,6 +155,17 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       const activePreset = getActivePreset('workflow')
       const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
 
+      // Auto-start camofox-browser if stealth mode is selected
+      if (effectiveServers.includes('camofox')) {
+        try {
+          const headed = activePreset?.camofoxHeaded !== false // default true
+          await agentApi.startCamofox(headed)
+        } catch (err) {
+          console.warn('[useWorkflowExecution] Failed to start camofox-browser:', err)
+          // Don't block workflow — camofox-mcp will retry connection
+        }
+      }
+
       // Build request payload
       // CDP port: read from active tab config (set via ChatInput CDP toggle)
       const tabConfig = activeTab?.config
@@ -224,6 +235,16 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       // Get active preset for LLM config
       const activePreset = getActivePreset('workflow')
       const filteredPresetTools = currentPresetTools?.filter(t => !t.endsWith(':*')) || []
+
+      // Auto-start camofox-browser if stealth mode is selected
+      if (effectiveServers.includes('camofox')) {
+        try {
+          const headed = activePreset?.camofoxHeaded !== false
+          await agentApi.startCamofox(headed)
+        } catch (err) {
+          console.warn('[useWorkflowExecution] Failed to start camofox-browser for step:', err)
+        }
+      }
 
       // CDP port: read from active tab config (set via ChatInput CDP toggle)
       const stepTabConfig = useChatStore.getState().getActiveTab()?.config

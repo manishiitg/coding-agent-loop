@@ -1557,3 +1557,11 @@ export interface SimulatorMessagesResponse {
 export interface SimulatorInteractResponse {
   success: boolean;
 }
+
+// Workflow Versions
+export interface WorkflowVersionMeta {
+  version: number
+  label: string
+  created_at: string
+  files_count: number
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -115,12 +116,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		effectiveServers = hcpo.GetSelectedServers()
 	}
 
-	// Check for Playwright MCP server
+	// Check for Playwright and Camofox MCP servers
 	hasPlaywright := false
+	hasCamofox := false
 	for _, server := range effectiveServers {
 		if server == "playwright" {
 			hasPlaywright = true
-			break
+		}
+		if server == "camofox" {
+			hasCamofox = true
 		}
 	}
 
@@ -133,7 +137,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		}
 	}
 
-	if !hasPlaywright && !hasAgentBrowser {
+	if !hasPlaywright && !hasAgentBrowser && !hasCamofox {
 		return // No browser tool, nothing to configure
 	}
 
@@ -141,6 +145,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 	browserToolType := "agent-browser"
 	if hasPlaywright {
 		browserToolType = "playwright"
+	} else if hasCamofox {
+		browserToolType = "camofox"
 	}
 
 	// CRITICAL: Ensure selectedRunFolder is set before configuring Downloads path
@@ -1245,6 +1251,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 			mcpAgent.AppendSystemPrompt(secretPrompt)
 			hcpo.GetLogger().Info(fmt.Sprintf("🔐 Added secret prompt to execution agent (%d secrets)", len(effectiveSecrets)))
 		}
+	}
+
+	// Add browser instructions if browser tools are available
+	hasPlaywrightServer := false
+	hasCamofoxServer := false
+	hasAgentBrowserSkill := false
+	for _, s := range config.ServerNames {
+		if s == "playwright" {
+			hasPlaywrightServer = true
+		}
+		if s == "camofox" {
+			hasCamofoxServer = true
+		}
+	}
+	for _, skill := range effectiveSkills {
+		if skill == "agent-browser" {
+			hasAgentBrowserSkill = true
+		}
+	}
+	if hasPlaywrightServer || hasCamofoxServer || hasAgentBrowserSkill {
+		mcpAgent.AppendSystemPrompt(browserinstructions.GetBrowserUploadInstructions())
+		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser upload instructions to execution agent (playwright=%v, camofox=%v, agent-browser=%v)", hasPlaywrightServer, hasCamofoxServer, hasAgentBrowserSkill))
+	}
+	if hasCamofoxServer {
+		mcpAgent.AppendSystemPrompt(browserinstructions.GetCamofoxInstructions())
+		hcpo.GetLogger().Info("🦊 Added camofox-specific instructions to execution agent")
 	}
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)

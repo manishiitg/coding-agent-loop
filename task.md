@@ -2,8 +2,6 @@
 
 30.. also add a slack hook to talk to multi chat agnet 
 
-33. look at comflaux
-
 34. make it very seemless to switch between multi agent chat vs workflow etc..  right now workflow just hangs fully
 
 35. in workflows, we shouldh ave plan versions published? 

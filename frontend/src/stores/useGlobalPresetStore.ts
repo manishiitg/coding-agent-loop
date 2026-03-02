@@ -38,7 +38,7 @@ interface GlobalPresetState {
   refreshPresets: () => Promise<void>
   addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
   updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null) => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean) => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -542,7 +542,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded) => {
         // Apply workflow-specific default for tool search mode
         // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
         const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
@@ -634,7 +634,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                       preDiscoveredTools,
                       enableContextSummarization,
                       enableContextEditing,
-                      enableBrowserAccess
+                      enableBrowserAccess,
+                      camofoxHeaded
                     }
                   : preset
               )
@@ -722,7 +723,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               preDiscoveredTools,
               enableContextSummarization,
               enableContextEditing,
-              enableBrowserAccess
+              enableBrowserAccess,
+              camofoxHeaded
             }
 
             set(state => ({

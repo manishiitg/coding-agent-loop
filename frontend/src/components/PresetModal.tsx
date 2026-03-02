@@ -14,6 +14,7 @@ import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/a
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore';
+import { useMCPStore } from '../stores/useMCPStore';
 import { agentApi, getApiBaseUrl } from '../services/api';
 import LLMSelectionDropdown from './LLMSelectionDropdown';
 import type { LLMOption } from '../types/llm';
@@ -21,7 +22,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean) => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -56,12 +57,51 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [useToolSearchMode, setUseToolSearchMode] = useState(false);
   const enableContextSummarization = true;
   const [useKnowledgebase, setUseKnowledgebase] = useState(true);
-  const [enableBrowserAccess, setEnableBrowserAccess] = useState(false);
+  const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'>('none');
+  const [camofoxHeaded, setCamofoxHeaded] = useState(true);
+  const enableBrowserAccess = browserMode === 'headless' || browserMode === 'cdp';
   const [useCdp, setUseCdp] = useState(false);
   const [cdpPort, setCdpPort] = useState(9222);
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null);
   const [cdpChecking, setCdpChecking] = useState(false);
   const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false);
+  const toolList = useMCPStore(state => state.toolList);
+
+  // Playwright MCP availability: check if 'playwright' server exists in toolList
+  const playwrightServerStatus = useMemo(() => {
+    const entry = toolList.find(t => t.server === 'playwright')
+    if (!entry) return 'not_found' as const
+    if (entry.status === 'ok') return 'ok' as const
+    if (entry.status === 'error') return 'error' as const
+    return 'loading' as const
+  }, [toolList])
+
+  // Camofox MCP availability: check if 'camofox' server exists in toolList
+  const camofoxServerStatus = useMemo(() => {
+    const entry = toolList.find(t => t.server === 'camofox')
+    if (!entry) return 'not_found' as const
+    if (entry.status === 'ok') return 'ok' as const
+    if (entry.status === 'error') return 'error' as const
+    return 'loading' as const
+  }, [toolList])
+
+  // Browser mode setter that also syncs selectedServers
+  const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => {
+    setBrowserModeState(mode)
+    setSelectedServers(prev => {
+      const cleaned = prev.filter(s => s !== 'playwright' && s !== 'camofox')
+      if (mode === 'playwright') return [...cleaned, 'playwright']
+      if (mode === 'stealth') return [...cleaned, 'camofox']
+      return cleaned
+    })
+    // Reset CDP when switching away
+    if (mode !== 'cdp') {
+      setUseCdp(false)
+    } else {
+      setUseCdp(true)
+    }
+  }, [])
+
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
@@ -167,7 +207,22 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // For workflow presets, default to true if not explicitly set
       setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : true); // Default true for workflow
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
-      setEnableBrowserAccess(editingPreset?.enableBrowserAccess ?? false); // Default false unless explicitly true
+      // Derive browser mode from preset data
+      const presetServers = editingPreset.selectedServers || [];
+      if (presetServers.includes('camofox')) {
+        setBrowserModeState('stealth');
+      } else if (presetServers.includes('playwright')) {
+        setBrowserModeState('playwright');
+      } else if (editingPreset.enableBrowserAccess && editingPreset.selectedServers?.includes('cdp')) {
+        setBrowserModeState('cdp');
+        setUseCdp(true);
+      } else if (editingPreset.enableBrowserAccess) {
+        // Check if CDP was enabled (useCdp was stored via enableBrowserAccess + cdp detection)
+        setBrowserModeState('headless');
+      } else {
+        setBrowserModeState('none');
+      }
+      setCamofoxHeaded(editingPreset.camofoxHeaded !== false); // Default true
       // Load agent-specific configs if available
       setExecutionLLM(presetLLM.execution_llm || null);
       setValidationLLM(presetLLM.validation_llm || null);
@@ -200,7 +255,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // Default tool search mode to true for workflow presets
       setUseToolSearchMode(true);
       setUseKnowledgebase(true); // Default true
-      setEnableBrowserAccess(false); // Default false
+      setBrowserModeState('none'); // Default no browser
+      setCamofoxHeaded(true); // Default headed
       // Initialize agent-specific configs to null (will use legacy default)
       setExecutionLLM(null);
       setValidationLLM(null);
@@ -338,11 +394,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         toolSearchModeToPass, // Always pass explicit boolean
         enableBrowserAccess, // Browser automation access
         selectedSecrets, // Secret IDs for injection
-        selectedGlobalSecrets // Per-preset global secret selection (null=all)
+        selectedGlobalSecrets, // Per-preset global secret selection (null=all)
+        browserMode === 'stealth' ? camofoxHeaded : undefined // Camofox headed mode
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -945,118 +1002,228 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                   </div>
                 </div>
 
-                {/* Browser Automation Toggle */}
+                {/* Browser Automation Mode Selector */}
                 <div>
                   <label className="block text-sm font-medium mb-2">
                     Browser Automation
                   </label>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          Enable Browser Access
+                  <div className="p-3 bg-gray-50 dark:bg-gray-900/60 border border-gray-200 dark:border-gray-700 rounded-lg space-y-3">
+                    {/* Mode selection cards */}
+                    <div className="space-y-2">
+                      {/* None */}
+                      <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        browserMode === 'none'
+                          ? 'border-gray-400 dark:border-gray-500 bg-gray-100 dark:bg-gray-800/60'
+                          : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40'
+                      }`}>
+                        <input type="radio" name="presetBrowserMode" checked={browserMode === 'none'} onChange={() => setBrowserMode('none')} className="mt-0.5 w-4 h-4 accent-gray-500" />
+                        <div>
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">None</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">No browser access for this workflow</div>
                         </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Allow agent to control browser for web automation and testing
+                      </label>
+
+                      {/* Headless */}
+                      <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        browserMode === 'headless'
+                          ? 'border-blue-500 dark:border-blue-500 bg-blue-50 dark:bg-blue-950/40'
+                          : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40'
+                      }`}>
+                        <input type="radio" name="presetBrowserMode" checked={browserMode === 'headless'} onChange={() => setBrowserMode('headless')} className="mt-0.5 w-4 h-4 text-blue-500 accent-blue-500" />
+                        <div>
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Headless Browser</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Agent controls a headless Chromium inside Docker. You won&apos;t see the browser window.
+                          </div>
                         </div>
-                      </div>
-                      <label className="relative inline-flex items-center cursor-pointer ml-3">
+                      </label>
+
+                      {/* CDP (local mode only) */}
+                      {isLocalMode && (
+                        <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                          browserMode === 'cdp'
+                            ? 'border-green-500 dark:border-green-500 bg-green-50 dark:bg-green-950/40'
+                            : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40'
+                        }`}>
+                          <input type="radio" name="presetBrowserMode" checked={browserMode === 'cdp'} onChange={() => setBrowserMode('cdp')} className="mt-0.5 w-4 h-4 text-green-500 accent-green-500" />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Connect to Local Chrome (CDP)</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                              Agent connects to your real Chrome browser so you can watch it navigate in real-time.
+                            </div>
+                          </div>
+                        </label>
+                      )}
+
+                      {/* Playwright MCP */}
+                      <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                        playwrightServerStatus === 'not_found'
+                          ? 'border-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed'
+                          : browserMode === 'playwright'
+                            ? 'border-purple-500 dark:border-purple-500 bg-purple-50 dark:bg-purple-950/40 cursor-pointer'
+                            : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40 cursor-pointer'
+                      }`}>
                         <input
-                          type="checkbox"
-                          checked={enableBrowserAccess}
-                          onChange={(e) => setEnableBrowserAccess(e.target.checked)}
-                          className="sr-only peer"
+                          type="radio"
+                          name="presetBrowserMode"
+                          checked={browserMode === 'playwright'}
+                          onChange={() => setBrowserMode('playwright')}
+                          disabled={playwrightServerStatus === 'not_found'}
+                          className="mt-0.5 w-4 h-4 text-purple-500 accent-purple-500"
                         />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Playwright MCP</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Opens a new visible browser window per session. Uses Playwright MCP server.
+                          </div>
+                          {playwrightServerStatus === 'not_found' && (
+                            <div className="text-xs text-red-500 dark:text-red-400 mt-1.5 flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                              &quot;playwright&quot; server not found in MCP config &mdash; add it in MCP Settings
+                            </div>
+                          )}
+                          {playwrightServerStatus === 'error' && (
+                            <div className="text-xs text-amber-500 dark:text-amber-400 mt-1.5 flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                              Playwright server has errors &mdash; check MCP Settings
+                            </div>
+                          )}
+                        </div>
+                      </label>
+
+                      {/* Stealth (Camofox) */}
+                      <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                        camofoxServerStatus === 'not_found'
+                          ? 'border-gray-200 dark:border-gray-700 opacity-50 cursor-not-allowed'
+                          : browserMode === 'stealth'
+                            ? 'border-orange-500 dark:border-orange-500 bg-orange-50 dark:bg-orange-950/40 cursor-pointer'
+                            : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800/40 cursor-pointer'
+                      }`}>
+                        <input
+                          type="radio"
+                          name="presetBrowserMode"
+                          checked={browserMode === 'stealth'}
+                          onChange={() => setBrowserMode('stealth')}
+                          disabled={camofoxServerStatus === 'not_found'}
+                          className="mt-0.5 w-4 h-4 text-orange-500 accent-orange-500"
+                        />
+                        <div className="flex-1">
+                          <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Stealth Browser (Camofox)</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                            Anti-detect Firefox for sites that block bots. Headed mode with session persistence.
+                          </div>
+                          {camofoxServerStatus === 'not_found' && (
+                            <div className="text-xs text-red-500 dark:text-red-400 mt-1.5 flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                              &quot;camofox&quot; server not found in MCP config &mdash; add it in MCP Settings
+                            </div>
+                          )}
+                          {camofoxServerStatus === 'error' && (
+                            <div className="text-xs text-amber-500 dark:text-amber-400 mt-1.5 flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                              Camofox MCP server has errors &mdash; check MCP Settings
+                            </div>
+                          )}
+                        </div>
                       </label>
                     </div>
 
-                    {/* CDP Sub-option (local mode only) */}
-                    {enableBrowserAccess && isLocalMode && (
-                      <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600">
-                        <div className="flex items-center justify-between">
-                          <div className="flex-1">
-                            <div className="text-sm font-medium text-gray-900 dark:text-white">
-                              Connect via CDP
-                            </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              Connect to your local Chrome browser instead of headless mode
+                    {/* Camofox configuration sub-panel */}
+                    {browserMode === 'stealth' && (
+                      <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
+                        <label className="flex items-center gap-2.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={camofoxHeaded}
+                            onChange={(e) => setCamofoxHeaded(e.target.checked)}
+                            className="w-4 h-4 rounded accent-orange-500"
+                          />
+                          <div>
+                            <div className="text-sm text-gray-900 dark:text-gray-200">Show browser window</div>
+                            <div className="text-xs text-gray-500 dark:text-gray-500">
+                              {camofoxHeaded
+                                ? 'Visible Firefox window \u2014 watch the agent navigate in real-time'
+                                : 'Headless mode \u2014 browser runs in background (faster, no window)'}
                             </div>
                           </div>
-                          <label className="relative inline-flex items-center cursor-pointer ml-3">
-                            <input
-                              type="checkbox"
-                              checked={useCdp}
-                              onChange={(e) => setUseCdp(e.target.checked)}
-                              className="sr-only peer"
-                            />
-                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                          </label>
-                        </div>
+                        </label>
+                      </div>
+                    )}
 
-                        {useCdp && (
-                          <div className="mt-3 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Port:</label>
-                              <input
-                                type="number"
-                                value={cdpPort}
-                                onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
-                                className="w-24 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                                min={1}
-                                max={65535}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => checkCdpConnection(cdpPort)}
-                                disabled={cdpChecking}
-                                className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded text-gray-700 dark:text-gray-300 disabled:opacity-50"
-                              >
-                                {cdpChecking ? 'Checking...' : 'Check'}
-                              </button>
-                            </div>
-                            {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
-                              <div className="rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/80 p-2 space-y-1.5">
-                                <p className="text-xs font-medium text-gray-700 dark:text-gray-300">macOS: Easy setup</p>
-                                <a
-                                  href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
-                                  download="Chrome-CDP-macOS.zip"
-                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded transition-colors"
-                                >
-                                  <Download className="w-3 h-3" />
-                                  Download Chrome CDP launcher
-                                </a>
-                                <ol className="text-xs text-gray-600 dark:text-gray-400 list-decimal list-inside space-y-0.5">
-                                  <li>Unzip, move &quot;Chrome CDP.app&quot; to Applications, then open it from Spotlight or LaunchPad.</li>
-                                  <li>Click Check above to verify connection.</li>
-                                </ol>
-                                <p className="text-xs text-amber-600 dark:text-amber-400/90 mt-1">
-                                  If macOS says &quot;package is damaged&quot;, run in Terminal: <code className="bg-gray-900 dark:bg-gray-950 px-1 rounded font-mono text-[11px]">xattr -c &apos;~/Downloads/Chrome CDP.app&apos;</code> (or the path where you put the app), or right-click the app → Open.
-                                </p>
-                              </div>
-                            )}
-                            <div className="flex items-center gap-1.5">
-                              {cdpChecking ? (
-                                <>
-                                  <div className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
-                                  <span className="text-xs text-yellow-600 dark:text-yellow-400">Checking connection...</span>
-                                </>
-                              ) : cdpConnected === true ? (
-                                <>
-                                  <div className="w-2 h-2 rounded-full bg-green-500" />
-                                  <span className="text-xs text-green-600 dark:text-green-400">Connected</span>
-                                </>
-                              ) : cdpConnected === false ? (
-                                <>
-                                  <div className="w-2 h-2 rounded-full bg-red-500" />
-                                  <span className="text-xs text-red-600 dark:text-red-400">
-                                    Not connected &mdash; launch Chrome with <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">--remote-debugging-port={cdpPort}</code>
-                                  </span>
-                                </>
-                              ) : null}
-                            </div>
+                    {/* CDP configuration sub-panel */}
+                    {browserMode === 'cdp' && (
+                      <div className="space-y-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
+                        <div className="flex items-center gap-3">
+                          <label className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">CDP Port:</label>
+                          <input
+                            type="number"
+                            value={cdpPort}
+                            onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
+                            className="w-24 px-2.5 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:border-green-500 focus:outline-none"
+                            min={1}
+                            max={65535}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => checkCdpConnection(cdpPort)}
+                            disabled={cdpChecking}
+                            className="px-3 py-1.5 text-xs font-medium bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-md text-gray-700 dark:text-gray-200 disabled:opacity-50 transition-colors"
+                          >
+                            {cdpChecking ? 'Checking...' : 'Check Connection'}
+                          </button>
+                        </div>
+                        {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
+                          <div className="rounded-lg bg-white dark:bg-gray-900/80 border border-gray-300 dark:border-gray-600 p-3 space-y-2">
+                            <p className="text-xs font-medium text-gray-700 dark:text-gray-300">macOS: Easy setup</p>
+                            <a
+                              href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
+                              download="Chrome-CDP-macOS.zip"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              Download Chrome CDP launcher
+                            </a>
+                            <ol className="text-xs text-gray-500 dark:text-gray-400 list-decimal list-inside space-y-0.5">
+                              <li>Double-click the zip to unzip.</li>
+                              <li>Move &quot;Chrome CDP.app&quot; to Applications, then open it from Spotlight or LaunchPad.</li>
+                              <li>Click Check Connection above to verify.</li>
+                            </ol>
+                            <p className="text-xs text-amber-600 dark:text-amber-400/90 mt-1.5">
+                              If macOS says &quot;package is damaged&quot;, run in Terminal: <code className="bg-gray-100 dark:bg-gray-950 px-1 rounded font-mono text-[11px]">xattr -c &apos;~/Downloads/Chrome CDP.app&apos;</code> or right-click the app → Open.
+                            </p>
                           </div>
                         )}
+                        <div className="flex items-start gap-2">
+                          {cdpChecking ? (
+                            <>
+                              <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
+                              <span className="text-sm text-yellow-600 dark:text-yellow-400">Checking connection to port {cdpPort}...</span>
+                            </>
+                          ) : cdpConnected === true ? (
+                            <>
+                              <div className="w-3 h-3 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
+                              <span className="text-sm text-green-600 dark:text-green-400">Connected! Chrome is reachable on port {cdpPort}.</span>
+                            </>
+                          ) : cdpConnected === false ? (
+                            <>
+                              <div className="w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
+                              <div className="text-sm">
+                                <span className="text-red-600 dark:text-red-400">Chrome is not reachable on port {cdpPort}.</span>
+                                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                                  <p className="font-medium text-gray-700 dark:text-gray-300">To enable CDP, launch Chrome with:</p>
+                                  <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1.5 rounded text-xs font-mono break-all text-green-700 dark:text-green-400 border border-gray-300 dark:border-gray-700">
+                                    {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac')
+                                      ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
+                                      : `google-chrome --remote-debugging-port=${cdpPort}`}
+                                  </code>
+                                  <p className="text-gray-500">Close all Chrome windows first, then run the command above.</p>
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-500">Click &quot;Check Connection&quot; to verify Chrome is reachable.</span>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

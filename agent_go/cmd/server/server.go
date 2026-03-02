@@ -1204,6 +1204,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
+	apiRouter.HandleFunc("/camofox-start", api.handleCamofoxStart).Methods("POST")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
@@ -1457,6 +1458,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleGetStepOverride).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleUpdateStepOverride).Methods("POST", "OPTIONS")
+
+	// Workflow Version API routes
+	apiRouter.HandleFunc("/workflow/versions", api.handleListVersions).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/versions/publish", api.handlePublishVersion).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/versions/revert", api.handleRevertVersion).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/versions", api.handleDeleteVersion).Methods("DELETE", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
@@ -1928,6 +1935,98 @@ func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"connected": true,
 	})
+}
+
+// handleCamofoxStart checks if camofox-browser is running, starts it if not, and returns status.
+// Called by the frontend when the user selects Stealth Browser mode.
+func (api *StreamingAPI) handleCamofoxStart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	// Parse request body for headed preference
+	var reqBody struct {
+		Headed *bool `json:"headed"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+	}
+	headed := true // default to headed (visible browser)
+	if reqBody.Headed != nil {
+		headed = *reqBody.Headed
+	}
+
+	port := 9377
+	healthURL := fmt.Sprintf("http://127.0.0.1:%d/health", port)
+
+	// Check if already running
+	if api.camofoxHealthCheck(healthURL) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": true,
+			"started":   false,
+			"message":   "camofox-browser already running",
+		})
+		return
+	}
+
+	// Not running — start it
+	headlessEnv := "CAMOFOX_HEADLESS=false"
+	if !headed {
+		headlessEnv = "CAMOFOX_HEADLESS=true"
+	}
+	log.Printf("[CAMOFOX] Starting camofox-browser on port %d (headed=%v)...", port, headed)
+	cmd := exec.Command("camofox-browser")
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("PORT=%d", port),
+		headlessEnv,
+	)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		log.Printf("[CAMOFOX] Failed to start camofox-browser: %v", err)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"connected": false,
+			"started":   false,
+			"error":     fmt.Sprintf("failed to start camofox-browser: %v", err),
+		})
+		return
+	}
+
+	// Detach — don't wait for the process
+	go func() {
+		_ = cmd.Wait()
+	}()
+
+	// Poll health endpoint for up to 20 seconds
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(500 * time.Millisecond)
+		if api.camofoxHealthCheck(healthURL) {
+			log.Printf("[CAMOFOX] camofox-browser is ready (pid %d)", cmd.Process.Pid)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"connected": true,
+				"started":   true,
+				"message":   "camofox-browser started successfully",
+			})
+			return
+		}
+	}
+
+	log.Printf("[CAMOFOX] camofox-browser did not become ready within 20s")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"connected": false,
+		"started":   true,
+		"error":     "camofox-browser started but did not become ready within 20 seconds",
+	})
+}
+
+// camofoxHealthCheck hits the camofox-browser /health endpoint
+func (api *StreamingAPI) camofoxHealthCheck(healthURL string) bool {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(healthURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
 }
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
@@ -4676,15 +4775,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// then resolves those to absolute host paths before they reach Playwright MCP.
 			hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
 			hasPlaywright := false
+			hasCamofox := false
 			for _, s := range req.EnabledServers {
 				if s == "playwright" {
 					hasPlaywright = true
-					break
+				}
+				if s == "camofox" {
+					hasCamofox = true
 				}
 			}
-			if hasBrowserAccess || hasPlaywright {
+			if hasBrowserAccess || hasPlaywright || hasCamofox {
 				underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
-				log.Printf("[BROWSER_UPLOAD] Added browser upload instructions (browser=%v, playwright=%v)", hasBrowserAccess, hasPlaywright)
+				if hasCamofox {
+					underlyingAgent.AppendSystemPrompt(GetCamofoxInstructions())
+					log.Printf("[CAMOFOX] Added camofox-specific instructions (session persistence, downloads)")
+				}
+				log.Printf("[BROWSER_UPLOAD] Added browser upload instructions (browser=%v, playwright=%v, camofox=%v)", hasBrowserAccess, hasPlaywright, hasCamofox)
 
 				// Register transformer on the agent (primary path for LLM-driven tool calls).
 				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
@@ -7144,15 +7250,22 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// its own toolArgTransformers map — the parent's transformer doesn't propagate.
 		hasBrowserAccess := parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess
 		hasPlaywright := false
+		hasCamofox := false
 		for _, s := range parentReq.EnabledServers {
 			if s == "playwright" {
 				hasPlaywright = true
-				break
+			}
+			if s == "camofox" {
+				hasCamofox = true
 			}
 		}
-		if hasBrowserAccess || hasPlaywright {
+		if hasBrowserAccess || hasPlaywright || hasCamofox {
 			underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
-			log.Printf("[BROWSER_UPLOAD] Added browser upload instructions to sub-agent (browser=%v, playwright=%v)", hasBrowserAccess, hasPlaywright)
+			if hasCamofox {
+				underlyingAgent.AppendSystemPrompt(GetCamofoxInstructions())
+				log.Printf("[CAMOFOX] Added camofox-specific instructions to sub-agent")
+			}
+			log.Printf("[BROWSER_UPLOAD] Added browser upload instructions to sub-agent (browser=%v, playwright=%v, camofox=%v)", hasBrowserAccess, hasPlaywright, hasCamofox)
 
 			// Register transformer on the sub-agent (same logic as parent, separate instance)
 			wsAbsPath, err := filepath.Abs("../workspace-docs/_users/default")
@@ -7944,11 +8057,18 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 // buildCapabilitiesContext creates a CapabilitiesContext from the chat request
 // This is passed to the planner sub-agent so it knows what tools/servers/skills are available
 func buildCapabilitiesContext(req QueryRequest) *virtualtools.CapabilitiesContext {
+	hasBrowser := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+	for _, s := range req.EnabledServers {
+		if s == "camofox" {
+			hasBrowser = true
+			break
+		}
+	}
 	caps := &virtualtools.CapabilitiesContext{
 		EnabledServers: req.EnabledServers,
 		SelectedTools:  req.SelectedTools,
 		HasWorkspace:   req.EnableWorkspaceAccess == nil || *req.EnableWorkspaceAccess,
-		HasBrowser:     req.EnableBrowserAccess != nil && *req.EnableBrowserAccess,
+		HasBrowser:     hasBrowser,
 	}
 
 	// Load skill summaries

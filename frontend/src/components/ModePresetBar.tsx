@@ -209,7 +209,8 @@ export const ModePresetBar: React.FC = () => {
     useToolSearchMode?: boolean,
     enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
-    selectedGlobalSecretNames?: string[] | null
+    selectedGlobalSecretNames?: string[] | null,
+    camofoxHeaded?: boolean
   ) => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
@@ -229,7 +230,8 @@ export const ModePresetBar: React.FC = () => {
         enableBrowserAccess,
         undefined, // enableContextEditing
         selectedSecrets,
-        selectedGlobalSecretNames
+        selectedGlobalSecretNames,
+        camofoxHeaded
       )
 
       // Apply the preset immediately if it's a new one

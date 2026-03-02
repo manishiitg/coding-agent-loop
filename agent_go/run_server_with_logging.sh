@@ -245,8 +245,14 @@ echo "📦 Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens"
 echo "📊 Debug level: $LOG_LEVEL"
 
 # Database configuration based on DATABASE_URL
+# Set USE_SQLITE=true to force SQLite for local testing (ignores DATABASE_URL)
+USE_SQLITE="${USE_SQLITE:-false}"
 DB_TYPE_FLAG="sqlite"
-if [ -n "$DATABASE_URL" ]; then
+if [ "$USE_SQLITE" = "true" ]; then
+    unset DATABASE_URL
+    echo "🗄️  USE_SQLITE=true — forcing SQLite (ignoring DATABASE_URL)"
+    DB_TYPE_FLAG="sqlite"
+elif [ -n "$DATABASE_URL" ]; then
     echo "🗄️  Detected DATABASE_URL, using PostgreSQL (Supabase)"
     DB_TYPE_FLAG="postgres"
 else
@@ -264,6 +270,22 @@ fi
 if ! command -v go &> /dev/null; then
     echo "❌ Error: 'go' command not found. Please install Go."
     exit 1
+fi
+
+# Pre-install camofox packages globally (skips if already installed — avoids slow npx -y each time)
+if ! command -v camofox-browser &> /dev/null; then
+    echo "📦 Installing camofox-browser globally (first time only)..."
+    npm install -g camofox-browser@latest 2>&1 | tail -1
+    echo "✅ camofox-browser installed"
+else
+    echo "✅ camofox-browser already installed"
+fi
+if ! command -v camofox-mcp &> /dev/null; then
+    echo "📦 Installing camofox-mcp globally (first time only)..."
+    npm install -g camofox-mcp@latest 2>&1 | tail -1
+    echo "✅ camofox-mcp installed"
+else
+    echo "✅ camofox-mcp already installed"
 fi
 
 # Build mcpbridge binary (required for Gemini CLI MCP bridge)

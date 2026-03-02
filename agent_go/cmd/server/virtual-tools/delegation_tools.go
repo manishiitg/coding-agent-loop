@@ -141,9 +141,10 @@ func NewPlanTracker() *PlanTracker {
 
 // DelegationTierConfig holds provider/model for each reasoning tier
 type DelegationTierConfig struct {
-	High   *TierModel                `json:"high,omitempty"`
-	Medium *TierModel                `json:"medium,omitempty"`
-	Low    *TierModel                `json:"low,omitempty"`
+	Main   *TierModel                 `json:"main,omitempty"` // orchestrator/main agent model
+	High   *TierModel                 `json:"high,omitempty"`
+	Medium *TierModel                 `json:"medium,omitempty"`
+	Low    *TierModel                 `json:"low,omitempty"`
 	Custom map[string]*CustomTierModel `json:"custom,omitempty"`
 }
 

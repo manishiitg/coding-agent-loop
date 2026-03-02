@@ -1,4 +1,4 @@
-import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2 } from 'lucide-react'
+import { X, Brain, Zap, Gauge, Server, Shield, FolderOpen, Sparkles, Tag, Plus, Trash2, Crown } from 'lucide-react'
 import { Button } from './ui/Button'
 import { useLLMStore } from '../stores'
 import { useChatStore } from '../stores'
@@ -26,7 +26,7 @@ const descToSlug = (desc: string): string => {
     .join('-')
     .replace(/-+/g, '-')
     .slice(0, 30) || 'custom'
-  if (slug === 'high' || slug === 'medium' || slug === 'low') {
+  if (slug === 'high' || slug === 'medium' || slug === 'low' || slug === 'main') {
     return `${slug}-tier`
   }
   return slug
@@ -35,7 +35,7 @@ const descToSlug = (desc: string): string => {
 // Check if config has any values (built-in or custom)
 const hasAnyConfig = (config: DelegationTierConfig | null): boolean => {
   if (!config) return false
-  return !!(config.high || config.medium || config.low ||
+  return !!(config.main || config.high || config.medium || config.low ||
     (config.custom && Object.keys(config.custom).length > 0))
 }
 
@@ -195,6 +195,58 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
           {/* Right: Tier config */}
           <div className="w-3/5 p-5 overflow-y-auto">
+
+            {/* Main Agent section */}
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Main Agent</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              The orchestrator that creates the plan and coordinates sub-agents. Defaults to the global/tab LLM if not set.
+            </p>
+            <div className="border border-gray-200 dark:border-slate-600 rounded-lg p-3 mb-5">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-2">
+                  <Crown className="w-4 h-4 text-amber-500" />
+                  <div>
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Main Agent (Orchestrator)</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-1.5">Plan creation &amp; coordination</span>
+                  </div>
+                </div>
+                {delegationTierConfig?.main && (
+                  <button
+                    onClick={() => {
+                      const newConfig: DelegationTierConfig = { ...delegationTierConfig }
+                      delete newConfig.main
+                      const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
+                      setDelegationTierConfig(finalConfig)
+                      syncTierConfigToActiveTab(finalConfig)
+                    }}
+                    className="text-xs text-red-400 hover:text-red-600"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              <LLMSelectionDropdown
+                availableLLMs={availableLLMs}
+                selectedLLM={delegationTierConfig?.main
+                  ? {
+                      provider: delegationTierConfig.main.provider,
+                      model: delegationTierConfig.main.model_id,
+                      label: `${delegationTierConfig.main.provider} - ${delegationTierConfig.main.model_id}`,
+                      description: 'main agent model'
+                    }
+                  : null}
+                onLLMSelect={(llm: LLMOption) => {
+                  const newTier: TierModel = { provider: llm.provider, model_id: llm.model }
+                  const newConfig: DelegationTierConfig = { ...delegationTierConfig, main: newTier }
+                  setDelegationTierConfig(newConfig)
+                  syncTierConfigToActiveTab(newConfig)
+                }}
+                inModal={true}
+                openDirection="down"
+                title="Select main agent model"
+              />
+            </div>
+
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Sub-Agent Models</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
               Assign models by complexity tier. Leave empty to use the parent model.

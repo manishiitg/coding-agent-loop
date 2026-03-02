@@ -285,7 +285,8 @@ function spawnWorkspace(userDataPath) {
     const env = { 
       ...process.env, 
       DOCS_DIR: docsDir, 
-      DATA_DIR: dataDir 
+      DATA_DIR: dataDir,
+      WORKSPACE_ENABLE_GITHUB_SYNC: 'true'
     };
 
     if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
@@ -387,8 +388,11 @@ function spawnAgent(userDataPath) {
       ...process.env,
       WORKSPACE_API_URL: `http://127.0.0.1:${dynamicWorkspacePort}`, // Inject dynamic workspace port
       DB_PATH: dbPath,
-      LOG_FILE: logFile
+      LOG_FILE: logFile,
+      WORKSPACE_ENABLE_GITHUB_SYNC: 'true'
     };
+
+    if (settings.ghToken) env.GITHUB_TOKEN = settings.ghToken;
 
     if (settings.dbType === 'postgres' && settings.dbUrl) {
       env.DATABASE_URL = settings.dbUrl;

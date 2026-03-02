@@ -1772,8 +1772,8 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         ? currentTab.config.llmConfig
         : llmStore.primaryConfig
       const tierConfig = llmStore.delegationTierConfig
-      const effectiveLLMConfig: ExtendedLLMConfiguration = (isMultiAgentMode && tierConfig?.high?.provider && tierConfig?.high?.model_id)
-        ? { ...baseLLMConfig, provider: tierConfig.high.provider as ExtendedLLMConfiguration['provider'], model_id: tierConfig.high.model_id }
+      const effectiveLLMConfig: ExtendedLLMConfiguration = (isMultiAgentMode && tierConfig?.main?.provider && tierConfig?.main?.model_id)
+        ? { ...baseLLMConfig, provider: tierConfig.main.provider as ExtendedLLMConfiguration['provider'], model_id: tierConfig.main.model_id }
         : baseLLMConfig
 
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(effectiveLLMConfig)

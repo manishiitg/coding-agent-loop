@@ -134,6 +134,7 @@ export interface AgentQueryRequest {
 
 // Delegation tier configuration for multi-LLM support
 export interface DelegationTierConfig {
+  main?: TierModel    // orchestrator/main agent model
   high?: TierModel
   medium?: TierModel
   low?: TierModel

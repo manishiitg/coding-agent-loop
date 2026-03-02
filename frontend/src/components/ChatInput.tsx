@@ -1221,6 +1221,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
+    // Handle Shift + Tab to toggle between planning and execution phase in multi-agent or code-prototype mode
+    if (e.key === 'Tab' && e.shiftKey && isMultiAgentMode) {
+      e.preventDefault()
+      const newPhase = planPhase === 'planning' ? 'execution' : 'planning'
+      setPlanPhaseOverride(newPhase)
+      addToast(`Switched to ${newPhase} mode`, 'info')
+      return
+    }
+
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
@@ -1480,7 +1489,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills, addToast, isMultiAgentMode, planPhase, setPlanPhaseOverride])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -1897,8 +1906,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoized placeholder
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
-    return "Ask anything... (@ files, / commands, # workflows, ! skills, $ servers, ^ agents)"
-  }, [isViewOnly])
+    const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
+    if (isMultiAgentMode) return `Ask anything... (Shift+Tab: switch mode | ${baseHints})`
+    return `Ask anything... (${baseHints})`
+  }, [isViewOnly, isMultiAgentMode])
 
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
@@ -2175,8 +2186,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             className="flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors text-xs"
                           >
                             <Layers className="w-3.5 h-3.5 flex-shrink-0" />
-                            {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                            {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
                               <span className="flex items-center gap-1 font-medium">
+                                {delegationTierConfig.main && (
+                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-800/40 text-amber-700 dark:text-amber-300 text-[10px] leading-none">
+                                    <TierProviderDot provider={delegationTierConfig.main.provider} />
+                                    Main
+                                  </span>
+                                )}
                                 {delegationTierConfig.high && (
                                   <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
                                     <TierProviderDot provider={delegationTierConfig.high.provider} />
@@ -2202,8 +2219,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </button>
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                          {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
                             <div className="space-y-1 text-xs">
+                              {delegationTierConfig.main && <p>Main: {shortModelName(delegationTierConfig.main.model_id)} ({delegationTierConfig.main.provider})</p>}
                               {delegationTierConfig.high && <p>High: {shortModelName(delegationTierConfig.high.model_id)} ({delegationTierConfig.high.provider})</p>}
                               {delegationTierConfig.medium && <p>Med: {shortModelName(delegationTierConfig.medium.model_id)} ({delegationTierConfig.medium.provider})</p>}
                               {delegationTierConfig.low && <p>Low: {shortModelName(delegationTierConfig.low.model_id)} ({delegationTierConfig.low.provider})</p>}

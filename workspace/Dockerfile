@@ -21,7 +21,7 @@ ENV CGO_ENABLED=1
 RUN go build -o planner .
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.20
 
 # Install system packages
 RUN apk add --no-cache \

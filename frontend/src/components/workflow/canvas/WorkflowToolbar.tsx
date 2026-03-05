@@ -1418,13 +1418,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
     // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
     if (!isExecutionRunning && targetPhase) {
-      // Check if variablesManifest exists - required for execution
-      if (!variablesManifest) {
-        alert('Error: Variables manifest not found. Please ensure variables are configured before executing the workflow.')
-        console.error('[WorkflowToolbar] Cannot execute: variablesManifest is missing')
-        return
-      }
-
       // Check if groups are available and if at least one is selected
       const hasGroups = variablesManifest?.groups && variablesManifest.groups.length > 0
       if (hasGroups && selectedGroupIds.length === 0) {

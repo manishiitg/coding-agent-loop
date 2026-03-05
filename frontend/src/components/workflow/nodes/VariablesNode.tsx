@@ -45,16 +45,17 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
   const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds) // Selected group IDs from checkboxes
   
   const variableCount = manifest?.variables?.length || 0
-  const totalGroups = manifest?.groups?.length || (variableCount > 0 ? 1 : 0)
+  const groupCount = manifest?.groups?.length || 0
+  const totalGroups = groupCount || (variableCount > 0 ? 1 : 0)
   const enabledGroups = getEnabledGroups(manifest)
   const enabledCount = enabledGroups.length
   const isMultiGroup = hasMultipleGroups(manifest)
-  
+
   // Count how many groups are selected via checkboxes
-  const selectedCount = selectedGroupIds.length > 0 
+  const selectedCount = selectedGroupIds.length > 0
     ? selectedGroupIds.filter(id => manifest?.groups?.some(g => g.group_id === id && g.enabled)).length
     : 0
-  
+
   // Handle node click to open sidebar
   const handleClick = useCallback((e: MouseEvent) => {
     e.stopPropagation()
@@ -62,9 +63,9 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
       onOpenSidebar()
     }
   }, [onOpenSidebar])
-  
-  // No variables yet
-  if (!manifest || variableCount === 0) {
+
+  // No variables and no groups yet
+  if (!manifest || (variableCount === 0 && groupCount === 0)) {
     return (
       <div 
         className={`
@@ -134,7 +135,7 @@ export const VariablesNode = memo(({ data, selected }: VariablesNodeProps) => {
       <div className="flex items-center gap-2 px-3 py-2 bg-purple-100 dark:bg-purple-800/30 rounded-t-lg border-b border-purple-200 dark:border-purple-700">
         <Variable className="w-4 h-4 text-purple-600 dark:text-purple-400" />
         <span className="text-sm font-medium text-purple-700 dark:text-purple-300">
-          Variables ({variableCount})
+          {variableCount > 0 ? `Variables (${variableCount})` : 'Groups'}
         </span>
         {isMultiGroup && (
           <span className="ml-auto flex items-center gap-1 text-xs text-purple-600 dark:text-purple-400">

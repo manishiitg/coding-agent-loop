@@ -1201,11 +1201,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
     }),
     {
       name: 'global-preset-storage',
-      // Only persist the essential state, not temporary UI state
+      // Only persist UI session state — presets come from the database on load.
+      // Do NOT persist customPresets/predefinedPresets/predefinedServerSelections
+      // as that causes stale data (e.g. old server lists surviving preset edits).
       partialize: (state) => ({
-        customPresets: state.customPresets,
-        predefinedPresets: state.predefinedPresets,
-        predefinedServerSelections: state.predefinedServerSelections,
         activePresetIds: state.activePresetIds,
         currentPresetServers: state.currentPresetServers,
         currentPresetTools: state.currentPresetTools,

@@ -41,7 +41,6 @@ export const WORKSPACE_TOOLS = [
   ...WORKSPACE_BASIC_TOOLS,
   ...WORKSPACE_GIT_TOOLS,
   ...WORKSPACE_ADVANCED_TOOLS,
-  ...WORKSPACE_BROWSER_TOOLS,
 ] as const;
 
 export const HUMAN_TOOLS = [
@@ -83,9 +82,6 @@ export function getToolsByCategory(category: string, capabilities?: { semantic_s
     case 'workspace_advanced':
       // Advanced tools (4 tools: shell + image + PDF + diff patch)
       return [...WORKSPACE_ADVANCED_TOOLS];
-    case 'workspace_browser':
-      // Browser automation tool (1 tool)
-      return [...WORKSPACE_BROWSER_TOOLS];
     case 'human_tools':
       return [...HUMAN_TOOLS];
     default:
@@ -102,7 +98,6 @@ export function getAllCustomTools(capabilities?: { semantic_search_enabled?: boo
     ...getToolsByCategory('workspace_basic', { semantic_search_enabled: isSemanticEnabled, github_sync_enabled: isGitEnabled }),
     ...(isGitEnabled ? WORKSPACE_GIT_TOOLS : []),
     ...WORKSPACE_ADVANCED_TOOLS,
-    ...WORKSPACE_BROWSER_TOOLS,
     ...HUMAN_TOOLS
   ];
 }
@@ -117,9 +112,6 @@ export function getCategoryForTool(toolName: string): string | null {
   }
   if (WORKSPACE_ADVANCED_TOOLS.includes(toolName as WorkspaceAdvancedToolName)) {
     return 'workspace_advanced';
-  }
-  if (WORKSPACE_BROWSER_TOOLS.includes(toolName as WorkspaceBrowserToolName)) {
-    return 'workspace_browser';
   }
   if (HUMAN_TOOLS.includes(toolName as HumanToolName)) {
     return 'human_tools';

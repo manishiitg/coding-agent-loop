@@ -1427,6 +1427,19 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Start background cleanup goroutine to mark inactive sessions (10 minute timeout)
 	go api.cleanupInactiveSessions()
 
+	// Initialize and start the cron scheduler
+	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
+	defer schedulerCancel()
+	schedulerSvc := NewSchedulerService(chatDB, api)
+	go func() {
+		if err := schedulerSvc.Start(schedulerCtx); err != nil {
+			log.Printf("[SCHEDULER] Error: %v", err)
+		}
+	}()
+
+	// Register scheduler routes
+	SchedulerRoutes(router, chatDB, schedulerSvc)
+
 	// Workflow API routes
 	apiRouter.HandleFunc("/workflow/create", api.handleCreateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
@@ -3076,6 +3089,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if !hasAgentBrowserSkill {
 						selectedSkills = append(selectedSkills, "agent-browser")
 						log.Printf("[WORKFLOW] Auto-adding agent-browser skill for browser access")
+					}
+
+					// Headless/CDP mode uses agent_browser virtual tool, not playwright/camofox MCP servers.
+					// Strip these MCP servers to prevent the agent from discovering and using their tools
+					// instead of the intended headless browser.
+					var filteredServers []string
+					for _, s := range selectedServers {
+						if s != "playwright" && s != "camofox" {
+							filteredServers = append(filteredServers, s)
+						}
+					}
+					if len(filteredServers) != len(selectedServers) {
+						log.Printf("[WORKFLOW] Headless browser mode: stripped playwright/camofox MCP servers from server list (was %d, now %d)", len(selectedServers), len(filteredServers))
+						selectedServers = filteredServers
+						// Update serverList as well
+						if len(selectedServers) == 0 {
+							serverList = mcpclient.NoServers
+						} else {
+							serverList = strings.Join(selectedServers, ",")
+						}
 					}
 				}
 			}

@@ -464,6 +464,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	}
 
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
+	// An empty config still falls through to the "no valid LLM" error at the end.
+	if orchestratorLLMConfig == nil {
+		orchestratorLLMConfig = &orchestrator.LLMConfig{}
+	}
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 
 	// Check if step config explicitly disables tempLLM
@@ -489,9 +494,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				},
 				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 			}
+		} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback (disable_temp_llm path): %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+			return orchestratorLLMConfig
 		} else {
-			err := fmt.Errorf("no valid LLM configuration found for execution agent: step config and preset execution LLM are both empty or invalid")
-			hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: step config and preset execution LLM are both empty or invalid", err)
+			err := fmt.Errorf("no valid LLM configuration found for execution agent: step config, preset execution LLM, and workflow LLM are all empty or invalid")
+			hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: step config, preset execution LLM, and workflow LLM are all empty or invalid", err)
 			return nil
 		}
 	}
@@ -610,9 +618,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			},
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+		return orchestratorLLMConfig
 	} else {
-		err := fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid")
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid", err)
+		err := fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, preset execution LLM, and workflow LLM are all empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: temp override, step config, preset execution LLM, and workflow LLM are all empty or invalid", err)
 		return nil
 	}
 }

@@ -1565,3 +1565,77 @@ export interface WorkflowVersionMeta {
   created_at: string
   files_count: number
 }
+
+// Scheduled Jobs
+export interface ScheduledJob {
+  id: string
+  name: string
+  description: string
+  entity_type: 'workflow' | 'chat'
+  preset_query_id: string
+  trigger_payload?: Record<string, unknown>
+  group_ids?: string[]  // undefined/empty = all groups
+  cron_expression: string
+  timezone: string
+  enabled: boolean
+  last_run_at?: string
+  next_run_at?: string
+  last_session_id?: string
+  last_status?: 'success' | 'error' | 'running'
+  last_error?: string
+  last_duration_ms?: number
+  run_count: number
+  consecutive_failures: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateScheduledJobRequest {
+  name: string
+  description?: string
+  entity_type: 'workflow' | 'chat'
+  preset_query_id: string
+  trigger_payload?: Record<string, unknown>
+  group_ids?: string[]  // undefined/empty = all groups
+  cron_expression: string
+  timezone?: string
+  enabled?: boolean
+}
+
+export interface UpdateScheduledJobRequest {
+  name?: string
+  description?: string
+  trigger_payload?: Record<string, unknown>
+  group_ids?: string[]       // undefined = don't change; [] = run all groups; [...] = specific groups
+  set_group_ids?: boolean    // must be true to actually update group_ids
+  cron_expression?: string
+  timezone?: string
+  enabled?: boolean
+}
+
+export interface ListScheduledJobsResponse {
+  jobs: ScheduledJob[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface ScheduledJobRun {
+  id: string
+  job_id: string
+  run_folder?: string
+  session_id?: string
+  status: 'running' | 'success' | 'error'
+  error?: string
+  duration_ms?: number
+  group_ids?: string[]
+  started_at: string
+  completed_at?: string
+}
+
+export interface ListScheduledJobRunsResponse {
+  runs: ScheduledJobRun[]
+  total: number
+  limit: number
+  offset: number
+}

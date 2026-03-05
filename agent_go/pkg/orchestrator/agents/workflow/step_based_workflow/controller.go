@@ -948,10 +948,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// Each group has its own run folder and progress file, initialized by ApplyCleanup in runBatchExecution
 	// This prevents duplicate "Step Progress Updated" events before batch_execution_start
 
-	// DEBUG: Panic if no groups found or if groups have empty GroupID
 	if len(enabledGroups) == 0 {
-		// PANIC for debugging: groups are required for execution
-		panic(fmt.Sprintf("CRITICAL: No variable groups found in getEnabledGroupsForExecution() - cannot proceed without groups. variablesManifest is nil: %v", hcpo.variablesManifest == nil))
+		return "", fmt.Errorf("no enabled variable groups found for execution")
 	}
 
 	// Validate that all groups have valid GroupIDs
@@ -974,6 +972,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	}
 	if !batchResult.Success {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Batch execution completed with %d failed groups", batchResult.FailedGroups))
+		duration := time.Since(hcpo.GetStartTime())
+		hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Human-controlled todo planning completed with failures in %v", duration))
+		errMsg := batchResult.Error
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("failed group(s): %v", batchResult.FailedGroupIDs)
+		}
+		return "", fmt.Errorf("%s", errMsg)
 	}
 
 	duration := time.Since(hcpo.GetStartTime())

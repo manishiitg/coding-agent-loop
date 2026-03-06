@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -7,6 +7,10 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import ChatCostsPopup from './ChatCostsPopup'
 import DelegationLogsPopup from './DelegationLogsPopup'
+import SchedulePresetPopup from './SchedulePresetPopup'
+import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
+import { schedulerApi } from '../api/scheduler'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
@@ -94,8 +98,10 @@ export const ModePresetBar: React.FC = () => {
     getPresetsForMode
   } = usePresetApplication()
 
-  // Get active preset for current mode
+  // Get active preset for current mode (for schedule popup, supports all modes)
   const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activePresetForSchedule = (getActivePreset as any)(selectedModeCategory) as ReturnType<typeof getActivePreset>
 
   // Get presets for current mode
   const presetsForMode = getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
@@ -106,6 +112,17 @@ export const ModePresetBar: React.FC = () => {
   const [showCostsPopup, setShowCostsPopup] = useState(false)
   const [showDelegationLogs, setShowDelegationLogs] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showSchedulePopup, setShowSchedulePopup] = useState(false)
+  const [showRunsPanel, setShowRunsPanel] = useState(false)
+  const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
+
+  // Fetch workflow schedule count for badge
+  useEffect(() => {
+    if (selectedModeCategory !== 'workflow') return
+    schedulerApi.listJobs({ entity_type: 'workflow' })
+      .then(resp => setWorkflowScheduleCount(resp.jobs?.length ?? 0))
+      .catch(() => {})
+  }, [selectedModeCategory, showSchedulePopup, showRunsPanel]) // refresh after schedule/runs panel closes
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -209,7 +226,8 @@ export const ModePresetBar: React.FC = () => {
     useToolSearchMode?: boolean,
     enableBrowserAccess?: boolean,
     selectedSecrets?: string[],
-    selectedGlobalSecretNames?: string[] | null
+    selectedGlobalSecretNames?: string[] | null,
+    camofoxHeaded?: boolean
   ) => {
     try {
       // Use consolidated savePreset function - pass id if editing, undefined if creating
@@ -229,7 +247,8 @@ export const ModePresetBar: React.FC = () => {
         enableBrowserAccess,
         undefined, // enableContextEditing
         selectedSecrets,
-        selectedGlobalSecretNames
+        selectedGlobalSecretNames,
+        camofoxHeaded
       )
 
       // Apply the preset immediately if it's a new one
@@ -517,34 +536,84 @@ export const ModePresetBar: React.FC = () => {
             </div>
           </div>
 
-          {/* Right: Cost Analysis / Execution Logs */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setShowShortcuts(true)}
-              className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-              title="Keyboard Shortcuts"
-            >
-              <Keyboard className="w-4 h-4" />
-            </button>
-            {selectedModeCategory === 'multi-agent' && (
-              <button
-                onClick={() => { setWorkspaceMinimized(true); setShowDelegationLogs(true) }}
-                className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                title="Execution logs"
-              >
-                <DollarSign className="w-4 h-4" />
-              </button>
-            )}
-            {selectedModeCategory === 'chat' && (
-              <button
-                onClick={() => setShowCostsPopup(true)}
-                className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                title="Cost analysis"
-              >
-                <DollarSign className="w-4 h-4" />
-              </button>
-            )}
-          </div>
+          {/* Right: icons */}
+          <TooltipProvider delayDuration={400}>
+            <div className="flex items-center gap-3">
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowShortcuts(true)}
+                    className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                  >
+                    <Keyboard className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
+              </Tooltip>
+
+              {selectedModeCategory === 'multi-agent' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => { setWorkspaceMinimized(true); setShowDelegationLogs(true) }}
+                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    >
+                      <DollarSign className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Execution logs & costs</TooltipContent>
+                </Tooltip>
+              )}
+
+              {selectedModeCategory === 'workflow' && (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setShowSchedulePopup(true)}
+                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                      >
+                        <Clock className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Schedule this workflow</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setShowRunsPanel(true)}
+                        className="relative p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                      >
+                        <CalendarDays className="w-4 h-4" />
+                        {workflowScheduleCount > 0 && (
+                          <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none px-0.5">
+                            {workflowScheduleCount}
+                          </span>
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Scheduled workflow runs</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+
+              {selectedModeCategory === 'chat' && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => setShowCostsPopup(true)}
+                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                    >
+                      <DollarSign className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Cost analysis</TooltipContent>
+                </Tooltip>
+              )}
+
+            </div>
+          </TooltipProvider>
         </div>
       </div>
 
@@ -650,6 +719,22 @@ export const ModePresetBar: React.FC = () => {
         isOpen={showDelegationLogs}
         onClose={() => setShowDelegationLogs(false)}
       />
+
+      {/* Scheduled Workflow Runs Panel */}
+      {showRunsPanel && (
+        <WorkflowScheduleRunsPanel onClose={() => setShowRunsPanel(false)} />
+      )}
+
+      {/* Schedule Preset Popup (workflow / multi-agent mode) */}
+      {showSchedulePopup && (
+        <SchedulePresetPopup
+          presetQueryId={activePresetForSchedule?.id ?? null}
+          presetLabel={activePresetForSchedule?.label ?? ''}
+          entityType={selectedModeCategory === 'workflow' ? 'workflow' : 'chat'}
+          workspacePath={activePresetForSchedule?.selectedFolder?.filepath}
+          onClose={() => setShowSchedulePopup(false)}
+        />
+      )}
     </>
   )
 }

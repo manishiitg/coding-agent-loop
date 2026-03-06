@@ -20,6 +20,7 @@ export interface CustomPreset {
   enableContextSummarization?: boolean; // Enable context summarization
   enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Browser automation access
+  camofoxHeaded?: boolean; // Show visible browser window for stealth mode
 }
 
 export interface PredefinedPreset {
@@ -39,4 +40,5 @@ export interface PredefinedPreset {
   enableContextSummarization?: boolean; // Enable context summarization
   enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Browser automation access
+  camofoxHeaded?: boolean; // Show visible browser window for stealth mode
 }

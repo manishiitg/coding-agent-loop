@@ -419,6 +419,13 @@ export const agentApi = {
     return response.data;
   },
 
+  // Camofox Browser — starts camofox-browser on host if not already running.
+  // Returns { connected: boolean, started: boolean, error?: string, message?: string }
+  startCamofox: async (headed: boolean = true): Promise<{ connected: boolean; started: boolean; error?: string; message?: string }> => {
+    const response = await api.post('/api/camofox-start', { headed }, { timeout: 25000 })
+    return response.data
+  },
+
   // LLM Guidance Management
   // Set LLM guidance for a session
   setLLMGuidance: async (sessionId: string, guidance: string, memoryFolder?: string): Promise<LLMGuidanceResponse> => {
@@ -1187,6 +1194,37 @@ export const agentApi = {
       insert_after_step_id: options?.insertAfterStepId,
       parent_step_id: options?.parentStepId,
       branch_type: options?.branchType
+    })
+    return response.data
+  },
+
+  // Workflow Versions API
+  publishVersion: async (workspacePath: string, label: string): Promise<{ success: boolean; version: { version: number; label: string; created_at: string; files_count: number } }> => {
+    const response = await api.post('/api/workflow/versions/publish', {
+      workspace_path: workspacePath,
+      label: label
+    })
+    return response.data
+  },
+
+  listVersions: async (workspacePath: string): Promise<{ success: boolean; versions: import('./api-types').WorkflowVersionMeta[] }> => {
+    const response = await api.get('/api/workflow/versions', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  revertToVersion: async (workspacePath: string, version: number): Promise<{ success: boolean; files_restored: number }> => {
+    const response = await api.post('/api/workflow/versions/revert', {
+      workspace_path: workspacePath,
+      version: version
+    })
+    return response.data
+  },
+
+  deleteVersion: async (workspacePath: string, version: number): Promise<{ success: boolean; message: string }> => {
+    const response = await api.delete('/api/workflow/versions', {
+      params: { workspace_path: workspacePath, version: version }
     })
     return response.data
   },

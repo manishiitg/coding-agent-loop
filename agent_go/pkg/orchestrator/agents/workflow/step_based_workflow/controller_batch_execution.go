@@ -29,8 +29,8 @@ type BatchExecutionResult struct {
 // Priority: ExecutionOptions.EnabledGroupIDs > manifest enabled groups
 func (hcpo *StepBasedWorkflowOrchestrator) getEnabledGroupsForExecution() []VariableGroup {
 	if hcpo.variablesManifest == nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP SELECTION] variablesManifest is nil - cannot determine enabled groups"))
-		return nil
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ [GROUP SELECTION] variablesManifest is nil - using default group"))
+		return []VariableGroup{{GroupID: "group-1", Values: map[string]string{}, Enabled: true}}
 	}
 
 	// Log available groups in manifest for debugging
@@ -107,10 +107,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 	enabledGroups := hcpo.getEnabledGroupsForExecution()
 	totalGroups := len(enabledGroups)
 
-	// DEBUG: Panic if no groups found (should have been caught earlier, but double-check here)
 	if totalGroups == 0 {
-		// PANIC for debugging: groups are required for batch execution
-		panic(fmt.Sprintf("CRITICAL: No enabled variable groups found in runBatchExecution() - this should have been caught earlier. variablesManifest is nil: %v", hcpo.variablesManifest == nil))
+		return nil, fmt.Errorf("no enabled variable groups found for batch execution")
 	}
 
 	// Validate that all groups have valid GroupIDs
@@ -361,6 +359,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Batch execution: group %s failed: %v", group.GroupID, err), nil)
 			result.FailedGroups++
 			result.FailedGroupIDs = append(result.FailedGroupIDs, group.GroupID)
+			if result.Error == "" {
+				result.Error = err.Error() // Capture first failure reason
+			}
 			hcpo.emitBatchGroupEndEvent(ctx, group.GroupID, groupIndex, totalGroups, false, err.Error(), groupDuration, len(progress.CompletedStepIndices), len(breakdownSteps), runFolder, remainingGroups)
 
 			// Check if we should stop on first failure

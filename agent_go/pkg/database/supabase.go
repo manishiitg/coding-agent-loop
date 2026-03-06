@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -2411,4 +2412,309 @@ func (s *SupabaseDB) ListUserSecrets(ctx context.Context, userID string) ([]User
 		secrets = append(secrets, secret)
 	}
 	return secrets, nil
+}
+
+// --- Scheduled Jobs CRUD ---
+
+func scanScheduledJobPG(row interface {
+	Scan(dest ...interface{}) error
+}) (*ScheduledJob, error) {
+	var job ScheduledJob
+	var triggerPayloadStr sql.NullString
+	var groupIDsStr sql.NullString
+	var lastRunAtStr sql.NullTime
+	var nextRunAtStr sql.NullTime
+	var lastSessionIDStr sql.NullString
+	var lastStatusStr sql.NullString
+	var lastErrorStr sql.NullString
+	var lastDurationMs sql.NullInt64
+
+	err := row.Scan(
+		&job.ID, &job.Name, &job.Description, &job.EntityType, &job.PresetQueryID,
+		&triggerPayloadStr, &groupIDsStr, &job.CronExpression, &job.Timezone,
+		&job.Enabled, &lastRunAtStr, &nextRunAtStr,
+		&lastSessionIDStr, &lastStatusStr, &lastErrorStr, &lastDurationMs,
+		&job.RunCount, &job.ConsecutiveFailures, &job.CreatedAt, &job.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if triggerPayloadStr.Valid {
+		job.TriggerPayload = json.RawMessage(triggerPayloadStr.String)
+	}
+	if groupIDsStr.Valid && groupIDsStr.String != "" {
+		_ = json.Unmarshal([]byte(groupIDsStr.String), &job.GroupIDs)
+	}
+	if lastRunAtStr.Valid {
+		t := lastRunAtStr.Time
+		job.LastRunAt = &t
+	}
+	if nextRunAtStr.Valid {
+		t := nextRunAtStr.Time
+		job.NextRunAt = &t
+	}
+	if lastSessionIDStr.Valid {
+		job.LastSessionID = lastSessionIDStr.String
+	}
+	if lastStatusStr.Valid {
+		job.LastStatus = lastStatusStr.String
+	}
+	if lastErrorStr.Valid {
+		job.LastError = lastErrorStr.String
+	}
+	if lastDurationMs.Valid {
+		v := lastDurationMs.Int64
+		job.LastDurationMs = &v
+	}
+	return &job, nil
+}
+
+func (s *SupabaseDB) CreateScheduledJob(ctx context.Context, req *CreateScheduledJobRequest) (*ScheduledJob, error) {
+	id := uuid.New().String()
+	enabled := true
+	if req.Enabled != nil && !*req.Enabled {
+		enabled = false
+	}
+	tz := req.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	var triggerPayload interface{}
+	if len(req.TriggerPayload) > 0 {
+		triggerPayload = string(req.TriggerPayload)
+	}
+	var groupIDs interface{}
+	if len(req.GroupIDs) > 0 {
+		b, _ := json.Marshal(req.GroupIDs)
+		groupIDs = string(b)
+	}
+
+	query := `
+		INSERT INTO scheduled_jobs (id, name, description, entity_type, preset_query_id, trigger_payload,
+			group_ids, cron_expression, timezone, enabled, run_count, consecutive_failures, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, 0, NOW(), NOW())
+	`
+	_, err := s.db.ExecContext(ctx, query, id, req.Name, req.Description, req.EntityType, req.PresetQueryID,
+		triggerPayload, groupIDs, req.CronExpression, tz, enabled)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scheduled job: %w", err)
+	}
+	return s.GetScheduledJob(ctx, id)
+}
+
+func (s *SupabaseDB) GetScheduledJob(ctx context.Context, id string) (*ScheduledJob, error) {
+	query := `SELECT id, name, description, entity_type, preset_query_id, trigger_payload,
+		group_ids, cron_expression, timezone, enabled, last_run_at, next_run_at,
+		last_session_id, last_status, last_error, last_duration_ms, run_count, consecutive_failures, created_at, updated_at
+		FROM scheduled_jobs WHERE id = $1`
+	row := s.db.QueryRowContext(ctx, query, id)
+	job, err := scanScheduledJobPG(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("failed to get scheduled job: %w", err)
+	}
+	return job, nil
+}
+
+func (s *SupabaseDB) UpdateScheduledJob(ctx context.Context, id string, req *UpdateScheduledJobRequest) (*ScheduledJob, error) {
+	setClauses := []string{"updated_at = NOW()"}
+	args := []interface{}{}
+	argIdx := 0
+
+	if req.Name != "" {
+		argIdx++
+		setClauses = append(setClauses, fmt.Sprintf("name = $%d", argIdx))
+		args = append(args, req.Name)
+	}
+	if req.Description != "" {
+		argIdx++
+		setClauses = append(setClauses, fmt.Sprintf("description = $%d", argIdx))
+		args = append(args, req.Description)
+	}
+	if len(req.TriggerPayload) > 0 {
+		argIdx++
+		setClauses = append(setClauses, fmt.Sprintf("trigger_payload = $%d", argIdx))
+		args = append(args, string(req.TriggerPayload))
+	}
+	if req.SetGroupIDs {
+		if len(req.GroupIDs) > 0 {
+			b, _ := json.Marshal(req.GroupIDs)
+			argIdx++
+			setClauses = append(setClauses, fmt.Sprintf("group_ids = $%d", argIdx))
+			args = append(args, string(b))
+		} else {
+			setClauses = append(setClauses, "group_ids = NULL")
+		}
+	}
+	if req.CronExpression != "" {
+		argIdx++
+		setClauses = append(setClauses, fmt.Sprintf("cron_expression = $%d", argIdx))
+		args = append(args, req.CronExpression)
+	}
+	if req.Timezone != "" {
+		argIdx++
+		setClauses = append(setClauses, fmt.Sprintf("timezone = $%d", argIdx))
+		args = append(args, req.Timezone)
+	}
+	if req.Enabled != nil {
+		argIdx++
+		setClauses = append(setClauses, fmt.Sprintf("enabled = $%d", argIdx))
+		args = append(args, *req.Enabled)
+	}
+
+	argIdx++
+	args = append(args, id)
+	query := fmt.Sprintf("UPDATE scheduled_jobs SET %s WHERE id = $%d", strings.Join(setClauses, ", "), argIdx)
+	_, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update scheduled job: %w", err)
+	}
+	return s.GetScheduledJob(ctx, id)
+}
+
+func (s *SupabaseDB) DeleteScheduledJob(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM scheduled_jobs WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete scheduled job: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) ListScheduledJobs(ctx context.Context, limit, offset int, entityType *string, enabled *bool) ([]ScheduledJob, int, error) {
+	whereClauses := []string{}
+	args := []interface{}{}
+	argIdx := 0
+
+	if entityType != nil {
+		argIdx++
+		whereClauses = append(whereClauses, fmt.Sprintf("entity_type = $%d", argIdx))
+		args = append(args, *entityType)
+	}
+	if enabled != nil {
+		argIdx++
+		whereClauses = append(whereClauses, fmt.Sprintf("enabled = $%d", argIdx))
+		args = append(args, *enabled)
+	}
+
+	where := ""
+	if len(whereClauses) > 0 {
+		where = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM scheduled_jobs %s", where)
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count scheduled jobs: %w", err)
+	}
+
+	argIdx++
+	limitArg := argIdx
+	argIdx++
+	offsetArg := argIdx
+	listArgs := append(args, limit, offset)
+	query := fmt.Sprintf(`SELECT id, name, description, entity_type, preset_query_id, trigger_payload,
+		group_ids, cron_expression, timezone, enabled, last_run_at, next_run_at,
+		last_session_id, last_status, last_error, last_duration_ms, run_count, consecutive_failures, created_at, updated_at
+		FROM scheduled_jobs %s ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, where, limitArg, offsetArg)
+
+	rows, err := s.db.QueryContext(ctx, query, listArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list scheduled jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobs := make([]ScheduledJob, 0)
+	for rows.Next() {
+		job, err := scanScheduledJobPG(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan scheduled job: %w", err)
+		}
+		jobs = append(jobs, *job)
+	}
+	return jobs, total, nil
+}
+
+func (s *SupabaseDB) UpdateScheduledJobRunStatus(ctx context.Context, id string, lastRunAt time.Time, nextRunAt *time.Time, sessionID, status, errMsg string, durationMs *int64) error {
+	query := `UPDATE scheduled_jobs SET
+		last_run_at = $1,
+		next_run_at = $2,
+		last_session_id = $3,
+		last_status = $4,
+		last_error = $5,
+		last_duration_ms = $6,
+		run_count = CASE WHEN $7 = 'running' THEN run_count ELSE run_count + 1 END,
+		consecutive_failures = CASE WHEN $8 = 'error' THEN consecutive_failures + 1 WHEN $9 = 'running' THEN consecutive_failures ELSE 0 END,
+		updated_at = NOW()
+		WHERE id = $10`
+	_, err := s.db.ExecContext(ctx, query, lastRunAt, nextRunAt, sessionID, status, errMsg, durationMs, status, status, status, id)
+	if err != nil {
+		return fmt.Errorf("failed to update scheduled job run status: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) CreateScheduledJobRun(ctx context.Context, run *ScheduledJobRun) error {
+	groupIDsJSON := "[]"
+	if len(run.GroupIDs) > 0 {
+		b, _ := json.Marshal(run.GroupIDs)
+		groupIDsJSON = string(b)
+	}
+	query := `INSERT INTO scheduled_job_runs (id, job_id, run_folder, session_id, status, error, duration_ms, group_ids, started_at, completed_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	_, err := s.db.ExecContext(ctx, query, run.ID, run.JobID, run.RunFolder, run.SessionID, run.Status, run.Error, run.DurationMs, groupIDsJSON, run.StartedAt, run.CompletedAt)
+	if err != nil {
+		return fmt.Errorf("failed to create scheduled job run: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) UpdateScheduledJobRun(ctx context.Context, id string, status string, errMsg string, durationMs *int64, runFolder string, sessionID string) error {
+	query := `UPDATE scheduled_job_runs SET status = $1, error = $2, duration_ms = $3, run_folder = $4, session_id = $5, completed_at = NOW() WHERE id = $6`
+	_, err := s.db.ExecContext(ctx, query, status, errMsg, durationMs, runFolder, sessionID, id)
+	if err != nil {
+		return fmt.Errorf("failed to update scheduled job run: %w", err)
+	}
+	return nil
+}
+
+func (s *SupabaseDB) ListScheduledJobRuns(ctx context.Context, jobID string, limit, offset int) ([]ScheduledJobRun, int, error) {
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM scheduled_job_runs WHERE job_id = $1", jobID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count scheduled job runs: %w", err)
+	}
+
+	query := `SELECT id, job_id, run_folder, session_id, status, error, duration_ms, group_ids, started_at, completed_at
+		FROM scheduled_job_runs WHERE job_id = $1 ORDER BY started_at DESC LIMIT $2 OFFSET $3`
+	rows, err := s.db.QueryContext(ctx, query, jobID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list scheduled job runs: %w", err)
+	}
+	defer rows.Close()
+
+	runs := make([]ScheduledJobRun, 0)
+	for rows.Next() {
+		var run ScheduledJobRun
+		var runFolder, sessionID, errMsg, groupIDsJSON sql.NullString
+		var durationMs sql.NullInt64
+		var completedAt sql.NullTime
+		if err := rows.Scan(&run.ID, &run.JobID, &runFolder, &sessionID, &run.Status, &errMsg, &durationMs, &groupIDsJSON, &run.StartedAt, &completedAt); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan scheduled job run: %w", err)
+		}
+		run.RunFolder = runFolder.String
+		run.SessionID = sessionID.String
+		run.Error = errMsg.String
+		if durationMs.Valid {
+			run.DurationMs = &durationMs.Int64
+		}
+		if completedAt.Valid {
+			run.CompletedAt = &completedAt.Time
+		}
+		if groupIDsJSON.Valid && groupIDsJSON.String != "" && groupIDsJSON.String != "[]" {
+			json.Unmarshal([]byte(groupIDsJSON.String), &run.GroupIDs)
+		}
+		runs = append(runs, run)
+	}
+	return runs, total, nil
 }

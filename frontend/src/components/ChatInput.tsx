@@ -300,14 +300,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const useCdp = useMemo(() => browserMode === 'cdp', [browserMode])
   const cdpPort = useMemo(() => tabConfig?.cdpPort ?? 9222, [tabConfig?.cdpPort])
   const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false)
+  const camofoxHeaded = useMemo(() => tabConfig?.camofoxHeaded ?? true, [tabConfig?.camofoxHeaded])
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
   const [showCdpPopup, setShowCdpPopup] = useState(false)
+
+  // Camofox browser connection state
+  const [camofoxConnected, setCamofoxConnected] = useState<boolean | null>(null)
+  const [camofoxStarting, setCamofoxStarting] = useState(false)
 
   // Playwright MCP availability: check if 'playwright' server exists in toolList
   const toolList = useMCPStore(state => state.toolList)
   const playwrightServerStatus = useMemo(() => {
     const entry = toolList.find(t => t.server === 'playwright')
+    if (!entry) return 'not_found' as const
+    if (entry.status === 'ok') return 'ok' as const
+    if (entry.status === 'error') return 'error' as const
+    return 'loading' as const
+  }, [toolList])
+
+  // Camofox MCP availability: check if 'camofox' server exists in toolList
+  const camofoxServerStatus = useMemo(() => {
+    const entry = toolList.find(t => t.server === 'camofox')
     if (!entry) return 'not_found' as const
     if (entry.status === 'ok') return 'ok' as const
     if (entry.status === 'error') return 'error' as const
@@ -366,26 +380,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!activeTabId) return
 
     if (mode === 'stealth') {
-      // Stealth: uses code execution (no virtual browser tool, no MCP server)
-      // Auto-select stealth-browser skill, enable workspace access
-      const currentSkills = tabConfig?.selectedSkills || []
-      const newSkills = currentSkills.includes('stealth-browser') ? currentSkills : [...currentSkills, 'stealth-browser']
+      // Stealth: uses camofox MCP server (anti-detect Firefox via camofox-browser on host)
       const currentServers = tabConfig?.selectedServers || []
       const newServers = currentServers.filter(s => s !== 'playwright')
+      if (!newServers.includes('camofox')) newServers.push('camofox')
+      const cleanedSkills = (tabConfig?.selectedSkills || []).filter(s => s !== 'stealth-browser')
       setTabConfig(activeTabId, {
         browserMode: 'stealth',
         enableBrowserAccess: false,
         useCdp: false,
         enableWorkspaceAccess: true,
         selectedServers: newServers,
-        selectedSkills: newSkills,
+        selectedSkills: cleanedSkills,
       })
       setChatSelectedServers(newServers)
       setWorkspaceMinimized(false)
     } else if (mode === 'playwright') {
       // Playwright: no virtual tool, add 'playwright' to selectedServers, enable workspace
       const currentServers = tabConfig?.selectedServers || []
-      const newServers = currentServers.includes('playwright') ? currentServers : [...currentServers, 'playwright']
+      const newServers = currentServers.filter(s => s !== 'camofox')
+      if (!newServers.includes('playwright')) newServers.push('playwright')
       setTabConfig(activeTabId, {
         browserMode: 'playwright',
         enableBrowserAccess: false,
@@ -396,9 +410,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setChatSelectedServers(newServers)
       setWorkspaceMinimized(false)
     } else if (mode === 'headless' || mode === 'cdp') {
-      // Headless/CDP: use agent_browser virtual tool, remove 'playwright' from servers
+      // Headless/CDP: use agent_browser virtual tool, remove 'playwright' and 'camofox' from servers
       const currentServers = tabConfig?.selectedServers || []
-      const newServers = currentServers.filter(s => s !== 'playwright')
+      const newServers = currentServers.filter(s => s !== 'playwright' && s !== 'camofox')
       setTabConfig(activeTabId, {
         browserMode: mode,
         enableBrowserAccess: true,
@@ -409,9 +423,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setChatSelectedServers(newServers)
       setWorkspaceMinimized(false)
     } else {
-      // None: disable everything, remove 'playwright' from servers
+      // None: disable everything, remove 'playwright' and 'camofox' from servers
       const currentServers = tabConfig?.selectedServers || []
-      const newServers = currentServers.filter(s => s !== 'playwright')
+      const newServers = currentServers.filter(s => s !== 'playwright' && s !== 'camofox')
       setTabConfig(activeTabId, {
         browserMode: 'none',
         enableBrowserAccess: false,
@@ -452,6 +466,36 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }, 500)
     return () => clearTimeout(timer)
   }, [browserMode, cdpPort, checkCdpConnection])
+
+  // Auto-start camofox-browser when stealth mode is selected or headed toggle changes
+  useEffect(() => {
+    if (browserMode !== 'stealth') {
+      setCamofoxConnected(null)
+      setCamofoxStarting(false)
+      return
+    }
+    let cancelled = false
+    const startCamofox = async () => {
+      setCamofoxStarting(true)
+      setCamofoxConnected(null)
+      try {
+        const result = await agentApi.startCamofox(camofoxHeaded)
+        if (!cancelled) {
+          setCamofoxConnected(result.connected)
+        }
+      } catch {
+        if (!cancelled) {
+          setCamofoxConnected(false)
+        }
+      } finally {
+        if (!cancelled) {
+          setCamofoxStarting(false)
+        }
+      }
+    }
+    const timer = setTimeout(startCamofox, 300)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [browserMode, camofoxHeaded])
 
   // Get preset info for chat mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
@@ -495,30 +539,74 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   // Server operations (always update tab config AND sync to chat-specific MCP store)
   // This ensures new chat tabs inherit the user's manual server selection
+  // Browser servers are mutually exclusive — only one can be active at a time
+  const BROWSER_SERVERS = ['playwright', 'camofox'] as const
+
   const onManualServerToggle = useCallback((server: string) => {
     if (activeTabId) {
       // Remove "NO_SERVERS" if it exists (when selecting a real server)
       const serversWithoutNoServers = manualSelectedServers.filter(s => s !== "NO_SERVERS")
-      
-      const newServers = serversWithoutNoServers.includes(server)
-        ? serversWithoutNoServers.filter(s => s !== server)
-        : [...serversWithoutNoServers, server]
-      
+
+      const isToggling = serversWithoutNoServers.includes(server)
+      let newServers: string[]
+      if (isToggling) {
+        // Toggling off — just remove it
+        newServers = serversWithoutNoServers.filter(s => s !== server)
+      } else {
+        // Toggling on — if it's a browser server, remove the other browser servers
+        const isBrowserServer = (BROWSER_SERVERS as readonly string[]).includes(server)
+        const base = isBrowserServer
+          ? serversWithoutNoServers.filter(s => !(BROWSER_SERVERS as readonly string[]).includes(s))
+          : serversWithoutNoServers
+        newServers = [...base, server]
+
+        // If enabling a browser server via MCP dropdown, also sync browserMode
+        if (server === 'camofox') {
+          setTabConfig(activeTabId, {
+            selectedServers: newServers,
+            browserMode: 'stealth',
+            enableBrowserAccess: false,
+            useCdp: false,
+            enableWorkspaceAccess: true,
+          })
+          setChatSelectedServers(newServers)
+          setWorkspaceMinimized(false)
+          return
+        }
+        if (server === 'playwright') {
+          setTabConfig(activeTabId, {
+            selectedServers: newServers,
+            browserMode: 'playwright',
+            enableBrowserAccess: false,
+            useCdp: false,
+            enableWorkspaceAccess: true,
+          })
+          setChatSelectedServers(newServers)
+          setWorkspaceMinimized(false)
+          return
+        }
+      }
+
       setTabConfig(activeTabId, { selectedServers: newServers })
       // Sync to chat-specific MCP store so new chat tabs inherit this selection
       setChatSelectedServers(newServers)
     }
-  }, [activeTabId, manualSelectedServers, setTabConfig, setChatSelectedServers])
+  }, [activeTabId, manualSelectedServers, setTabConfig, setChatSelectedServers, setWorkspaceMinimized])
   
   const onSelectAllServers = useCallback(() => {
     if (activeTabId) {
-      // availableServers is already an array of server names (strings)
-      const allServers = [...availableServers]
+      // Select all servers, but only keep one browser server (mutual exclusivity)
+      // Keep whichever browser server is already selected; if none, exclude both
+      const currentBrowser = manualSelectedServers.find(s => (BROWSER_SERVERS as readonly string[]).includes(s))
+      const allServers = availableServers.filter(s => {
+        if (!(BROWSER_SERVERS as readonly string[]).includes(s)) return true
+        return s === currentBrowser // only keep the currently active browser server
+      })
       setTabConfig(activeTabId, { selectedServers: allServers })
       // Sync to chat-specific MCP store so new chat tabs inherit this selection
       setChatSelectedServers(allServers)
     }
-  }, [activeTabId, availableServers, setTabConfig, setChatSelectedServers])
+  }, [activeTabId, availableServers, manualSelectedServers, setTabConfig, setChatSelectedServers])
 
   const onClearAllServers = useCallback(() => {
     if (activeTabId) {
@@ -1901,7 +1989,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Block submission if CDP is enabled but not connected, or playwright server not found
   const isCdpDisconnected = browserMode === 'cdp' && cdpConnected === false
   const isPlaywrightMissing = browserMode === 'playwright' && playwrightServerStatus === 'not_found'
-  const submitButtonDisabled = !hasValidQuery || !tabSessionId || isViewOnly || isCdpDisconnected || isPlaywrightMissing
+  const isCamofoxMissing = browserMode === 'stealth' && (camofoxServerStatus === 'not_found' || camofoxStarting || camofoxConnected === false)
+  const submitButtonDisabled = !hasValidQuery || !tabSessionId || isViewOnly || isCdpDisconnected || isPlaywrightMissing || isCamofoxMissing
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -2290,7 +2379,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       disabled={isStreaming || isSummarizing}
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
                         browserMode === 'stealth'
-                          ? 'bg-orange-900/40 border-orange-600 text-orange-400'
+                          ? camofoxConnected === false || camofoxServerStatus === 'not_found'
+                            ? 'bg-red-900/40 border-red-600 text-red-400'
+                            : camofoxStarting
+                              ? 'bg-yellow-900/40 border-yellow-600 text-yellow-400'
+                              : 'bg-orange-900/40 border-orange-600 text-orange-400'
                           : browserMode === 'cdp'
                           ? cdpConnected === false
                             ? 'bg-red-900/40 border-red-600 text-red-400'
@@ -2310,7 +2403,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       {browserMode !== 'none' ? (
                         <span className={`text-[10px] font-semibold px-1 rounded ${
                           browserMode === 'stealth'
-                            ? 'bg-orange-800 text-orange-200'
+                            ? camofoxConnected === false || camofoxServerStatus === 'not_found'
+                              ? 'bg-red-800 text-red-200'
+                              : camofoxStarting
+                                ? 'bg-yellow-800 text-yellow-200'
+                                : 'bg-orange-800 text-orange-200'
                             : browserMode === 'cdp'
                             ? cdpConnected === false
                               ? 'bg-red-800 text-red-200'
@@ -2437,27 +2534,92 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             </div>
                           </label>
 
-                          {/* Stealth (Camoufox) mode option */}
-                          <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                            browserMode === 'stealth'
-                              ? 'border-orange-500 bg-orange-950/40'
-                              : 'border-gray-700 hover:bg-gray-800'
+                          {/* Stealth (Camofox MCP) mode option */}
+                          <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                            camofoxServerStatus === 'not_found'
+                              ? 'border-gray-700 opacity-50 cursor-not-allowed'
+                              : browserMode === 'stealth'
+                                ? 'border-orange-500 bg-orange-950/40 cursor-pointer'
+                                : 'border-gray-700 hover:bg-gray-800 cursor-pointer'
                           }`}>
                             <input
                               type="radio"
                               name="browserMode"
                               checked={browserMode === 'stealth'}
                               onChange={() => setBrowserMode('stealth')}
+                              disabled={camofoxServerStatus === 'not_found'}
                               className="mt-0.5 w-4 h-4 text-orange-500 accent-orange-500"
                             />
-                            <div>
-                              <div className="text-sm font-medium text-gray-100">Stealth Browser (Camoufox)</div>
+                            <div className="flex-1">
+                              <div className="text-sm font-medium text-gray-100">Stealth Browser (Camofox)</div>
                               <div className="text-xs text-gray-400 mt-0.5">
-                                Anti-detect Firefox for sites that block bots. Screenshots saved to Chats/.
+                                Anti-detect Firefox for sites that block bots. Headed mode with session persistence.
                               </div>
+                              {camofoxServerStatus === 'not_found' && (
+                                <div className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                                  &quot;camofox&quot; server not found in MCP config &mdash; add it in MCP Settings
+                                </div>
+                              )}
+                              {camofoxServerStatus === 'loading' && (
+                                <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                                  <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                                  Discovering MCP server...
+                                </div>
+                              )}
+                              {camofoxServerStatus === 'error' && (
+                                <div className="text-xs text-amber-400 mt-1.5 flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                                  Camofox MCP server has errors &mdash; check MCP Settings
+                                </div>
+                              )}
+                              {browserMode === 'stealth' && camofoxStarting && (
+                                <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                                  <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
+                                  Starting camofox-browser...
+                                </div>
+                              )}
+                              {browserMode === 'stealth' && !camofoxStarting && camofoxConnected === true && (
+                                <div className="text-xs text-green-400 mt-1.5 flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                                  camofox-browser connected
+                                </div>
+                              )}
+                              {browserMode === 'stealth' && !camofoxStarting && camofoxConnected === false && (
+                                <div className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                                  Failed to start camofox-browser &mdash; check if npm packages are installed
+                                </div>
+                              )}
                             </div>
                           </label>
                         </div>
+
+                        {/* Camofox configuration - only when stealth is selected */}
+                        {browserMode === 'stealth' && (
+                          <div className="p-3 rounded-lg bg-gray-800/60 border border-gray-700">
+                            <label className="flex items-center gap-2.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={camofoxHeaded}
+                                onChange={(e) => {
+                                  if (activeTabId) {
+                                    setTabConfig(activeTabId, { camofoxHeaded: e.target.checked })
+                                  }
+                                }}
+                                className="w-4 h-4 rounded accent-orange-500"
+                              />
+                              <div>
+                                <div className="text-sm text-gray-200">Show browser window</div>
+                                <div className="text-xs text-gray-500">
+                                  {camofoxHeaded
+                                    ? 'Visible Firefox window — watch the agent navigate in real-time'
+                                    : 'Headless mode — browser runs in background (faster, no window)'}
+                                </div>
+                              </div>
+                            </label>
+                          </div>
+                        )}
 
                         {/* CDP configuration - only when CDP is selected */}
                         {browserMode === 'cdp' && (

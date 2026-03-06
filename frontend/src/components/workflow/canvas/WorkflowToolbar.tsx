@@ -28,6 +28,7 @@ import {
   DollarSign,
   ArrowRight,
   ArrowDown,
+  Package,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -46,6 +47,7 @@ import LearningsPopup from '../LearningsPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
+import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -265,6 +267,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Evaluation popup state
   const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
+
+  // Versions popup state
+  const [showVersionsPopup, setShowVersionsPopup] = useState(false)
   
   // Close popups when workspacePath changes (switching workflows)
   // Use a ref to track previous workspacePath to avoid closing on initial mount
@@ -276,6 +281,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       setShowExecutionLogsPopup(false)
       setShowCostsPopup(false)
       setShowEvaluationPopup(false)
+      setShowVersionsPopup(false)
     }
     prevWorkspacePathRef.current = workspacePath
   }, [workspacePath]) // Only depend on workspacePath - popup states are only read, not dependencies
@@ -1412,13 +1418,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
     // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
     if (!isExecutionRunning && targetPhase) {
-      // Check if variablesManifest exists - required for execution
-      if (!variablesManifest) {
-        alert('Error: Variables manifest not found. Please ensure variables are configured before executing the workflow.')
-        console.error('[WorkflowToolbar] Cannot execute: variablesManifest is missing')
-        return
-      }
-
       // Check if groups are available and if at least one is selected
       const hasGroups = variablesManifest?.groups && variablesManifest.groups.length > 0
       if (hasGroups && selectedGroupIds.length === 0) {
@@ -1503,7 +1502,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Create Plan'}
             </button>
             {onRefresh && (
-              <TooltipProvider>
+              <TooltipProvider delayDuration={150}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1719,7 +1718,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* Refresh Button - Reload plan and variables */}
             {onRefresh && (
               <>
-                <TooltipProvider>
+                <TooltipProvider delayDuration={150}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -1771,15 +1770,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
                         }
                       `}
-                      title={
-                        isExecutionRunning
-                          ? 'Stop execution'
-                          : isExecutionStarting
-                          ? 'Starting execution...'
-                          : hasGroups && noGroupsSelected
-                          ? 'Please select at least one group to execute'
-                          : workflowMode === 'eval' ? 'Execute evaluation plan' : 'Execute workflow'
-                      }
                     >
                       {isExecutionRunning ? (
                         <>
@@ -1821,7 +1811,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         : 'bg-muted text-foreground hover:bg-accent hover:text-accent-foreground'
                       }
                     `}
-                    title={isLoadingWorkspaceState ? "Loading workspace data..." : "Select iteration folder"}
                   >
                     {isLoadingWorkspaceState ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1857,7 +1846,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                               : 'bg-primary/10 text-primary hover:bg-primary/20'
                             }
                           `}
-                          title={isCreatingIteration ? 'Creating iteration...' : 'Create a new iteration folder'}
                         >
                           {isCreatingIteration ? (
                             <>
@@ -1897,7 +1885,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                         onClick={() => toggleIteration(iteration)}
                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleIteration(iteration) }}
                                         className="w-full px-3 py-1.5 text-xs font-semibold text-muted-foreground bg-muted/50 flex items-center justify-between gap-2 hover:bg-muted transition-colors cursor-pointer"
-                                        title={isExpanded ? 'Collapse iteration' : 'Expand iteration'}
                                       >
                                         <div className="flex items-center gap-2">
                                           {isExpanded ? (
@@ -1927,7 +1914,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               }}
                                               disabled={isRunning}
                                               className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                                              title="Select all groups"
                                             >
                                               <CheckSquare className="w-3.5 h-3.5 text-primary" />
                                             </button>
@@ -1940,7 +1926,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               }}
                                               disabled={isRunning}
                                               className="p-1 rounded hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                                              title="Unselect all groups"
                                             >
                                               <Square className="w-3.5 h-3.5 text-muted-foreground" />
                                             </button>
@@ -2067,7 +2052,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                               onClick={(e) => e.stopPropagation()}
                                               disabled={isDisabled || isRunning}
                                               className="w-4 h-4 rounded border-border text-primary focus:ring-primary focus:ring-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                                              title={isDisabled ? 'Group is disabled' : isGroupChecked ? 'Deselect group' : 'Select group for execution'}
                                             />
                                           )}
                                           <button
@@ -2089,7 +2073,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 : 'hover:bg-accent text-foreground'
                                               }
                                             `}
-                                            title={isDisabled ? 'Group is disabled' : group.exists ? undefined : 'Group not run yet'}
                                           >
                                             {/* Only show folder icon if folder exists - checkbox is the primary indicator for selection */}
                                             {group.exists ? (
@@ -2125,7 +2108,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                                 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10
                                                 opacity-0 group-hover:opacity-100 transition-opacity
                                               `}
-                                              title={`Delete ${group.id}`}
                                             >
                                               <Trash2 className="w-3.5 h-3.5" />
                                             </button>
@@ -2224,7 +2206,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                         p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10
                                         opacity-0 group-hover:opacity-100 transition-opacity
                                       `}
-                                      title={`Delete ${folder.name}`}
                                     >
                                       <Trash2 className="w-3.5 h-3.5" />
                                     </button>
@@ -2265,7 +2246,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         : 'bg-muted text-foreground hover:bg-accent'
                       }
                     `}
-                    title="Select where to start execution"
                   >
                     {(() => {
                       const Icon = currentStartPointInfo.icon
@@ -2381,7 +2361,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       <div className="flex items-center gap-1">
         {/* LLM Override Button and Banner - hidden in tiered mode */}
         {isTieredMode ? (
-          <TooltipProvider>
+          <TooltipProvider delayDuration={150}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="p-1.5 rounded-md bg-muted text-muted-foreground cursor-not-allowed opacity-50">
@@ -2396,7 +2376,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </TooltipProvider>
         ) : tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM ? (
           // Active override indicator with toggle and clear button
-          <TooltipProvider>
+          <TooltipProvider delayDuration={150}>
             <div className={`flex items-center gap-1 px-2 py-1 bg-secondary border border-border rounded-md shadow-sm ${!tempOverrideLLMEnabled ? 'opacity-60' : ''}`}>
               <div className="flex items-center gap-0.5">
                 <Tooltip>
@@ -2439,137 +2419,202 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   </>
                 )}
               </div>
-              <button
-                onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
-                className={`px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
-                  tempOverrideLLMEnabled 
-                    ? 'bg-primary/20 text-primary hover:bg-primary/30' 
-                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                }`}
-                title={tempOverrideLLMEnabled ? 'Disable temp LLM overrides' : 'Enable temp LLM overrides'}
-              >
-                {tempOverrideLLMEnabled ? 'ON' : 'OFF'}
-              </button>
-              <button
-                onClick={() => {
-                  clearTempOverrideLLM()
-                  clearTempOverrideLLM2()
-                  clearTempLearningLLM()
-                }}
-                className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                title="Clear LLM overrides (removes configs)"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            <button
-              onClick={() => setShowLLMOverrideModal(true)}
-              className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-              title="Change LLM overrides"
-            >
-              <Settings className="w-3 h-3" />
-            </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
+                    className={`px-1.5 py-0.5 rounded text-xs font-medium transition-colors ${
+                      tempOverrideLLMEnabled
+                        ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                    }`}
+                  >
+                    {tempOverrideLLMEnabled ? 'ON' : 'OFF'}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>{tempOverrideLLMEnabled ? 'Disable overrides' : 'Enable overrides'}</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => {
+                      clearTempOverrideLLM()
+                      clearTempOverrideLLM2()
+                      clearTempLearningLLM()
+                    }}
+                    className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Clear overrides</p></TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setShowLLMOverrideModal(true)}
+                    className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                  >
+                    <Settings className="w-3 h-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom"><p>Change overrides</p></TooltipContent>
+              </Tooltip>
           </div>
           </TooltipProvider>
         ) : (
           // No override - show button to set one
-          <button
-            onClick={() => setShowLLMOverrideModal(true)}
-            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Set temporary LLM override for execution agents"
-          >
-            <Brain className="w-3.5 h-3.5" />
-          </button>
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowLLMOverrideModal(true)}
+                  className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <Brain className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>LLM override</p></TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
         
+        <TooltipProvider delayDuration={150}>
         {/* Show Costs - opens popup with cost analysis across all iterations */}
         {workspacePath && (
-          <button
-            onClick={() => setShowCostsPopup(true)}
-            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Show cost analysis"
-          >
-            <DollarSign className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowCostsPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <DollarSign className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Costs</p></TooltipContent>
+          </Tooltip>
         )}
-        
+
         {/* Show Execution Logs - opens popup with detailed execution logs */}
         {workspacePath && (
-          <button
-            onClick={() => setShowExecutionLogsPopup(true)}
-            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Show execution logs"
-          >
-            <FileText className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowExecutionLogsPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Execution logs</p></TooltipContent>
+          </Tooltip>
         )}
-        
+
         {/* Show Learnings - opens popup with learning metadata */}
         {workspacePath && (
-          <button
-            onClick={() => setShowLearningsPopup(true)}
-            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Show step learnings"
-          >
-            <BookOpen className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowLearningsPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Learnings</p></TooltipContent>
+          </Tooltip>
         )}
 
         {/* Show Evaluation Reports - opens popup with evaluation scores */}
         {workspacePath && (
-          <button
-            onClick={() => setShowEvaluationPopup(true)}
-            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Show evaluation reports"
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowEvaluationPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Evaluation reports</p></TooltipContent>
+          </Tooltip>
+        )}
+
+        {/* Show Versions - opens popup with version publish/revert */}
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowVersionsPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Package className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Versions</p></TooltipContent>
+          </Tooltip>
         )}
 
         {/* Toggle ChatArea Button */}
         {onToggleChatArea && (
-          <button
-            onClick={onToggleChatArea}
-            className={`p-1.5 rounded-md transition-colors ${
-              showChatArea
-                ? 'bg-primary/10 text-primary border border-primary/30'
-                : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-            }`}
-            title={showChatArea ? 'Hide chat panel' : 'Show chat panel'}
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={onToggleChatArea}
+                className={`p-1.5 rounded-md transition-colors ${
+                  showChatArea
+                    ? 'bg-primary/10 text-primary border border-primary/30'
+                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>{showChatArea ? 'Hide chat' : 'Show chat'}</p></TooltipContent>
+          </Tooltip>
         )}
-        
+
         {/* Multi-Select Indicator - appears when 2+ steps are selected */}
         {selectedStepIds && selectedStepIds.length >= 2 && (
-          <div
-            className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary border border-primary/30"
-            title={`${selectedStepIds.length} steps selected - configure in sidebar`}
-          >
-            <CheckSquare className="w-3.5 h-3.5" />
-            <span className="text-xs font-medium">{selectedStepIds.length} Selected</span>
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary border border-primary/30">
+                <CheckSquare className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">{selectedStepIds.length} Selected</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>{selectedStepIds.length} steps selected - configure in sidebar</p></TooltipContent>
+          </Tooltip>
         )}
 
         {/* Bulk Step Config Button */}
         {hasPlan && plan && onBulkUpdateSteps && (
-          <button
-            onClick={() => setShowBulkStepConfigModal(true)}
-            className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-            title="Bulk configure all steps"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowBulkStepConfigModal(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Bulk configure steps</p></TooltipContent>
+          </Tooltip>
         )}
 
         {/* Workflow Settings Button — opens the preset settings modal from the top header */}
-        <button
-          onClick={() => useCommandDialogStore.getState().openDialog('presetSettings')}
-          className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          title="Workflow settings"
-        >
-          <Settings className="w-3.5 h-3.5" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => useCommandDialogStore.getState().openDialog('presetSettings')}
+              className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom"><p>Settings</p></TooltipContent>
+        </Tooltip>
+        </TooltipProvider>
 
         {/* Layout Controls Group - Direction, Save and Reset */}
         {(onSaveLayout || onDeleteLayout) && (
@@ -2577,7 +2622,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <div className="w-px h-5 bg-border mx-0.5" />
             <div className="flex items-center gap-1">
               {/* Layout Direction Toggle */}
-              <TooltipProvider>
+              <TooltipProvider delayDuration={150}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
@@ -2587,7 +2632,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                         setLayoutDirection(newDirection)
                       }}
                       className="p-1.5 rounded-md transition-colors hover:bg-accent text-muted-foreground"
-                      title={layoutDirection === 'LR' ? 'Switch to vertical layout' : 'Switch to horizontal layout'}
                     >
                       {layoutDirection === 'LR' ? (
                         <ArrowRight className="w-3.5 h-3.5" />
@@ -2604,7 +2648,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
               {/* Save Layout Button */}
               {onSaveLayout && (
-                <TooltipProvider>
+                <TooltipProvider delayDuration={150}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                     <button
@@ -2626,7 +2670,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                           ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 animate-pulse'
                           : 'hover:bg-accent text-muted-foreground'
                       }`}
-                      title={isSavingLayout ? 'Saving layout...' : (hasUnsavedLayoutChanges ? 'Save layout (unsaved changes)' : 'Save layout')}
                     >
                       {isSavingLayout ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -2644,7 +2687,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               
               {/* Delete/Reset Layout Button */}
               {onDeleteLayout && (
-                <TooltipProvider>
+                <TooltipProvider delayDuration={150}>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -2667,7 +2710,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                             ? 'bg-muted text-muted-foreground cursor-not-allowed'
                             : 'hover:bg-orange-100 dark:hover:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:text-orange-700 dark:hover:text-orange-300'
                         }`}
-                        title={isDeletingLayout ? 'Resetting layout...' : 'Reset layout to default'}
                       >
                         {isDeletingLayout ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -2749,6 +2791,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => setShowEvaluationPopup(false)}
       workspacePath={workspacePath || null}
       selectedRunFolder={contextRunFolder}
+    />
+
+    {/* Workflow Versions Popup */}
+    <WorkflowVersionsPopup
+      isOpen={showVersionsPopup}
+      onClose={() => setShowVersionsPopup(false)}
+      workspacePath={workspacePath || null}
+      onRefresh={async () => {
+        if (onRefresh) await onRefresh()
+        fetchFiles()
+      }}
     />
     </>
   )

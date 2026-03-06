@@ -26,6 +26,7 @@ type APIKeys struct {
 	Anthropic  *string     `json:"anthropic,omitempty"`
 	Vertex     *string     `json:"vertex,omitempty"`
 	GeminiCLI  *string     `json:"gemini_cli,omitempty"`
+	MiniMax    *string     `json:"minimax,omitempty"`
 	Bedrock    *BedrockKey `json:"bedrock,omitempty"`
 	Azure      *AzureKey   `json:"azure,omitempty"`
 }

@@ -9,6 +9,13 @@
         "--isolated"
       ],
       "working_dir": "../workspace-docs/Downloads"
+    },
+    "camofox": {
+      "command": "camofox-mcp",
+      "args": [],
+      "env": {
+        "CAMOFOX_URL": "http://localhost:9377"
+      }
     }
   }
 }

@@ -202,26 +202,6 @@ func (api *StreamingAPI) handleDecryptSecret(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// encryptSecretValue encrypts a plaintext value with AES-256-GCM using userID as AAD.
-// Symmetric counterpart to decryptSecretValue, for server-side use.
-func encryptSecretValue(plaintext, userID string) (string, error) {
-	key := deriveSecretsKey()
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", fmt.Errorf("cipher error: %w", err)
-	}
-	aesGCM, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("GCM error: %w", err)
-	}
-	nonce := make([]byte, aesGCM.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("nonce error: %w", err)
-	}
-	ciphertext := aesGCM.Seal(nonce, nonce, []byte(plaintext), []byte(userID))
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
 // decryptSecretValue decrypts an AES-256-GCM encrypted base64 value using userID as AAD.
 // Extracted from handleDecryptSecret for reuse by the bot secrets loader.
 func decryptSecretValue(encryptedBase64 string, userID string) (string, error) {

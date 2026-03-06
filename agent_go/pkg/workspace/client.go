@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -239,4 +241,70 @@ func (c *Client) CreateFolder(ctx context.Context, folderPath string) error {
 	body := map[string]string{"folder_path": folderPath}
 	_, err := c.request(ctx, "POST", "/api/folders", body)
 	return err
+}
+
+// UploadBinary uploads binary data as a file to the workspace via POST /api/upload.
+// Returns the saved file path on success.
+func (c *Client) UploadBinary(ctx context.Context, folderPath, fileName string, data []byte) (string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	if err := w.WriteField("folder_path", folderPath); err != nil {
+		return "", fmt.Errorf("write folder_path field: %w", err)
+	}
+	fw, err := w.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := fw.Write(data); err != nil {
+		return "", fmt.Errorf("write file data: %w", err)
+	}
+	w.Close()
+
+	apiURL := c.BaseURL + "/api/upload"
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, &buf)
+	if err != nil {
+		return "", fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if userID := c.getUserIDFromContext(ctx); userID != "" {
+		req.Header.Set("X-User-ID", userID)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("execute upload request: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("upload HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Data struct {
+			FilePath string `json:"file_path"`
+			Filepath string `json:"filepath"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &result); err == nil {
+		if result.Data.FilePath != "" {
+			return result.Data.FilePath, nil
+		}
+		if result.Data.Filepath != "" {
+			return result.Data.Filepath, nil
+		}
+	}
+	return folderPath + "/" + fileName, nil
+}
+
+// DownloadFile fetches raw file bytes from the workspace via GET /api/documents/{path}/raw.
+func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, error) {
+	segments := strings.Split(filePath, "/")
+	encoded := make([]string, len(segments))
+	for i, s := range segments {
+		encoded[i] = url.PathEscape(s)
+	}
+	apiPath := "/api/documents/" + strings.Join(encoded, "/") + "/raw"
+	return c.request(ctx, "GET", apiPath, nil)
 }

@@ -5219,3 +5219,494 @@ func convertToMapList(items []interface{}) []map[string]interface{} {
 	}
 	return res
 }
+
+// writeRawFileToWorkspace writes raw string content to a file in the workspace API
+func writeRawFileToWorkspace(ctx context.Context, filePath string, content string) error {
+	// URL-encode the filepath segments
+	pathSegments := strings.Split(filePath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Prepare request body
+	requestBody := map[string]interface{}{
+		"content": content,
+	}
+	requestBodyJSON, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Write file via workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, strings.NewReader(string(requestBodyJSON)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// Config files that are versioned when publishing a workflow version
+var versionedConfigFiles = []string{
+	"planning/plan.json",
+	"planning/step_config.json",
+	"planning/workflow_layout.json",
+	"planning/step_override.json",
+	"variables/variables.json",
+	"evaluation/evaluation_plan.json",
+}
+
+// handlePublishVersion creates a new numbered version snapshot of workflow config files
+func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var req struct {
+		WorkspacePath string `json:"workspace_path"`
+		Label         string `json:"label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+
+	// List existing versions to find next version number
+	versionsPath := req.WorkspacePath + "/versions"
+	listURL := getWorkspaceAPIURL() + "/api/documents"
+	listReq, err := http.NewRequestWithContext(ctx, "GET", listURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	q := listReq.URL.Query()
+	q.Add("folder", versionsPath)
+	q.Add("max_depth", "1")
+	listReq.URL.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	listResp, err := client.Do(listReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list versions: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer listResp.Body.Close()
+
+	nextVersion := 1
+	if listResp.StatusCode == http.StatusOK {
+		listBody, _ := io.ReadAll(listResp.Body)
+		var listAPIResp virtualtools.WorkspaceAPIResponse
+		if err := json.Unmarshal(listBody, &listAPIResp); err == nil && listAPIResp.Success {
+			// Parse as typed folder listing
+			if dataBytes, err := json.Marshal(listAPIResp.Data); err == nil {
+				var folderListing virtualtools.WorkspaceFolderListing
+				if err := json.Unmarshal(dataBytes, &folderListing); err == nil {
+					// The first item is the versions folder itself; its children are v1, v2, etc.
+					items := folderListing
+					if len(folderListing) > 0 && len(folderListing[0].Children) > 0 {
+						items = folderListing[0].Children
+					}
+					for _, item := range items {
+						if item.Type != "folder" {
+							continue
+						}
+						parts := strings.Split(item.FilePath, "/")
+						name := parts[len(parts)-1]
+						var v int
+						if _, err := fmt.Sscanf(name, "v%d", &v); err == nil && v >= nextVersion {
+							nextVersion = v + 1
+						}
+					}
+				}
+			}
+		}
+	} else {
+		// versions folder doesn't exist yet — that's fine, start at v1
+		io.ReadAll(listResp.Body)
+	}
+
+	versionFolder := fmt.Sprintf("%s/versions/v%d", req.WorkspacePath, nextVersion)
+	var filesSnapshot []string
+
+	// Copy each config file to the version folder
+	for _, relPath := range versionedConfigFiles {
+		srcPath := req.WorkspacePath + "/" + relPath
+		content, exists, err := readFileFromWorkspace(ctx, srcPath)
+		if err != nil {
+			log.Printf("[WARN] Failed to read %s for versioning: %v", srcPath, err)
+			continue
+		}
+		if !exists {
+			continue
+		}
+
+		dstPath := versionFolder + "/" + relPath
+		if err := writeRawFileToWorkspace(ctx, dstPath, content); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to write version file %s: %v", relPath, err), http.StatusInternalServerError)
+			return
+		}
+		filesSnapshot = append(filesSnapshot, relPath)
+	}
+
+	if len(filesSnapshot) == 0 {
+		http.Error(w, "No config files found to version", http.StatusBadRequest)
+		return
+	}
+
+	// Write version_meta.json
+	meta := map[string]interface{}{
+		"version":        nextVersion,
+		"label":          req.Label,
+		"created_at":     time.Now().UTC().Format(time.RFC3339),
+		"files_snapshot": filesSnapshot,
+	}
+	metaJSON, _ := json.MarshalIndent(meta, "", "  ")
+	if err := writeRawFileToWorkspace(ctx, versionFolder+"/version_meta.json", string(metaJSON)); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write version metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"version": map[string]interface{}{
+			"version":     nextVersion,
+			"label":       req.Label,
+			"created_at":  meta["created_at"],
+			"files_count": len(filesSnapshot),
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleListVersions returns all published versions for a workflow
+func (api *StreamingAPI) handleListVersions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	versionsPath := workspacePath + "/versions"
+
+	// List version subfolders
+	listURL := getWorkspaceAPIURL() + "/api/documents"
+	listReq, err := http.NewRequestWithContext(ctx, "GET", listURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+	q := listReq.URL.Query()
+	q.Add("folder", versionsPath)
+	q.Add("max_depth", "1")
+	listReq.URL.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	listResp, err := client.Do(listReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list versions: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer listResp.Body.Close()
+
+	if listResp.StatusCode == http.StatusNotFound {
+		// No versions folder - return empty list
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":  true,
+			"versions": []interface{}{},
+		})
+		return
+	}
+
+	listBody, err := io.ReadAll(listResp.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var listAPIResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(listBody, &listAPIResp); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Collect version folder names using typed folder listing
+	var versionFolders []string
+	if dataBytes, err := json.Marshal(listAPIResp.Data); err == nil {
+		var folderListing virtualtools.WorkspaceFolderListing
+		if err := json.Unmarshal(dataBytes, &folderListing); err == nil {
+			// The first item is the versions folder itself; its children are v1, v2, etc.
+			items := folderListing
+			if len(folderListing) > 0 && len(folderListing[0].Children) > 0 {
+				items = folderListing[0].Children
+			}
+			for _, item := range items {
+				if item.Type != "folder" {
+					continue
+				}
+				parts := strings.Split(item.FilePath, "/")
+				name := parts[len(parts)-1]
+				if strings.HasPrefix(name, "v") {
+					versionFolders = append(versionFolders, name)
+				}
+			}
+		}
+	}
+
+	// Read version_meta.json from each folder
+	type versionInfo struct {
+		Version    int    `json:"version"`
+		Label      string `json:"label"`
+		CreatedAt  string `json:"created_at"`
+		FilesCount int    `json:"files_count"`
+	}
+	var versions []versionInfo
+
+	for _, folder := range versionFolders {
+		metaPath := versionsPath + "/" + folder + "/version_meta.json"
+		content, exists, err := readFileFromWorkspace(ctx, metaPath)
+		if err != nil || !exists {
+			continue
+		}
+
+		var meta map[string]interface{}
+		if err := json.Unmarshal([]byte(content), &meta); err != nil {
+			continue
+		}
+
+		v := versionInfo{
+			Label:     fmt.Sprintf("%v", meta["label"]),
+			CreatedAt: fmt.Sprintf("%v", meta["created_at"]),
+		}
+		if vNum, ok := meta["version"].(float64); ok {
+			v.Version = int(vNum)
+		}
+		if snapshot, ok := meta["files_snapshot"].([]interface{}); ok {
+			v.FilesCount = len(snapshot)
+		}
+		versions = append(versions, v)
+	}
+
+	// Sort newest first
+	sort.Slice(versions, func(i, j int) bool {
+		return versions[i].Version > versions[j].Version
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"versions": versions,
+	})
+}
+
+// handleRevertVersion restores config files from a published version
+func (api *StreamingAPI) handleRevertVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	var req struct {
+		WorkspacePath string `json:"workspace_path"`
+		Version       int    `json:"version"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.WorkspacePath == "" || req.Version < 1 {
+		http.Error(w, "workspace_path and version (>= 1) are required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	versionFolder := fmt.Sprintf("%s/versions/v%d", req.WorkspacePath, req.Version)
+
+	// Read version_meta.json to get file list
+	metaPath := versionFolder + "/version_meta.json"
+	metaContent, exists, err := readFileFromWorkspace(ctx, metaPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read version metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, fmt.Sprintf("Version v%d not found", req.Version), http.StatusNotFound)
+		return
+	}
+
+	var meta map[string]interface{}
+	if err := json.Unmarshal([]byte(metaContent), &meta); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse version metadata: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	filesSnapshot, ok := meta["files_snapshot"].([]interface{})
+	if !ok || len(filesSnapshot) == 0 {
+		http.Error(w, "Version has no files to restore", http.StatusBadRequest)
+		return
+	}
+
+	// Restore each file
+	var filesRestored int
+	for _, f := range filesSnapshot {
+		relPath, ok := f.(string)
+		if !ok {
+			continue
+		}
+
+		srcPath := versionFolder + "/" + relPath
+		content, exists, err := readFileFromWorkspace(ctx, srcPath)
+		if err != nil || !exists {
+			log.Printf("[WARN] Failed to read version file %s: exists=%v, err=%v", srcPath, exists, err)
+			continue
+		}
+
+		dstPath := req.WorkspacePath + "/" + relPath
+		if err := writeRawFileToWorkspace(ctx, dstPath, content); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to restore file %s: %v", relPath, err), http.StatusInternalServerError)
+			return
+		}
+		filesRestored++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":        true,
+		"files_restored": filesRestored,
+	})
+}
+
+// handleDeleteVersion deletes a published version folder
+func (api *StreamingAPI) handleDeleteVersion(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "DELETE, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	versionStr := r.URL.Query().Get("version")
+	if workspacePath == "" || versionStr == "" {
+		http.Error(w, "workspace_path and version parameters are required", http.StatusBadRequest)
+		return
+	}
+
+	var versionNum int
+	if _, err := fmt.Sscanf(versionStr, "%d", &versionNum); err != nil || versionNum < 1 {
+		http.Error(w, "Invalid version number", http.StatusBadRequest)
+		return
+	}
+
+	// Construct folder path
+	folderPath := fmt.Sprintf("%s/versions/v%d", workspacePath, versionNum)
+
+	// URL-encode the folder path segments
+	pathSegments := strings.Split(folderPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	// Delete folder via workspace API
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
+	req, err := http.NewRequestWithContext(r.Context(), "DELETE", apiURL, nil)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create request: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to call workspace API: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Version does not exist (already deleted)",
+		})
+		return
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		http.Error(w, fmt.Sprintf("Workspace API returned status %d: %s", resp.StatusCode, string(body)), http.StatusInternalServerError)
+		return
+	}
+
+	var apiResp virtualtools.WorkspaceAPIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse API response: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if !apiResp.Success {
+		http.Error(w, fmt.Sprintf("Failed to delete version: %s", apiResp.Error), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": fmt.Sprintf("Successfully deleted version v%d", versionNum),
+	})
+}

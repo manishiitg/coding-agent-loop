@@ -17,7 +17,7 @@ import FileRevisionsModal from "./components/workspace/FileRevisionsModal";
 import PushToGistDialog from "./components/workspace/PushToGistDialog";
 import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
-import { prepareDomForPdfExport, exportPdfChunked } from "./utils/pdfExport";
+import { prepareDomForPdfExport } from "./utils/pdfExport";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
@@ -336,34 +336,35 @@ function App() {
     if (!markdownContentRef.current || !selectedFile) return
     setIsExportingPdf(true)
     setExportProgress(null)
+    const filename = (selectedFile.name || selectedFile.path?.split('/').pop() || 'document')
+      .replace(/\.[^.]+$/, '') + '.pdf'
+    const isElectron = !!(window as any).electronAPI?.printToPDF
+
     try {
-      const filename = (selectedFile.name || selectedFile.path?.split('/').pop() || 'document').replace(/\.[^.]+$/, '') + '.pdf'
       const { restore } = await prepareDomForPdfExport(markdownContentRef.current)
       try {
-        const contentHeight = markdownContentRef.current.scrollHeight
-        const pdfScale = contentHeight > 25000 ? 1 : contentHeight > 12000 ? 1.5 : 2
-        const canvasPixels = contentHeight * pdfScale
-
-        if (canvasPixels <= 30000) {
-          // Small/medium docs: existing html2pdf.js path
-          const html2pdf = (await import('html2pdf.js')).default
-          await html2pdf().set({
-            margin: [15, 10, 15, 10],
-            filename,
-            image: { type: 'png', quality: 1 },
-            html2canvas: { scale: pdfScale, backgroundColor: '#ffffff', scrollY: 0, useCORS: true },
-            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-            pagebreak: { mode: ['css', 'legacy'] }
-          }).from(markdownContentRef.current).save()
+        if (isElectron) {
+          // Electron: printToPDF via IPC → direct file save
+          await (window as any).electronAPI.printToPDF(filename)
         } else {
-          // Large docs: chunked rendering to avoid canvas size limits
-          const chunkedScale = contentHeight > 200000 ? 1 : 1.5
-          await exportPdfChunked(
-            markdownContentRef.current,
-            filename,
-            chunkedScale,
-            (current, total) => setExportProgress(`Rendering ${current}/${total}...`)
-          )
+          // Web: inject @media print CSS to isolate the markdown panel, then print
+          const printTarget = markdownContentRef.current
+          printTarget.setAttribute('data-pdf-print', 'true')
+          const style = document.createElement('style')
+          style.textContent = `@media print {
+            body * { visibility: hidden !important; }
+            [data-pdf-print] { visibility: visible !important; position: fixed !important;
+              top: 0 !important; left: 0 !important; width: 100% !important;
+              background: white !important; }
+            [data-pdf-print] * { visibility: visible !important; }
+          }`
+          document.head.appendChild(style)
+          await new Promise<void>((resolve) => {
+            window.addEventListener('afterprint', resolve, { once: true })
+            window.print()
+          })
+          document.head.removeChild(style)
+          printTarget.removeAttribute('data-pdf-print')
         }
       } finally {
         restore()

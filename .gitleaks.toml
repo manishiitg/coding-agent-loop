@@ -87,6 +87,7 @@ paths = [
   '''^gitleaks-current-scan\.json$''', # Ignore current scan report
   '''^gitleaks-test\.json$''', # Ignore test scan report
   '''^gitleaks-final-test\.json$''', # Ignore final test scan report
+  '''^vendor/''', # Ignore Go vendor directory (contains well-known example keys in SDK docs)
   # Environment files - these contain real secrets but are gitignored
   '''^\.env$''', # Root .env file
   '''^agent_go/\.env$''', # Agent .env file

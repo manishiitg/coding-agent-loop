@@ -232,6 +232,21 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+ipcMain.handle('print-to-pdf', async (event, suggestedFilename) => {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: suggestedFilename,
+    filters: [{ name: 'PDF Files', extensions: ['pdf'] }]
+  })
+  if (canceled || !filePath) return { canceled: true }
+  const data = await event.sender.printToPDF({
+    printBackground: true,
+    pageSize: 'A4',
+    margins: { marginType: 'custom', top: 15000, bottom: 15000, left: 10000, right: 10000 }
+  })
+  await require('fs').promises.writeFile(filePath, data)
+  return { canceled: false }
+})
+
 // IPC Handler for Dock Badge
 ipcMain.on('set-dock-badge', (event, text) => {
   if (process.platform === 'darwin') {

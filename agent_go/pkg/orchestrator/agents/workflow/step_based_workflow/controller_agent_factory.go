@@ -9,6 +9,7 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -115,12 +116,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		effectiveServers = hcpo.GetSelectedServers()
 	}
 
-	// Check for Playwright MCP server
+	// Check for Playwright and Camofox MCP servers
 	hasPlaywright := false
+	hasCamofox := false
 	for _, server := range effectiveServers {
 		if server == "playwright" {
 			hasPlaywright = true
-			break
+		}
+		if server == "camofox" {
+			hasCamofox = true
 		}
 	}
 
@@ -133,7 +137,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		}
 	}
 
-	if !hasPlaywright && !hasAgentBrowser {
+	if !hasPlaywright && !hasAgentBrowser && !hasCamofox {
 		return // No browser tool, nothing to configure
 	}
 
@@ -141,6 +145,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 	browserToolType := "agent-browser"
 	if hasPlaywright {
 		browserToolType = "playwright"
+	} else if hasCamofox {
+		browserToolType = "camofox"
 	}
 
 	// CRITICAL: Ensure selectedRunFolder is set before configuring Downloads path
@@ -458,6 +464,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	}
 
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
+	// An empty config still falls through to the "no valid LLM" error at the end.
+	if orchestratorLLMConfig == nil {
+		orchestratorLLMConfig = &orchestrator.LLMConfig{}
+	}
 	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 
 	// Check if step config explicitly disables tempLLM
@@ -483,9 +494,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				},
 				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 			}
+		} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback (disable_temp_llm path): %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+			return orchestratorLLMConfig
 		} else {
-			err := fmt.Errorf("no valid LLM configuration found for execution agent: step config and preset execution LLM are both empty or invalid")
-			hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: step config and preset execution LLM are both empty or invalid", err)
+			err := fmt.Errorf("no valid LLM configuration found for execution agent: step config, preset execution LLM, and workflow LLM are all empty or invalid")
+			hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: step config, preset execution LLM, and workflow LLM are all empty or invalid", err)
 			return nil
 		}
 	}
@@ -604,9 +618,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			},
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
+	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+		return orchestratorLLMConfig
 	} else {
-		err := fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid")
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: temp override, step config, and preset execution LLM are all empty or invalid", err)
+		err := fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, preset execution LLM, and workflow LLM are all empty or invalid")
+		hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: temp override, step config, preset execution LLM, and workflow LLM are all empty or invalid", err)
 		return nil
 	}
 }
@@ -1245,6 +1262,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 			mcpAgent.AppendSystemPrompt(secretPrompt)
 			hcpo.GetLogger().Info(fmt.Sprintf("🔐 Added secret prompt to execution agent (%d secrets)", len(effectiveSecrets)))
 		}
+	}
+
+	// Add browser instructions if browser tools are available
+	hasPlaywrightServer := false
+	hasCamofoxServer := false
+	hasAgentBrowserSkill := false
+	for _, s := range config.ServerNames {
+		if s == "playwright" {
+			hasPlaywrightServer = true
+		}
+		if s == "camofox" {
+			hasCamofoxServer = true
+		}
+	}
+	for _, skill := range effectiveSkills {
+		if skill == "agent-browser" {
+			hasAgentBrowserSkill = true
+		}
+	}
+	if hasPlaywrightServer || hasCamofoxServer || hasAgentBrowserSkill {
+		mcpAgent.AppendSystemPrompt(browserinstructions.GetBrowserUploadInstructions())
+		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser upload instructions to execution agent (playwright=%v, camofox=%v, agent-browser=%v)", hasPlaywrightServer, hasCamofoxServer, hasAgentBrowserSkill))
+	}
+	if hasCamofoxServer {
+		mcpAgent.AppendSystemPrompt(browserinstructions.GetCamofoxInstructions())
+		hcpo.GetLogger().Info("🦊 Added camofox-specific instructions to execution agent")
 	}
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)

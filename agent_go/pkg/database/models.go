@@ -16,6 +16,83 @@ const (
 	WorkflowStatusPostVerification = "post-verification"
 )
 
+// Schedule entity type constants
+const (
+	ScheduleEntityWorkflow = "workflow"
+	ScheduleEntityChat     = "chat"
+)
+
+// ScheduledJob represents a cron-scheduled job in the database
+type ScheduledJob struct {
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	Description         string          `json:"description"`
+	EntityType          string          `json:"entity_type"`
+	PresetQueryID       string          `json:"preset_query_id"`
+	TriggerPayload      json.RawMessage `json:"trigger_payload,omitempty"`
+	GroupIDs            []string        `json:"group_ids,omitempty"` // nil/empty = run all groups
+	CronExpression      string          `json:"cron_expression"`
+	Timezone            string          `json:"timezone"`
+	Enabled             bool            `json:"enabled"`
+	LastRunAt           *time.Time      `json:"last_run_at,omitempty"`
+	NextRunAt           *time.Time      `json:"next_run_at,omitempty"`
+	LastSessionID       string          `json:"last_session_id,omitempty"`
+	LastStatus          string          `json:"last_status,omitempty"`
+	LastError           string          `json:"last_error,omitempty"`
+	LastDurationMs      *int64          `json:"last_duration_ms,omitempty"`
+	RunCount            int             `json:"run_count"`
+	ConsecutiveFailures int             `json:"consecutive_failures"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+}
+
+// CreateScheduledJobRequest represents a request to create a new scheduled job
+type CreateScheduledJobRequest struct {
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	EntityType     string          `json:"entity_type"`
+	PresetQueryID  string          `json:"preset_query_id"`
+	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
+	GroupIDs       []string        `json:"group_ids,omitempty"` // nil/empty = all groups
+	CronExpression string          `json:"cron_expression"`
+	Timezone       string          `json:"timezone,omitempty"`
+	Enabled        *bool           `json:"enabled,omitempty"`
+}
+
+// UpdateScheduledJobRequest represents a request to update a scheduled job
+type UpdateScheduledJobRequest struct {
+	Name           string          `json:"name,omitempty"`
+	Description    string          `json:"description,omitempty"`
+	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
+	GroupIDs       []string        `json:"group_ids"`             // updated always (use SetGroupIDs flag)
+	SetGroupIDs    bool            `json:"set_group_ids,omitempty"` // true = update group_ids (even if empty)
+	CronExpression string          `json:"cron_expression,omitempty"`
+	Timezone       string          `json:"timezone,omitempty"`
+	Enabled        *bool           `json:"enabled,omitempty"`
+}
+
+// ScheduledJobRun represents a single execution of a scheduled job
+type ScheduledJobRun struct {
+	ID          string     `json:"id"`
+	JobID       string     `json:"job_id"`
+	RunFolder   string     `json:"run_folder,omitempty"`
+	SessionID   string     `json:"session_id,omitempty"`
+	Status      string     `json:"status"`
+	Error       string     `json:"error,omitempty"`
+	DurationMs  *int64     `json:"duration_ms,omitempty"`
+	GroupIDs    []string   `json:"group_ids,omitempty"`
+	StartedAt   time.Time  `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+}
+
+// ListScheduledJobsResponse represents the response for listing scheduled jobs
+type ListScheduledJobsResponse struct {
+	Jobs   []ScheduledJob `json:"jobs"`
+	Total  int            `json:"total"`
+	Limit  int            `json:"limit"`
+	Offset int            `json:"offset"`
+}
+
 // Agent mode constants
 const (
 	AgentModeSimple       = "simple"

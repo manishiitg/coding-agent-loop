@@ -1,0 +1,56 @@
+import axios from 'axios'
+import { getApiBaseUrl, getAuthToken } from '../services/api'
+import type {
+  ScheduledJob,
+  CreateScheduledJobRequest,
+  UpdateScheduledJobRequest,
+  ListScheduledJobsResponse,
+  ListScheduledJobRunsResponse,
+} from '../services/api-types'
+
+const API_BASE_URL = getApiBaseUrl()
+
+const api = axios.create({
+  baseURL: API_BASE_URL,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken()
+  if (token && config.headers) {
+    config.headers['Authorization'] = `Bearer ${token}`
+  }
+  return config
+})
+
+export const schedulerApi = {
+  listJobs: (params?: { entity_type?: string; enabled?: boolean; limit?: number; offset?: number }) =>
+    api.get<ListScheduledJobsResponse>('/api/scheduler/jobs', { params }).then(r => r.data),
+
+  getJob: (id: string) =>
+    api.get<ScheduledJob>(`/api/scheduler/jobs/${id}`).then(r => r.data),
+
+  createJob: (req: CreateScheduledJobRequest) =>
+    api.post<ScheduledJob>('/api/scheduler/jobs', req).then(r => r.data),
+
+  updateJob: (id: string, req: UpdateScheduledJobRequest) =>
+    api.put<ScheduledJob>(`/api/scheduler/jobs/${id}`, req).then(r => r.data),
+
+  deleteJob: (id: string) =>
+    api.delete(`/api/scheduler/jobs/${id}`),
+
+  enableJob: (id: string) =>
+    api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/enable`).then(r => r.data),
+
+  disableJob: (id: string) =>
+    api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/disable`).then(r => r.data),
+
+  triggerJob: (id: string) =>
+    api.post<{ session_id: string }>(`/api/scheduler/jobs/${id}/trigger`).then(r => r.data),
+
+  getJobRuns: (id: string, limit = 20) =>
+    api.get<ListScheduledJobRunsResponse>(`/api/scheduler/jobs/${id}/runs`, { params: { limit } }).then(r => r.data),
+
+  stopJob: (id: string) =>
+    api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/stop`).then(r => r.data),
+}

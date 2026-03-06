@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return `http://127.0.0.1:${port}`;
   },
   setDockBadge: (text) => ipcRenderer.send('set-dock-badge', text),
-  openExternal: (url) => ipcRenderer.send('open-external', url)
+  openExternal: (url) => ipcRenderer.send('open-external', url),
+  printToPDF: (filename) => ipcRenderer.invoke('print-to-pdf', filename),
 });

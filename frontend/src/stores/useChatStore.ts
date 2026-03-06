@@ -118,6 +118,7 @@ export interface ChatTabConfig {
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)
+  camofoxHeaded?: boolean  // Camofox headed mode — visible browser window (default: true)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
   workflowContext: Array<{
     presetId: string

@@ -77,26 +77,36 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
 
   // Add new group
   const handleAddGroup = useCallback(() => {
-    if (!manifest) return
-    
+    if (!manifest) {
+      // No manifest yet — create one with empty variables and a first group
+      const newManifest: VariablesManifest = {
+        variables: [],
+        groups: [{ group_id: 'group-1', values: {}, enabled: true }]
+      }
+      setManifest(newManifest)
+      setHasChanges(true)
+      return
+    }
+
     // If this is the first group being added, migrate existing values to group-1
     const isFirstGroup = !manifest.groups || manifest.groups.length === 0
-    
+    const variables = manifest.variables ?? []
+
     let newGroupId: string
     let updatedGroups: VariableGroup[]
-    
+
     if (isFirstGroup) {
       // Migrate existing values to group-1, new group will be group-2
       const existingValues: Record<string, string> = {}
-      manifest.variables.forEach(v => {
+      variables.forEach(v => {
         existingValues[v.name] = v.value || ''
       })
-      
+
       const newValues: Record<string, string> = {}
-      manifest.variables.forEach(v => {
+      variables.forEach(v => {
         newValues[v.name] = '' // Empty values for new group
       })
-      
+
       newGroupId = 'group-2'
       updatedGroups = [
         { group_id: 'group-1', values: existingValues, enabled: true },
@@ -107,21 +117,21 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
       const existingGroups = manifest.groups || []
       newGroupId = `group-${existingGroups.length + 1}`
       const newValues: Record<string, string> = {}
-      manifest.variables.forEach(v => {
+      variables.forEach(v => {
         newValues[v.name] = '' // Empty values for new group
       })
-      
+
       updatedGroups = [
         ...existingGroups,
         { group_id: newGroupId, values: newValues, enabled: true }
       ]
     }
-    
+
     const updatedManifest: VariablesManifest = {
       ...manifest,
       groups: updatedGroups
     }
-    
+
     setManifest(updatedManifest)
     setHasChanges(true)
   }, [manifest])
@@ -154,7 +164,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     if (!manifest) return
     
     // Single-group mode - update Variables[].value directly
-    const updatedVariables = manifest.variables.map(v => 
+    const updatedVariables = (manifest.variables ?? []).map(v =>
       v.name === variableName ? { ...v, value: newValue } : v
     )
     const updatedManifest = { ...manifest, variables: updatedVariables }
@@ -248,13 +258,6 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
-      ) : !manifest || manifest.variables.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
-          <p className="text-muted-foreground mb-2">No variables extracted yet</p>
-          <p className="text-xs text-muted-foreground">
-            Run the Variable Extraction phase first
-          </p>
-        </div>
       ) : (
         <div className="flex-1 overflow-y-auto flex flex-col">
           {/* Add group button */}
@@ -269,7 +272,9 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
             </button>
             {!isMultiGroup && (
               <p className="text-xs text-muted-foreground mt-1.5 text-center">
-                Add multiple groups to run workflow with different values
+                {(!manifest || (manifest.variables ?? []).length === 0)
+                  ? 'No variables extracted. You can still add groups as named execution runs.'
+                  : 'Add multiple groups to run workflow with different values'}
               </p>
             )}
           </div>
@@ -304,6 +309,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                         onChange={(e) => {
                           // Update display name for this specific group
                           // Handle both cases: when groups exist in manifest, and when we're in single-group mode
+                          if (!manifest) return
                           if (manifest.groups && manifest.groups.length > 0) {
                             // Multi-group mode: update existing groups
                             const updatedGroups = manifest.groups.map(g => {
@@ -319,7 +325,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                             // Single-group mode: create groups array from virtual group
                             // Migrate existing values to a proper group structure
                             const values: Record<string, string> = {}
-                            manifest.variables.forEach(v => {
+                            ;(manifest.variables ?? []).forEach(v => {
                               values[v.name] = v.value || ''
                             })
                             const updatedGroups = [{
@@ -359,7 +365,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
 
                 {/* Variables for this group */}
                 <div className="space-y-2">
-                  {manifest.variables.map((variable) => (
+                  {(manifest?.variables ?? []).map((variable) => (
                     <div key={variable.name} className="space-y-1">
                       <label className="flex items-center gap-2 text-xs font-medium text-foreground">
                         <span className="font-mono text-purple-600 dark:text-purple-400">
@@ -376,6 +382,7 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
                         value={group.values[variable.name] || ''}
                         onChange={(e) => {
                           // Update value for this specific group
+                          if (!manifest) return
                           if (manifest.groups && manifest.groups.length > 0) {
                             const updatedGroups = manifest.groups.map(g => {
                               if (g.group_id === group.group_id) {

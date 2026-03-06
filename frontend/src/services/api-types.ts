@@ -126,6 +126,15 @@ export interface AgentQueryRequest {
   selected_global_secrets?: string[]
   // Workspace paths of workflows to inject context for (via # selector in chat)
   workflow_context_paths?: string[]
+  // Image generation configuration
+  enable_image_generation?: boolean
+  image_gen_config?: {
+    provider: string
+    model_id: string
+    api_key?: string
+  }
+  // Existing plan folder to reuse (skips creating new folder in multi-agent mode)
+  plan_folder?: string
 }
 
 // Delegation tier configuration for multi-LLM support
@@ -165,6 +174,7 @@ export interface LLMDefaultsResponse {
   vertex_config?: ExtendedLLMConfiguration
   anthropic_config?: ExtendedLLMConfiguration
   azure_config?: ExtendedLLMConfiguration
+  minimax_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
     openrouter: string[]
@@ -172,8 +182,9 @@ export interface LLMDefaultsResponse {
     vertex?: string[]
     anthropic?: string[]
     azure?: string[]
+    minimax?: string[]
   }
-  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli')[]
+  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax')[]
   /** When true, LLM config is locked by admin; do not show editable modal, use server env only */
   llm_config_locked?: boolean
   /** Default published LLMs from server (e.g. one "Gemini" entry); when locked, list is read-only */
@@ -186,7 +197,7 @@ export interface LLMDefaultsResponse {
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli'
+  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
   endpoint?: string // Azure endpoint URL

@@ -11,6 +11,7 @@ import { useLLMStore } from '../stores'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
+import { useImageGenStore } from '../stores/useImageGenStore'
 import { logger } from './logger'
 
 // ---------------------------------------------------------------------------
@@ -58,6 +59,7 @@ export function buildLLMConfigWithApiKeys(
       vertex: store.vertexConfig,
       bedrock: store.bedrockConfig,
       azure: store.azureConfig,
+      minimax: store.minimaxConfig,
     }
   })()
 
@@ -67,6 +69,7 @@ export function buildLLMConfigWithApiKeys(
   const vx = configs.vertex as ExtendedLLMConfiguration | undefined
   const br = configs.bedrock as ExtendedLLMConfiguration | undefined
   const az = configs.azure as ExtendedLLMConfiguration | undefined
+  const mm = configs.minimax as ExtendedLLMConfiguration | undefined
 
   return {
     ...effectiveLLMConfig,
@@ -79,6 +82,7 @@ export function buildLLMConfigWithApiKeys(
       ...(az?.endpoint && az?.api_key
         ? { azure: { endpoint: az.endpoint, api_key: az.api_key, api_version: (az.options?.api_version as string) || undefined, region: az.region || undefined } }
         : {}),
+      ...(mm?.api_key ? { minimax: mm.api_key } : {}),
       ...(() => {
         const geminiKey = useLLMStore.getState().geminiCliApiKey
         return geminiKey ? { gemini_cli: geminiKey } : {}
@@ -107,6 +111,7 @@ export function buildQueryRequestPayload(params: {
   chatPresetId: string | null
   filteredPresetTools: string[]
   hasActivePreset: boolean
+  effectivePlanPhase?: string
   decryptedSecrets?: Array<{ name: string; value: string }>
   selectedGlobalSecrets?: string[]
 }): AgentQueryRequest {
@@ -115,7 +120,7 @@ export function buildQueryRequestPayload(params: {
     enabledTools, effectiveServers, currentTab, effectiveLLMConfig,
     llmConfigWithApiKeys, useCodeExecutionMode, useToolSearchMode,
     executionOptions, workflowPresetId, chatPresetId,
-    filteredPresetTools, hasActivePreset, decryptedSecrets,
+    filteredPresetTools, hasActivePreset, effectivePlanPhase, decryptedSecrets,
     selectedGlobalSecrets,
   } = params
 
@@ -152,7 +157,7 @@ export function buildQueryRequestPayload(params: {
     execution_options: executionOptions as AgentQueryRequest['execution_options'],
     enable_context_summarization: isChatLikeMode ? true : undefined,
     summarize_on_max_turns: isChatLikeMode ? true : undefined,
-    summary_keep_last_messages: isChatLikeMode ? 8 : undefined,
+    summary_keep_last_messages: isChatLikeMode ? 4 : undefined,
     enable_workspace_access: isChatLikeMode
       ? (currentTab?.config?.enableWorkspaceAccess ?? true)
       : undefined,
@@ -168,7 +173,7 @@ export function buildQueryRequestPayload(params: {
         ? useAppStore.getState().delegationMode as 'spawn'
         : undefined),
     plan_phase: isMultiAgentMode
-      ? (currentTab?.config?.planPhaseOverride ?? 'planning')
+      ? (effectivePlanPhase ?? currentTab?.config?.planPhaseOverride ?? 'planning')
       : undefined,
     delegation_tier_config: isMultiAgentMode
       ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)
@@ -185,6 +190,19 @@ export function buildQueryRequestPayload(params: {
     workflow_context_paths: isChatLikeMode && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
+    plan_folder: isMultiAgentMode ? (currentTab?.config?.selectedPlanFolder ?? undefined) : undefined,
+    enable_image_generation: isChatLikeMode ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
+    image_gen_config: (() => {
+      if (!isChatLikeMode) return undefined
+      const imageGenConfig = useImageGenStore.getState().config
+      const cfg = {
+        provider: imageGenConfig.provider,
+        model_id: imageGenConfig.modelId,
+        api_key: imageGenConfig.apiKey || undefined,
+      }
+      console.log('[IMAGE_GEN] sending image_gen_config:', JSON.stringify(cfg))
+      return cfg
+    })(),
   }
 }
 

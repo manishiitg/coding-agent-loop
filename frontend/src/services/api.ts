@@ -397,6 +397,28 @@ export const agentApi = {
     }
   },
 
+  syncGWSSkills: async (): Promise<{
+    synced: number;
+    failed?: { name: string; error: string }[];
+    error?: string;
+  }> => {
+    const response = await api.post('/api/gws-sync-skills', {}, { timeout: 120000 });
+    return response.data;
+  },
+
+  checkGWSAuthStatus: async (): Promise<{
+    configured: boolean;
+    auth_method?: string;
+    token_valid?: boolean;
+    enabled_api_count?: number;
+    enabled_apis?: string[];
+    scope_count?: number;
+    error?: string;
+  }> => {
+    const response = await api.get('/api/gws-auth-status', { timeout: 10000 });
+    return response.data;
+  },
+
   // LLM Guidance Management
   // Set LLM guidance for a session
   setLLMGuidance: async (sessionId: string, guidance: string, memoryFolder?: string): Promise<LLMGuidanceResponse> => {
@@ -1305,6 +1327,12 @@ export const sessionShareApi = {
   // Get a shared session (no auth required)
   getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
     const response = await api.get(`/api/shared/${shareToken}`)
+    return response.data
+  },
+
+  // Test image generation config by attempting to generate a sample image
+  testImageGen: async (config: { provider: string; model_id: string; api_key?: string }): Promise<{ valid: boolean; message?: string; error?: string }> => {
+    const response = await api.post('/api/image-gen/test', config)
     return response.data
   },
 }

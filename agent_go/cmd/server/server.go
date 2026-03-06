@@ -821,6 +821,9 @@ type QueryRequest struct {
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
 	// CDP port for connecting to an existing Chrome browser (local mode only)
 	CdpPort *int `json:"cdp_port,omitempty"` // When set and > 0, connect to Chrome via CDP on this port instead of launching headless
+	// Image generation configuration
+	EnableImageGeneration *bool          `json:"enable_image_generation,omitempty"` // Enable image generation virtual tool
+	ImageGenConfig        *ImageGenConfig `json:"image_gen_config,omitempty"`        // Image generation provider configuration
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
 	// Selected sub-agent templates to make available for delegation
@@ -829,6 +832,8 @@ type QueryRequest struct {
 	DelegationMode string `json:"delegation_mode,omitempty"`
 	// Plan phase override: 'planning' = plan first (default), 'execution' = skip planning and execute directly
 	PlanPhase string `json:"plan_phase,omitempty"`
+	// Existing plan folder to reuse (pre-seeds PlanSessionState so LLM reuses it)
+	PlanFolder string `json:"plan_folder,omitempty"`
 	// Delegation tier configuration: Maps reasoning levels (high/medium/low) to specific provider/model pairs
 	DelegationTierConfig *virtualtools.DelegationTierConfig `json:"delegation_tier_config,omitempty"`
 	// Decrypted secrets to inject into agent system prompt
@@ -843,6 +848,13 @@ type QueryRequest struct {
 
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
+}
+
+// ImageGenConfig holds image generation provider configuration
+type ImageGenConfig struct {
+	Provider string `json:"provider"` // e.g. "vertex"
+	ModelID  string `json:"model_id"` // e.g. "imagen-4.0-generate-001"
+	APIKey   string `json:"api_key"`  // e.g. GEMINI_API_KEY value (optional; backend falls back to env var)
 }
 
 // getCdpPort returns the CDP port from a QueryRequest, or 0 if not set
@@ -1204,11 +1216,14 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
+	apiRouter.HandleFunc("/gws-auth-status", api.handleGWSAuthStatus).Methods("GET")
+	apiRouter.HandleFunc("/gws-sync-skills", api.handleGWSSyncSkills).Methods("POST")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/azure/deployments", api.handleGetAzureDeployedModels).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/validate-key", api.handleValidateAPIKey).Methods("POST")
+	apiRouter.HandleFunc("/image-gen/test", api.handleTestImageGen).Methods("POST")
 	apiRouter.HandleFunc("/llm-config/delegation-tiers", api.handleGetDelegationTierDefaults).Methods("GET")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
@@ -1932,7 +1947,7 @@ func (api *StreamingAPI) handleCdpCheck(w http.ResponseWriter, r *http.Request) 
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
-	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "claude-code", "gemini-cli"}
+	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "minimax", "claude-code", "gemini-cli"}
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
 	if envValue == "" {
 		return allProviders
@@ -2086,6 +2101,9 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("GEMINI_API_KEY"); s != "" {
 		keys.GeminiCLI = &s
 	}
+	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
+		keys.MiniMax = &s
+	}
 	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
 		apiKey := os.Getenv("AZURE_AI_API_KEY")
 		apiVer := os.Getenv("AZURE_AI_API_VERSION")
@@ -2151,7 +2169,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex"}
+	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "minimax"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -2231,6 +2249,7 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		"openai_config":       defaults.OpenaiConfig,
 		"anthropic_config":    defaults.AnthropicConfig,
 		"azure_config":        defaults.AzureConfig,
+		"minimax_config":      defaults.MinimaxConfig,
 		"available_models":    defaults.AvailableModels,
 		"supported_providers": getSupportedProviders(),
 		"locked_providers":    lockedProviders,
@@ -2266,6 +2285,8 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("azure_config")
 			case "vertex":
 				stripSecrets("vertex_config")
+			case "minimax":
+				stripSecrets("minimax_config")
 			}
 		}
 	}
@@ -2276,6 +2297,44 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleTestImageGen tests image generation config by attempting to generate a single test image
+func (api *StreamingAPI) handleTestImageGen(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Provider string `json:"provider"`
+		ModelID  string `json:"model_id"`
+		APIKey   string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	cfg := virtualtools.ImageGenExecutorConfig{
+		Provider: req.Provider,
+		ModelID:  req.ModelID,
+		APIKey:   req.APIKey,
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = "vertex"
+	}
+	if cfg.ModelID == "" {
+		cfg.ModelID = "imagen-4.0-generate-001"
+	}
+
+	executor := virtualtools.CreateImageGenExecutor(cfg)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	_, err := executor(ctx, map[string]any{"prompt": "a simple red circle on white background"})
+
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"valid": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"valid": true, "message": "Image generation is working"})
 }
 
 // handleValidateAPIKey validates API keys for OpenRouter, OpenAI, Bedrock, Vertex, Anthropic, and Claude Code
@@ -2979,6 +3038,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW] Auto-adding agent-browser skill for browser access")
 					}
 				}
+
+				// Auto-add gws-* skills when gws MCP server is in enabled servers (workflow mode)
+				for _, s := range req.EnabledServers {
+					if s == "gws" {
+						gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
+						existingSkills := make(map[string]bool)
+						for _, sk := range selectedSkills {
+							existingSkills[sk] = true
+						}
+						added := 0
+						for _, gs := range gwsSkills {
+							if !existingSkills[gs] {
+								selectedSkills = append(selectedSkills, gs)
+								added++
+							}
+						}
+						if added > 0 {
+							log.Printf("[GWS] Auto-added %d gws-* skills for workflow mode (gws MCP server enabled)", added)
+						}
+						break
+					}
+				}
 			}
 		}
 
@@ -3519,8 +3600,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Validate provider
-		llmProvider, err := llm.ValidateProvider(req.Provider)
+		// Validate provider (use finalProvider which reflects LLMConfig.Primary.Provider)
+		providerToValidate := finalProvider
+		if providerToValidate == "" {
+			providerToValidate = req.Provider
+		}
+		llmProvider, err := llm.ValidateProvider(providerToValidate)
 		if err != nil {
 			sendError(fmt.Sprintf("Invalid provider: %v", err), true)
 			return
@@ -3630,31 +3715,39 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
-			// Count real servers (exclude "all" and "NO_SERVERS" sentinels)
-			realServerCount := 0
+			// Count total tools across selected servers to decide on tool search mode
+			api.toolStatusMux.RLock()
+			totalToolCount := 0
 			for _, s := range selectedServers {
 				if s != "all" && s != mcpclient.NoServers {
-					realServerCount++
+					if status, ok := api.toolStatus[s]; ok {
+						totalToolCount += status.ToolsEnabled
+					}
 				}
 			}
-			if realServerCount > 3 && !useToolSearchMode {
-				log.Printf("[TOOL_SEARCH] Auto-enabling tool search mode for orchestrator — %d MCP servers selected (>3)", realServerCount)
+			api.toolStatusMux.RUnlock()
+			if totalToolCount >= 10 && !useToolSearchMode {
+				log.Printf("[TOOL_SEARCH] Auto-enabling tool search mode for orchestrator — %d tools across selected servers (>=10)", totalToolCount)
 				useToolSearchMode = true
-			} else if useToolSearchMode && realServerCount <= 3 {
-				log.Printf("[TOOL_SEARCH] Disabling tool search mode for orchestrator in plan delegation mode (%d servers)", realServerCount)
+			} else if useToolSearchMode && totalToolCount < 10 {
+				log.Printf("[TOOL_SEARCH] Disabling tool search mode for orchestrator — only %d tools across selected servers (<10)", totalToolCount)
 				useToolSearchMode = false
 			}
 		}
 
-		// In plan delegation mode, orchestrator always uses the high reasoning tier model
+		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
 		if req.DelegationMode == "plan" {
 			tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
-			if tierConfig != nil && tierConfig.High != nil &&
-				tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
-				finalProvider = tierConfig.High.Provider
-				finalModelID = tierConfig.High.ModelID
-				log.Printf("[DELEGATION] Orchestrator using high tier model: %s/%s",
-					finalProvider, finalModelID)
+			if tierConfig != nil {
+				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
+					finalProvider = tierConfig.Main.Provider
+					finalModelID = tierConfig.Main.ModelID
+					log.Printf("[DELEGATION] Orchestrator using main tier model: %s/%s", finalProvider, finalModelID)
+				} else if tierConfig.High != nil && tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
+					finalProvider = tierConfig.High.Provider
+					finalModelID = tierConfig.High.ModelID
+					log.Printf("[DELEGATION] Orchestrator using high tier model (main not set): %s/%s", finalProvider, finalModelID)
+				}
 			}
 		}
 
@@ -3723,6 +3816,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					llmKeys.Anthropic = req.LLMConfig.APIKeys.Anthropic
 					llmKeys.Vertex = req.LLMConfig.APIKeys.Vertex
 					llmKeys.GeminiCLI = req.LLMConfig.APIKeys.GeminiCLI
+					llmKeys.MiniMax = req.LLMConfig.APIKeys.MiniMax
 
 					if req.LLMConfig.APIKeys.Bedrock != nil {
 						llmKeys.Bedrock = &llm.BedrockConfig{
@@ -3764,6 +3858,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				if globalLocked || isProviderLocked("gemini-cli") {
 					llmKeys.GeminiCLI = envKeys.GeminiCLI
+				}
+				if globalLocked || isProviderLocked("minimax") {
+					llmKeys.MiniMax = envKeys.MiniMax
 				}
 
 				return llmKeys
@@ -4012,6 +4109,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
+		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
 			// Default to true for backward compatibility with legacy requests
@@ -4050,6 +4148,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					req.SelectedSkills = append(req.SelectedSkills, "agent-browser")
 				}
 				log.Printf("[BROWSER] Auto-adding agent-browser skill and tool (enable_browser_access: true)")
+			}
+
+			// Auto-add gws-* skills when gws MCP server is enabled
+			gwsServerEnabled := false
+			for _, s := range req.EnabledServers {
+				if s == "gws" {
+					gwsServerEnabled = true
+					break
+				}
+			}
+			if gwsServerEnabled {
+				gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
+				existingSkills := make(map[string]bool)
+				for _, skill := range req.SelectedSkills {
+					existingSkills[skill] = true
+				}
+				added := 0
+				for _, gs := range gwsSkills {
+					if !existingSkills[gs] {
+						req.SelectedSkills = append(req.SelectedSkills, gs)
+						added++
+					}
+				}
+				if added > 0 {
+					log.Printf("[GWS] Auto-added %d gws-* skills (gws MCP server enabled)", added)
+				}
 			}
 
 			if enableWorkspaceAccess {
@@ -4245,9 +4369,70 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[BROWSER TOOLS] Successfully registered %d browser tools for chat mode", len(browserTools))
 				}
 
-
 			} else {
-				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
+			log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
+		}
+
+			// Register image generation tools if enabled
+			// NOTE: This is OUTSIDE the enableWorkspaceAccess block intentionally —
+			// image gen should work regardless of workspace access setting.
+			enableImgGen := req.EnableImageGeneration != nil && *req.EnableImageGeneration
+			log.Printf("[IMAGE GEN] enable_image_generation check: ptr_set=%v enabled=%v image_gen_config_nil=%v", req.EnableImageGeneration != nil, enableImgGen, req.ImageGenConfig == nil)
+			if req.ImageGenConfig != nil {
+				log.Printf("[IMAGE GEN] received image_gen_config: provider=%q model_id=%q api_key_set=%v", req.ImageGenConfig.Provider, req.ImageGenConfig.ModelID, req.ImageGenConfig.APIKey != "")
+			}
+			if enableImgGen {
+				imgAgent := llmAgent.GetUnderlyingAgent()
+				if imgAgent == nil {
+					log.Printf("[IMAGE GEN] Warning: underlying agent is nil, cannot register image gen tools")
+				} else {
+					imgCfg := virtualtools.ImageGenExecutorConfig{
+						Provider:        "vertex",
+						ModelID:         "gemini-2.5-flash-image",
+						WorkspaceAPIURL: getWorkspaceAPIURL(),
+						UserID:          currentUserID,
+					}
+					if req.ImageGenConfig != nil {
+						if req.ImageGenConfig.Provider != "" {
+							imgCfg.Provider = req.ImageGenConfig.Provider
+						}
+						if req.ImageGenConfig.ModelID != "" {
+							imgCfg.ModelID = req.ImageGenConfig.ModelID
+						}
+						imgCfg.APIKey = req.ImageGenConfig.APIKey
+					}
+					for _, toolDef := range []struct {
+						tool     func() llmtypes.Tool
+						executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
+						category func() string
+					}{
+						{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
+						{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
+					} {
+						t := toolDef.tool()
+						exec := toolDef.executor(imgCfg)
+						var params map[string]interface{}
+						if t.Function.Parameters != nil {
+							paramsBytes, err := json.Marshal(t.Function.Parameters)
+							if err == nil {
+								json.Unmarshal(paramsBytes, &params)
+							}
+						}
+						if params != nil {
+							if err := imgAgent.RegisterCustomTool(
+								t.Function.Name,
+								t.Function.Description,
+								params,
+								exec,
+								toolDef.category(),
+							); err != nil {
+								log.Printf("[IMAGE GEN] Warning: Failed to register %s: %v", t.Function.Name, err)
+							} else {
+								log.Printf("[IMAGE GEN] Registered %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
+							}
+						}
+					}
+				}
 			}
 
 			// Register delegation tool if delegation mode is enabled
@@ -4289,6 +4474,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 					// Get or create session-level plan state (replaces per-message PlanTracker)
 					planState := api.getOrCreatePlanSessionState(sessionID)
+
+					// If client passed an existing plan folder, pre-seed the session state so LLM reuses it
+					if req.PlanFolder != "" && planState.PlanID == "" {
+						parts := strings.SplitN(req.PlanFolder, "/", 2)
+						if len(parts) == 2 && parts[0] == virtualtools.PlanFileFolderPath {
+							planState.PlanID = parts[1]
+							planState.PlanFolder = req.PlanFolder
+							log.Printf("[PLAN STATE] Pre-seeded plan from request: %s", req.PlanFolder)
+						}
+					}
 
 					// Create background delegate function for plan mode (async delegation)
 					var bgDelegateFunc virtualtools.BackgroundDelegateFunc
@@ -6818,6 +7013,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		apiKeys.Anthropic = parentReq.LLMConfig.APIKeys.Anthropic
 		apiKeys.Vertex = parentReq.LLMConfig.APIKeys.Vertex
 		apiKeys.GeminiCLI = parentReq.LLMConfig.APIKeys.GeminiCLI
+		apiKeys.MiniMax = parentReq.LLMConfig.APIKeys.MiniMax
 		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{Region: parentReq.LLMConfig.APIKeys.Bedrock.Region}
 		}
@@ -6875,6 +7071,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 		if isProviderLocked("gemini-cli") {
 			apiKeys.GeminiCLI = envKeys.GeminiCLI
+		}
+		if isProviderLocked("minimax") {
+			apiKeys.MiniMax = envKeys.MiniMax
 		}
 	}
 
@@ -7337,9 +7536,58 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 							log.Printf("[DELEGATION] Warning: Failed to register browser tool %s for sub-agent: %v", toolName, err)
 						}
 					}
-				}
+					}
 			}
 
+			// Register image generation tool for sub-agent if enabled in parent request
+			if parentReq.EnableImageGeneration != nil && *parentReq.EnableImageGeneration {
+				imgCfg := virtualtools.ImageGenExecutorConfig{
+					Provider:        "vertex",
+					ModelID:         "gemini-2.5-flash-image",
+					WorkspaceAPIURL: getWorkspaceAPIURL(),
+					UserID:          subAgentUserID,
+				}
+				if parentReq.ImageGenConfig != nil {
+					if parentReq.ImageGenConfig.Provider != "" {
+						imgCfg.Provider = parentReq.ImageGenConfig.Provider
+					}
+					if parentReq.ImageGenConfig.ModelID != "" {
+						imgCfg.ModelID = parentReq.ImageGenConfig.ModelID
+					}
+					imgCfg.APIKey = parentReq.ImageGenConfig.APIKey
+				}
+				for _, toolDef := range []struct {
+				tool     func() llmtypes.Tool
+				executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
+				category func() string
+			}{
+				{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
+				{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
+			} {
+				t := toolDef.tool()
+				exec := toolDef.executor(imgCfg)
+				var params map[string]interface{}
+				if t.Function.Parameters != nil {
+					paramsBytes, err := json.Marshal(t.Function.Parameters)
+					if err == nil {
+						json.Unmarshal(paramsBytes, &params)
+					}
+				}
+				if params != nil {
+					if err := underlyingAgent.RegisterCustomTool(
+						t.Function.Name,
+						t.Function.Description,
+						params,
+						exec,
+						toolDef.category(),
+					); err != nil {
+						log.Printf("[IMAGE GEN] Warning: Failed to register %s for sub-agent: %v", t.Function.Name, err)
+					} else {
+						log.Printf("[IMAGE GEN] Registered %s for sub-agent (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
+					}
+				}
+			}
+			}
 
 			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
 			// This prevents runaway delegation chains
@@ -7383,7 +7631,7 @@ After completing your task, you MUST update the plan file:
 This is critical — the manager reads plan.md after you finish and passes your Key Knowledge to the next worker. Without your updates, the next worker will have no context about what you discovered.
 
 Use execute_shell_command or diff_patch_workspace_file to update the file.
-- For appending: execute_shell_command(command: "echo '\n- [task-N result]: Summary of findings' >> %s/plan.md", working_directory: ".")
+- For appending: execute_shell_command(command: "echo '\n- [task-N result]: Summary of findings' >> %s/plan.md")
 - For precise edits (marking checkboxes, updating sections): diff_patch_workspace_file with filepath "%s/plan.md"
 `, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder, planFolder)
 				underlyingAgent.AppendSystemPrompt(planUpdatePrompt)
@@ -8106,6 +8354,10 @@ func resolveDelegationTierConfig(frontendConfig *virtualtools.DelegationTierConf
 
 	// Override with frontend config (higher priority)
 	if frontendConfig != nil {
+		if frontendConfig.Main != nil && frontendConfig.Main.Provider != "" && frontendConfig.Main.ModelID != "" {
+			result.Main = frontendConfig.Main
+			hasAny = true
+		}
 		if frontendConfig.High != nil && frontendConfig.High.Provider != "" && frontendConfig.High.ModelID != "" {
 			result.High = frontendConfig.High
 			hasAny = true

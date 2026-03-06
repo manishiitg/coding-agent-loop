@@ -176,7 +176,7 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 		"regex_search_workspace_files":    {"folder"},
 		"semantic_search_workspace_files": {"folder"},
 		"glob_discover_workspace_files":   {"folder"},
-		"execute_shell_command":           {"working_directory"},
+		"execute_shell_command":           {},
 		"read_image":                      {"filepath"},
 		"read_pdf":                        {"filepath"},
 	}

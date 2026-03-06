@@ -48,15 +48,15 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 2. **Workspace Paths**:
    - **Tool Args**: Pass '{{.WorkspacePath}}' as the workspace path argument.
    - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
-{{if .IsCodeExecutionMode}}   - **execute_shell_command working_directory**: ALWAYS set `+"`"+`working_directory`+"`"+` to '{{.StepExecutionPath}}' so that code runs inside the step folder. This ensures all output files are written to the correct step directory.
-   - **Writing output files**: Use paths relative to the step folder (e.g., `+"`"+`open("{{.StepContextOutput}}", "w")`+"`"+`). The `+"`"+`working_directory`+"`"+` setting handles the base path automatically.
-   - **Reading dependencies from other steps**: Use relative paths from the workspace root in your code: `+"`"+`execution/step-N/file.json`+"`"+`.
+{{if .IsCodeExecutionMode}}   - **execute_shell_command paths**: Always use `+"`"+`cd {{.StepExecutionPath}} && python3 script.py`+"`"+` so code runs inside the step folder and relative file paths work correctly.
+   - **Writing output files**: Use the full path: `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
+   - **Reading dependencies from other steps**: Use full workspace-relative paths in your code: `+"`"+`{{.WorkspacePath}}/execution/step-N/file.json`+"`"+`.
    - **MCP tool calls**: Use HTTP requests to per-tool endpoints via `+"`"+`os.environ["MCP_API_URL"]`+"`"+` and `+"`"+`os.environ["MCP_API_TOKEN"]`+"`"+`.
 {{else}}   - **File Operations**: Prefer `+"`"+`execute_shell_command`+"`"+` for reading files (`+"`"+`cat`+"`"+`, `+"`"+`head`+"`"+`), writing files (shell redirects, `+"`"+`python3 -c`+"`"+`), and data processing. Use `+"`"+`diff_patch_workspace_file`+"`"+` for targeted edits to existing files.
-   - **execute_shell_command working_directory**: ALWAYS set `+"`"+`working_directory`+"`"+` to '{{.StepExecutionPath}}' so commands run inside the step folder. Use **relative file paths** in the command string (e.g., `+"`"+`echo '...' > output.json`+"`"+`). Do NOT embed full workspace paths in the command — the `+"`"+`working_directory`+"`"+` parameter handles path resolution.
+   - **execute_shell_command paths**: Always use full workspace-relative paths in commands (e.g., `+"`"+`echo '...' > {{.StepExecutionPath}}/output.json`+"`"+`). To run in a specific directory, use `+"`"+`cd {{.StepExecutionPath}} && <command>`+"`"+`.
    - **MCP tools**: Use MCP tools directly for external service calls.
-{{end}}3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.{{if .IsCodeExecutionMode}} Read dependency files from code using relative workspace paths.{{else}} Use `+"`"+`execute_shell_command`+"`"+` (e.g., `+"`"+`cat`+"`"+`) to read dependency files. The **Inputs** field below shows exact file paths.{{end}}
-4. **Mandatory Output**: Create '{{.StepContextOutput}}' in the step folder '{{.StepExecutionPath}}/'.{{if .IsCodeExecutionMode}} With `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+`, just write to '{{.StepContextOutput}}' directly in your code.{{else}} Use `+"`"+`execute_shell_command`+"`"+` with `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+` or `+"`"+`diff_patch_workspace_file`+"`"+`.{{end}}
+{{end}}3. **Pre-requisites**: Read all **Context Dependencies** before execution. They are inputs.{{if .IsCodeExecutionMode}} Read dependency files from code using full workspace-relative paths.{{else}} Use `+"`"+`execute_shell_command`+"`"+` (e.g., `+"`"+`cat {{.StepExecutionPath}}/file`+"`"+`) to read files. The **Inputs** field below shows exact file paths.{{end}}
+4. **Mandatory Output**: Create '{{.StepContextOutput}}' in the step folder '{{.StepExecutionPath}}/'.{{if .IsCodeExecutionMode}} Write to `+"`"+`{{.StepExecutionPath}}/{{.StepContextOutput}}`+"`"+` in your code.{{else}} Use `+"`"+`execute_shell_command`+"`"+` with full path (e.g., `+"`"+`echo '...' > {{.StepExecutionPath}}/{{.StepContextOutput}}`+"`"+`) or `+"`"+`diff_patch_workspace_file`+"`"+`.{{end}}
 5. **File Existence**: {{if .IsCodeExecutionMode}}Before reading files in code, verify they exist (e.g., `+"`"+`os.path.exists()`+"`"+` in Python).{{else}}Use `+"`"+`execute_shell_command(command="ls ...", ...)`+"`"+` to verify files exist before reading.{{end}}
 6. **Parallel Tools**: When you need multiple independent operations (e.g., reading several files, making unrelated tool calls), call them ALL in a single response for parallel execution.
 
@@ -105,10 +105,9 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 
 {{if .IsCodeExecutionMode}}
 ## 💻 Code Execution Patterns
-- **Working Directory**: ALWAYS pass `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+` to execute_shell_command. Example tool call:
-  `+"`"+`execute_shell_command(command="python3 script.py", working_directory="{{.StepExecutionPath}}")`+"`"+`
-- **Output Files**: Write output using just the filename since working_directory is set. E.g., `+"`"+`open("{{.StepContextOutput}}", "w")`+"`"+` — this writes to `+"`"+`{{.StepExecutionPath}}/{{.StepContextOutput}}`+"`"+`.
-- **Reading Other Steps' Output**: Dependencies from other steps are at relative paths from workspace root. In code, use `+"`"+`execution/step-N/file.json`+"`"+` to read them.
+- **Run in step folder**: `+"`"+`execute_shell_command(command="cd {{.StepExecutionPath}} && python3 script.py")`+"`"+`
+- **Output Files**: Write using the full path: `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
+- **Reading Other Steps' Output**: Use full workspace-relative paths, e.g., `+"`"+`{{.WorkspacePath}}/execution/step-N/file.json`+"`"+`.
 - **JSON Safety**: Read dependencies FIRST, parse with `+"`"+`json.loads()`+"`"+`, then process.
 - **Robust Parsing**: For CSV/Delimited text, use Python's `+"`"+`csv`+"`"+` module or `+"`"+`pandas`+"`"+` to handle complex data reliably.
 - **Verification**: Programmatically verify success. Print "✅ PASS: [detail]" or "❌ FAIL: [reason]" + `+"`"+`sys.exit(1)`+"`"+`.
@@ -195,7 +194,7 @@ Full details available in:
 ### 📋 Requirements
 - **Inputs**: {{.StepContextDependencies}}
 - **Output File**: {{.StepContextOutput}} (Create in {{.StepExecutionPath}}/)
-{{if eq .IsCodeExecutionMode "true"}}- **execute_shell_command**: Set `+"`"+`working_directory: "{{.StepExecutionPath}}"`+"`"+` so output files land in the correct step folder.{{end}}`)
+{{if eq .IsCodeExecutionMode "true"}}- **execute_shell_command**: Use `+"`"+`cd {{.StepExecutionPath}} && python3 script.py`+"`"+` and write output to `+"`"+`{{.StepExecutionPath}}/{{.StepContextOutput}}`+"`"+`.{{end}}`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {

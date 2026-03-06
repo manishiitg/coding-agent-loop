@@ -1,18 +1,19 @@
 import React, { useState } from 'react'
-import { 
-  CheckCircle, 
-  XCircle, 
-  Copy, 
-  FileText, 
-  Code, 
-  AlertCircle
+import {
+  CheckCircle,
+  XCircle,
+  Copy,
+  FileText,
+  Code,
+  AlertCircle,
+  Download
 } from 'lucide-react'
 import { formatDuration } from '../../utils/formatDuration'
 import type { ToolCallEndEvent, ToolCallErrorEvent } from '../../generated/events'
 
 // Enhanced content type detection
 interface ParsedContent {
-  type: 'json-text' | 'structured-data' | 'plain-text' | 'error' | 'code' | 'unknown'
+  type: 'json-text' | 'structured-data' | 'plain-text' | 'error' | 'code' | 'unknown' | 'image-gen-result'
   content: string
   metadata?: Record<string, unknown>
 }
@@ -30,6 +31,19 @@ const parseContent = (content: string): ParsedContent => {
       }
     }
     
+    // Handle image generation result (workspace-saved or base64 fallback)
+    if (
+      typeof parsed === 'object' &&
+      typeof parsed.count === 'number' &&
+      (Array.isArray(parsed.saved_paths) || Array.isArray(parsed.images))
+    ) {
+      return {
+        type: 'image-gen-result',
+        content: content,
+        metadata: { originalData: parsed }
+      }
+    }
+
     // Handle structured data (PRs, file changes, etc.)
     if (typeof parsed === 'object' && !parsed.type) {
       return {
@@ -96,6 +110,8 @@ const ResponseTypeBadge: React.FC<{ type: ParsedContent['type'] }> = ({ type }) 
         return { label: 'Error', color: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' }
       case 'code':
         return { label: 'Code', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' }
+      case 'image-gen-result':
+        return { label: 'Images', color: 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200' }
       default:
         return { label: 'Unknown', color: 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200' }
     }
@@ -286,6 +302,51 @@ const EnhancedContentRenderer: React.FC<{
         </div>
       )
       
+    case 'image-gen-result': {
+      const data = parsedContent.metadata?.originalData as {
+        images?: Array<{ data: string; mime_type: string }>
+        model: string
+        cost_per_image: number
+        prompt: string
+        saved_paths?: string[]
+        count: number
+      }
+      return (
+        <div className="space-y-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Generated {data.count} image{data.count !== 1 ? 's' : ''} · {data.model} · ${data.cost_per_image.toFixed(2)}/image
+          </p>
+          {data.images && data.images.length > 0 && (
+            <div className="flex flex-wrap gap-3">
+              {data.images.map((img, i) => (
+                <div key={i} className="relative group">
+                  <img
+                    src={`data:${img.mime_type};base64,${img.data}`}
+                    alt={`Generated image ${i + 1}`}
+                    className="max-w-xs max-h-64 rounded border border-gray-200 dark:border-gray-700 object-contain"
+                  />
+                  <a
+                    href={`data:${img.mime_type};base64,${img.data}`}
+                    download={`generated-image-${i + 1}.png`}
+                    className="absolute bottom-1 right-1 flex items-center gap-1 bg-black/70 hover:bg-black/90 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Download className="w-3 h-3" />
+                    Save
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-gray-500 dark:text-gray-400 italic">Prompt: {data.prompt}</p>
+          {data.saved_paths && data.saved_paths.length > 0 && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Saved to workspace: {data.saved_paths.join(', ')}
+            </p>
+          )}
+        </div>
+      )
+    }
+
     case 'structured-data':
       return <StructuredDataRenderer content={parsedContent.content} metadata={parsedContent.metadata} />
       

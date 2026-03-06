@@ -1,6 +1,6 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../generated/event-types'
-import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay, SubAgentToolCallDisplay } from './ToolCallSpecialRender'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
 
@@ -76,6 +76,11 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
   // If it's a delegation tool, use the specialized component
   if (event.tool_name && isDelegationTool(event.tool_name)) {
     return <DelegationToolCallDisplay event={event} />
+  }
+
+  // If it's a sub-agent tool, use the specialized component
+  if (event.tool_name === 'call_sub_agent' || event.tool_name === 'call_generic_agent') {
+    return <SubAgentToolCallDisplay event={event} />
   }
 
   // Simple JSON formatting function for regular tools

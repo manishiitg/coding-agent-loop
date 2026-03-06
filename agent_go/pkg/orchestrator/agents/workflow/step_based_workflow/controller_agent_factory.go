@@ -2100,8 +2100,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.SubAgentLLM)
 		}
 
+		// Before calling sub-agent, emit current tasks.md state (it may already exist)
+		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+
 		// Call original executor with enriched context
-		return originalExecutor(ctx, args)
+		result, err := originalExecutor(ctx, args)
+
+		// After sub-agent completes, emit tasks.md state again (may have been updated)
+		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+
+		return result, err
 	}
 }
 

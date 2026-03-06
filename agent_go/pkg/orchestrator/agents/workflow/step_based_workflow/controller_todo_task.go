@@ -69,7 +69,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	// Build paths for folder guard
 	// All paths should include the workspace prefix (e.g., Workflow/codeanalysis/...)
-	// This matches what the LLM uses in execute_shell_command's working_directory parameter
+	
 	var stepExecutionPath string
 	var executionWorkspacePath string
 	if hcpo.selectedRunFolder != "" {
@@ -89,7 +89,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 
 	// READ: step-specific learnings folder + execution folder + run folder + knowledgebase folder
 	// WRITE: step execution path + knowledgebase folder
-	// All paths include workspace prefix to match shell working_directory parameter
+	
 	readPaths := []string{stepLearningsPath, executionWorkspacePath, runWorkspacePath, knowledgebasePath}
 	writePaths := []string{stepExecutionPath, knowledgebasePath, stepLearningsPath}
 
@@ -347,7 +347,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	}
 
 	// Build shell working directory (WorkspacePath + StepExecutionPath)
-	// This is the path to use in execute_shell_command's working_directory parameter
+	// Step folder path used as ShellWorkingDirectory in agent prompts
 	shellWorkingDirectory := filepath.Join(hcpo.GetWorkspacePath(), executionPath)
 
 	// Get step config for code execution mode
@@ -1003,6 +1003,78 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStepCompletedEvent(
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📢 Emitted todo task step completed event: step=%s, iterations=%d, todos=%d/%d",
 			stepPath, totalIterations, completedCount, totalTodos))
+	}
+}
+
+// emitTodoTaskStatusUpdate reads tasks.md and emits a status update event after a sub-agent completes
+func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStatusUpdate(
+	ctx context.Context,
+	args map[string]interface{},
+	execCtx *SubAgentExecutionContext,
+) {
+	bridge := hcpo.GetContextAwareBridge()
+	if bridge == nil {
+		hcpo.GetLogger().Warn("📋 emitTodoTaskStatusUpdate: bridge is nil, skipping")
+		return
+	}
+
+	stepPath := ""
+	stepIndex := 0
+	var stepID, stepTitle string
+	if execCtx != nil {
+		stepPath = execCtx.StepPath
+		stepIndex = execCtx.StepIndex
+		if execCtx.TodoTaskStep != nil {
+			stepID = execCtx.TodoTaskStep.GetID()
+			stepTitle = execCtx.TodoTaskStep.GetTitle()
+		}
+	}
+
+	// Build tasks.md path (use relative path so ReadWorkspaceFile prepends workspacePath correctly)
+	var tasksFilePath string
+	if hcpo.selectedRunFolder != "" {
+		tasksFilePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath, "tasks.md")
+	} else {
+		tasksFilePath = filepath.Join("execution", stepPath, "tasks.md")
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate: reading tasks.md at '%s' (workspacePath=%s, runFolder=%s, stepPath=%s)", tasksFilePath, hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, stepPath))
+
+	tasksContent, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
+	if err != nil || tasksContent == "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate: tasks.md not found or empty at '%s' (err=%v), skipping event", tasksFilePath, err))
+		return // No tasks.md yet, skip
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate: found tasks.md (%d chars), emitting event", len(tasksContent)))
+
+	routeID, _ := args["route_id"].(string)
+	todoID, _ := args["todo_id"].(string)
+
+	event := &TodoTaskStatusUpdateEvent{
+		BaseEventData: baseevents.BaseEventData{
+			Timestamp: time.Now(),
+			Component: "orchestrator",
+		},
+		StepIndex:    stepIndex,
+		StepPath:     stepPath,
+		StepID:       stepID,
+		StepTitle:    stepTitle,
+		TasksContent: tasksContent,
+		RouteID:      routeID,
+		TodoID:       todoID,
+	}
+
+	agentEvent := &baseevents.AgentEvent{
+		Type:      events.TodoTaskStatusUpdate,
+		Timestamp: time.Now(),
+		Data:      event,
+	}
+
+	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit todo task status update event: %v", err))
+	} else {
+		hcpo.GetLogger().Info("✅ emitTodoTaskStatusUpdate: event emitted successfully")
 	}
 }
 

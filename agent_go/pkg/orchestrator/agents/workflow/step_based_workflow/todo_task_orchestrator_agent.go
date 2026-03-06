@@ -37,13 +37,18 @@ Sub-agents receive only the task instructions you provide - they don't have your
 1. **Create tasks first**: When tasks.md is empty, create it with your task breakdown before delegating.
 2. **Parallel execution**: You can call MULTIPLE sub-agent tools in a SINGLE response to run them concurrently. When tasks are independent (no shared state or ordering dependency), delegate them in parallel for faster execution. Only serialize tasks that depend on each other's output.
 3. **Precise Instructions**: Include exact file names and expected outputs when delegating.
-4. **MANDATORY REFLECTION**: After EVERY batch of sub-agent executions, you MUST:
+4. **MANDATORY STATUS UPDATES**: You MUST keep tasks.md accurate at all times:
+   - **Before delegating**: Mark the task(s) as In Progress ([~]) using sed or heredoc rewrite
+   - **After sub-agent completes successfully**: Mark the task as Completed ([x]) and move it to the Completed section
+   - **After sub-agent fails**: Keep task as In Progress or move back to Pending with a note
+   - The tasks.md must always reflect the TRUE current state — never leave completed work marked as pending
+5. **MANDATORY REFLECTION**: After EVERY batch of sub-agent executions, you MUST:
    - Read ALL results carefully
    - Ask: "What did I learn? What changed? What's still needed?"
    - Update tasks.md with any NEW tasks discovered
    - Remove tasks that are no longer needed
    - Refine remaining task descriptions if needed
-5. **Produce Required Outputs**: The step completes automatically when validation passes. Focus on creating the expected output files.
+6. **Produce Required Outputs**: The step completes automatically when validation passes. Focus on creating the expected output files.
 
 ## 🚨 ANTI-PATTERN: FIXED TASK EXECUTION
 **DO NOT** create a task list and blindly execute through it. Your initial plan is a HYPOTHESIS.
@@ -56,8 +61,8 @@ After each task, you should be LEARNING and ADAPTING:
 ---
 
 ## 🛠️ PLAN & TASK MANAGEMENT (via shell)
-**Shell Working Directory**: '{{.ShellWorkingDirectory}}'
-Use this path as 'working_directory' parameter in execute_shell_command.
+**Step Folder**: '{{.ShellWorkingDirectory}}'
+Use full paths in execute_shell_command (e.g., `+"`"+`echo '...' > {{.ShellWorkingDirectory}}/tasks.md`+"`"+`) or `+"`"+`cd {{.ShellWorkingDirectory}} && <command>`+"`"+`.
 
 Create a plan with tasks in 'tasks.md' using 'execute_shell_command'.
 
@@ -229,7 +234,7 @@ A powerful execution agent that can handle any task you define.
 ---
 
 ## 📁 FILE ADVISORY
-**Note**: All paths below are relative to shell working directory: '{{.ShellWorkingDirectory}}'
+**Note**: Step folder is '{{.ShellWorkingDirectory}}'. Use full paths in all commands.
 
 | Path Type | File | Behavior | Best Use |
 | :--- | :--- | :--- | :--- |
@@ -278,9 +283,10 @@ Before proceeding:
 **STEP A - SELECT & EXECUTE (parallel when possible):**
 1. Read tasks.md to check current status
 2. Identify ALL PENDING tasks ([ ]) that are ready to execute
-3. **If multiple tasks are INDEPENDENT** (no shared files, no ordering dependency): call multiple sub-agent tools in the SAME response to run them in parallel
-4. **If tasks depend on each other**: execute them sequentially (one per response)
-5. You can also do quick work yourself while delegating other tasks
+3. **Mark selected tasks as In Progress** ([~]) by rewriting tasks.md via shell BEFORE calling sub-agents
+4. **If multiple tasks are INDEPENDENT** (no shared files, no ordering dependency): call multiple sub-agent tools in the SAME response to run them in parallel
+5. **If tasks depend on each other**: execute them sequentially (one per response)
+6. You can also do quick work yourself while delegating other tasks
 
 **STEP B - REFLECT (MANDATORY after each batch of executions):**
 Ask yourself these questions and act on the answers:
@@ -289,16 +295,18 @@ Ask yourself these questions and act on the answers:
 - "Are there NEW tasks I should add based on these results?"
 - "Are there EXISTING tasks that are now unnecessary?"
 - "Should I REFINE any remaining task descriptions?"
+- "Did I discover anything worth saving as a learning?" → If yes, call 'save_learning' now (e.g. effective delegation strategy, error pattern, optimization, data insight)
 
-**STEP C - UPDATE PLAN:**
-1. Mark all completed tasks [x] in tasks.md
+**STEP C - UPDATE PLAN (MANDATORY - do this before moving on):**
+1. Rewrite tasks.md to move completed tasks to the **## Completed** section with [x]
 2. ADD any new tasks discovered (in Pending section)
 3. REMOVE any tasks that are no longer needed (move to Removed section with reason)
 4. REFINE task descriptions if you have better information now
 5. Update the Plan section if your overall approach changed
+Note: Use heredoc to rewrite the full tasks.md cleanly rather than sed, to ensure tasks move to the correct section.
 
 **STEP D - CONTINUE OR COMPLETE:**
-- If OBJECTIVE is achieved → Ensure all required outputs are created, then call 'mark_step_complete' to signal completion
+- If OBJECTIVE is achieved → Save any final learnings via 'save_learning', ensure all required outputs are created, then call 'mark_step_complete' to signal completion
 - If more work needed → Go back to STEP A
 
 **Example of Dynamic Adaptation:**
@@ -336,7 +344,7 @@ Adaptation:
 - 'mark_step_complete(reason)' — Signal that the step objective is fully achieved
 
 ### Workspace Tools
-- 'execute_shell_command(command, working_directory)' — Run shell commands to manage tasks.md and read files
+- 'execute_shell_command(command)' — Run shell commands using full paths (e.g., `+"`"+`cat {{.ShellWorkingDirectory}}/tasks.md`+"`"+`)
 {{end}}
 
 *Manage tasks via shell commands (tasks.md), delegate work via sub-agent tools, and continuously refine your task list based on learnings.*`)
@@ -381,12 +389,12 @@ var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestrato
 → Update tasks.md: mark complete [x], ADD new tasks, REMOVE unnecessary ones, REFINE descriptions
 
 ### After EVERY sub-agent result:
-**MANDATORY REFLECTION CHECKLIST:**
-- [ ] Did I learn something new? If yes, how does this affect my plan?
-- [ ] Should I ADD any tasks based on this result?
-- [ ] Should I REMOVE any tasks that are now unnecessary?
-- [ ] Should I REFINE any remaining task descriptions?
-- [ ] Update tasks.md with ALL changes before proceeding
+**MANDATORY — answer these before your next action:**
+- Did I learn something new? If yes, how does this affect my plan?
+- Should I ADD any tasks based on this result?
+- Should I REMOVE any tasks that are now unnecessary?
+- Should I REFINE any remaining task descriptions?
+- Rewrite tasks.md: move completed tasks to Completed section, update In Progress, add new tasks
 
 ### When OBJECTIVE is achieved:
 → Ensure all required outputs are created (your final task list may look very different from your initial plan - that's expected!)

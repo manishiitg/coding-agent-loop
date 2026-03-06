@@ -39,6 +39,15 @@ interface AppState {
   setWorkspaceMinimized: (minimized: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
   setDelegationMode: (mode: 'off' | 'spawn') => void
+  // Last plan phase chosen in multi-agent mode — persisted so new tabs inherit it
+  lastMultiAgentPlanPhase: 'planning' | 'execution'
+  setLastMultiAgentPlanPhase: (phase: 'planning' | 'execution') => void
+  // Last-used tab settings — inherited by new tabs
+  lastSelectedSkills: string[]
+  lastSelectedSubAgents: string[]
+  lastBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
+  lastEnableImageGeneration: boolean
+  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastSelectedSubAgents' | 'lastBrowserMode' | 'lastEnableImageGeneration'>>) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -131,6 +140,18 @@ export const useAppStore = create<AppState>()(
         setDelegationMode: (mode) => {
           set({ delegationMode: mode })
         },
+
+        lastMultiAgentPlanPhase: 'planning',
+        setLastMultiAgentPlanPhase: (phase) => {
+          set({ lastMultiAgentPlanPhase: phase })
+        },
+        lastSelectedSkills: [],
+        lastSelectedSubAgents: [],
+        lastBrowserMode: 'none',
+        lastEnableImageGeneration: false,
+        syncLastTabSettings: (update) => {
+          set(update)
+        },
         }
       },
       {
@@ -142,7 +163,12 @@ export const useAppStore = create<AppState>()(
         workspaceMinimized: state.workspaceMinimized,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
-        delegationMode: state.delegationMode
+        delegationMode: state.delegationMode,
+        lastMultiAgentPlanPhase: state.lastMultiAgentPlanPhase,
+        lastSelectedSkills: state.lastSelectedSkills,
+        lastSelectedSubAgents: state.lastSelectedSubAgents,
+        lastBrowserMode: state.lastBrowserMode,
+        lastEnableImageGeneration: state.lastEnableImageGeneration
         // delegationMode: persisted so /spawn survives page refresh
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: chat tabs have their own, workflow uses preset

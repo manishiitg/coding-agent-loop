@@ -103,12 +103,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
   const {
     toolList: allTools,
     selectedServers,
-    enabledServers,
   } = useMCPStore(useShallow(state => ({
     toolList: state.toolList,
     selectedServers: state.selectedServers,
-    enabledServers: state.enabledServers,
   })))
+
+  // All servers that are currently connected (status=ok)
+  const connectedServers = useMemo(
+    () => new Set(allTools.filter(t => t.status === 'ok').map(t => t.server).filter(Boolean)),
+    [allTools]
+  )
   
   // Get active tab reactively (works for both chat and workflow modes)
   // Use selector to ensure reactivity when tab config changes
@@ -158,19 +162,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (tabSelectedServers.length === 0) {
       return ["NO_SERVERS"]
     }
-    // Filter out servers that aren't currently enabled (connected).
+    // Filter out servers that aren't currently connected (status=ok).
     // Stale servers from localStorage could block queries if sent to backend.
-    const filtered = tabSelectedServers.filter(s => s === "NO_SERVERS" || enabledServers.includes(s))
+    const filtered = tabSelectedServers.filter(s => s === "NO_SERVERS" || connectedServers.has(s))
     return filtered
   }, [
     selectedModeCategory,
-    // Include currentPresetServers only for workflow mode reactivity
-    // In chat mode, this value is ignored but included to satisfy exhaustive-deps
-    // The logic above ensures chat mode never uses currentPresetServers
     currentPresetServers,
     selectedServers,
-    enabledServers,
-    activeTab?.config  // ✅ Now reactive - will update when tab config changes
+    connectedServers,
+    activeTab?.config
   ])
   
   // Filter tools to only include those from effective servers
@@ -593,6 +594,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     }
   }, [finalResponse, autoScroll, scrollToBottom])
 
+  // Scroll to bottom when switching tabs
+  useEffect(() => {
+    if (!targetTabId) return
+    // Small delay to let the new tab's content render before scrolling
+    const timer = setTimeout(() => {
+      scrollToBottom('instant')
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [targetTabId, scrollToBottom])
+
   // Auto-scroll when streaming text first appears (brings the "Generating..." card into view)
   const hasStreamingText = useChatStore(state =>
     activeSessionId ? !!state.streamingText[activeSessionId] : false
@@ -960,8 +971,16 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
     if (isCompletionLike && hadWorkspaceActivityRef.current) {
       hadWorkspaceActivityRef.current = false
-      console.log('[Workspace] Marking needsRefresh (completion event + had workspace activity)')
-      useWorkspaceStore.getState().setNeedsRefresh(true)
+      const isChatLikeMode = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
+      if (isChatLikeMode) {
+        // Auto-refresh workspace for chat modes so the file tree updates immediately
+        console.log('[Workspace] Auto-refreshing workspace (completion event + had workspace activity, chat mode)')
+        useWorkspaceStore.getState().fetchFiles()
+      } else {
+        // Workflow mode: just mark stale — workflow has its own debounced refresh logic
+        console.log('[Workspace] Marking needsRefresh (completion event + had workspace activity)')
+        useWorkspaceStore.getState().setNeedsRefresh(true)
+      }
     }
 
     // Defer streaming text clear
@@ -1778,6 +1797,30 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
 
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(effectiveLLMConfig)
 
+      // Compute effective plan phase for multi-agent mode (mirrors ChatInput logic)
+      let effectivePlanPhase: string | undefined
+      if (isMultiAgentMode) {
+        const planPhaseOverride = currentTab?.config?.planPhaseOverride ?? null
+        let autoDetectedPlanPhase: 'planning' | 'execution' | null = null
+        const currentTabEvents = currentTab?.sessionId ? (tabEvents) : []
+        for (let i = currentTabEvents.length - 1; i >= 0; i--) {
+          const event = currentTabEvents[i]
+          if (event.type === 'plan_approval') {
+            autoDetectedPlanPhase = 'execution'
+            break
+          }
+          if (event.type === 'tool_call_start' || event.type === 'tool_call_end') {
+            const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined
+            const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name
+            if (toolName === 'create_delegation_plan') {
+              autoDetectedPlanPhase = 'planning'
+              break
+            }
+          }
+        }
+        effectivePlanPhase = planPhaseOverride ?? autoDetectedPlanPhase ?? 'planning'
+      }
+
       // Build request payload
       const requestPayload = buildQueryRequestPayload({
         queryWithContext,
@@ -1795,6 +1838,7 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         chatPresetId,
         filteredPresetTools,
         hasActivePreset: !!activePreset,
+        effectivePlanPhase,
         decryptedSecrets,
         selectedGlobalSecrets: (activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : useSecretsStore.getState().selectedGlobalSecretNames) ?? undefined,
       })

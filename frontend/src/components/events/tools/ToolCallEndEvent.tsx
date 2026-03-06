@@ -2,6 +2,7 @@ import React from 'react'
 import type { ToolCallEndEvent } from '../../../generated/events'
 import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay, ToolSearchToolCallEndDisplay } from './ToolCallSpecialRender'
+import { ImageGenToolCallEndDisplay } from './ToolCallSpecialRender/ImageGenToolCallEndDisplay'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularProgress'
 import { TooltipProvider } from '../../ui/tooltip'
 import { useExpandable } from '../useExpandable'
@@ -38,6 +39,11 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     return toolName === 'search_tools' || toolName === 'add_tool'
   }
 
+  // Check if this is an image generation/editing tool
+  const isImageGenTool = (toolName: string): boolean => {
+    return toolName === 'workspace_image_gen' || toolName === 'workspace_image_edit'
+  }
+
   // If it's a workspace tool, use the specialized component
   if (event.tool_name && isWorkspaceTool(event.tool_name)) {
     const specializedDisplay = <WorkspaceToolCallEndDisplay event={event} />
@@ -63,6 +69,11 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
     if (specializedDisplay) {
       return specializedDisplay
     }
+  }
+
+  // If it's the image generation tool, use the specialized component
+  if (event.tool_name && isImageGenTool(event.tool_name)) {
+    return <ImageGenToolCallEndDisplay event={event} />
   }
 
   // Function to parse and extract content from JSON results

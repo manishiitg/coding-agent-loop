@@ -12,7 +12,8 @@ interface OrchestratorAgentStartEventDisplayProps {
 }
 
 export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
-  const { isExpanded: isInputsExpanded, toggle } = useExpandable(false)
+  const { isExpanded: isInputsExpanded, toggle } = useExpandable(true)
+  const [isMetaExpanded, setIsMetaExpanded] = React.useState(false)
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
@@ -125,12 +126,16 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             </div>
             <div className="min-w-0 flex-1">
               <div className={`text-sm font-medium ${colors.text}`}>
-                {getLabel()} Started: {event.agent_name}{' '}
-                <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  | Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
-                  {event.step_index !== undefined && ` | Step: ${event.step_index}`}
-                  {isCollapsed && eventCount !== undefined && ` | ${eventCount} events collapsed`}
-                </span>
+                {getLabel()} Started: {event.agent_name}
+                {isCollapsed && eventCount !== undefined && (
+                  <span className={`text-xs font-normal ${colors.textSecondary}`}> | {eventCount} events collapsed</span>
+                )}
+                {isMetaExpanded && (
+                  <span className={`text-xs font-normal ${colors.textSecondary}`}>
+                    {' '}| Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
+                    {event.step_index !== undefined && ` | Step: ${event.step_index}`}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -142,6 +147,17 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             <div className={`text-xs ${colors.textSecondary}`}>
               {formatTimestamp(event.timestamp)}
             </div>
+          )}
+
+          {/* Toggle for meta details (model, servers, turns) */}
+          {!isCollapsed && (
+            <button
+              onClick={() => setIsMetaExpanded(!isMetaExpanded)}
+              className={`p-0.5 ${colors.hover} rounded ${colors.text} transition-colors`}
+              title={isMetaExpanded ? "Hide details" : "Show details"}
+            >
+              {isMetaExpanded ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+            </button>
           )}
 
           {/* Toggle for inputs/details */}
@@ -170,16 +186,17 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
         </div>
       </div>
 
+      {/* Objective - always visible when not collapsed */}
+      {!isCollapsed && event.objective && (
+        <div className={`mt-2 text-xs ${colors.textSecondary}`}>
+          <ConversationMarkdownRenderer content={event.objective} maxHeight="200px" />
+        </div>
+      )}
+
       {/* Expandable content - only show when not collapsed AND inputs expanded */}
       {!isCollapsed && isInputsExpanded && (
         <div className="mt-3 space-y-3">
-          {/* Objective content */}
-          {event.objective && (
-            <div>
-              <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>Objective:</div>
-              <ConversationMarkdownRenderer content={event.objective} maxHeight="400px" />
-            </div>
-          )}
+          {/* Objective is always shown above; only show here if inputs are expanded for full height */}
 
           {/* Context for conditional agents - show prominently after objective */}
           {(event as unknown as { agent_type?: string })?.agent_type === 'conditional' && event.input_data?.context && (

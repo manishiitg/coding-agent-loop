@@ -39,11 +39,11 @@ The workspace is organized into the following folders:
 
 ## How to Read Skills
 Skills are stored at skills/<skill-name>/SKILL.md. To use a skill:
-1. Read the SKILL.md file: execute_shell_command(command: "cat skills/<skill-name>/SKILL.md", working_directory: ".")
+1. Read the SKILL.md file: execute_shell_command(command: "cat skills/<skill-name>/SKILL.md")
 2. If SKILL.md references supporting files (scripts, templates, examples), read those files too from the same skill folder.
 3. Follow the instructions in the SKILL.md to complete the user's request.
 
-Skills are located at the **workspace root** — always use working_directory: "." when accessing them.
+Skills are located at the **workspace root** — use workspace-relative paths (e.g., "skills/<skill-name>/SKILL.md") when accessing them.
 `
 	return instructions
 }
@@ -166,8 +166,8 @@ The following skills are available for this conversation. Each skill extends you
 
 	promptParts = append(promptParts, `
 **How to read skills efficiently:**
-1. **Quick scan first:** Use execute_shell_command(command: "head -100 skills/<name>/SKILL.md", working_directory: ".") to read the first few lines (frontmatter + description) of each skill to determine if it is relevant to the user's request.
-2. **Read fully if relevant:** If a skill matches the user's intent, read the complete file: execute_shell_command(command: "cat skills/<name>/SKILL.md", working_directory: "."). Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
+1. **Quick scan first:** Use execute_shell_command(command: "head -100 skills/<name>/SKILL.md") to read the first few lines (frontmatter + description) of each skill to determine if it is relevant to the user's request.
+2. **Read fully if relevant:** If a skill matches the user's intent, read the complete file: execute_shell_command(command: "cat skills/<name>/SKILL.md"). Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
 3. **Skip if not relevant:** If the description clearly does not match the user's request, move on — no need to read the full file.
 `)
 
@@ -355,7 +355,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Check step logs: `+"`list_files`"+` on `+"`{path}/runs/{iteration}/logs/step-{N}/`"+`
 - Check progress: `+"`read_file`"+` on `+"`{path}/runs/{iteration}/execution/steps_done.json`"+`
 - Check learnings: `+"`list_files`"+` on `+"`{path}/learnings/`"+`
-- All paths are relative to the workspace root (working_directory: ".")
+- All paths are workspace-relative (e.g., "Workflow/myproject/plan.md")
 `)
 
 	return strings.Join(parts, "\n")

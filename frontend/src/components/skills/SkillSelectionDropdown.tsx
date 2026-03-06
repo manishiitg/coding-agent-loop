@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, Check, HelpCircle } from 'lucide-react';
+import { Sparkles, Check, HelpCircle, Search } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/checkbox';
 import { Card } from '../ui/Card';
@@ -28,6 +28,7 @@ export default function SkillSelectionDropdown({
   const [skills, setSkills] = useState<Skill[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Load skills when dropdown opens
   useEffect(() => {
@@ -69,6 +70,13 @@ export default function SkillSelectionDropdown({
     }
   };
 
+  const filteredSkills = searchQuery.trim()
+    ? skills.filter(s =>
+        s.frontmatter.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.frontmatter.description.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : skills;
+
   const isAllSelected = skills.length > 0 && selectedSkills.length === skills.length;
   const isNoneSelected = selectedSkills.length === 0;
 
@@ -103,7 +111,7 @@ export default function SkillSelectionDropdown({
             {/* Backdrop */}
             <div
               className="fixed inset-0 z-40"
-              onClick={() => setIsOpen(false)}
+              onClick={() => { setIsOpen(false); setSearchQuery(''); }}
             />
 
             {/* Dropdown */}
@@ -129,7 +137,7 @@ export default function SkillSelectionDropdown({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setIsOpen(false)}
+                      onClick={() => { setIsOpen(false); setSearchQuery(''); }}
                       className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
                     >
                       ✕
@@ -178,14 +186,28 @@ export default function SkillSelectionDropdown({
                     </Button>
                   </div>
 
+                  {/* Search */}
+                  {!isLoading && skills.length > 0 && (
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Search skills..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        className="w-full pl-7 pr-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      />
+                    </div>
+                  )}
+
                   {/* Skills List */}
                   <div className="max-h-64 overflow-y-auto space-y-1 border border-gray-200 dark:border-gray-600 rounded-md p-2 bg-gray-50 dark:bg-gray-900">
                     {isLoading ? (
                       <div className="text-sm text-gray-500 text-center py-4">
                         Loading skills...
                       </div>
-                    ) : skills.length > 0 ? (
-                      skills.map((skill) => (
+                    ) : filteredSkills.length > 0 ? (
+                      filteredSkills.map((skill) => (
                         <div key={skill.file_path || skill.folder_name} className="flex items-start space-x-2 group p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer">
                           <Checkbox
                             id={`skill-${skill.folder_name}`}
@@ -211,6 +233,10 @@ export default function SkillSelectionDropdown({
                           </div>
                         </div>
                       ))
+                    ) : skills.length > 0 ? (
+                      <div className="text-sm text-gray-500 text-center py-4">
+                        No skills match "{searchQuery}"
+                      </div>
                     ) : (
                       <div className="text-sm text-gray-500 text-center py-4">
                         No skills available. Import skills from the Skills Manager.

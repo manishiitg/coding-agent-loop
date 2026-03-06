@@ -33,7 +33,7 @@ export const FallbackAttemptEventDisplay: React.FC<FallbackAttemptEventDisplayPr
             <div className="text-sm font-medium text-gray-700 dark:text-gray-300">
               {getSuccessIcon(event.success)} Fallback Attempt{' '}
               <span className="text-xs font-normal text-gray-600 dark:text-gray-400">
-                #{event.attempt_index || '?'} | Model: {event.model_id || 'Unknown'} | Phase: {event.phase || 'Unknown'}
+                #{event.attempt_index ?? '?'} | Model: {event.model_id || event.provider || 'Unknown'} | Phase: {event.phase || 'Unknown'}
                 {event.success !== undefined && ` | Success: ${getSuccessText(event.success)}`}
               </span>
             </div>

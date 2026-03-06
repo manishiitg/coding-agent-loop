@@ -11,6 +11,7 @@ export { RoutingEvaluatedEventDisplay } from './RoutingEvaluatedEvent'
 export { PreValidationCompletedEventDisplay } from './PreValidationCompletedEvent'
 export { PrerequisiteNavigationEventDisplay } from './PrerequisiteNavigationEvent'
 export * from './TodoTaskEvents'
+export { TodoTaskStatusUpdateEventDisplay } from './TodoTaskStatusUpdateEvent'
 
 // Unified Orchestrator Agent Event Components
 export { OrchestratorAgentStartEventDisplay } from '../system/OrchestratorAgentStartEvent'

@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "gws": {
+      "command": "gws",
+      "args": ["mcp", "-s", "drive,gmail,calendar,docs,sheets,slides"]
+    },
     "playwright": {
       "command": "npx",
       "args": [

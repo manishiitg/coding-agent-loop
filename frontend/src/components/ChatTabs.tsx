@@ -183,8 +183,15 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
             // Get all events for this tab's session
             const allEvents = tabEvents[tab.sessionId] || []
 
-            // Filter events by visibility rules
-            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type))
+            // Events that are too noisy to count as "new" in the badge
+            const BADGE_EXCLUDED_EVENTS = new Set([
+              'tool_call_start',
+              'tool_call_end',
+              'tool_call_delta',
+            ])
+
+            // Filter events by visibility rules, excluding noisy tool events from badge
+            const visibleEvents = allEvents.filter(e => e.type && shouldShowEventByMode(e.type) && !BADGE_EXCLUDED_EVENTS.has(e.type))
 
             // Get the last viewed count (with fallback for migration)
             const lastViewedCount = tab.lastViewedEventCounts?.micro ?? tab.lastViewedEventCount ?? 0

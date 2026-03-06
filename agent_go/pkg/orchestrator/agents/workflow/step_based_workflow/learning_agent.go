@@ -28,7 +28,7 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
    - ❌ Generic naming or formatting feedback.
 3. **Include (The "Best Stuff")**:
    - ✅ **Patterns**: MCP tool calling sequences ('server.tool') with arguments.
-   - ✅ **Shell Commands**: Successful execute_shell_command patterns, working_directory settings, and data processing pipelines.
+   - ✅ **Shell Commands**: Successful execute_shell_command patterns (full paths used), and data processing pipelines.
    - ✅ **Success Criteria**: Exact JSON structures, field names, and data types found in outputs.
    - ✅ **Failures to Avoid**: Task-specific dead-ends (e.g., "Tool X doesn't work for PDF extraction in this repo").
    - ✅ **Scripts**: Full content of successful scripts — Python, bash, or other (save to '{{.ScriptsPath}}').

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { AgentStartEvent } from '@/generated/events'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
@@ -8,6 +9,7 @@ interface AgentStartEventProps {
 
 export function AgentStartEventComponent({ event }: AgentStartEventProps) {
   const { isExpanded, toggle } = useExpandable()
+  const [isMetaExpanded, setIsMetaExpanded] = useState(false)
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return 'Unknown time'
@@ -23,16 +25,17 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
-              🤖 Agent Started{' '}
-              <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                | Type: {event.agent_type || 'Unknown'}
-                {event.use_code_execution_mode && ' | Mode: Code Exec'}
-                {event.use_tool_search_mode && ' | Mode: Tool Search'}
-                {' | Model: '}{event.model_id || 'Unknown'}
-                {' | Provider: '}{event.provider || 'Unknown'}
-                {(event.metadata?.max_turns !== undefined) && 
-                  ` | Max Turns: ${event.metadata.max_turns as number}`}
-              </span>
+              🤖 Agent Started: {event.agent_type || 'Unknown'}
+              {isMetaExpanded && (
+                <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
+                  {event.use_code_execution_mode && ' | Mode: Code Exec'}
+                  {event.use_tool_search_mode && ' | Mode: Tool Search'}
+                  {' | Model: '}{event.model_id || 'Unknown'}
+                  {' | Provider: '}{event.provider || 'Unknown'}
+                  {(event.metadata?.max_turns !== undefined) &&
+                    ` | Max Turns: ${event.metadata.max_turns as number}`}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -45,13 +48,22 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
             </div>
           )}
           
+          <button
+            onClick={() => setIsMetaExpanded(!isMetaExpanded)}
+            className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-600 dark:text-blue-400 transition-colors"
+            title={isMetaExpanded ? "Hide details" : "Show details"}
+          >
+            {isMetaExpanded ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+          </button>
+
           {hasExpandableContent && (
-            <button 
+            <button
               onClick={toggle}
-              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-600 dark:text-blue-400 transition-colors"
+              className="p-0.5 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-blue-600 dark:text-blue-400 transition-colors flex items-center gap-1"
               title={isExpanded ? "Collapse details (Alt+Click for all)" : "Expand details (Alt+Click for all)"}
             >
-              {isExpanded ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+              <span className="text-[10px] uppercase font-bold">Details</span>
+              {isExpanded ? <Minus className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
             </button>
           )}
         </div>

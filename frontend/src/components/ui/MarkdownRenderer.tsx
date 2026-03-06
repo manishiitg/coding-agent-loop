@@ -6,7 +6,7 @@ import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAppStore } from '../../stores/useAppStore'
-import { workspaceApi, agentApi } from '../../services/api'
+import { workspaceApi, agentApi, getApiBaseUrl } from '../../services/api'
 import mermaid from 'mermaid'
 
 interface MarkdownRendererProps {
@@ -489,19 +489,24 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            if (href?.startsWith('#workspace/')) {
-              const filepath = decodeURIComponent(href.replace('#workspace/', ''))
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+            const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
+            const workspaceFilepath = href?.startsWith('#workspace/')
+              ? decodeURIComponent(href.replace('#workspace/', ''))
+              : isWorkspacePath ? href : null
+
+            if (workspaceFilepath) {
               return (
-                <a 
+                <a
                   href={href}
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
-                    handleWorkspaceLink(filepath)
+                    handleWorkspaceLink(workspaceFilepath)
                   }}
                   style={{ pointerEvents: 'auto', cursor: 'pointer' }}
                   className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 underline cursor-pointer break-words overflow-wrap-anywhere font-medium transition-colors"
-                  title={`Open ${filepath} in workspace`}
+                  title={`Open ${workspaceFilepath} in workspace`}
                 >
                   {children}
                 </a>
@@ -518,13 +523,21 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
               </a>
             )
           },
-          img: ({ src, alt }) => (
-            <img 
-              src={src} 
-              alt={alt} 
-              className="max-w-full h-auto rounded-lg shadow-md my-4 border border-gray-200 dark:border-gray-700"
-            />
-          ),
+          img: ({ src, alt }) => {
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+            const isWorkspacePath = !!src && workspacePrefixes.some(p => src.startsWith(p))
+            const resolvedSrc = isWorkspacePath
+              ? `${getApiBaseUrl()}/api/public/file?path=${btoa(src!)}`
+              : src
+            console.log(`[IMAGE_RENDER] MarkdownRenderer src="${src}" isWorkspace=${isWorkspacePath} resolvedSrc="${resolvedSrc}"`)
+            return (
+              <img
+                src={resolvedSrc}
+                alt={alt}
+                className="max-w-full h-auto rounded-lg shadow-md my-4 border border-gray-200 dark:border-gray-700"
+              />
+            )
+          },
           hr: () => <hr className="my-6 border-gray-300 dark:border-gray-600" />,
           table: ({ children }) => (
             <div className="overflow-x-auto my-6 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">

@@ -3,41 +3,21 @@ package workspace
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 type ExecuteShellCommandParams struct {
-	Command          string             `json:"command"`
-	WorkingDirectory string             `json:"working_directory"`
-	Timeout          *int               `json:"timeout,omitempty"`
-	UseShell         *bool              `json:"use_shell,omitempty"`
-	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
-	ExtraEnv         map[string]string  `json:"extra_env,omitempty"`
+	Command     string             `json:"command"`
+	Timeout     *int               `json:"timeout,omitempty"`
+	UseShell    *bool              `json:"use_shell,omitempty"`
+	FolderGuard *FolderGuardConfig `json:"folder_guard,omitempty"`
+	ExtraEnv    map[string]string  `json:"extra_env,omitempty"`
 }
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
-	// Reject empty working directory — the tool definition marks it as required
-	if params.WorkingDirectory == "" {
-		return "", fmt.Errorf("working_directory is required for execute_shell_command; specify the step execution folder path (e.g., 'execution/step-1/') so commands run in the correct directory")
-	}
-
-	// Validate working_directory as a READ operation (isWrite=false).
-	// Rationale: setting working_directory is just a "cd" — it doesn't write anything.
-	// Using isWrite=true was rejecting valid paths like "." when FolderGuard had
-	// restricted WritePaths (e.g., ["Chats/abc/"]), even though "." is in ReadPaths.
-	// Actual write restrictions are enforced container-side: the FolderGuard config
-	// (populated below, lines 35-48) is sent to the workspace API, which sets up
-	// tmpfs overlays and bind mounts to physically prevent writes outside allowed paths.
-	if params.WorkingDirectory != "" {
-		if err := c.ValidatePath(params.WorkingDirectory, false); err != nil {
-			return "", err
-		}
-	}
-
 	// Populate folder guard configuration from context or client.
 	// Two context key systems exist:
 	//   1. Chat/plan/prototype modes: FolderGuardAllowedWriteFolderKey (from server.go wrappers)
@@ -86,20 +66,6 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			c.BaseURL, params.FolderGuard.ReadPaths, params.FolderGuard.WritePaths, params.Command)
 	}
 
-	// Mode-aware default working directory (safety net).
-	// Each mode injects its primary folder via DefaultWorkingDirKey:
-	//   - prototype mode → "Projects/{name}"
-	//   - plan mode      → "Plans"
-	//   - chat mode      → "Chats"
-	// If the LLM passes "." it is replaced with the mode's default so commands
-	// run in the correct folder automatically.
-	if params.WorkingDirectory == "." {
-		if defaultDir, ok := ctx.Value(common.DefaultWorkingDirKey).(string); ok && defaultDir != "" && defaultDir != "." {
-			log.Printf("[DEFAULT_WORKING_DIR] Substituted working_directory \".\" → %q for command: %s", defaultDir, params.Command)
-			params.WorkingDirectory = defaultDir
-		}
-	}
-
 	// Always use shell execution - removed from tool definition to simplify LLM interface
 	useShell := true
 	params.UseShell = &useShell
@@ -139,12 +105,12 @@ func formatShellResponse(respBody []byte) (string, bool) {
 	var exitCode float64
 
 	// Copy data fields (stdout, stderr, exit_code, execution_time_ms)
-	// Skip "command" and "working_directory" — the LLM already knows what it sent
+	// Skip "command" — the LLM already knows what it sent
 	if data, ok := resp["data"]; ok {
 		var dataFields map[string]json.RawMessage
 		if err := json.Unmarshal(data, &dataFields); err == nil {
 			for k, v := range dataFields {
-				if k == "command" || k == "working_directory" {
+				if k == "command" {
 					continue
 				}
 				out[k] = v

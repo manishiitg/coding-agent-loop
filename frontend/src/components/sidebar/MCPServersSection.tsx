@@ -39,8 +39,6 @@ export default function MCPServersSection() {
   // Store subscriptions
   const {
     toolList,
-    enabledServers,
-    setEnabledServers,
     isLoadingTools,
     toolsError,
     showMCPDetails,
@@ -213,7 +211,7 @@ export default function MCPServersSection() {
                       <span>Logs</span>
                     </button>
 
-                    {/* Show/Hide Tools Button */}
+                    {/* Expand/Collapse Tools Button */}
                     {tools[0].function_names && tools[0].function_names.length > 0 && (
                       <button
                         onClick={() => {
@@ -231,32 +229,9 @@ export default function MCPServersSection() {
                         <span className="text-xs">
                           {expandedServers.has(serverName) ? '▼' : '▶'}
                         </span>
-                        <span>
-                          {expandedServers.has(serverName) ? 'Hide' : 'Show'}
-                        </span>
+                        <span>Tools</span>
                       </button>
                     )}
-                    
-                    {/* Toggle Enable/Disable */}
-                    <button
-                      onClick={() => {
-                        const isCurrentlyEnabled = enabledServers.includes(serverName)
-                        if (isCurrentlyEnabled) {
-                          setEnabledServers(enabledServers.filter(s => s !== serverName))
-                        } else {
-                          setEnabledServers([...enabledServers, serverName])
-                        }
-                      }}
-                      className={`w-12 h-6 rounded-full transition-all duration-200 ${
-                        enabledServers.includes(serverName) 
-                          ? 'bg-green-500' 
-                          : 'bg-gray-300 dark:bg-gray-600'
-                      }`}
-                    >
-                      <div className={`w-4 h-4 bg-white rounded-full transition-transform ${
-                        enabledServers.includes(serverName) ? 'translate-x-6' : 'translate-x-1'
-                      }`}></div>
-                    </button>
                   </div>
                 </div>
                 

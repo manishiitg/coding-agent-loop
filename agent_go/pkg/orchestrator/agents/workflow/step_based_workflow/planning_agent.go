@@ -156,7 +156,7 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 - 'update_variable(action, existing_variable_name, ...)' — Add, update, or delete a variable in variables.json
 
 ### Workspace Tools
-- 'execute_shell_command(command, working_directory)' — Run shell commands to read files
+- 'execute_shell_command(command)' — Run shell commands using full workspace-relative paths
 - 'human_feedback(question, response_type)' — Ask user for approval or input (**call before any plan change**)
 {{end}}
 

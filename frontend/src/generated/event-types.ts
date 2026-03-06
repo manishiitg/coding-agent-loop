@@ -295,6 +295,7 @@ export type EventTypeString =
   | 'todo_task_item_updated'
   | 'todo_task_item_completed'
   | 'todo_task_step_completed'
+  | 'todo_task_status_update'
   // Delegation Events
   | 'delegation_start'
   | 'delegation_end';
@@ -420,6 +421,7 @@ export interface EventTypeToDataMap {
   'todo_task_item_updated': TodoTaskItemUpdatedEvent;
   'todo_task_item_completed': TodoTaskItemCompletedEvent;
   'todo_task_step_completed': TodoTaskStepCompletedEvent;
+  'todo_task_status_update': TodoTaskStatusUpdateEvent;
   // Delegation Events
   'delegation_start': DelegationStartEvent;
   'delegation_end': DelegationEndEvent;
@@ -554,6 +556,20 @@ export interface TodoTaskStepCompletedEvent {
   completed_count?: number;
   completion_reason?: string;
   next_step_id?: string;
+}
+
+export interface TodoTaskStatusUpdateEvent {
+  timestamp?: string;
+  component?: string;
+  correlation_id?: string;
+  step_index?: number;
+  step_path?: string;
+  step_id?: string;
+  step_title?: string;
+  iteration?: number;
+  tasks_content?: string;
+  route_id?: string;
+  todo_id?: string;
 }
 
 // Delegation event data types (not in generated schema)

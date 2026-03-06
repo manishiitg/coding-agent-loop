@@ -128,6 +128,9 @@ export interface ChatTabConfig {
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   autoRun?: boolean  // Automatically run the chat when tab is loaded
   planPhaseOverride?: 'planning' | 'execution' | null  // User-selected plan phase override for multi-agent mode
+  defaultReasoningLevel?: 'high' | 'medium' | 'low' | null  // Preferred reasoning level for delegated tasks in multi-agent mode
+  enableImageGeneration?: boolean  // Enable/disable image generation virtual tool
+  selectedPlanFolder?: string  // Existing plan folder to reuse (multi-agent mode; cleared after submit)
 }
 
 // Generalized ChatTab interface (works for both chat and workflow modes)
@@ -159,6 +162,7 @@ export interface ChatTab {
 const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
+  const appStore = useAppStore?.getState?.()
 
   // Get mode-specific server selection (multi-agent uses chat settings)
   const selectedServers = mode === 'workflow'
@@ -177,10 +181,8 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     // Default to false - user can toggle to true (tool search mode) via ChatInput
     useToolSearchMode: false,
     selectedServers,
-    selectedSkills: [],  // No skills selected by default
-    selectedSecrets: [],  // No secrets selected by default
-    selectedSubAgents: [],  // No sub-agent templates selected by default
-    workflowContext: [],  // No workflow context selected by default
+    selectedSecrets: [],
+    workflowContext: [],
     llmConfig: llmConfig || {
       provider: 'openrouter',
       model_id: '',
@@ -191,12 +193,16 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     // Workflow mode uses global chatFileContext, but chat mode uses tab-specific fileContext
     fileContext: [],
     enableContextSummarization: false,
-    enableWorkspaceAccess: true,  // Enable workspace access by default
-    browserMode: 'none',  // No browser access by default
-    enableBrowserAccess: false,  // Disable browser access by default (user must enable via checkbox)
+    enableWorkspaceAccess: true,
+    browserMode: appStore?.lastBrowserMode ?? 'none',
+    enableBrowserAccess: (appStore?.lastBrowserMode === 'headless' || appStore?.lastBrowserMode === 'cdp') ?? false,
+    enableImageGeneration: appStore?.lastEnableImageGeneration ?? false,
+    selectedSkills: appStore?.lastSelectedSkills ?? [],
+    selectedSubAgents: appStore?.lastSelectedSubAgents ?? [],
     delegationTierConfig: mode === 'multi-agent' ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
-    queuedMessages: [],  // No queued messages by default
-    autoRun: false  // Do not auto-run by default
+    queuedMessages: [],
+    autoRun: false,
+    planPhaseOverride: mode === 'multi-agent' ? (appStore?.lastMultiAgentPlanPhase ?? 'planning') : undefined,
   }
 }
 
@@ -1578,7 +1584,7 @@ export const useChatStore = create<ChatState>()(
         const state = get()
         const tab = state.chatTabs[tabId]
         if (!tab) return
-        
+
         set((state) => ({
           chatTabs: {
             ...state.chatTabs,
@@ -1591,6 +1597,29 @@ export const useChatStore = create<ChatState>()(
             }
           }
         }))
+
+        // Sync last-used settings to AppStore so new tabs inherit them.
+        // Only sync for chat/multi-agent tabs — workflow tabs have different settings.
+        // Sync last-used settings to AppStore so new tabs inherit them.
+        // Only sync for chat/multi-agent tabs — workflow tabs have different settings.
+        const tabMode = tab.metadata?.mode
+        if (tabMode === 'chat' || tabMode === 'multi-agent') {
+          type SyncUpdate = {
+            lastSelectedSkills?: string[]
+            lastSelectedSubAgents?: string[]
+            lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
+            lastEnableImageGeneration?: boolean
+          }
+          const sync: SyncUpdate = {}
+          if (configUpdate.selectedSkills !== undefined) sync.lastSelectedSkills = configUpdate.selectedSkills
+          if (configUpdate.selectedSubAgents !== undefined) sync.lastSelectedSubAgents = configUpdate.selectedSubAgents
+          if (configUpdate.browserMode !== undefined) sync.lastBrowserMode = configUpdate.browserMode
+          if (configUpdate.enableImageGeneration !== undefined) sync.lastEnableImageGeneration = configUpdate.enableImageGeneration
+          if (Object.keys(sync).length > 0) {
+            console.log('[TabSettings] Syncing to AppStore:', sync)
+            useAppStore.getState().syncLastTabSettings(sync)
+          }
+        }
       },
       
       setTabMetadata: (tabId: string, metadataUpdate: Partial<NonNullable<ChatTab['metadata']>>) => {
@@ -1998,7 +2027,7 @@ export const useChatStore = create<ChatState>()(
                 hasRunningBgAgents: false,
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
-                config: tab.config, // CRITICAL: Persist full config including:
+                config: { ...tab.config, selectedPlanFolder: undefined }, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)
                 // - useCodeExecutionMode (Simple vs Code Exec mode)

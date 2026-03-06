@@ -26,12 +26,12 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
 2. **Exclude General Bloat**:
    - ❌ No syntax error patterns (general programming knowledge).
    - ❌ No internal infra scripts unless they are part of the core logic.
-   - ❌ No execute_shell_command mechanics (working_directory, timeout) — focus on the code content.
+   - ❌ No execute_shell_command mechanics (timeout) — focus on the code content.
 3. **Extraction Checklist**:
    - ✅ **Best Code**: Complete, runnable code with imports and logic. Preserve the original language used (Python, bash, etc.).
    - ✅ **Variable Handling**: Replace hardcoded values (IDs, regions) with template variables (e.g., '{{ "{{" }}AWS_ACCOUNT_ID{{ "}}" }}').
    - ✅ **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' (Python) or '$MCP_API_URL' and '$MCP_API_TOKEN' (bash/curl) for per-tool HTTP endpoints — never hardcode URLs or tokens.
-   - ✅ **Working Directory**: Note the correct working_directory setting used (e.g., the step execution path).
+   - ✅ **Step Path**: Note the step execution path used so future runs know where to write output.
    - ✅ **JSON Schemas**: Document the exact JSON structure of any files created.
 
 ## 🔄 FILE MANAGEMENT ALGORITHM (MANDATORY)

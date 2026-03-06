@@ -61,6 +61,7 @@ const (
 	TodoTaskItemUpdated    events.EventType = "todo_task_item_updated"    // When a todo item is updated
 	TodoTaskItemCompleted  events.EventType = "todo_task_item_completed"  // When a todo item is completed
 	TodoTaskStepCompleted  events.EventType = "todo_task_step_completed"  // When the entire todo task step is completed
+	TodoTaskStatusUpdate   events.EventType = "todo_task_status_update"   // Current tasks.md content after a sub-agent completes
 
 )
 
@@ -75,7 +76,7 @@ func GetComponentFromEventType(eventType events.EventType) string {
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, BlockingHumanQuestions, PlanApproval,
 		LearningSkipped, TempLLMSkipped,
 		DecisionEvaluated, RoutingEvaluated, PreValidationCompleted,
-		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted:
+		TodoTaskRouteSelected, TodoTaskItemCreated, TodoTaskItemUpdated, TodoTaskItemCompleted, TodoTaskStepCompleted, TodoTaskStatusUpdate:
 		return "orchestrator"
 	default:
 		return "system"

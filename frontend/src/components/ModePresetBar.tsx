@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays, GitBranch } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -9,7 +9,9 @@ import ChatCostsPopup from './ChatCostsPopup'
 import DelegationLogsPopup from './DelegationLogsPopup'
 import SchedulePresetPopup from './SchedulePresetPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
+import PlansManagerModal from './PlansManagerModal'
 import { schedulerApi } from '../api/scheduler'
+import { agentApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
@@ -115,6 +117,7 @@ export const ModePresetBar: React.FC = () => {
   const [showSchedulePopup, setShowSchedulePopup] = useState(false)
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
+  const [showPlansManager, setShowPlansManager] = useState(false)
 
   // Fetch workflow schedule count for badge
   useEffect(() => {
@@ -553,17 +556,30 @@ export const ModePresetBar: React.FC = () => {
               </Tooltip>
 
               {selectedModeCategory === 'multi-agent' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => { setWorkspaceMinimized(true); setShowDelegationLogs(true) }}
-                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    >
-                      <DollarSign className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Execution logs & costs</TooltipContent>
-                </Tooltip>
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setShowPlansManager(true)}
+                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                      >
+                        <GitBranch className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Manage Plans</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => { setWorkspaceMinimized(true); setShowDelegationLogs(true) }}
+                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                      >
+                        <DollarSign className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Execution logs & costs</TooltipContent>
+                  </Tooltip>
+                </>
               )}
 
               {selectedModeCategory === 'workflow' && (
@@ -735,6 +751,18 @@ export const ModePresetBar: React.FC = () => {
           onClose={() => setShowSchedulePopup(false)}
         />
       )}
+
+      {/* Plans Manager Modal (Multi-agent mode) */}
+      <PlansManagerModal
+        isOpen={showPlansManager}
+        onClose={() => setShowPlansManager(false)}
+        onSelectPlan={(folder) => {
+          const chatStore = useChatStore.getState()
+          const activeTabId = chatStore.activeTabId
+          if (activeTabId) chatStore.setTabConfig(activeTabId, { selectedPlanFolder: folder })
+          agentApi.updatePlannerFile(`${folder}/.last_used`, new Date().toISOString()).catch(() => {})
+        }}
+      />
     </>
   )
 }

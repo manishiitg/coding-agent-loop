@@ -291,3 +291,20 @@ type TodoTaskStepCompletedEvent struct {
 func (e *TodoTaskStepCompletedEvent) GetEventType() baseevents.EventType {
 	return events.TodoTaskStepCompleted
 }
+
+// TodoTaskStatusUpdateEvent is emitted after a sub-agent completes, containing the current tasks.md content
+type TodoTaskStatusUpdateEvent struct {
+	baseevents.BaseEventData
+	StepIndex    int    `json:"step_index"`
+	StepPath     string `json:"step_path"`
+	StepID       string `json:"step_id"`
+	StepTitle    string `json:"step_title"`
+	Iteration    int    `json:"iteration"`
+	TasksContent string `json:"tasks_content"` // Raw markdown content of tasks.md
+	RouteID      string `json:"route_id,omitempty"`
+	TodoID       string `json:"todo_id,omitempty"`
+}
+
+func (e *TodoTaskStatusUpdateEvent) GetEventType() baseevents.EventType {
+	return events.TodoTaskStatusUpdate
+}

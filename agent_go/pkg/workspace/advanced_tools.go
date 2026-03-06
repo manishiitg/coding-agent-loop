@@ -10,26 +10,22 @@ func shellToolDef() llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "execute_shell_command",
-			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary.\n\n**PATH USAGE RULES:**\n- **Tool Parameters**: Use relative paths (e.g., 'working_directory: \"scripts\"')\n- **Inside Scripts**: When writing Python/shell scripts that reference files, use relative paths from the working directory or workspace root. The shell starts in the workspace root by default.\n\nReturns stdout, stderr, and exit code. Always executes via shell (sh -c), supporting pipes (|), redirects (>), chaining (&&, ||), environment variables, and wildcards.",
+			Description: "Execute shell commands and scripts within the workspace directory. Commands run with a 60-second timeout (configurable up to 300 seconds) and are restricted to the workspace boundary.\n\n**PATH USAGE RULES:**\n- Always use full workspace-relative paths in commands (e.g., 'cat Workflow/myproject/plan.md', 'python3 Workflow/myproject/execution/step-1/script.py')\n- To run a command inside a specific directory, use 'cd <path> && <command>' in the command string\n- The shell starts in the workspace root by default\n\nReturns stdout, stderr, and exit code. Always executes via shell (sh -c), supporting pipes (|), redirects (>), chaining (&&, ||), environment variables, and wildcards.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM. 
+					// NOTE: use_shell was removed from the tool definition to simplify the interface for the LLM.
 					// It is now hardcoded to true internally in ExecuteShellCommand.
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "Shell command to execute as a single string including all arguments. Supports pipes, redirects, chaining, env vars, and wildcards (e.g., 'ls -la | grep .md', 'cat file.txt', 'python3 script.py'). Do NOT wrap with 'sh -c'.",
-					},
-					"working_directory": map[string]interface{}{
-						"type":        "string",
-						"description": "Relative directory path within workspace to execute command. Use the project-specific path (e.g. 'Projects/myapp/frontend') rather than '.' — the session default will be used if omitted, but an explicit path is preferred.",
+						"description": "Shell command to execute as a single string including all arguments. Use full workspace-relative paths (e.g., 'cat Workflow/myproject/plan.md'). To run in a specific directory use 'cd <path> && <command>'. Supports pipes, redirects, chaining, env vars, and wildcards.",
 					},
 					"timeout": map[string]interface{}{
 						"type":        "integer",
 						"description": "Timeout in seconds (default: 60, max: 300)",
 					},
 				},
-				"required": []string{"command", "working_directory"},
+				"required": []string{"command"},
 			}),
 		},
 	}

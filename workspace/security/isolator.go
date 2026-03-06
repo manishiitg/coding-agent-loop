@@ -397,8 +397,13 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 			if !strings.HasPrefix(path, "/") {
 				absPath = filepath.Join(baseDir, path)
 			}
-			// Mount point exists in read-only view (created in step 2, visible via step 4)
-			sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n", tempPath, absPath))
+			// Ensure mount point exists in the tmpfs (step 4 may have skipped it if the
+			// directory didn't exist in the original workspace at the time of the check).
+			// mkdir -p is safe to run even when the mount point already exists.
+			sb.WriteString(fmt.Sprintf("if [ -e \"%s\" ]; then\n", tempPath))
+			sb.WriteString(fmt.Sprintf("  mkdir -p \"%s\"\n", absPath))
+			sb.WriteString(fmt.Sprintf("  mount --bind \"%s\" \"%s\"\n", tempPath, absPath))
+			sb.WriteString("fi\n")
 		}
 		sb.WriteString("\n")
 	}

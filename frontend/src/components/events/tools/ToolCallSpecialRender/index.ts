@@ -8,3 +8,4 @@ export { CodeExecutionToolCallEndDisplay } from './CodeExecutionToolCallEndDispl
 export { ToolSearchToolCallDisplay } from './ToolSearchToolCallDisplay'
 export { ToolSearchToolCallEndDisplay } from './ToolSearchToolCallEndDisplay'
 export { DelegationToolCallDisplay } from './DelegationToolCallDisplay'
+export { SubAgentToolCallDisplay } from './SubAgentToolCallDisplay'

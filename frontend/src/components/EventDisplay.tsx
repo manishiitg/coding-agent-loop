@@ -5,7 +5,8 @@ import { BackgroundAgentsStatusBar } from './events/BackgroundAgentsStatusBar'
 import { Card, CardContent } from './ui/Card'
 import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
-import { agentApi } from '../services/api'
+import { agentApi, getApiBaseUrl } from '../services/api'
+import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import type { PollingEvent } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 
@@ -45,6 +46,54 @@ const getMarkdownComponents = (compact: boolean) => ({
   ),
   strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>,
   em: ({ children }: { children?: React.ReactNode }) => <em className="italic text-gray-800 dark:text-gray-200">{children}</em>,
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+    const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
+    const workspaceFilepath = href?.startsWith('#workspace/')
+      ? decodeURIComponent(href.replace('#workspace/', ''))
+      : isWorkspacePath ? href : null
+
+    if (workspaceFilepath) {
+      const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const { setSelectedFile, setShowFileContent, setLoadingFileContent, highlightFile, expandFoldersForFile, setWorkspaceMinimized } = useWorkspaceStore.getState()
+        let resolvedPath = workspaceFilepath
+        if (workspaceFilepath.startsWith('Plans/') && !workspaceFilepath.includes('.')) {
+          resolvedPath = workspaceFilepath + '/plan.md'
+        }
+        const fileName = resolvedPath.split('/').pop() || resolvedPath
+        setWorkspaceMinimized(false)
+        expandFoldersForFile(resolvedPath)
+        highlightFile(resolvedPath)
+        setSelectedFile({ name: fileName, path: resolvedPath })
+        setLoadingFileContent(true)
+        setShowFileContent(true)
+      }
+      return (
+        <a href={href} onClick={handleClick} style={{ cursor: 'pointer' }}
+          className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 underline cursor-pointer break-words overflow-wrap-anywhere font-medium transition-colors"
+          title={`Open ${workspaceFilepath} in workspace`}>
+          {children}
+        </a>
+      )
+    }
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer"
+        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline break-words overflow-wrap-anywhere">
+        {children}
+      </a>
+    )
+  },
+  img: ({ src, alt }: { src?: string; alt?: string }) => {
+    const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+    const isWorkspacePath = !!src && workspacePrefixes.some(p => src.startsWith(p))
+    const resolvedSrc = isWorkspacePath
+      ? `${getApiBaseUrl()}/api/public/file?path=${btoa(src!)}`
+      : src
+    console.log(`[IMAGE_RENDER] src="${src}" isWorkspace=${isWorkspacePath} resolvedSrc="${resolvedSrc}"`)
+    return <img src={resolvedSrc} alt={alt} className="max-w-full h-auto rounded-lg shadow-md my-4 border border-gray-200 dark:border-gray-700" />
+  },
 })
 
 // Isolated event display component that can re-render without affecting input

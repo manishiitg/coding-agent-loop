@@ -231,6 +231,21 @@ echo "- Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens" >> "$LOG_PATH"
 echo "=========================================" >> "$LOG_PATH"
 echo "" >> "$LOG_PATH"
 
+# Start background log rotation: keep only last 10000 lines every 30 seconds
+LOG_ROTATE_LINES=10000
+log_rotate_daemon() {
+    while true; do
+        sleep 30
+        if [ -f "$LOG_PATH" ] && [ "$(wc -l < "$LOG_PATH" 2>/dev/null)" -gt "$LOG_ROTATE_LINES" ]; then
+            tail -n "$LOG_ROTATE_LINES" "$LOG_PATH" > "${LOG_PATH}.tmp" && mv "${LOG_PATH}.tmp" "$LOG_PATH"
+        fi
+    done
+}
+log_rotate_daemon &
+LOG_ROTATE_PID=$!
+trap "kill $LOG_ROTATE_PID 2>/dev/null; wait $LOG_ROTATE_PID 2>/dev/null" EXIT
+echo "🔄 Log rotation started (keeping last $LOG_ROTATE_LINES lines, PID: $LOG_ROTATE_PID)"
+
 # Start the server with enhanced logging and structured output LLM
 echo "🚀 Starting MCP Agent Server with enhanced logging..."
 echo "📝 Log file: $LOG_PATH"

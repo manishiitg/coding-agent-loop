@@ -222,7 +222,7 @@ Example: {"summary": "brief", "details_file": "step_X_details.md"}
 - 'delete_todo_task_route(parent_step_id, deleted_route_id)'
 
 ### Workspace Tools
-- 'execute_shell_command(command, working_directory)' — Run shell commands to read logs/files
+- 'execute_shell_command(command)' — Run shell commands using full workspace-relative paths
 - 'human_feedback(question, response_type)' — Ask user for approval or input (**call before any plan change**)
 {{end}}`)
 

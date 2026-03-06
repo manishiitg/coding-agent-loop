@@ -33,41 +33,74 @@ Returns immediately with an `agent_id`. A background agent:
 
 ## Storage Structure
 
+Two parallel structures for different access patterns:
+
 ```
 Plans/memories/
   prompt.md              ← User-editable custom instructions (optional)
-  2026-02/               ← Monthly folders
-    general.md           ← General memories
-    decisions.md         ← Important decisions
-    preferences.md       ← User preferences
-    architecture.md      ← Custom categories (agent decides)
-  2026-01/
+  entities.md            ← Entity registry (list of known entity names)
+  entities/              ← Per-entity knowledge files (fast lookup)
+    auth-service.md      ← Everything known about "auth-service"
+    postgresql.md        ← Everything known about "postgresql"
+    {entity-name}.md     ← Lowercase, hyphenated
+  2026-03-05/            ← Date folders (chronological log)
     general.md
-    project-setup.md
-  2025-12/
+    decisions.md
+    preferences.md
+    {custom}.md
+  2026-02-18/
     ...
 ```
 
-### File Format
+### Entity Files
 
-Each file has a top-level category heading and timestamped entries:
+Entity files group all knowledge about a specific named thing (project, system, technology, person, feature). They are updated by the `save_memory` agent when it identifies relevant entities in the content being saved.
+
+**entities.md** registry:
+```markdown
+# Entity Registry
+
+Known entities (each has a file in entities/):
+- auth-service
+- postgresql
+- user-preferences
+```
+
+**entities/auth-service.md**:
+```markdown
+# Auth Service
+
+## 2026-03-05 14:30
+Chose JWT for authentication. Uses HS256 algorithm.
+Refresh tokens stored in Redis with 24h TTL.
+
+## 2026-03-05 16:00
+Updated auth middleware to handle token expiry gracefully.
+```
+
+### Date Files (Chronological Log)
+
+Full chronological record of all memories, regardless of entity:
 
 ```markdown
 # Decisions
 
-## 2026-02-17 14:30
+## 2026-03-05 14:30
 User confirmed all API endpoints require JWT authentication.
 
-## 2026-02-17 15:45
+## 2026-03-05 15:45
 Chose PostgreSQL over MongoDB for relational data model.
 ```
 
-### Why Monthly Folders
+### Why Both Structures
 
-- Old memories naturally age into separate folders
-- Easy to prune: delete old month directories
-- Recall searches all months but prioritizes recent ones
-- Prevents single files from growing unbounded
+| | Entity Files | Date Files |
+|---|---|---|
+| Best for | "What do I know about X?" | "What happened recently?" |
+| Lookup | O(1) — direct file read | O(n) — grep across folders |
+| Content | Curated, deduplicated | Full chronological record |
+| Updated by | `save_memory` (if entity extracted) | `save_memory` (always) |
+| Compressed by | `compress_memory` | `compress_memory` |
 
 ## Custom Instructions (prompt.md)
 

@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download, Bot, Server } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download, Bot, Server, ImagePlus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -27,6 +27,7 @@ import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import ResumeSessionDialog from './ResumeSessionDialog'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
+import { ImageGenerationConfigModal } from './ImageGenerationConfigModal'
 import WorkflowBuilderModal from './WorkflowBuilderModal'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
 import type { LLMOption } from '../types/llm'
@@ -41,6 +42,9 @@ import { skillsApi } from '../api/skills'
 import { subagentsApi } from '../api/subagents'
 import type { Skill } from '../types/skills'
 import type { SubAgent } from '../types/subagents'
+
+// MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
+const DEDICATED_MCP_SERVERS = new Set(['gws', 'playwright'])
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -142,6 +146,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const tabId = useChatStore.getState().activeTabId
     if (tabId) {
       useChatStore.getState().setTabConfig(tabId, { planPhaseOverride: phase })
+    }
+    // Persist the choice so new multi-agent tabs start with the same phase
+    if (phase) {
+      useAppStore.getState().setLastMultiAgentPlanPhase(phase)
+    }
+  }, [])
+
+  const defaultReasoningLevel = tabConfig?.defaultReasoningLevel ?? null
+  const setDefaultReasoningLevel = useCallback((level: 'high' | 'medium' | 'low' | null) => {
+    const tabId = useChatStore.getState().activeTabId
+    if (tabId) {
+      useChatStore.getState().setTabConfig(tabId, { defaultReasoningLevel: level })
     }
   }, [])
 
@@ -295,6 +311,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const useCodeExecutionMode = useMemo(() => isClaudeCode ? true : (tabConfig?.useCodeExecutionMode ?? false), [isClaudeCode, tabConfig?.useCodeExecutionMode])
   const useToolSearchMode = useMemo(() => isClaudeCode ? false : (tabConfig?.useToolSearchMode ?? false), [isClaudeCode, tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
+  const enableImageGeneration = useMemo(() => tabConfig?.enableImageGeneration ?? false, [tabConfig?.enableImageGeneration])
   const browserMode = useMemo(() => tabConfig?.browserMode ?? 'none', [tabConfig?.browserMode])
   const enableBrowserAccess = useMemo(() => browserMode === 'headless' || browserMode === 'cdp', [browserMode])
   const useCdp = useMemo(() => browserMode === 'cdp', [browserMode])
@@ -304,6 +321,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
   const [showCdpPopup, setShowCdpPopup] = useState(false)
+  const [showImageGenConfig, setShowImageGenConfig] = useState(false)
+  const [showGWSPopup, setShowGWSPopup] = useState(false)
+  const [showReasoningPopup, setShowReasoningPopup] = useState(false)
+  const [gwsChatAuthStatus, setGwsChatAuthStatus] = useState<{
+    configured?: boolean; auth_method?: string; token_valid?: boolean;
+    enabled_api_count?: number; scope_count?: number; error?: string;
+  } | null>(null)
+  const [gwsChatChecking, setGwsChatChecking] = useState(false)
+  const [gwsChatSyncing, setGwsChatSyncing] = useState(false)
+  const [gwsChatSyncResult, setGwsChatSyncResult] = useState<{
+    synced?: number; failed?: { name: string; error: string }[]; error?: string;
+  } | null>(null)
 
   // Camofox browser connection state
   const [camofoxConnected, setCamofoxConnected] = useState<boolean | null>(null)
@@ -319,6 +348,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return 'loading' as const
   }, [toolList])
 
+  const gwsServerStatus = useMemo(() => {
+    const entry = toolList.find(t => t.server === 'gws')
+    if (!entry) return 'not_found' as const
+    if (entry.status === 'ok') return 'ok' as const
+    if (entry.status === 'error') return 'error' as const
+    return 'loading' as const
+  }, [toolList])
+
   // Camofox MCP availability: check if 'camofox' server exists in toolList
   const camofoxServerStatus = useMemo(() => {
     const entry = toolList.find(t => t.server === 'camofox')
@@ -327,6 +364,34 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (entry.status === 'error') return 'error' as const
     return 'loading' as const
   }, [toolList])
+
+
+  const syncGWSChatSkills = useCallback(async () => {
+    setGwsChatSyncing(true)
+    setGwsChatSyncResult(null)
+    try {
+      const result = await agentApi.syncGWSSkills()
+      setGwsChatSyncResult(result)
+    } catch {
+      setGwsChatSyncResult({ error: 'Failed to sync skills' })
+    } finally {
+      setGwsChatSyncing(false)
+    }
+  }, [])
+
+  const checkGWSChatAuth = useCallback(async () => {
+    setGwsChatChecking(true)
+    setGwsChatAuthStatus(null)
+    try {
+      const result = await agentApi.checkGWSAuthStatus()
+      setGwsChatAuthStatus(result)
+    } catch {
+      setGwsChatAuthStatus({ configured: false, error: 'Failed to connect to backend' })
+    } finally {
+      setGwsChatChecking(false)
+    }
+  }, [])
+
 
   // File context operations (always update tab config)
   const removeFileFromContext = useCallback((path: string) => {
@@ -362,9 +427,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, setTabConfig])
 
   const {
-    enabledServers: availableServers,
+    toolList: mcpToolList,
     setChatSelectedServers
   } = useMCPStore()
+
+  const availableServers = useMemo(
+    () => [...new Set(mcpToolList.filter(t => t.status === 'ok').map(t => t.server).filter((s): s is string => typeof s === 'string' && !DEDICATED_MCP_SERVERS.has(s)))],
+    [mcpToolList]
+  )
 
   const setEnableWorkspaceAccess = useCallback((enabled: boolean) => {
     if (activeTabId) {
@@ -375,6 +445,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
   }, [activeTabId, setTabConfig, setWorkspaceMinimized])
+
+  const setEnableImageGeneration = useCallback((enabled: boolean) => {
+    if (activeTabId) {
+      setTabConfig(activeTabId, { enableImageGeneration: enabled })
+    }
+  }, [activeTabId, setTabConfig])
 
   const setBrowserMode = useCallback((mode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => {
     if (!activeTabId) return
@@ -528,6 +604,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [])
 
+  // Auto-check GWS auth when popup opens
+  useEffect(() => {
+    if (showGWSPopup && !gwsChatAuthStatus && !gwsChatChecking) {
+      checkGWSChatAuth()
+    }
+  }, [showGWSPopup]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
   
@@ -537,6 +620,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Use tab-specific servers - memoize to prevent re-renders
   const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
   
+  const gwsEnabled = useMemo(() => manualSelectedServers.includes('gws'), [manualSelectedServers])
+
+  const toggleGWSServer = useCallback(() => {
+    if (!activeTabId) return
+    const currentServers = tabConfig?.selectedServers || []
+    const newServers = gwsEnabled
+      ? currentServers.filter(s => s !== 'gws')
+      : [...currentServers, 'gws']
+    setTabConfig(activeTabId, { selectedServers: newServers })
+    setChatSelectedServers(newServers)
+  }, [activeTabId, gwsEnabled, tabConfig?.selectedServers, setTabConfig, setChatSelectedServers])
+
   // Server operations (always update tab config AND sync to chat-specific MCP store)
   // This ensures new chat tabs inherit the user's manual server selection
   // Browser servers are mutually exclusive — only one can be active at a time
@@ -620,10 +715,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   useEffect(() => {
     if (selectedModeCategory !== 'chat' || !activeTabId) return
     const realServers = manualSelectedServers.filter(s => s !== 'NO_SERVERS')
-    if (realServers.length > 2 && !useToolSearchMode) {
+    const totalTools = mcpToolList
+      .filter(t => t.status === 'ok' && t.server && realServers.includes(t.server))
+      .reduce((sum, t) => sum + (t.toolsEnabled || 0), 0)
+    if (totalTools >= 10 && !useToolSearchMode) {
       setTabConfig(activeTabId, { useToolSearchMode: true })
     }
-  }, [manualSelectedServers, selectedModeCategory, activeTabId, useToolSearchMode, setTabConfig])
+  }, [manualSelectedServers, mcpToolList, selectedModeCategory, activeTabId, useToolSearchMode, setTabConfig])
 
   // Use tab-specific skills - memoize to prevent re-renders
   const selectedSkills = useMemo(() => tabConfig?.selectedSkills || [], [tabConfig?.selectedSkills])
@@ -1540,13 +1638,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
         
         if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '' })
+          setTabConfig(activeTabId, { inputText: '', selectedPlanFolder: undefined })
         }
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
         // Queue message when streaming - clear input (both local and store)
         setLocalInputText('')
-        
+
         // Clear any pending store sync to prevent overwriting the empty state
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)
@@ -1644,12 +1742,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: '' })
+        setTabConfig(activeTabId, { inputText: '', selectedPlanFolder: undefined })
       }
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
       setLocalInputText('')
-      
+
       // Clear any pending store sync to prevent overwriting the empty state
       if (syncToStoreTimeoutRef.current) {
         clearTimeout(syncToStoreTimeoutRef.current)
@@ -1789,6 +1887,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       scrollToFile(file.filepath)
     }
 
+    // If the selected file is a direct Plans/ subfolder, pre-seed it as the plan to reuse
+    const isPlanFolder = file.type === 'folder' && /^Plans\/[^/]+$/.test(file.filepath)
+    if (isPlanFolder && activeTabId) {
+      setTabConfig(activeTabId, { selectedPlanFolder: file.filepath })
+      // Write .last_used timestamp so Plans Manager can show when this plan was last accessed
+      agentApi.updatePlannerFile(`${file.filepath}/.last_used`, new Date().toISOString()).catch(() => {})
+    }
+
     // Focus back to textarea and position cursor after the space
     setTimeout(() => {
       if (textareaRef.current) {
@@ -1797,7 +1903,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
-  }, [inputText, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile, activeTabId])
+  }, [inputText, atPosition, fileSearchQuery, chatFileContext, addFileToContext, scrollToFile, activeTabId, setTabConfig])
 
   const handleCommandDialogClose = useCallback(() => {
     setShowCommandDialog(false)
@@ -2089,6 +2195,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         </div>
       )}
 
+      {/* Selected Plan Badge (multi-agent mode) */}
+      {isMultiAgentMode && tabConfig?.selectedPlanFolder && (
+        <div className="px-4">
+          <div className="flex items-center gap-1.5 border rounded px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700">
+            <GitBranch className="w-3 h-3 text-blue-500 dark:text-blue-400 flex-shrink-0" />
+            <span className="text-xs text-blue-700 dark:text-blue-300">
+              Continuing plan: <span className="font-mono font-semibold">{tabConfig.selectedPlanFolder.split('/').pop()}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => { if (activeTabId) setTabConfig(activeTabId, { selectedPlanFolder: undefined }) }}
+              className="ml-auto p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
+              title="Clear plan selection"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Input Form */}
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">
         <form onSubmit={handleSubmit} className="space-y-2">
@@ -2134,25 +2260,67 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             />
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
-                
+
+                {/* Tier config chip — plan/multi-agent mode only, always first */}
+                {effectiveDelegationMode === 'plan' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setShowTierModal(true)}
+                        className="group flex items-center gap-1 p-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all duration-200"
+                      >
+                        <Layers className="w-3.5 h-3.5 flex-shrink-0" />
+                        {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                          <span className="flex items-center gap-1 max-w-0 overflow-hidden opacity-0 group-hover:max-w-[160px] group-hover:opacity-100 transition-all duration-200 whitespace-nowrap">
+                            {delegationTierConfig.main && (
+                              <span className="flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                <TierProviderDot provider={delegationTierConfig.main.provider} />
+                                Main
+                              </span>
+                            )}
+                            {delegationTierConfig.high && (
+                              <span className="flex items-center gap-0.5 text-[10px] font-medium">
+                                <TierProviderDot provider={delegationTierConfig.high.provider} />
+                                H
+                              </span>
+                            )}
+                            {delegationTierConfig.medium && (
+                              <span className="flex items-center gap-0.5 text-[10px] font-medium">
+                                <TierProviderDot provider={delegationTierConfig.medium.provider} />
+                                M
+                              </span>
+                            )}
+                            {delegationTierConfig.low && (
+                              <span className="flex items-center gap-0.5 text-[10px] font-medium">
+                                <TierProviderDot provider={delegationTierConfig.low.provider} />
+                                L
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="max-w-0 overflow-hidden opacity-0 group-hover:max-w-[40px] group-hover:opacity-100 transition-all duration-200 text-[10px] font-medium whitespace-nowrap">Tiers</span>
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
+                        <div className="space-y-1 text-xs">
+                          {delegationTierConfig.main && <p>Main: {shortModelName(delegationTierConfig.main.model_id)} ({delegationTierConfig.main.provider})</p>}
+                          {delegationTierConfig.high && <p>High: {shortModelName(delegationTierConfig.high.model_id)} ({delegationTierConfig.high.provider})</p>}
+                          {delegationTierConfig.medium && <p>Med: {shortModelName(delegationTierConfig.medium.model_id)} ({delegationTierConfig.medium.provider})</p>}
+                          {delegationTierConfig.low && <p>Low: {shortModelName(delegationTierConfig.low.model_id)} ({delegationTierConfig.low.provider})</p>}
+                        </div>
+                      ) : (
+                        <p>Click to configure delegation tier models</p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
                 {/* Agent Mode Selector - Only show when no preset is active */}
                 {!chatActivePreset && (
-                  effectiveDelegationMode === 'plan' ? (
-                    /* In plan mode, agent auto-picks tool mode per task */
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-0.5 px-2 py-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 cursor-default">
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <Code2 className="w-3.5 h-3.5" />
-                          <Search className="w-3.5 h-3.5" />
-                          <span className="text-[10px] font-medium ml-0.5">Auto</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="top">
-                        <p>Plan mode: agent picks tool mode per task (simple, code exec, tool search)</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : isClaudeCode ? (
+                  effectiveDelegationMode === 'plan' ? null : isClaudeCode ? (
                     /* Claude Code always uses code execution mode */
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -2265,62 +2433,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         )}
                       </>
 
-                    {/* Hide LLM dropdown in plan/multi-agent mode - show tier summary chip instead */}
-                    {effectiveDelegationMode === 'plan' ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            onClick={() => setShowTierModal(true)}
-                            className="flex items-center gap-1.5 px-2 py-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors text-xs"
-                          >
-                            <Layers className="w-3.5 h-3.5 flex-shrink-0" />
-                            {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
-                              <span className="flex items-center gap-1 font-medium">
-                                {delegationTierConfig.main && (
-                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-800/40 text-amber-700 dark:text-amber-300 text-[10px] leading-none">
-                                    <TierProviderDot provider={delegationTierConfig.main.provider} />
-                                    Main
-                                  </span>
-                                )}
-                                {delegationTierConfig.high && (
-                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
-                                    <TierProviderDot provider={delegationTierConfig.high.provider} />
-                                    H
-                                  </span>
-                                )}
-                                {delegationTierConfig.medium && (
-                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
-                                    <TierProviderDot provider={delegationTierConfig.medium.provider} />
-                                    M
-                                  </span>
-                                )}
-                                {delegationTierConfig.low && (
-                                  <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-800/40 text-[10px] leading-none">
-                                    <TierProviderDot provider={delegationTierConfig.low.provider} />
-                                    L
-                                  </span>
-                                )}
-                              </span>
-                            ) : (
-                              <span className="font-medium">Tiers</span>
-                            )}
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">
-                          {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
-                            <div className="space-y-1 text-xs">
-                              {delegationTierConfig.main && <p>Main: {shortModelName(delegationTierConfig.main.model_id)} ({delegationTierConfig.main.provider})</p>}
-                              {delegationTierConfig.high && <p>High: {shortModelName(delegationTierConfig.high.model_id)} ({delegationTierConfig.high.provider})</p>}
-                              {delegationTierConfig.medium && <p>Med: {shortModelName(delegationTierConfig.medium.model_id)} ({delegationTierConfig.medium.provider})</p>}
-                              {delegationTierConfig.low && <p>Low: {shortModelName(delegationTierConfig.low.model_id)} ({delegationTierConfig.low.provider})</p>}
-                            </div>
-                          ) : (
-                            <p>Click to configure delegation tier models</p>
-                          )}
-                        </TooltipContent>
-                      </Tooltip>
-                    ) : (
+                    {effectiveDelegationMode !== 'plan' && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -2428,7 +2541,74 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </span>
                       )}
                     </button>}
+
+                    {/* Google Workspace Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setShowGWSPopup(true)}
+                      disabled={isStreaming || isSummarizing}
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        gwsEnabled
+                          ? gwsServerStatus === 'ok'
+                            ? 'bg-green-900/40 border-green-600 text-green-400'
+                            : gwsServerStatus === 'error'
+                              ? 'bg-red-900/40 border-red-600 text-red-400'
+                              : gwsServerStatus === 'loading'
+                                ? 'bg-yellow-900/40 border-yellow-600 text-yellow-400'
+                                : 'bg-blue-900/40 border-blue-600 text-blue-400'
+                          : 'bg-gray-800 border-gray-600 text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <svg viewBox="0 0 24 24" className="w-4 h-4 flex-shrink-0" fill="none">
+                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="currentColor" opacity="0.9"/>
+                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="currentColor" opacity="0.7"/>
+                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="currentColor" opacity="0.8"/>
+                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="currentColor" opacity="0.85"/>
+                      </svg>
+                      {gwsEnabled ? (
+                        <span className="text-[10px] font-semibold px-1 rounded bg-white/10">GWS</span>
+                      ) : (
+                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[40px] transition-all duration-200">
+                          GWS
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Image Generation Toggle — opens config modal directly */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!enableImageGeneration) {
+                          setEnableImageGeneration(true)
+                        }
+                        setShowImageGenConfig(true)
+                      }}
+                      disabled={isStreaming || isSummarizing}
+                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
+                        enableImageGeneration
+                          ? 'bg-purple-900/40 border-purple-600 text-purple-400'
+                          : 'bg-gray-800 border-gray-600 text-gray-500'
+                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                    >
+                      <ImagePlus className="w-4 h-4 flex-shrink-0" />
+                      {enableImageGeneration ? (
+                        <span className="text-[10px] font-semibold px-1 rounded bg-purple-800/60 text-purple-200">IMG</span>
+                      ) : (
+                        <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[60px] transition-all duration-200">
+                          Image Gen
+                        </span>
+                      )}
+                    </button>
+
                   </div>
+                )}
+
+                {/* Image Generation Config Modal */}
+                {showImageGenConfig && (
+                  <ImageGenerationConfigModal
+                    onClose={() => setShowImageGenConfig(false)}
+                    onDisable={() => setEnableImageGeneration(false)}
+                  />
                 )}
 
                 {/* Browser Access Configuration Popup */}
@@ -2724,6 +2904,249 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {browserMode === 'cdp' && cdpConnected !== true ? (cdpChecking ? 'Checking...' : 'Connect Chrome First') : 'Done'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Google Workspace Popup */}
+                {showGWSPopup && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowGWSPopup(false)}>
+                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[480px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none">
+                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                          </svg>
+                          <h3 className="text-base font-semibold text-white">Google Workspace</h3>
+                          <a
+                            href="https://github.com/googleworkspace/cli"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                          >
+                            @googleworkspace/cli ↗
+                          </a>
+                        </div>
+                        <button onClick={() => setShowGWSPopup(false)} className="text-gray-400 hover:text-gray-200 transition-colors">
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+
+                      <div className="px-5 py-4 space-y-4">
+                        {/* Enable/disable toggle */}
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="text-sm font-medium text-gray-100">gws MCP Server</div>
+                            <div className="text-xs text-gray-400 mt-0.5">Drive · Gmail · Calendar · Docs · Sheets · Slides</div>
+                          </div>
+                          <label className={`relative inline-flex items-center ${gwsEnabled || gwsChatAuthStatus?.configured ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}>
+                            <input
+                              type="checkbox"
+                              checked={gwsEnabled}
+                              onChange={toggleGWSServer}
+                              disabled={!gwsEnabled && !gwsChatAuthStatus?.configured}
+                              className="sr-only peer"
+                            />
+                            <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                          </label>
+                        </div>
+
+                        {/* Install prompt when gws not found */}
+                        {gwsServerStatus === 'not_found' && (
+                          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 space-y-1.5">
+                            <p className="text-xs font-medium text-amber-300">gws is not installed</p>
+                            <p className="text-xs text-amber-400/80">
+                              Install it from{' '}
+                              <a
+                                href="https://github.com/googleworkspace/cli"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
+                              >
+                                github.com/googleworkspace/cli
+                              </a>
+                              , then run:
+                            </p>
+                            <code className="block text-xs font-mono bg-gray-900 text-green-400 px-2 py-1 rounded select-all">
+                              npm install -g @googleworkspace/cli
+                            </code>
+                          </div>
+                        )}
+
+                        {/* Auth gate hint */}
+                        {gwsServerStatus !== 'not_found' && !gwsEnabled && !gwsChatAuthStatus?.configured && (
+                          <p className="text-xs text-amber-400">
+                            {gwsChatChecking ? 'Checking auth...' : 'Auth check required before enabling'}
+                          </p>
+                        )}
+
+                        {/* Server status */}
+                        {gwsEnabled && (
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                              gwsServerStatus === 'ok' ? 'bg-green-500' :
+                              gwsServerStatus === 'error' ? 'bg-red-500' :
+                              gwsServerStatus === 'loading' ? 'bg-yellow-400 animate-pulse' :
+                              'bg-gray-500'
+                            }`} />
+                            <span className="text-xs text-gray-400">
+                              {gwsServerStatus === 'ok' ? 'Server connected' :
+                               gwsServerStatus === 'error' ? 'Server error' :
+                               gwsServerStatus === 'loading' ? 'Connecting...' :
+                               'Server not found — run: npm install -g @googleworkspace/cli'}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Auth status */}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={checkGWSChatAuth}
+                              disabled={gwsChatChecking}
+                              className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-200 disabled:opacity-50 transition-colors"
+                            >
+                              {gwsChatChecking ? 'Checking...' : 'Check Auth Status'}
+                            </button>
+                            {gwsChatAuthStatus && (
+                              gwsChatAuthStatus.configured ? (
+                                <div className="flex items-center gap-1.5">
+                                  <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                                  <span className="text-xs text-green-400">
+                                    Auth OK · {gwsChatAuthStatus.enabled_api_count ?? 0} APIs
+                                    {gwsChatAuthStatus.auth_method ? ` (${gwsChatAuthStatus.auth_method})` : ''}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5">
+                                  <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                                  <span className="text-xs text-red-400">{gwsChatAuthStatus.error ?? 'Not configured'}</span>
+                                </div>
+                              )
+                            )}
+                          </div>
+                          {!gwsChatAuthStatus && (
+                            <p className="text-xs text-gray-500">Run <code className="text-gray-400">gws auth login</code> to authenticate</p>
+                          )}
+                        </div>
+
+                        {/* Skills */}
+                        <div className="border-t border-gray-700 pt-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="text-sm font-medium text-gray-100">Skills</div>
+                              <div className="text-xs text-gray-400 mt-0.5">
+                                Sync all gws-* skills from{' '}
+                                <a
+                                  href="https://github.com/googleworkspace/cli/tree/main/skills"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
+                                >
+                                  github.com/googleworkspace/cli
+                                </a>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={syncGWSChatSkills}
+                              disabled={gwsChatSyncing}
+                              className="ml-3 flex-shrink-0 px-3 py-1.5 text-xs bg-blue-700 hover:bg-blue-600 disabled:opacity-50 text-white rounded transition-colors"
+                            >
+                              {gwsChatSyncing ? 'Syncing...' : 'Sync from GitHub'}
+                            </button>
+                          </div>
+                          {gwsChatSyncResult && (
+                            gwsChatSyncResult.error ? (
+                              <p className="text-xs text-red-400">{gwsChatSyncResult.error}</p>
+                            ) : (
+                              <p className="text-xs text-green-400">
+                                Synced {gwsChatSyncResult.synced} skill{gwsChatSyncResult.synced !== 1 ? 's' : ''}
+                                {gwsChatSyncResult.failed?.length ? ` · ${gwsChatSyncResult.failed.length} failed` : ''}
+                              </p>
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end gap-2 px-5 py-3 border-t border-gray-700">
+                        <button
+                          type="button"
+                          onClick={() => { if (gwsEnabled) toggleGWSServer(); setShowGWSPopup(false) }}
+                          className="px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors"
+                        >
+                          Disable GWS
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowGWSPopup(false)}
+                          className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reasoning Level Popup */}
+                {showReasoningPopup && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowReasoningPopup(false)}>
+                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[320px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <Bot className="w-5 h-5 text-blue-400" />
+                          <h3 className="text-base font-semibold text-white">Reasoning Level</h3>
+                        </div>
+                        <button onClick={() => setShowReasoningPopup(false)} className="text-gray-400 hover:text-gray-200 transition-colors">
+                          <X className="w-5 h-5" />
+                        </button>
+                      </div>
+                      <div className="px-5 py-4 space-y-2">
+                        <p className="text-xs text-gray-400 mb-3">Sets the default reasoning effort for delegated sub-agent tasks.</p>
+                        {([
+                          { level: 'high',   label: 'High',   desc: 'Deep thinking — complex reasoning, research, planning',   activeClass: 'border-orange-500 bg-orange-950/40', dotClass: 'bg-orange-500' },
+                          { level: 'medium', label: 'Medium', desc: 'Balanced — good for most tasks',                          activeClass: 'border-yellow-500 bg-yellow-950/40', dotClass: 'bg-yellow-400' },
+                          { level: 'low',    label: 'Low',    desc: 'Fast — simple lookups, straightforward actions',          activeClass: 'border-green-500 bg-green-950/40',  dotClass: 'bg-green-500'  },
+                        ] as const).map(({ level, label, desc, activeClass, dotClass }) => (
+                          <label key={level} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                            defaultReasoningLevel === level ? activeClass : 'border-gray-700 hover:bg-gray-800'
+                          }`}>
+                            <input
+                              type="radio"
+                              name="reasoningLevel"
+                              checked={defaultReasoningLevel === level}
+                              onChange={() => setDefaultReasoningLevel(level)}
+                              className="sr-only"
+                            />
+                            <div className={`w-3 h-3 rounded-full mt-0.5 flex-shrink-0 ${defaultReasoningLevel === level ? dotClass : 'bg-gray-600'}`} />
+                            <div>
+                              <div className="text-sm font-medium text-gray-100">{label}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{desc}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex justify-between gap-2 px-5 py-3 border-t border-gray-700">
+                        <button
+                          type="button"
+                          onClick={() => { setDefaultReasoningLevel(null); setShowReasoningPopup(false) }}
+                          className="px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors"
+                        >
+                          Clear (Auto)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowReasoningPopup(false)}
+                          className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white rounded-md transition-colors"
+                        >
+                          Done
                         </button>
                       </div>
                     </div>

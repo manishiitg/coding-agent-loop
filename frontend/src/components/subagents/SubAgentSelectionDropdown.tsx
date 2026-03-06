@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Bot, Check, HelpCircle } from 'lucide-react';
+import { Bot, Check, HelpCircle, Search } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/checkbox';
 import { Card } from '../ui/Card';
@@ -28,6 +28,7 @@ export default function SubAgentSelectionDropdown({
   const [subagents, setSubAgents] = useState<SubAgent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Load templates when dropdown opens
   useEffect(() => {
@@ -59,6 +60,13 @@ export default function SubAgentSelectionDropdown({
       return `${selectedSubAgents.length} sub-agents`;
     }
   };
+
+  const filteredSubAgents = searchQuery.trim()
+    ? subagents.filter(s =>
+        s.frontmatter.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.frontmatter.description.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : subagents;
 
   const isAllSelected = subagents.length > 0 && selectedSubAgents.length === subagents.length;
   const isNoneSelected = selectedSubAgents.length === 0;
@@ -94,7 +102,7 @@ export default function SubAgentSelectionDropdown({
             {/* Backdrop */}
             <div
               className="fixed inset-0 z-40"
-              onClick={() => setIsOpen(false)}
+              onClick={() => { setIsOpen(false); setSearchQuery(''); }}
             />
 
             {/* Dropdown */}
@@ -120,7 +128,7 @@ export default function SubAgentSelectionDropdown({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setIsOpen(false)}
+                      onClick={() => { setIsOpen(false); setSearchQuery(''); }}
                       className="h-6 w-6 p-0 text-gray-400 hover:text-gray-600"
                     >
                       ✕
@@ -169,14 +177,28 @@ export default function SubAgentSelectionDropdown({
                     </Button>
                   </div>
 
+                  {/* Search */}
+                  {!isLoading && subagents.length > 0 && (
+                    <div className="relative">
+                      <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+                      <input
+                        type="text"
+                        placeholder="Search sub-agents..."
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        className="w-full pl-7 pr-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  )}
+
                   {/* Templates List */}
                   <div className="max-h-64 overflow-y-auto space-y-1 border border-gray-200 dark:border-gray-600 rounded-md p-2 bg-gray-50 dark:bg-gray-900">
                     {isLoading ? (
                       <div className="text-sm text-gray-500 text-center py-4">
                         Loading templates...
                       </div>
-                    ) : subagents.length > 0 ? (
-                      subagents.map((sa) => (
+                    ) : filteredSubAgents.length > 0 ? (
+                      filteredSubAgents.map((sa) => (
                         <div key={sa.folder_name} className="flex items-start space-x-2 group p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer">
                           <Checkbox
                             id={`subagent-${sa.folder_name}`}
@@ -215,6 +237,10 @@ export default function SubAgentSelectionDropdown({
                           </div>
                         </div>
                       ))
+                    ) : subagents.length > 0 ? (
+                      <div className="text-sm text-gray-500 text-center py-4">
+                        No sub-agents match "{searchQuery}"
+                      </div>
                     ) : (
                       <div className="text-sm text-gray-500 text-center py-4">
                         No sub-agent templates available. Create one via /build-subagent.

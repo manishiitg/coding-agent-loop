@@ -289,17 +289,13 @@ else
 fi
 
 # Build mcpbridge binary (required for Gemini CLI MCP bridge)
-MCPBRIDGE_SRC="${SCRIPT_DIR}/../../mcpagent/cmd/mcpbridge"
-if [ -d "$MCPBRIDGE_SRC" ]; then
-    echo "🔨 Building mcpbridge binary..."
-    go build -o ~/go/bin/mcpbridge "$MCPBRIDGE_SRC" 2>&1
-    if [ $? -eq 0 ]; then
-        echo "✅ mcpbridge binary built: ~/go/bin/mcpbridge"
-    else
-        echo "⚠️  Failed to build mcpbridge (Gemini CLI MCP bridge will not work)"
-    fi
+# Install from the published module (avoids go.work workspace constraint)
+echo "🔨 Installing mcpbridge binary from published release..."
+GOWORK=off go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest 2>&1
+if [ $? -eq 0 ]; then
+    echo "✅ mcpbridge binary installed: $(which mcpbridge || echo ~/go/bin/mcpbridge)"
 else
-    echo "⚠️  mcpbridge source not found at $MCPBRIDGE_SRC (skipping)"
+    echo "⚠️  Failed to install mcpbridge (Gemini CLI MCP bridge will not work)"
 fi
 
 # Run the server with all the enhanced configuration

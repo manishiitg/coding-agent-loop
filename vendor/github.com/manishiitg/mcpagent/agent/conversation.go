@@ -1,0 +1,1906 @@
+// conversation.go
+//
+// This file contains the synchronous conversation logic for the Agent, including Ask, AskWithHistory, and generateContentWithRetry.
+// These functions handle multi-turn LLM conversations, tool call execution, and error handling.
+//
+// Exported:
+//   - Ask
+//   - AskWithHistory
+//   - generateContentWithRetry
+
+package mcpagent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
+	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpcache"
+	"github.com/manishiitg/mcpagent/mcpclient"
+	"github.com/manishiitg/mcpagent/observability"
+
+	"github.com/mark3labs/mcp-go/mcp"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+)
+
+// Generic tool execution context keys
+// These are injected into context for all tool executions to provide metadata
+// Tools can extract these values if needed (e.g., workspace tools for event emission)
+// Using string keys ensures compatibility across packages
+const (
+	// ToolExecutionAgentKey is the context key for the agent executing the tool
+	// Tools can use this to emit events or access agent functionality
+	ToolExecutionAgentKey = "tool_execution_agent"
+	// ToolExecutionTurnKey is the context key for the current conversation turn
+	ToolExecutionTurnKey = "tool_execution_turn"
+	// ToolExecutionServerKey is the context key for the server name providing the tool
+	ToolExecutionServerKey = "tool_execution_server"
+	// ToolExecutionLLMConfigKey is the context key for the agent's primary LLM configuration.
+	// Tools like read_image use this to create a dedicated LLM client for analysis.
+	// Value type: mcpagent.LLMModel (Provider, ModelID, APIKey, Region).
+	ToolExecutionLLMConfigKey = "tool_execution_llm_config"
+)
+
+// getLogger returns the agent's logger (guaranteed to be non-nil)
+func getLogger(a *Agent) loggerv2.Logger {
+	// Agent logger is guaranteed to be non-nil in the new architecture
+	return a.Logger
+}
+
+// isVirtualTool checks if a tool name is a virtual tool
+func isVirtualTool(toolName string) bool {
+	// Check hardcoded virtual tools (includes all possible virtual tools)
+	virtualTools := []string{
+		"get_prompt", "get_resource",
+		"read_large_output", "search_large_output", "query_large_output",
+		"get_api_spec", // Code execution mode tools
+		"search_tools", "add_tool", "show_all_tools", // Tool search mode tools
+	}
+	for _, vt := range virtualTools {
+		if vt == toolName {
+			return true
+		}
+	}
+
+	// Check if it's a custom tool (this will be checked in the calling function)
+	return false
+}
+
+// getToolExecutionTimeout returns the tool execution timeout duration
+func getToolExecutionTimeout(a *Agent) time.Duration {
+	// First check if agent has a specific timeout configured
+	if a.ToolTimeout > 0 {
+		return a.ToolTimeout
+	}
+
+	// Fall back to environment variable
+	timeoutStr := os.Getenv("TOOL_EXECUTION_TIMEOUT")
+	if timeoutStr == "" {
+		return 5 * time.Minute // Default 5 minutes (changed from 10 seconds)
+	}
+
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		// Log parsing error - this function doesn't have access to agent logger
+		// so we'll just return the default without logging (or could use fmt.Printf for debugging)
+		return 5 * time.Minute // Default 5 minutes (changed from 10 seconds)
+	}
+
+	return timeout
+}
+
+// callToolWithTimeoutWrapper wraps MCP client CallTool with explicit timeout monitoring.
+// This ensures timeouts work even if the underlying library doesn't properly respect context cancellation.
+// The wrapper runs the call in a goroutine and monitors the context deadline explicitly.
+func callToolWithTimeoutWrapper(
+	ctx context.Context,
+	client mcpclient.ClientInterface,
+	toolName string,
+	args map[string]interface{},
+	logger loggerv2.Logger,
+	serverName string,
+) (*mcp.CallToolResult, error) {
+	// Get deadline from context
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline {
+		// No deadline, just call directly
+		return client.CallTool(ctx, toolName, args)
+	}
+
+	// Calculate remaining time
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return nil, context.DeadlineExceeded
+	}
+
+	// Create result channels
+	type result struct {
+		res *mcp.CallToolResult
+		err error
+	}
+	resultChan := make(chan result, 1)
+
+	// Start the call in a goroutine with proper cleanup to prevent leaks
+	// Use nested goroutine pattern to ensure this wrapper goroutine exits
+	// even if client.CallTool blocks indefinitely and doesn't respect context cancellation
+	go func() {
+		// Create a done channel to signal when the actual call completes
+		callDone := make(chan struct{})
+		var res *mcp.CallToolResult
+		var err error
+
+		// Run the actual call in an inner goroutine
+		go func() {
+			defer close(callDone)
+			res, err = client.CallTool(ctx, toolName, args)
+		}()
+
+		// Wait for either completion or context cancellation
+		select {
+		case <-callDone:
+			// Call completed - try to send result (non-blocking if context expired)
+			select {
+			case resultChan <- result{res: res, err: err}:
+				// Successfully sent result
+			case <-ctx.Done():
+				// Context expired while trying to send - exit without blocking
+				// This prevents goroutine leak if function already returned
+				return
+			}
+		case <-ctx.Done():
+			// Context expired before call completed - exit immediately
+			// Note: The inner client.CallTool goroutine may still be running,
+			// but at least this wrapper goroutine exits cleanly
+			return
+		}
+	}()
+
+	startTime := time.Now()
+
+	// Set up periodic progress logging for long-running calls (every 30 seconds)
+	// Use time.AfterFunc instead of ticker for better efficiency - only schedules timers when needed
+	// The context deadline will handle timeout automatically via ctx.Done()
+	done := make(chan struct{})
+	var nextLogTimer *time.Timer
+	var scheduleNextLog func()
+
+	scheduleNextLog = func() {
+		nextLogTimer = time.AfterFunc(30*time.Second, func() {
+			select {
+			case <-done:
+				// Call already completed, don't log or reschedule
+				return
+			default:
+				// Still waiting, log progress and reschedule
+				elapsed := time.Since(startTime)
+				remaining := time.Until(deadline)
+				logger.Debug("🔧 [TOOL_CALL] Still waiting for tool response",
+					loggerv2.String("tool_name", toolName),
+					loggerv2.String("server_name", serverName),
+					loggerv2.String("elapsed", elapsed.String()),
+					loggerv2.String("remaining", remaining.String()))
+				// Reschedule next log if still waiting
+				scheduleNextLog()
+			}
+		})
+	}
+
+	// Schedule the first progress log
+	scheduleNextLog()
+	defer func() {
+		close(done)
+		if nextLogTimer != nil {
+			nextLogTimer.Stop()
+		}
+	}()
+
+	for {
+		select {
+		case res := <-resultChan:
+			// Call completed
+			return res.res, res.err
+
+		case <-ctx.Done():
+			// Context cancelled or timed out
+			logger.Warn("🔧 [TOOL_TIMEOUT] Context cancelled/timed out while waiting for tool call",
+				loggerv2.String("tool_name", toolName),
+				loggerv2.String("server_name", serverName),
+				loggerv2.String("elapsed", time.Since(startTime).String()),
+				loggerv2.Error(ctx.Err()))
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// ensureSystemPrompt ensures that the system prompt is included in the messages
+func ensureSystemPrompt(a *Agent, messages []llmtypes.MessageContent) []llmtypes.MessageContent {
+	// Always use the agent's current system prompt — it reflects the latest mode
+	// (code execution, tool search, etc.) which may differ from a stale system
+	// message carried over in conversation history from a previous turn.
+	systemPrompt := a.SystemPrompt
+
+	systemMessage := llmtypes.MessageContent{
+		Role:  llmtypes.ChatMessageTypeSystem,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: systemPrompt}},
+	}
+
+	// If the first message is already a system message, replace it
+	if len(messages) > 0 && messages[0].Role == llmtypes.ChatMessageTypeSystem {
+		messages[0] = systemMessage
+		return messages
+	}
+
+	// If a system message exists elsewhere in the conversation, replace it
+	for i, msg := range messages {
+		if msg.Role == llmtypes.ChatMessageTypeSystem {
+			messages[i] = systemMessage
+			return messages
+		}
+	}
+
+	// No system message found — prepend one
+	return append([]llmtypes.MessageContent{systemMessage}, messages...)
+}
+
+// AskWithHistory runs an interaction using the provided message history (multi-turn conversation).
+func AskWithHistory(a *Agent, ctx context.Context, messages []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	// Use agent's logger if available, otherwise use default
+	v2Logger := a.Logger
+	v2Logger.Debug("Entered AskWithHistory", loggerv2.Int("message_count", len(messages)))
+	if len(a.Tracers) == 0 {
+		a.Tracers = []observability.Tracer{observability.NoopTracer{}}
+	}
+	if a.MaxTurns <= 0 {
+		// Get default from environment variable, fallback to 100
+		if envVal := os.Getenv("MAX_TURNS"); envVal != "" {
+			if maxTurns, err := strconv.Atoi(envVal); err == nil && maxTurns > 0 {
+				a.MaxTurns = maxTurns
+			} else {
+				// Fallback to 100 if env var is invalid
+				a.MaxTurns = 100
+			}
+		} else {
+			// Fallback to 100 if env var not set
+			a.MaxTurns = 100
+		}
+	}
+
+	// Use the passed context for cancellation checks (not the agent's internal context)
+	// This ensures we use the context that the caller wants us to respect
+	agentCtx := ctx
+
+	// Track conversation start time for duration calculation
+	conversationStartTime := time.Now()
+	log.Printf("[LATENCY_DEBUG] AskWithHistory started | messages=%d provider=%s model=%s",
+		len(messages), a.provider, a.ModelID)
+
+	// ✅ CONTEXT-AWARE HIERARCHY: Initialize based on calling context
+	// This ensures hierarchy reflects the actual calling context
+	a.initializeHierarchyForContext(ctx)
+
+	// Ensure system prompt is included in messages
+	messages = ensureSystemPrompt(a, messages)
+
+	// NEW: Set current query for hierarchy tracking (will be set later when lastUserMessage is extracted)
+
+	// Add cache validation AFTER the agent is fully initialized
+	if len(a.Tracers) > 0 && len(a.Clients) > 0 {
+		// Debug: Log what's in the clients map
+		clientKeys := make([]string, 0, len(a.Clients))
+		for k := range a.Clients {
+			clientKeys = append(clientKeys, k)
+		}
+
+		// Get actual server information for better cache events
+		serverNames := make([]string, 0, len(a.Clients))
+		for serverName := range a.Clients {
+			serverNames = append(serverNames, serverName)
+		}
+
+		// Emit comprehensive cache validation event for all servers
+		serverStatus := make(map[string]mcpcache.ServerCacheStatus)
+		for serverName := range a.Clients {
+			serverStatus[serverName] = mcpcache.ServerCacheStatus{
+				ServerName:     serverName,
+				Status:         "validation",
+				ToolsCount:     len(a.Tools),
+				PromptsCount:   0, // Will be populated if available
+				ResourcesCount: 0, // Will be populated if available
+			}
+		}
+
+		// Emit cache operation start event through agent event system (frontend visible)
+		cacheStartEvent := events.NewCacheOperationStartEvent("all-servers", "conversation_cache_validation")
+		a.EmitTypedEvent(ctx, cacheStartEvent)
+
+		// Also emit to tracers for observability (Langfuse, etc.)
+		mcpcache.EmitComprehensiveCacheEvent(
+			a.Tracers,
+			"validation",
+			"conversation_cache_validation",
+			serverNames,
+			nil, // No result available here
+			serverStatus,
+			time.Duration(0), // No connection time available
+			time.Duration(0), // No cache time available
+			nil,              // No errors
+		)
+
+		// Debug: Log the comprehensive cache event structure
+		v2Logger.Debug("Comprehensive cache event emitted")
+
+	}
+
+	// Emit user message event for the current conversation
+	// Extract the last user message (latest turn) - this is the message from the current turn
+	// In multi-turn conversations, we want the latest user message, not the first one
+	var lastUserMessage string
+
+	// CRITICAL: The last message in the array should be the current user query
+	// Check if the last message is a user message first (most common case)
+	if len(messages) > 0 {
+		lastMsg := messages[len(messages)-1]
+		if lastMsg.Role == llmtypes.ChatMessageTypeHuman {
+			// Get the text content from the last message (current query)
+			for _, part := range lastMsg.Parts {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
+					lastUserMessage = textPart.Text
+					break
+				}
+			}
+		}
+	}
+
+	// Fallback: If last message is not a user message, iterate backwards to find the most recent user message
+	// This handles edge cases where there might be system messages or other message types at the end
+	if lastUserMessage == "" {
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == llmtypes.ChatMessageTypeHuman {
+				// Get the text content from the message
+				for _, part := range messages[i].Parts {
+					if textPart, ok := part.(llmtypes.TextContent); ok {
+						lastUserMessage = textPart.Text
+						break
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// Use last user message (latest turn) if available, otherwise use default
+	var userMessageForEvent string
+	if lastUserMessage != "" {
+		userMessageForEvent = lastUserMessage
+	} else {
+		userMessageForEvent = "conversation_with_history"
+	}
+
+	// NEW: Set the current query for hierarchy tracking
+	a.SetCurrentQuery(userMessageForEvent)
+
+	// NEW: Start agent session for hierarchy tracking
+	a.StartAgentSession(ctx)
+
+	// Emit user message event - this will appear in basic events (user_message is not in ADVANCED_MODE_EVENTS)
+	userMessageEvent := events.NewUserMessageEvent(0, userMessageForEvent, "user")
+	a.EmitTypedEvent(ctx, userMessageEvent)
+	v2Logger.Debug("🔄 Emitted user_message event for first user message",
+		loggerv2.String("content", userMessageForEvent),
+		loggerv2.Int("content_length", len(userMessageForEvent)))
+
+	serverList := strings.Join(a.servers, ",")
+	log.Printf("[LATENCY_DEBUG] T+%dms | Pre-conversation setup done (cache validation, system prompt, user message) | servers=%s",
+		time.Since(conversationStartTime).Milliseconds(), serverList)
+
+	// Events are now emitted directly to tracers (no event dispatcher)
+
+	// Generate trace ID for this conversation
+	traceID := events.GenerateEventID()
+
+	// Store trace ID for correlation
+	agentStartEventID := traceID
+
+	// Metadata for conversation tracking (used in events)
+	conversationMetadata := map[string]interface{}{
+		"system_prompt":   a.SystemPrompt,
+		"tools_count":     len(a.Tools),
+		"agent_mode":      string(a.AgentMode),
+		"model_id":        a.ModelID,
+		"provider":        string(a.provider),
+		"max_turns":       a.MaxTurns,
+		"temperature":     a.Temperature,
+		"tool_choice":     a.ToolChoice,
+		"servers":         serverList,
+		"conversation_id": fmt.Sprintf("conv_%d", time.Now().Unix()),
+		"start_time":      conversationStartTime.Format(time.RFC3339),
+	}
+
+	// Use conversationMetadata to avoid unused variable error
+	_ = conversationMetadata
+
+	// Emit conversation start event with correlation (child of agent start)
+	conversationStartEvent := events.NewConversationStartEventWithCorrelation(lastUserMessage, a.SystemPrompt, len(a.Tools), serverList, traceID, agentStartEventID)
+	a.EmitTypedEvent(ctx, conversationStartEvent)
+
+	// Store conversation start event ID for correlation
+	// conversationStartEventID := conversationStartEvent.EventID
+	// Metadata for processing tracking
+
+	// 🎯 SMART ROUTING APPLICATION - Apply smart routing with conversation context
+	// Reset filtered tools at the start of each conversation to ensure fresh evaluation
+	// In tool search mode, use getToolsForToolSearchMode() to include discovered tools
+	if a.UseToolSearchMode {
+		a.filteredTools = a.getToolsForToolSearchMode()
+		v2Logger.Debug("🔍 Tool search mode: using getToolsForToolSearchMode()",
+			loggerv2.Int("filtered_count", len(a.filteredTools)))
+	} else {
+		a.filteredTools = a.Tools // Start with all tools, then filter based on conversation context
+		v2Logger.Debug("🔧 Normal/Code execution mode: using a.Tools",
+			loggerv2.Int("tools_count", len(a.Tools)),
+			loggerv2.Int("filtered_count", len(a.filteredTools)))
+		// Log tool names for debugging
+		toolNames := make([]string, 0, len(a.Tools))
+		for _, t := range a.Tools {
+			if t.Function != nil {
+				toolNames = append(toolNames, t.Function.Name)
+			}
+		}
+		v2Logger.Debug("🔧 Available tools", loggerv2.Any("tools", toolNames))
+	}
+
+	// Only run smart routing if it was enabled during initialization
+	// Use active clients count
+	serverCount := len(a.Clients)
+
+	if a.EnableSmartRouting && len(a.Tools) > a.SmartRoutingThreshold.MaxTools && serverCount > a.SmartRoutingThreshold.MaxServers {
+		v2Logger.Warn("⚠️ SMART ROUTING IS DEPRECATED - This feature will be removed in a future version")
+		v2Logger.Info("Smart routing enabled - applying conversation-specific tool filtering")
+
+		// Get the full conversation history for context
+		conversationContext := a.buildConversationContext(messages)
+
+		filteredTools, err := a.filterToolsByRelevance(ctx, conversationContext)
+		if err != nil {
+			v2Logger.Warn("Smart routing failed, using all tools", loggerv2.Error(err))
+			a.filteredTools = a.Tools // Fallback to all tools
+		} else {
+			a.filteredTools = filteredTools
+			v2Logger.Info("Smart routing successful",
+				loggerv2.Int("filtered_tools", len(filteredTools)),
+				loggerv2.Int("total_tools", len(a.Tools)))
+		}
+	} else {
+		// Smart routing was already determined during initialization
+		v2Logger.Debug("Using pre-determined tool set",
+			loggerv2.Int("tool_count", len(a.filteredTools)),
+			loggerv2.Any("smart_routing", a.EnableSmartRouting))
+	}
+
+	// ✅ Emit system prompt event AFTER smart routing has completed
+	// This ensures the frontend sees the final system prompt with filtered servers
+	// Calculate token count for the system prompt if tool output handler is available
+	var tokenCount int
+	if a.toolOutputHandler != nil && a.ModelID != "" {
+		tokenCount = a.toolOutputHandler.CountTokensForModel(a.SystemPrompt, a.ModelID)
+	}
+	systemPromptEvent := events.NewSystemPromptEventWithTokens(a.SystemPrompt, 0, tokenCount)
+	a.EmitTypedEvent(ctx, systemPromptEvent)
+
+	// Loop detection: track recent tool calls and responses to detect infinite loops
+	loopDetector := NewToolLoopDetector(DefaultLoopDetectionThreshold)
+
+	var lastResponse string
+	for turn := 0; turn < a.MaxTurns; turn++ {
+		// NEW: Start turn for hierarchy tracking
+		a.StartTurn(ctx, turn+1)
+
+		// Extract the last message from the conversation (could be user, assistant, or tool)
+		var lastMessage string
+
+		if len(messages) > 0 {
+			lastMsg := messages[len(messages)-1]
+
+			for _, part := range lastMsg.Parts {
+				if textPart, ok := part.(llmtypes.TextContent); ok {
+					lastMessage = textPart.Text
+					break
+				} else if toolResp, ok := part.(llmtypes.ToolCallResponse); ok {
+					lastMessage = toolResp.Content
+					break
+				} else if toolCall, ok := part.(llmtypes.ToolCall); ok {
+					lastMessage = fmt.Sprintf("Tool call: %s", toolCall.FunctionCall.Name)
+					break
+				}
+			}
+		}
+
+		// If no message found, use the last user message as fallback
+		if lastMessage == "" {
+			lastMessage = lastUserMessage
+		}
+
+		// Check for context cancellation at the start of each turn
+		if agentCtx.Err() != nil {
+			v2Logger.Debug("Context cancelled at start of turn",
+				loggerv2.Int("turn", turn+1),
+				loggerv2.Error(agentCtx.Err()),
+				loggerv2.String("duration", time.Since(conversationStartTime).String()))
+			return "", messages, fmt.Errorf("conversation cancelled: %w", agentCtx.Err())
+		}
+
+		// Use the current messages that include tool results from previous turns
+		llmMessages := messages
+
+		// Check if context editing should be applied (compact stale tool responses)
+		if a.EnableContextEditing {
+			// Log messages BEFORE compaction for verification
+			beforeMessageCount := len(llmMessages)
+			toolResponseCountBefore := 0
+			for _, msg := range llmMessages {
+				if msg.Role == llmtypes.ChatMessageTypeTool {
+					toolResponseCountBefore++
+				}
+			}
+
+			var err error
+			llmMessages, err = compactStaleToolResponses(a, ctx, llmMessages, turn+1)
+			if err != nil {
+				v2Logger.Warn("Failed to compact stale tool responses, continuing with original messages",
+					loggerv2.Error(err))
+				// Continue with original messages if compaction fails
+			} else {
+				// Messages may have been modified (content replaced with file paths)
+				// Update the messages slice to use the compacted version
+				messages = llmMessages
+
+				// Log messages AFTER compaction for verification
+				afterMessageCount := len(llmMessages)
+				toolResponseCountAfter := 0
+				compactedSampleCount := 0
+				for _, msg := range llmMessages {
+					if msg.Role == llmtypes.ChatMessageTypeTool {
+						toolResponseCountAfter++
+						// Check if this message was compacted (contains file path reference)
+						for _, part := range msg.Parts {
+							if tr, ok := part.(llmtypes.ToolCallResponse); ok {
+								if strings.Contains(tr.Content, "has been saved to:") || strings.Contains(tr.Content, "tool_output_folder") {
+									compactedSampleCount++
+									// Log a sample of compacted content (first 200 chars)
+									if compactedSampleCount == 1 {
+										sampleContent := tr.Content
+										if len(sampleContent) > 200 {
+											sampleContent = sampleContent[:200] + "..."
+										}
+										v2Logger.Info("✅ [CONTEXT_EDITING] Sample compacted message content",
+											loggerv2.String("tool_name", tr.Name),
+											loggerv2.String("sample_content", sampleContent))
+									}
+								}
+							}
+						}
+					}
+				}
+
+				v2Logger.Info("📊 [CONTEXT_EDITING] Messages before LLM call - VERIFICATION",
+					loggerv2.Int("turn", turn+1),
+					loggerv2.Int("before_message_count", beforeMessageCount),
+					loggerv2.Int("after_message_count", afterMessageCount),
+					loggerv2.Int("before_tool_responses", toolResponseCountBefore),
+					loggerv2.Int("after_tool_responses", toolResponseCountAfter),
+					loggerv2.Int("compacted_samples_found", compactedSampleCount))
+			}
+		}
+
+		// Check if token-based summarization should be triggered
+		// Support both percentage-based and fixed token thresholds (OR logic)
+		if a.EnableContextSummarization && (a.SummarizeOnTokenThreshold || a.SummarizeOnFixedTokenThreshold) {
+			// Use actual context window usage from previous LLM calls (actual tokens from LLM responses)
+			// This represents the actual tokens currently in the context window from previous calls
+			// Context window is based on INPUT tokens only, not output tokens
+			a.tokenTrackingMutex.RLock()
+			currentInputTokens := a.currentContextWindowUsage // Actual from previous LLM call
+			a.tokenTrackingMutex.RUnlock()
+
+			// Get model metadata for detailed logging
+			var modelContextWindow int
+			var thresholdTokens int
+			modelID := a.ModelID
+			if modelID == "" && a.LLM != nil {
+				modelID = a.LLM.GetModelID()
+			}
+			if a.LLM != nil {
+				if metadata, err := a.LLM.GetModelMetadata(modelID); err == nil && metadata != nil {
+					modelContextWindow = metadata.ContextWindow
+					if a.SummarizeOnTokenThreshold {
+						thresholdTokens = int(float64(metadata.ContextWindow) * a.TokenThresholdPercent)
+					}
+				}
+			}
+
+			usagePercent := 0.0
+			if modelContextWindow > 0 {
+				usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+			}
+			v2Logger.Info("🔍 [CONTEXT_SUMMARIZATION] Checking token threshold",
+				loggerv2.Int("current_context_window_usage", currentInputTokens),
+				loggerv2.Int("cumulative_input_tokens", a.cumulativePromptTokens),
+				loggerv2.Int("current_input_tokens", currentInputTokens),
+				loggerv2.Int("model_context_window", modelContextWindow),
+				loggerv2.Any("summarize_on_token_threshold", a.SummarizeOnTokenThreshold),
+				loggerv2.Any("token_threshold_percent", a.TokenThresholdPercent),
+				loggerv2.Int("percentage_threshold_tokens", thresholdTokens),
+				loggerv2.Any("summarize_on_fixed_token_threshold", a.SummarizeOnFixedTokenThreshold),
+				loggerv2.Int("fixed_token_threshold", a.FixedTokenThreshold),
+				loggerv2.Any("usage_percent", usagePercent))
+
+			shouldSummarize, err := ShouldSummarizeOnTokenThreshold(a, currentInputTokens)
+			if err != nil {
+				v2Logger.Warn("Failed to check token threshold for summarization, skipping",
+					loggerv2.Error(err),
+					loggerv2.Int("current_input_tokens", currentInputTokens))
+			} else if shouldSummarize {
+				// Check cooldown period to prevent repeated summarization
+				cooldownTurns := GetSummarizationCooldownTurns(a)
+				turnsSinceLastSummarization := turn - a.lastSummarizationTurn
+				inCooldown := a.lastSummarizationTurn >= 0 && turnsSinceLastSummarization < cooldownTurns
+
+				if inCooldown {
+					v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Skipping summarization due to cooldown period",
+						loggerv2.Int("current_turn", turn),
+						loggerv2.Int("last_summarization_turn", a.lastSummarizationTurn),
+						loggerv2.Int("turns_since_last", turnsSinceLastSummarization),
+						loggerv2.Int("cooldown_turns", cooldownTurns),
+						loggerv2.Int("turns_remaining", cooldownTurns-turnsSinceLastSummarization))
+					// Skip to LLM call without summarization
+				} else {
+					usagePercent := 0.0
+					if modelContextWindow > 0 {
+						usagePercent = (float64(currentInputTokens) / float64(modelContextWindow)) * 100.0
+					}
+					v2Logger.Info("📊 [CONTEXT_SUMMARIZATION] Token threshold reached, triggering context summarization",
+						loggerv2.Int("current_turn", turn),
+						loggerv2.Int("current_input_tokens", currentInputTokens),
+						loggerv2.Int("model_context_window", modelContextWindow),
+						loggerv2.Any("summarize_on_token_threshold", a.SummarizeOnTokenThreshold),
+						loggerv2.Any("token_threshold_percent", a.TokenThresholdPercent),
+						loggerv2.Int("percentage_threshold_tokens", thresholdTokens),
+						loggerv2.Any("summarize_on_fixed_token_threshold", a.SummarizeOnFixedTokenThreshold),
+						loggerv2.Int("fixed_token_threshold", a.FixedTokenThreshold),
+						loggerv2.Any("usage_percent", usagePercent))
+
+					keepLastMessages := GetSummaryKeepLastMessages(a)
+					originalMessageCount := len(messages) // Capture before overwriting
+					summarizedMessages, err := rebuildMessagesWithSummary(a, ctx, llmMessages, keepLastMessages)
+					if err != nil {
+						v2Logger.Warn("Failed to summarize conversation history, continuing with original messages",
+							loggerv2.Error(err))
+					} else {
+						// Update llmMessages for the current turn's LLM call
+						llmMessages = summarizedMessages
+
+						// CRITICAL BUG FIX: Also update the messages array so future turns use the summarized version.
+						// Without this, the next turn would copy from the unsummarized messages array, causing
+						// context to balloon back to original size (e.g., 179 messages → 6 after summarization,
+						// but next turn starts with 179 again instead of 6). This was causing repeated
+						// summarization every 3 turns because context kept growing back to 200k+ tokens.
+						messages = summarizedMessages
+
+						v2Logger.Info("Conversation history summarized successfully",
+							loggerv2.Int("original_count", originalMessageCount),
+							loggerv2.Int("new_count", len(llmMessages)))
+
+						// Track that we just performed summarization
+						a.lastSummarizationTurn = turn
+
+						// Reset current context window usage after summarization
+						// The actual token count for the new messages (system + summary + recent)
+						// will be updated after the next LLM call with actual PromptTokens from the response.
+						// We reset to 0 here because we don't have actual values yet - the next LLM call
+						// will update it with actual tokens from the response.
+						// Note: cumulativePromptTokens and other cumulative variables are NOT reset
+						// here - they remain truly cumulative across all conversation phases for
+						// accurate pricing and overall usage reporting.
+						a.tokenTrackingMutex.Lock()
+						// Reset to 0 - will be updated with actual tokens after next LLM call
+						a.currentContextWindowUsage = 0
+						a.tokenTrackingMutex.Unlock()
+					}
+				}
+			}
+		}
+
+		// Track start time for duration calculation
+		llmStartTime := time.Now()
+		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Preparing LLM call | messages=%d tools=%d",
+			turn+1, time.Since(conversationStartTime).Milliseconds(), len(llmMessages), len(a.filteredTools))
+
+		opts := []llmtypes.CallOption{}
+		if !llm.IsO3O4Model(a.ModelID) {
+			opts = append(opts, llmtypes.WithTemperature(a.Temperature))
+		}
+
+		// Use proper LLM function calling via llmtypes.WithTools()
+		// Use the pre-filtered tools that were determined at conversation start
+		if len(a.filteredTools) > 0 {
+			// Tools are already normalized during conversion in ToolsAsLLM() and cache loading
+			// No need for extra normalization here since langchaingo bug is fixed
+			opts = append(opts, llmtypes.WithTools(a.filteredTools))
+			if toolChoiceOpt := ConvertToolChoice(a.ToolChoice); toolChoiceOpt != nil {
+				opts = append(opts, llmtypes.WithToolChoice(toolChoiceOpt))
+			}
+		}
+		toolNames := make([]string, len(a.filteredTools))
+		for i, tool := range a.filteredTools {
+			toolNames[i] = tool.Function.Name
+		}
+
+		// Emit conversation turn event RIGHT BEFORE LLM call to show exactly what's being sent to the LLM
+		// This happens after all context editing and summarization, so it reflects the actual messages sent
+
+		// Debug: Verify compacted messages are in llmMessages
+		compactedInLLMMessages := 0
+		for _, msg := range llmMessages {
+			if msg.Role == llmtypes.ChatMessageTypeTool {
+				for _, part := range msg.Parts {
+					if tr, ok := part.(llmtypes.ToolCallResponse); ok {
+						if strings.Contains(tr.Content, "has been saved to:") || strings.Contains(tr.Content, "tool_output_folder") {
+							compactedInLLMMessages++
+							// Log first compacted message as sample
+							if compactedInLLMMessages == 1 {
+								contentPreview := tr.Content
+								if len(contentPreview) > 200 {
+									contentPreview = contentPreview[:200] + "..."
+								}
+								v2Logger.Info("🔍 [CONVERSATION_TURN] Sample compacted message in llmMessages",
+									loggerv2.String("tool_name", tr.Name),
+									loggerv2.String("content_preview", contentPreview))
+							}
+						}
+					}
+				}
+			}
+		}
+		v2Logger.Info("🔍 [CONVERSATION_TURN] Messages being sent to LLM and event",
+			loggerv2.Int("total_messages", len(llmMessages)),
+			loggerv2.Int("compacted_messages_found", compactedInLLMMessages))
+
+		// PRE-FLIGHT CHECK: Verify total context doesn't exceed API limits
+		// This prevents "prompt is too long" errors from cumulative tool results
+		// Uses 80% of model context window, or 800k fallback if unknown
+		if a.toolOutputHandler != nil {
+			contextLimit := GetMaxContextTokenLimit(a.modelContextWindow)
+			exceeds, totalTokens := a.toolOutputHandler.ExceedsContextLimit(llmMessages, a.ModelID, contextLimit)
+			if exceeds {
+				v2Logger.Error("Context exceeds maximum token limit", fmt.Errorf("context overflow: %d tokens > %d limit", totalTokens, contextLimit),
+					loggerv2.Int("total_tokens", totalTokens),
+					loggerv2.Int("max_tokens", contextLimit),
+					loggerv2.Int("model_context_window", a.modelContextWindow),
+					loggerv2.Int("turn", turn+1),
+					loggerv2.Int("message_count", len(llmMessages)))
+
+				contextErrorEvent := events.NewConversationErrorEvent(
+					lastUserMessage,
+					fmt.Sprintf("context overflow: %d tokens exceeds %d limit", totalTokens, contextLimit),
+					turn+1,
+					"context_overflow",
+					time.Since(conversationStartTime),
+				)
+				a.EmitTypedEvent(ctx, contextErrorEvent)
+
+				return "", messages, fmt.Errorf("context overflow: total messages contain %d tokens which exceeds the maximum limit of %d tokens. The cumulative tool results are too large. Consider using more targeted queries, pagination, or breaking the task into smaller steps", totalTokens, contextLimit)
+			}
+		}
+
+		tools := events.ConvertToolsToToolInfo(a.filteredTools, a.toolToServer)
+		conversationTurnEvent := events.NewConversationTurnEvent(turn+1, lastMessage, len(llmMessages), false, 0, tools, llmMessages)
+		a.EmitTypedEvent(ctx, conversationTurnEvent)
+
+		// NEW: Start LLM generation for hierarchy tracking
+		a.StartLLMGeneration(ctx)
+
+		// Use GenerateContentWithRetry for robust fallback handling
+		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Sending to LLM API | provider=%s model=%s",
+			turn+1, time.Since(conversationStartTime).Milliseconds(), a.provider, a.ModelID)
+		resp, usage, genErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
+		log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | LLM API responded | llm_duration=%dms err=%v",
+			turn+1, time.Since(conversationStartTime).Milliseconds(), time.Since(llmStartTime).Milliseconds(), genErr)
+
+		// Capture Claude Code session ID for --resume on next turn
+		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+			if sid, ok := resp.Choices[0].GenerationInfo.Additional["claude_code_session_id"].(string); ok && sid != "" {
+				a.ClaudeCodeSessionID = sid
+			}
+		}
+
+		// Capture Gemini CLI session ID for --resume on next turn
+		if resp != nil && len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+			if sid, ok := resp.Choices[0].GenerationInfo.Additional["gemini_session_id"].(string); ok && sid != "" {
+				a.GeminiSessionID = sid
+			}
+			// Capture Gemini CLI project dir ID for per-invocation isolation
+			if dirID, ok := resp.Choices[0].GenerationInfo.Additional["gemini_project_dir_id"].(string); ok && dirID != "" {
+				a.GeminiProjectDirID = dirID
+				a.Logger.Info(fmt.Sprintf("[GEMINI_CLI] Captured project dir ID: %s (session: %s)", dirID, a.GeminiSessionID))
+			}
+		}
+
+		// NEW: End LLM generation for hierarchy tracking
+		if resp != nil && len(resp.Choices) > 0 {
+			// 🔧 DEBUG: Log token usage for this LLM call
+			// Use unified extraction from multi-llm-provider-go
+			cacheTokens, thoughtsTokens, reasoningTokens := extractAllTokenTypes(resp)
+			// Note: We no longer estimate tokens - we only use actual values from LLM responses
+			// The actual token count is in usage.InputTokens (from LLM response)
+
+			v2Logger.Info("🔧 [TOKEN_USAGE] LLM call token usage",
+				loggerv2.Int("turn", turn+1),
+				loggerv2.String("model", a.ModelID),
+				loggerv2.Int("input_tokens", usage.InputTokens),
+				loggerv2.Int("output_tokens", usage.OutputTokens),
+				loggerv2.Int("total_tokens", usage.TotalTokens),
+				loggerv2.Int("cache_tokens", cacheTokens),
+				loggerv2.Int("thoughts_tokens", thoughtsTokens),
+				loggerv2.Int("reasoning_tokens", reasoningTokens),
+				loggerv2.Int("tool_calls", len(resp.Choices[0].ToolCalls)),
+				loggerv2.String("duration", time.Since(llmStartTime).String()))
+
+			a.EndLLMGeneration(ctx, resp.Choices[0].Content, turn+1, len(resp.Choices[0].ToolCalls), time.Since(llmStartTime), events.UsageMetrics{
+				PromptTokens:     usage.InputTokens,
+				CompletionTokens: usage.OutputTokens,
+				TotalTokens:      usage.TotalTokens,
+			}, resp)
+		}
+
+		// Check for context cancellation after LLM generation
+		// TEMPORARILY DISABLED: This check was causing issues with HTTP requests
+		if agentCtx.Err() != nil {
+			v2Logger.Debug("Context cancelled after LLM generation (temporarily ignoring)",
+				loggerv2.Int("turn", turn+1),
+				loggerv2.Error(agentCtx.Err()),
+				loggerv2.String("duration", time.Since(conversationStartTime).String()))
+
+			// TEMPORARILY DISABLED: Don't return error, continue with the turn
+			// This allows HTTP requests to work while we investigate the root cause
+			// When re-enabled, emit ContextCancelledEvent instead of returning error:
+			// cancellationEvent := events.NewContextCancelledEvent(
+			// 	turn+1,
+			// 	agentCtx.Err().Error(),
+			// 	time.Since(conversationStartTime),
+			// )
+			// a.EmitTypedEvent(ctx, cancellationEvent)
+			// return "", messages, fmt.Errorf("conversation cancelled after LLM generation: %w", agentCtx.Err())
+		}
+
+		if genErr != nil {
+			// Check if this is an empty content error that should trigger fallback
+			if strings.Contains(genErr.Error(), "Choice.Content is empty string") ||
+				strings.Contains(genErr.Error(), "empty content error") ||
+				strings.Contains(genErr.Error(), "choice.Content is empty") {
+
+				v2Logger.Debug("Empty content error detected, triggering fallback",
+					loggerv2.Int("turn", turn+1))
+
+				// Try fallback models by calling GenerateContentWithRetry again with fallback
+				fallbackResp, fallbackUsage, fallbackErr := GenerateContentWithRetry(a, ctx, llmMessages, opts, turn)
+
+				if fallbackErr == nil && fallbackResp != nil && len(fallbackResp.Choices) > 0 &&
+					fallbackResp.Choices[0].Content != "" {
+					v2Logger.Debug("Fallback succeeded", loggerv2.Int("turn", turn+1))
+					// Use the fallback response instead
+					resp = fallbackResp
+					usage = fallbackUsage
+					genErr = nil
+				} else {
+					if fallbackErr != nil {
+						v2Logger.Error("Fallback failed with error", fallbackErr, loggerv2.Int("turn", turn+1))
+					} else if fallbackResp == nil || len(fallbackResp.Choices) == 0 {
+						v2Logger.Error("Fallback failed - no response or choices", nil, loggerv2.Int("turn", turn+1))
+					} else {
+						v2Logger.Error("Fallback failed - empty content in response", nil, loggerv2.Int("turn", turn+1))
+					}
+				}
+			}
+
+			// If still have an error after fallback attempt, emit error event and return
+			if genErr != nil {
+				// Check for context cancellation FIRST - distinguish cancellations from errors
+				if isContextCanceledError(genErr) || ctx.Err() != nil {
+					v2Logger.Debug("Context cancelled during LLM generation",
+						loggerv2.Int("turn", turn+1),
+						loggerv2.Error(genErr),
+						loggerv2.String("duration", time.Since(conversationStartTime).String()))
+					// Emit context cancellation event instead of error events
+					cancellationEvent := events.NewContextCancelledEvent(
+						turn+1,
+						genErr.Error(),
+						time.Since(conversationStartTime),
+					)
+					a.EmitTypedEvent(ctx, cancellationEvent)
+					return "", messages, fmt.Errorf("conversation cancelled: %w", genErr)
+				}
+
+				// Emit LLM generation error event using typed event data
+				llmErrorEvent := events.NewLLMGenerationErrorEvent(turn+1, a.ModelID, genErr.Error(), time.Since(llmStartTime))
+				a.EmitTypedEvent(ctx, llmErrorEvent)
+
+				// Agent processing end event removed - no longer needed
+
+				// 🎯 FIX: End the trace for error cases - replaced with event emission
+				conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, genErr.Error(), turn+1, "conversation_error", time.Since(conversationStartTime))
+				a.EmitTypedEvent(ctx, conversationErrorEvent)
+
+				return "", messages, fmt.Errorf("llm error: %w", genErr)
+			}
+		}
+		if resp == nil || resp.Choices == nil || len(resp.Choices) == 0 {
+
+			// 🎯 FIX: End the trace for error cases - replaced with event emission
+			conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "no response choices returned", turn+1, "no_choices", time.Since(conversationStartTime))
+			a.EmitTypedEvent(ctx, conversationErrorEvent)
+
+			return "", messages, fmt.Errorf("no response choices returned")
+		}
+
+		choice := resp.Choices[0]
+		lastResponse = choice.Content
+
+		// Log empty response as warning
+		if len(choice.Content) == 0 && len(choice.ToolCalls) == 0 {
+			v2Logger.Warn("LLM Response is empty", loggerv2.Int("turn", turn+1))
+		}
+
+		// LLM generation end event is already emitted by EndLLMGeneration() method above
+
+		// For ReAct agents, reasoning is finalized in ProcessChunk when completion patterns are detected
+		// No need to call FinalizeReasoning as it's handled automatically
+
+		// Token usage is already included in the LLMGenerationEndEvent above
+
+		if len(choice.ToolCalls) > 0 {
+
+			// 🔧 FIX: Separate text content and tool calls into different messages
+			// Gemini API has issues when a model message contains both TextContent and ToolCall parts.
+			// We create separate messages to avoid this issue.
+
+			// 1. If there's text content, append it as a separate AI message
+			if choice.Content != "" {
+				messages = append(messages, llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
+				})
+			}
+
+			// 2. Append tool calls as a separate AI message (without text)
+			// Include read_image in tool call message so LLM knows it called the tool
+			toolCallParts := make([]llmtypes.ContentPart, 0, len(choice.ToolCalls))
+			for _, tc := range choice.ToolCalls {
+				if tc.FunctionCall != nil {
+					toolCallParts = append(toolCallParts, tc)
+				}
+			}
+			// Add tool call message if there are any tool calls
+			if len(toolCallParts) > 0 {
+				messages = append(messages, llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: toolCallParts,
+				})
+			}
+
+			// 2. For each tool call, execute and append the tool result as a new message
+			// Use parallel execution when enabled and there are multiple tool calls
+			toolDispatchMode := "sequential"
+			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
+				toolDispatchMode = "parallel"
+			}
+			v2Logger.Info(fmt.Sprintf("⏱️  TOOL DISPATCH START - Time: %s, Count: %d, Mode: %s, Turn: %d",
+				time.Now().Format(time.RFC3339), len(choice.ToolCalls), toolDispatchMode, turn+1))
+			if a.EnableParallelToolExecution && len(choice.ToolCalls) > 1 {
+				var parallelErr error
+				messages, parallelErr = executeToolCallsParallel(ctx, a, choice.ToolCalls, messages, turn, traceID, conversationStartTime, lastUserMessage, loopDetector, agentCtx)
+				if parallelErr != nil {
+					return "", messages, parallelErr
+				}
+				// After parallel execution, continue to next turn
+				continue
+			}
+
+			// Sequential execution (default path, or single tool call)
+			for i, tc := range choice.ToolCalls {
+				if tc.FunctionCall == nil {
+					v2Logger.Warn("Tool call has nil FunctionCall", loggerv2.Int("tool_call_index", i+1))
+				}
+
+					// Determine server name for tool call events
+				serverName := a.toolToServer[tc.FunctionCall.Name]
+				if isVirtualTool(tc.FunctionCall.Name) {
+					// For get_api_spec, extract the actual server_name from arguments
+					// so error events show the correct server, making debugging easier.
+					if tc.FunctionCall.Name == "get_api_spec" && tc.FunctionCall.Arguments != "" {
+						var args map[string]interface{}
+						if err := json.Unmarshal([]byte(tc.FunctionCall.Arguments), &args); err == nil {
+							if srvName, ok := args["server_name"].(string); ok && srvName != "" {
+								serverName = srvName
+							} else {
+								serverName = "virtual-tools"
+							}
+						} else {
+							serverName = "virtual-tools"
+						}
+					} else {
+						serverName = "virtual-tools"
+					}
+				}
+
+				// Emit tool call start event using typed event data with correlation
+				toolStartEvent := events.NewToolCallStartEventWithCorrelation(turn+1, tc.FunctionCall.Name, events.ToolParams{
+					Arguments: tc.FunctionCall.Arguments,
+				}, serverName, traceID, traceID) // Using traceID for both traceID and parentID correlation
+				toolStartEvent.ToolCallID = tc.ID
+
+				a.EmitTypedEvent(ctx, toolStartEvent)
+
+				if tc.FunctionCall == nil {
+					v2Logger.Error("AskWithHistory Early return: invalid tool call: nil function call", nil)
+
+					// 🎯 FIX: End the trace for invalid tool call error - replaced with event emission
+					conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "invalid tool call: nil function call", turn+1, "invalid_tool_call", time.Since(conversationStartTime))
+					a.EmitTypedEvent(ctx, conversationErrorEvent)
+
+					return "", messages, fmt.Errorf("invalid tool call: nil function call")
+				}
+
+				// 🔧 ENHANCED: Check for empty tool name and provide feedback to LLM for self-correction
+				if tc.FunctionCall.Name == "" {
+					v2Logger.Error("AskWithHistory: Empty tool name detected in tool call", nil,
+						loggerv2.Int("turn", turn+1),
+						loggerv2.String("arguments", tc.FunctionCall.Arguments))
+
+					// Generate feedback message for empty tool name
+					feedbackMessage := generateEmptyToolNameFeedback(tc.FunctionCall.Arguments)
+
+					// Emit tool call error event for observability (after tool start event)
+					toolNameErrorEvent := events.NewToolCallErrorEvent(turn+1, "", "empty tool name", "", time.Since(conversationStartTime))
+					toolNameErrorEvent.ToolCallID = tc.ID
+					a.EmitTypedEvent(ctx, toolNameErrorEvent)
+
+					// Add feedback to conversation so LLM can correct itself
+					toolName := ""
+					if tc.FunctionCall != nil {
+						toolName = tc.FunctionCall.Name
+					}
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeTool,
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: toolName, Content: feedbackMessage}},
+					})
+
+					continue
+				}
+				args, err := mcpclient.ParseToolArguments(tc.FunctionCall.Arguments)
+				if err != nil {
+					v2Logger.Error("AskWithHistory Tool args parsing error", err)
+
+					// 🔧 ENHANCED: Instead of failing, provide feedback to LLM for self-correction
+					feedbackMessage := generateToolArgsParsingFeedback(tc.FunctionCall.Name, tc.FunctionCall.Arguments, err)
+
+					// Emit tool call error event for observability
+					toolArgsParsingErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("parse tool args: %v", err), "", time.Since(conversationStartTime))
+					toolArgsParsingErrorEvent.ToolCallID = tc.ID
+					a.EmitTypedEvent(ctx, toolArgsParsingErrorEvent)
+
+					// Add feedback to conversation so LLM can correct itself
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeTool,
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+					})
+
+					continue
+				}
+
+				// 🔧 FIX: Check custom tools FIRST before MCP client lookup
+				// Custom tools don't need MCP clients, so check them early
+				isCustomTool := false
+				if a.customTools != nil {
+					if _, exists := a.customTools[tc.FunctionCall.Name]; exists {
+						isCustomTool = true
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' identified as custom tool (customTools map has %d tools)", tc.FunctionCall.Name, len(a.customTools)))
+					} else {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not found in customTools (map has %d tools)", tc.FunctionCall.Name, len(a.customTools)))
+					}
+				} else {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] customTools map is nil for tool '%s'", tc.FunctionCall.Name))
+				}
+
+				// Check if it's a virtual tool
+				isVirtual := isVirtualTool(tc.FunctionCall.Name)
+				if isVirtual {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' identified as virtual tool", tc.FunctionCall.Name))
+				}
+
+				client := a.Client
+				if a.toolToServer != nil {
+					if mapped, ok := a.toolToServer[tc.FunctionCall.Name]; ok {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' mapped to server '%s' in toolToServer", tc.FunctionCall.Name, mapped))
+						if mapped == "custom" {
+							// Custom tool - no client needed
+							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' is a custom tool (mapped to 'custom'), skipping client lookup", tc.FunctionCall.Name))
+							isCustomTool = true // Ensure it's marked as custom
+						} else if a.Clients != nil {
+							if c, exists := a.Clients[mapped]; exists {
+								client = c
+								v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Found client for tool '%s' from server '%s'", tc.FunctionCall.Name, mapped))
+							} else {
+								v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Server '%s' mapped for tool '%s' but no client found in Clients map", mapped, tc.FunctionCall.Name))
+							}
+						}
+					} else {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not found in toolToServer mapping (map has %d entries)", tc.FunctionCall.Name, len(a.toolToServer)))
+					}
+				} else {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] toolToServer map is nil for tool '%s'", tc.FunctionCall.Name))
+				}
+
+				// Only check for client errors for non-custom tools and non-virtual tools
+				if !isCustomTool && !isVirtual && client == nil {
+					v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' requires client but none found (isCustomTool=%v, isVirtual=%v, client=nil)", tc.FunctionCall.Name, isCustomTool, isVirtual))
+					// Check if we have no active connections
+					if len(a.Clients) == 0 {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_LOOKUP] No active clients (len(a.Clients)=%d), attempting on-demand connection for tool '%s'", len(a.Clients), tc.FunctionCall.Name))
+
+						// Create connection on-demand for the specific server
+						serverName := ""
+						if a.toolToServer != nil {
+							serverName = a.toolToServer[tc.FunctionCall.Name]
+						}
+						if serverName == "" {
+							// Calculate counts for logging
+							customToolsCount := 0
+							if a.customTools != nil {
+								customToolsCount = len(a.customTools)
+							}
+							toolToServerCount := 0
+							if a.toolToServer != nil {
+								toolToServerCount = len(a.toolToServer)
+							}
+							v2Logger.Warn(fmt.Sprintf("🔧 [TOOL_LOOKUP] Tool '%s' not mapped to any server. isCustomTool=%v, isVirtual=%v, customTools has %d tools, toolToServer has %d entries",
+								tc.FunctionCall.Name, isCustomTool, isVirtual, customToolsCount, toolToServerCount))
+							v2Logger.Warn(fmt.Sprintf("[AGENT DEBUG] AskWithHistory Turn %d: Tool '%s' not mapped to any server. Providing feedback to LLM.", turn+1, tc.FunctionCall.Name))
+
+							// Generate helpful feedback instead of failing
+							feedbackMessage := fmt.Sprintf("❌ Tool '%s' is not available in this system.\n\n🔧 Available tools include:\n- get_prompt, get_resource (virtual tools)\n- read_large_output, search_large_output, query_large_output (file tools)\n- MCP server tools (check system prompt for full list)\n\n💡 Please use one of the available tools listed above.", tc.FunctionCall.Name)
+
+							// Emit tool call error event for observability
+							toolNotFoundEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, fmt.Sprintf("tool '%s' not found", tc.FunctionCall.Name), "", time.Since(conversationStartTime))
+							toolNotFoundEvent.ToolCallID = tc.ID
+							a.EmitTypedEvent(ctx, toolNotFoundEvent)
+
+							// Add feedback to conversation so LLM can correct itself
+							messages = append(messages, llmtypes.MessageContent{
+								Role:  llmtypes.ChatMessageTypeTool,
+								Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: feedbackMessage}},
+							})
+
+							continue
+						}
+
+						// Create a fresh connection for this specific server using shared function
+						onDemandClient, err := mcpcache.GetFreshConnection(ctx, serverName, a.configPath, v2Logger)
+						if err != nil {
+							v2Logger.Error("AskWithHistory Early return: failed to create on-demand connection",
+								err,
+								loggerv2.String("server", serverName))
+							conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("failed to create on-demand connection for server %s: %v", serverName, err), turn+1, "on_demand_connection_failed", time.Since(conversationStartTime))
+							a.EmitTypedEvent(ctx, conversationErrorEvent)
+							return "", messages, fmt.Errorf("failed to create on-demand connection for server %s: %w", serverName, err)
+						}
+
+						// Use the on-demand client
+						client = onDemandClient
+					} else {
+						v2Logger.Error("AskWithHistory Early return: no MCP client found for tool", nil,
+							loggerv2.String("tool", tc.FunctionCall.Name))
+
+						// 🎯 FIX: End the trace for no MCP client error - replaced with event emission
+						conversationErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("no MCP client found for tool %s", tc.FunctionCall.Name), turn+1, "no_mcp_client", time.Since(conversationStartTime))
+						a.EmitTypedEvent(ctx, conversationErrorEvent)
+
+						err := fmt.Errorf("no MCP client found for tool %s", tc.FunctionCall.Name)
+						return "", messages, err
+					}
+				}
+
+				// Check for context cancellation before tool execution
+				if agentCtx.Err() != nil {
+					v2Logger.Debug("Context cancelled before tool execution",
+						loggerv2.Int("turn", turn+1),
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.Error(agentCtx.Err()),
+						loggerv2.String("duration", time.Since(conversationStartTime).String()))
+					// Emit context cancellation event instead of just returning error
+					cancellationEvent := events.NewContextCancelledEvent(
+						turn+1,
+						fmt.Sprintf("cancelled before tool execution: %s", tc.FunctionCall.Name),
+						time.Since(conversationStartTime),
+					)
+					a.EmitTypedEvent(ctx, cancellationEvent)
+					return "", messages, fmt.Errorf("conversation cancelled before tool execution: %w", agentCtx.Err())
+				}
+
+				// Create timeout context for tool execution
+				// Check if this is a custom tool with a per-tool timeout
+				toolTimeout := getToolExecutionTimeout(a)
+				hasNoTimeout := false
+				if isCustomTool {
+					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists && customTool.Timeout != -1 {
+						if customTool.Timeout == 0 {
+							// No timeout - tool runs indefinitely
+							hasNoTimeout = true
+							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has NO timeout (runs indefinitely)",
+								loggerv2.String("tool_name", tc.FunctionCall.Name))
+						} else if customTool.Timeout > 0 {
+							// Custom per-tool timeout
+							toolTimeout = customTool.Timeout
+							v2Logger.Debug("🔧 [TOOL_TIMEOUT] Custom tool has per-tool timeout",
+								loggerv2.String("tool_name", tc.FunctionCall.Name),
+								loggerv2.String("timeout", customTool.Timeout.String()))
+						}
+					}
+				}
+
+				var toolCtx context.Context
+				var cancel context.CancelFunc
+				if hasNoTimeout {
+					// No timeout - use the parent context directly (will run until agent context is cancelled)
+					toolCtx = ctx
+					cancel = func() {} // No-op cancel
+				} else {
+					toolCtx, cancel = context.WithTimeout(ctx, toolTimeout)
+				}
+				defer cancel()
+
+				startTime := time.Now()
+				v2Logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION START - Time: %s, Tool: %s, Turn: %d",
+					startTime.Format(time.RFC3339), tc.FunctionCall.Name, turn+1))
+
+				// 🔧 DEBUG: Log tool call with arguments
+				toolType := "MCP"
+				if isVirtualTool(tc.FunctionCall.Name) {
+					toolType = "virtual"
+				} else if isCustomTool {
+					toolType = "custom"
+				}
+				argsJSON, _ := json.Marshal(args)
+				timeoutStr := toolTimeout.String()
+				if hasNoTimeout {
+					timeoutStr = "none (indefinite)"
+				}
+				v2Logger.Debug("🔧 [TOOL_CALL] Tool called",
+					loggerv2.String("tool_name", tc.FunctionCall.Name),
+					loggerv2.String("tool_type", toolType),
+					loggerv2.String("server_name", serverName),
+					loggerv2.String("tool_call_id", tc.ID),
+					loggerv2.Int("turn", turn+1),
+					loggerv2.String("arguments", string(argsJSON)),
+					loggerv2.String("timeout", timeoutStr))
+
+				// Add cache hit event during tool execution to show cached connection usage
+				if len(a.Tracers) > 0 && serverName != "" && serverName != "virtual-tools" {
+					// Emit connection cache hit event to show we're using cached MCP server connection
+					// Note: We do NOT cache tool execution results - only server connections
+					connectionCacheHitEvent := events.NewCacheHitEvent(serverName, fmt.Sprintf("unified_%s", serverName), "unified_cache", 1, time.Duration(0))
+
+					// Debug: Log the connection cache hit event structure
+					v2Logger.Debug("Connection cache hit")
+
+					a.EmitTypedEvent(ctx, connectionCacheHitEvent)
+
+				}
+
+				// Inject generic tool execution metadata into context
+				// Any tool can extract these values if needed (e.g., workspace tools for event emission)
+				// Using generic keys keeps conversation.go agnostic about specific tool implementations
+				toolCtx = context.WithValue(toolCtx, ToolExecutionAgentKey, a)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionTurnKey, turn+1)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionServerKey, serverName)
+				toolCtx = context.WithValue(toolCtx, ToolExecutionLLMConfigKey, a.GetLLMModelConfig())
+
+				// Apply per-tool argument transformer if registered.
+				// This runs BEFORE any execution branch (virtual → custom → MCP) so all paths
+				// see transformed args. Primary use case: resolve workspace-relative paths
+				// (e.g. "Downloads/file.pdf") to absolute host paths for Playwright browser_file_upload.
+				// Transformers are registered via Agent.SetToolArgTransformer().
+				if a.toolArgTransformers != nil {
+					if transformer, ok := a.toolArgTransformers[tc.FunctionCall.Name]; ok {
+						v2Logger.Info("[BROWSER_UPLOAD] Applying tool arg transformer",
+							loggerv2.String("tool_name", tc.FunctionCall.Name))
+						transformer(args)
+					}
+				}
+
+				var result *mcp.CallToolResult
+				var toolErr error
+
+				// Check if this is a virtual tool
+				if isVirtualTool(tc.FunctionCall.Name) {
+					// Handle virtual tool execution
+					v2Logger.Debug("🔧 [TOOL_CALL] Executing virtual tool",
+						loggerv2.String("tool_name", tc.FunctionCall.Name))
+					resultText, toolErr := a.HandleVirtualTool(toolCtx, tc.FunctionCall.Name, args)
+					if toolErr != nil {
+						result = &mcp.CallToolResult{
+							IsError: true,
+							Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
+						}
+					} else {
+						// Ensure resultText is never empty for virtual tools
+						// This prevents empty content from being sent to LLM
+						if resultText == "" {
+							v2Logger.Warn("Virtual tool returned empty result - using default message",
+								loggerv2.String("tool", tc.FunctionCall.Name))
+							resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
+						}
+						result = &mcp.CallToolResult{
+							IsError: false,
+							Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
+						}
+
+						// If this was add_tool in tool search mode, refresh the tools list
+						// to include newly discovered tools
+						if a.UseToolSearchMode && tc.FunctionCall.Name == "add_tool" {
+							a.filteredTools = a.getToolsForToolSearchMode()
+							v2Logger.Debug("🔍 [TOOL_SEARCH] Tools refreshed after add_tool",
+								loggerv2.Int("discovered_count", a.GetDiscoveredToolCount()),
+								loggerv2.Int("total_available", len(a.filteredTools)))
+						}
+					}
+				} else if a.customTools != nil {
+					// Check if this is a custom tool
+					if customTool, exists := a.customTools[tc.FunctionCall.Name]; exists {
+						v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Executing custom tool '%s' (category: %s)", tc.FunctionCall.Name, customTool.Category))
+						// Handle custom tool execution using the stored execution function
+						resultText, toolErr := customTool.Execution(toolCtx, args)
+
+						if toolErr != nil {
+							v2Logger.Error(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' execution failed: %v", tc.FunctionCall.Name, toolErr), toolErr)
+							result = &mcp.CallToolResult{
+								IsError: true,
+								Content: []mcp.Content{&mcp.TextContent{Text: toolErr.Error()}},
+							}
+						} else {
+							v2Logger.Debug(fmt.Sprintf("🔧 [TOOL_EXECUTION] Custom tool '%s' executed successfully (result length: %d chars)", tc.FunctionCall.Name, len(resultText)))
+							result = &mcp.CallToolResult{
+								IsError: false,
+								Content: []mcp.Content{&mcp.TextContent{Text: resultText}},
+							}
+						}
+					} else {
+						// Handle regular MCP tool execution
+						v2Logger.Debug("🔧 [TOOL_CALL] About to call MCP tool via client (from customTools fallback)",
+							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("server_name", serverName),
+							loggerv2.String("timeout", toolTimeout.String()))
+						callStart := time.Now()
+						result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, tc.FunctionCall.Name, args, v2Logger, serverName)
+						callDuration := time.Since(callStart)
+						v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed (from customTools fallback)",
+							loggerv2.String("tool_name", tc.FunctionCall.Name),
+							loggerv2.String("server_name", serverName),
+							loggerv2.String("duration", callDuration.String()),
+							loggerv2.Any("ctx_done", toolCtx.Err() != nil),
+							loggerv2.Any("has_error", toolErr != nil))
+					}
+				} else {
+					// Handle regular MCP tool execution
+					v2Logger.Debug("🔧 [TOOL_CALL] About to execute MCP tool",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("timeout", toolTimeout.String()))
+					callStart := time.Now()
+					result, toolErr = callToolWithTimeoutWrapper(toolCtx, client, tc.FunctionCall.Name, args, v2Logger, serverName)
+					callDuration := time.Since(callStart)
+					v2Logger.Debug("🔧 [TOOL_CALL] MCP tool call completed",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("duration", callDuration.String()),
+						loggerv2.Any("ctx_done", toolCtx.Err() != nil),
+						loggerv2.Any("has_error", toolErr != nil))
+				}
+
+				duration := time.Since(startTime)
+				v2Logger.Info(fmt.Sprintf("⏱️  TOOL EXECUTION END - Time: %s, Tool: %s, Duration: %v, Turn: %d",
+					time.Now().Format(time.RFC3339), tc.FunctionCall.Name, duration, turn+1))
+				log.Printf("[LATENCY_DEBUG] Turn %d | T+%dms | Tool executed: %s | tool_duration=%dms err=%v",
+					turn+1, time.Since(conversationStartTime).Milliseconds(), tc.FunctionCall.Name, duration.Milliseconds(), toolErr)
+
+				// Check for timeout
+				if toolCtx.Err() == context.DeadlineExceeded {
+					toolErr = fmt.Errorf("tool execution timed out after %s: %s", toolTimeout.String(), tc.FunctionCall.Name)
+					v2Logger.Debug("Tool call timed out",
+						loggerv2.Int("turn", turn+1),
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("timeout", toolTimeout.String()))
+				}
+
+				if agentCtx.Err() != nil {
+					v2Logger.Debug("Tool call context error",
+						loggerv2.Int("turn", turn+1),
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.Error(agentCtx.Err()))
+				}
+
+				// Handle tool execution errors gracefully - provide feedback to LLM and continue
+				if toolErr != nil {
+					// 🔧 DEBUG: Log tool error
+					v2Logger.Debug("🔧 [TOOL_RESPONSE] Tool execution error",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("tool_type", toolType),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("tool_call_id", tc.ID),
+						loggerv2.Int("turn", turn+1),
+						loggerv2.String("error", toolErr.Error()),
+						loggerv2.String("duration", duration.String()))
+
+					// 🔧 ENHANCED ERROR RECOVERY HANDLING
+					errorRecoveryHandler := NewErrorRecoveryHandler(a)
+
+					// Attempt error recovery for recoverable errors
+					recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
+						ctx, &tc, serverName, toolErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
+
+					if wasRecovered && recoveredErr == nil {
+						// Successfully recovered - use recovered result and continue normal flow
+						v2Logger.Debug("Successfully recovered from error for tool",
+							loggerv2.String("tool", tc.FunctionCall.Name))
+						result = recoveredResult
+						toolErr = nil
+						duration = recoveredDuration
+						// Continue to normal result processing below (outside this if block)
+					} else {
+						// Recovery failed or not attempted - proceed with error handling
+						if wasRecovered {
+							v2Logger.Error("Recovery failed for tool", recoveredErr,
+								loggerv2.String("tool", tc.FunctionCall.Name))
+							toolErr = recoveredErr
+							duration = recoveredDuration
+						}
+
+						// Emit tool call error event using typed event data
+						toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, toolErr.Error(), serverName, duration)
+						toolErrorEvent.ToolCallID = tc.ID
+						a.EmitTypedEvent(ctx, toolErrorEvent)
+
+						// Instead of failing the entire conversation, provide feedback to the LLM
+						errorResultText := fmt.Sprintf("Tool execution failed - %v", toolErr)
+
+						// Add the error result to the conversation so the LLM can continue
+						messages = append(messages, llmtypes.MessageContent{
+							Role:  llmtypes.ChatMessageTypeTool, // Use "tool" role for tool responses
+							Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: errorResultText}},
+						})
+
+						// Continue to next turn instead of returning error
+						continue
+					}
+				}
+				var resultText string
+				if result != nil {
+
+					// Get the tool result as string (without prefix)
+					resultText = mcpclient.ToolResultAsString(result)
+
+					// 🔧 DEBUG: Log tool response
+					resultPreview := resultText
+					if len(resultPreview) > 500 {
+						resultPreview = resultPreview[:500] + "... (truncated)"
+					}
+					v2Logger.Debug("🔧 [TOOL_RESPONSE] Tool response received",
+						loggerv2.String("tool_name", tc.FunctionCall.Name),
+						loggerv2.String("tool_type", toolType),
+						loggerv2.String("server_name", serverName),
+						loggerv2.String("tool_call_id", tc.ID),
+						loggerv2.Int("turn", turn+1),
+						loggerv2.Int("result_length", len(resultText)),
+						loggerv2.Any("is_error", result.IsError),
+						loggerv2.String("duration", duration.String()),
+						loggerv2.String("result_preview", resultPreview))
+
+					// Ensure resultText is never empty when sending to LLM
+					// This is a safety check for all tool types (virtual, custom, MCP)
+					if resultText == "" && !result.IsError {
+						v2Logger.Warn("Tool returned empty result - using default message",
+							loggerv2.String("tool", tc.FunctionCall.Name))
+						resultText = fmt.Sprintf("Tool '%s' executed successfully but returned no output.", tc.FunctionCall.Name)
+					}
+
+					// 🔧 BROKEN PIPE DETECTION IN RESULT CONTENT (regardless of IsError flag)
+					// Check for broken pipe errors in content text, even when IsError is false
+					// This handles cases where the MCP server returns broken pipe errors in content rather than as error flags
+					if mcpclient.IsBrokenPipeInContent(resultText) {
+						v2Logger.Info(fmt.Sprintf("🔧 [BROKEN PIPE DETECTED IN RESULT] Turn %d, Tool: %s, Server: %s, IsError: %v - Attempting immediate connection recreation", turn+1, tc.FunctionCall.Name, serverName, result.IsError))
+
+						// Create error recovery handler
+						errorRecoveryHandler := NewErrorRecoveryHandler(a)
+
+						// Create a fake error for the recovery handler
+						fakeErr := fmt.Errorf("broken pipe detected in result: %s", resultText)
+
+						// Attempt error recovery
+						recoveredResult, recoveredDuration, wasRecovered, recoveredErr := errorRecoveryHandler.HandleError(
+							ctx, &tc, serverName, fakeErr, startTime, isCustomTool, isVirtualTool(tc.FunctionCall.Name))
+
+						if wasRecovered && recoveredErr == nil {
+							v2Logger.Debug("Broken pipe recovery successful for tool",
+								loggerv2.String("tool", tc.FunctionCall.Name))
+							result = recoveredResult
+							duration = recoveredDuration
+							resultText = mcpclient.ToolResultAsString(result)
+						} else if wasRecovered {
+							v2Logger.Error("Broken pipe recovery failed for tool", recoveredErr,
+								loggerv2.String("tool", tc.FunctionCall.Name))
+						}
+					}
+
+					// Context offloading: Check if tool output should be offloaded to filesystem
+					if a.EnableContextOffloading && a.toolOutputHandler != nil {
+						// Check if output exceeds threshold for context offloading
+						if a.toolOutputHandler.IsLargeToolOutputWithModel(resultText, a.ModelID) {
+
+							// Emit context offloading detection event
+							detectedEvent := events.NewLargeToolOutputDetectedEvent(tc.FunctionCall.Name, len(resultText), a.toolOutputHandler.GetToolOutputFolder())
+							detectedEvent.ServerAvailable = a.toolOutputHandler.IsServerAvailable()
+							a.EmitTypedEvent(ctx, detectedEvent)
+
+							// Offload large output to filesystem (context offloading)
+							filePath, writeErr := a.toolOutputHandler.WriteToolOutputToFile(resultText, tc.FunctionCall.Name)
+							if writeErr == nil {
+								// Extract first 100 characters for Langfuse observability
+								preview := a.toolOutputHandler.ExtractFirstNCharacters(resultText, 100)
+
+								// Emit successful file write event with preview
+								fileWrittenEvent := events.NewLargeToolOutputFileWrittenEvent(tc.FunctionCall.Name, filePath, len(resultText), preview)
+								a.EmitTypedEvent(ctx, fileWrittenEvent)
+
+								// Create message with file path, first 50% of threshold, and instructions
+								fileMessage := a.toolOutputHandler.CreateToolOutputMessageWithPreview(tc.ID, filePath, resultText, 50, false)
+
+								// Replace the result text with the file message
+								resultText = fileMessage
+
+							} else {
+								// Emit file write error event
+								fileErrorEvent := events.NewLargeToolOutputFileWriteErrorEvent(tc.FunctionCall.Name, writeErr.Error(), len(resultText))
+								a.EmitTypedEvent(ctx, fileErrorEvent)
+							}
+						}
+					}
+
+					// Safety check: Apply max token limit truncation regardless of context offloading setting
+					// This prevents API errors from prompts exceeding model context limits
+					if a.toolOutputHandler != nil && a.toolOutputHandler.ExceedsMaxTokenLimit(resultText, a.ModelID) {
+						truncatedResult, wasTruncated := a.toolOutputHandler.TruncateToMaxTokenLimit(resultText, a.ModelID, tc.FunctionCall.Name)
+						if wasTruncated {
+							v2Logger.Warn("Tool output exceeded max token limit, truncated",
+								loggerv2.String("tool", tc.FunctionCall.Name),
+								loggerv2.Int("original_length", len(resultText)),
+								loggerv2.Int("truncated_length", len(truncatedResult)),
+								loggerv2.Int("max_tokens", a.toolOutputHandler.GetMaxToolOutputTokens()))
+							resultText = truncatedResult
+						}
+					}
+				} else {
+					resultText = "Tool execution completed but no result returned"
+				}
+				// 3. Append the tool result as a new message (after the AI tool_call message)
+				// Add recover block to catch panics
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							v2Logger.Error("Panic while appending tool result message", fmt.Errorf("%v", r))
+						}
+					}()
+					// Use the exact tool call ID from the LLM response
+					messages = append(messages, llmtypes.MessageContent{
+						Role:  llmtypes.ChatMessageTypeTool, // Use "tool" role for tool responses
+						Parts: []llmtypes.ContentPart{llmtypes.ToolCallResponse{ToolCallID: tc.ID, Name: tc.FunctionCall.Name, Content: resultText}},
+					})
+				}()
+
+				// End the tool execution span with output and error information
+				toolOutput := map[string]interface{}{
+					"tool_name":   tc.FunctionCall.Name,
+					"server_name": a.toolToServer[tc.FunctionCall.Name],
+					"result":      resultText,
+					"duration":    duration,
+					"turn":        turn + 1,
+					"success":     toolErr == nil,
+					"timeout":     getToolExecutionTimeout(a).String(),
+				}
+				if toolErr != nil {
+					toolOutput["error"] = toolErr.Error()
+					if strings.Contains(toolErr.Error(), "timed out") {
+						toolOutput["error_type"] = "tool_execution_timeout"
+					} else {
+						toolOutput["error_type"] = "tool_execution_error"
+					}
+				}
+
+				// Tool execution completed - emit tool call end event
+				// Only emit ToolCallEndEvent if result is not an error (errors should emit ToolCallErrorEvent)
+				if result == nil || !result.IsError {
+					// Get current token usage information for the tool call end event
+					_, _, _, _, _, _, _, _, _, _, _, _, contextUsagePercent := a.GetTokenUsageWithPricing()
+					a.tokenTrackingMutex.RLock()
+					modelContextWindow := a.modelContextWindow
+					contextWindowUsage := a.currentContextWindowUsage
+					a.tokenTrackingMutex.RUnlock()
+
+					// Emit tool call end event using typed event data (consolidated - contains all tool information)
+					toolEndEvent := events.NewToolCallEndEventWithTokenUsageAndModel(turn+1, tc.FunctionCall.Name, resultText, serverName, duration, "", contextUsagePercent, modelContextWindow, contextWindowUsage, a.ModelID)
+					toolEndEvent.ToolCallID = tc.ID
+					a.EmitTypedEvent(ctx, toolEndEvent)
+				} else if result.IsError {
+					// Result contains an error - emit tool call error event
+					// This handles the case where tool execution succeeded but the tool returned an error result
+					toolErrorEvent := events.NewToolCallErrorEvent(turn+1, tc.FunctionCall.Name, resultText, serverName, duration)
+					toolErrorEvent.ToolCallID = tc.ID
+					a.EmitTypedEvent(ctx, toolErrorEvent)
+				}
+
+				// Note: Removed redundant tool_output and tool_response events
+				// tool_call_end now contains all necessary tool information
+
+				// 🔄 LOOP DETECTION: Check if this tool call + args + response matches recent calls
+				if tc.FunctionCall != nil {
+					loopResult := loopDetector.CheckAndHandleLoop(tc.FunctionCall.Name, tc.FunctionCall.Arguments, resultText)
+					if loopResult.Detected {
+						HandleLoopDetection(a, ctx, loopResult, lastUserMessage, turn+1, conversationStartTime, &messages, v2Logger)
+						// Continue to next turn so LLM can respond to the correction message
+					}
+				}
+			}
+
+			// After processing all tool calls, continue to next turn
+			// The messages slice now includes any user messages added by read_image
+			continue
+		} else {
+			// No tool calls - add the assistant response to conversation history
+			// This is CRITICAL to prevent conversation loops
+			if choice.Content != "" {
+				assistantMessage := llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: choice.Content}},
+				}
+				messages = append(messages, assistantMessage)
+			}
+
+			// Simple agent - return immediately when no tool calls
+			v2Logger.Debug("No tool calls detected, returning final answer", loggerv2.Int("turn", turn+1))
+
+			// Emit unified completion event for simple agent
+			unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
+				"simple",                          // agentType
+				string(a.AgentMode),               // agentMode
+				lastUserMessage,                   // question
+				choice.Content,                    // finalResult
+				"completed",                       // status
+				time.Since(conversationStartTime), // duration
+				turn+1,                            // turns
+			)
+			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
+
+			// NEW: End agent session for hierarchy tracking
+			a.EndAgentSession(ctx, time.Since(conversationStartTime))
+
+			return choice.Content, messages, nil
+		}
+	}
+
+	// Max turns reached - give agent one final chance to provide a proper answer
+	v2Logger.Debug("Max turns reached, giving agent final chance to provide answer",
+		loggerv2.Int("max_turns", a.MaxTurns))
+
+	// Emit max turns reached event
+	maxTurnsEvent := events.NewMaxTurnsReachedEvent(a.MaxTurns, a.MaxTurns, lastUserMessage, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far. If your task is not complete, please provide a summary of what you have accomplished so far and what is missing.", string(a.AgentMode), time.Since(conversationStartTime))
+	a.EmitTypedEvent(ctx, maxTurnsEvent)
+
+	// Note: Context summarization is now only triggered based on token usage percentage,
+	// not when max turns is reached. Token-based summarization is checked before each LLM call.
+
+	// Add a user message asking for final answer
+	finalUserMessage := llmtypes.MessageContent{
+		Role: llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{
+			llmtypes.TextContent{
+				Text: "You are out of turns, you need to generate a final answer now. Please provide your final answer based on what you have accomplished so far.",
+			},
+		},
+	}
+
+	// Add the final user message to the conversation
+	messages = append(messages, finalUserMessage)
+
+	// Emit user message event for the final request
+	finalUserMessageEvent := events.NewUserMessageEvent(a.MaxTurns+1, "You are out of turns, you need to generate final now. Please provide your final answer based on what you have accomplished so far.", "user")
+	a.EmitTypedEvent(ctx, finalUserMessageEvent)
+
+	// Make one final LLM call to get the final answer
+	var finalResp *llmtypes.ContentResponse
+	var err error
+
+	finalOpts := []llmtypes.CallOption{}
+	if !llm.IsO3O4Model(a.ModelID) {
+		finalOpts = append(finalOpts, llmtypes.WithTemperature(a.Temperature))
+	}
+
+	finalResp, finalUsage, err := GenerateContentWithRetry(a, ctx, messages, finalOpts, a.MaxTurns+1)
+
+	// Log finalUsage for debugging
+	v2Logger.Info(fmt.Sprintf("🔍 [FINAL LLM CALL DEBUG] finalUsage from GenerateContentWithRetry:"))
+	v2Logger.Info(fmt.Sprintf("   InputTokens: %d, OutputTokens: %d, TotalTokens: %d, Unit: %s",
+		finalUsage.InputTokens, finalUsage.OutputTokens, finalUsage.TotalTokens, finalUsage.Unit))
+	if finalResp != nil && len(finalResp.Choices) > 0 {
+		if finalResp.Choices[0].GenerationInfo != nil {
+			genInfo := finalResp.Choices[0].GenerationInfo
+			v2Logger.Info(fmt.Sprintf("   GenerationInfo available:"))
+			if genInfo.InputTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      InputTokens: %d", *genInfo.InputTokens))
+			}
+			if genInfo.OutputTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      OutputTokens: %d", *genInfo.OutputTokens))
+			}
+			if genInfo.TotalTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      TotalTokens: %d", *genInfo.TotalTokens))
+			}
+			if genInfo.CachedContentTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      CachedContentTokens: %d", *genInfo.CachedContentTokens))
+			}
+			if genInfo.ReasoningTokens != nil {
+				v2Logger.Info(fmt.Sprintf("      ReasoningTokens: %d", *genInfo.ReasoningTokens))
+			}
+			if genInfo.CacheDiscount != nil {
+				v2Logger.Info(fmt.Sprintf("      CacheDiscount: %.2f%%", *genInfo.CacheDiscount*100))
+			}
+			if len(genInfo.Additional) > 0 {
+				v2Logger.Info(fmt.Sprintf("      Additional fields:"))
+				for key, value := range genInfo.Additional {
+					if strings.Contains(strings.ToLower(key), "cache") || strings.Contains(strings.ToLower(key), "token") {
+						v2Logger.Info(fmt.Sprintf("         %s: %v", key, value))
+					}
+				}
+			}
+		} else {
+			v2Logger.Info(fmt.Sprintf("   GenerationInfo is nil"))
+		}
+	} else {
+		v2Logger.Info(fmt.Sprintf("   finalResp is nil or has no choices"))
+	}
+
+	// Accumulate token usage from final LLM call
+	if finalResp != nil && len(finalResp.Choices) > 0 && finalUsage.TotalTokens > 0 {
+		a.accumulateTokenUsage(ctx, events.UsageMetrics{
+			PromptTokens:     finalUsage.InputTokens,
+			CompletionTokens: finalUsage.OutputTokens,
+			TotalTokens:      finalUsage.TotalTokens,
+		}, finalResp, a.MaxTurns+1)
+	} else {
+		choicesCount := 0
+		if finalResp != nil {
+			choicesCount = len(finalResp.Choices)
+		}
+		v2Logger.Warn("Skipping token accumulation",
+			loggerv2.Any("final_resp_exists", finalResp != nil),
+			loggerv2.Int("choices", choicesCount),
+			loggerv2.Int("total_tokens", finalUsage.TotalTokens))
+	}
+
+	if err != nil {
+		// If the final call also fails, emit error event
+		conversationErrorEvent := &events.ConversationErrorEvent{
+			BaseEventData: events.BaseEventData{
+				Timestamp: time.Now(),
+			},
+			Question: lastUserMessage,
+			Error:    "max turns reached and final attempt failed",
+			Turn:     a.MaxTurns + 1,
+			Context:  "conversation",
+			Duration: time.Since(conversationStartTime),
+		}
+		a.EmitTypedEvent(ctx, conversationErrorEvent)
+
+		if lastResponse != "" {
+			v2Logger.Debug("Forced FINAL_ANSWER due to max turns")
+
+			// Agent end event removed - no longer needed
+
+			// 🎯 FIX: End the trace for fallback completion - replaced with event emission
+			// Note: This was a successful completion, so we emit a completion event instead of error
+			unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
+				"react",                           // agentType
+				string(a.AgentMode),               // agentMode
+				lastUserMessage,                   // question
+				lastResponse,                      // finalResult
+				"completed",                       // status
+				time.Since(conversationStartTime), // duration
+				a.MaxTurns+1,                      // turns (+1 for the final turn)
+			)
+			a.EmitTypedEvent(ctx, unifiedCompletionEvent)
+
+			// NEW: End agent session for hierarchy tracking
+			a.EndAgentSession(ctx, time.Since(conversationStartTime))
+
+			// Append the final response to messages array for consistency
+			if lastResponse != "" {
+				assistantMessage := llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: lastResponse}},
+				}
+				messages = append(messages, assistantMessage)
+			}
+
+			return lastResponse, messages, nil
+		}
+		v2Logger.Warn("Exiting with no final answer after max turns",
+			loggerv2.Int("max_turns", a.MaxTurns))
+
+		// 🎯 FIX: End the trace for max turns error - replaced with event emission
+		maxTurnsErrorEvent := events.NewConversationErrorEvent(lastUserMessage, fmt.Sprintf("max turns (%d) reached without final answer", a.MaxTurns), a.MaxTurns+1, "max_turns_exceeded", time.Since(conversationStartTime))
+		a.EmitTypedEvent(ctx, maxTurnsErrorEvent)
+
+		return "", messages, fmt.Errorf("max turns (%d) reached without final answer", a.MaxTurns)
+	}
+
+	if finalResp == nil || finalResp.Choices == nil || len(finalResp.Choices) == 0 {
+		v2Logger.Warn("Final call returned no response choices")
+
+		// 🎯 FIX: End the trace for final call error - replaced with event emission
+		finalCallErrorEvent := events.NewConversationErrorEvent(lastUserMessage, "final call returned no response choices", a.MaxTurns+1, "no_final_choices", time.Since(conversationStartTime))
+		a.EmitTypedEvent(ctx, finalCallErrorEvent)
+
+		return "", messages, fmt.Errorf("final call returned no response choices")
+	}
+
+	finalChoice := finalResp.Choices[0]
+
+	// Token usage is already included in the LLMGenerationEndEvent above
+
+	// Note: LLM generation end event is already emitted in the main conversation flow
+	// No need to emit it again here to avoid duplication
+
+	// Simple agent - use final choice content directly
+	v2Logger.Debug("Final answer provided after max turns")
+
+	// Emit unified completion event
+	unifiedCompletionEvent := events.NewUnifiedCompletionEvent(
+		"simple",                          // agentType
+		string(a.AgentMode),               // agentMode
+		lastUserMessage,                   // question
+		finalChoice.Content,               // finalResult
+		"completed",                       // status
+		time.Since(conversationStartTime), // duration
+		a.MaxTurns+1,                      // turns (+1 for the final turn)
+	)
+	a.EmitTypedEvent(ctx, unifiedCompletionEvent)
+
+	// NEW: End agent session for hierarchy tracking
+	a.EndAgentSession(ctx, time.Since(conversationStartTime))
+
+	// Append the final response to messages array for consistency
+	if finalChoice.Content != "" {
+		assistantMessage := llmtypes.MessageContent{
+			Role:  llmtypes.ChatMessageTypeAI,
+			Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: finalChoice.Content}},
+		}
+		messages = append(messages, assistantMessage)
+	}
+
+	return finalChoice.Content, messages, nil
+}

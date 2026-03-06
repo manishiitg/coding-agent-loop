@@ -5,6 +5,7 @@ go 1.24.4
 require (
 	github.com/PaesslerAG/jsonpath v0.1.1
 	github.com/gin-gonic/gin v1.10.1
+	github.com/go-co-op/gocron/v2 v2.19.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
@@ -12,12 +13,13 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.6.0
-	github.com/manishiitg/multi-llm-provider-go v0.5.1
+	github.com/manishiitg/mcpagent v1.7.2
+	github.com/manishiitg/multi-llm-provider-go v0.5.3
 	github.com/mark3labs/mcp-go v0.44.0
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/r3labs/diff/v3 v3.0.2
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.10.1
@@ -26,10 +28,6 @@ require (
 )
 
 replace github.com/manishiitg/mcp-agent-builder-go/workspace => ../workspace
-
-replace github.com/manishiitg/mcpagent v1.6.0 => ../../mcpagent
-
-replace github.com/manishiitg/multi-llm-provider-go v0.5.1 => ../../multi-llm-provider-go
 
 require (
 	cloud.google.com/go v0.123.0 // indirect
@@ -65,7 +63,6 @@ require (
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
-	github.com/go-co-op/gocron/v2 v2.19.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
@@ -90,7 +87,6 @@ require (
 	github.com/openai/openai-go/v3 v3.16.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/qdrant/go-client v1.15.2 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
@@ -119,7 +115,7 @@ require (
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
-	google.golang.org/genai v1.41.0 // indirect
+	google.golang.org/genai v1.49.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260112192933-99fd39fd28a9 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect

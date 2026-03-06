@@ -1,0 +1,78 @@
+package llmproviders
+
+import (
+	"context"
+
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+)
+
+// LLMCallFunc is a type-safe function signature for LLM calls.
+type LLMCallFunc func(ctx context.Context, prompt string) (string, error)
+
+// Re-export types from llmtypes for convenience
+type Model = llmtypes.Model
+type ChatMessageType = llmtypes.ChatMessageType
+type ContentPart = llmtypes.ContentPart
+type TextContent = llmtypes.TextContent
+type ImageContent = llmtypes.ImageContent
+type ToolCall = llmtypes.ToolCall
+type FunctionCall = llmtypes.FunctionCall
+type ToolCallResponse = llmtypes.ToolCallResponse
+type MessageContent = llmtypes.MessageContent
+type ContentResponse = llmtypes.ContentResponse
+type ContentChoice = llmtypes.ContentChoice
+type Usage = llmtypes.Usage
+type Tool = llmtypes.Tool
+type FunctionDefinition = llmtypes.FunctionDefinition
+type ToolChoice = llmtypes.ToolChoice
+type FunctionName = llmtypes.FunctionName
+type CallOptions = llmtypes.CallOptions
+type CallOption = llmtypes.CallOption
+
+// Re-export image generation types
+type ImageGenerationModel = llmtypes.ImageGenerationModel
+type ImageGenerationResponse = llmtypes.ImageGenerationResponse
+type GeneratedImage = llmtypes.GeneratedImage
+type ImageGenerationOptions = llmtypes.ImageGenerationOptions
+type ImageGenerationOption = llmtypes.ImageGenerationOption
+
+// Re-export embedding types
+type EmbeddingModel = llmtypes.EmbeddingModel
+type Embedding = llmtypes.Embedding
+type EmbeddingResponse = llmtypes.EmbeddingResponse
+type EmbeddingUsage = llmtypes.EmbeddingUsage
+type EmbeddingOptions = llmtypes.EmbeddingOptions
+type EmbeddingOption = llmtypes.EmbeddingOption
+
+// Re-export constants
+const (
+	ChatMessageTypeSystem   = llmtypes.ChatMessageTypeSystem
+	ChatMessageTypeHuman    = llmtypes.ChatMessageTypeHuman
+	ChatMessageTypeAI       = llmtypes.ChatMessageTypeAI
+	ChatMessageTypeTool     = llmtypes.ChatMessageTypeTool
+	ChatMessageTypeGeneric  = llmtypes.ChatMessageTypeGeneric
+	ChatMessageTypeFunction = llmtypes.ChatMessageTypeFunction
+)
+
+// Re-export functions
+var (
+	WithModel          = llmtypes.WithModel
+	WithTemperature    = llmtypes.WithTemperature
+	WithMaxTokens      = llmtypes.WithMaxTokens
+	WithJSONMode       = llmtypes.WithJSONMode
+	WithTools          = llmtypes.WithTools
+	WithToolChoice     = llmtypes.WithToolChoice
+	WithStreamingFunc  = llmtypes.WithStreamingFunc
+	TextPart           = llmtypes.TextPart
+	TextParts          = llmtypes.TextParts
+	ImagePart          = llmtypes.ImagePart
+	ImagePartBase64    = llmtypes.ImagePartBase64
+	ImagePartURL       = llmtypes.ImagePartURL
+	WithEmbeddingModel   = llmtypes.WithEmbeddingModel
+	WithDimensions       = llmtypes.WithDimensions
+	WithNumberOfImages   = llmtypes.WithNumberOfImages
+	WithAspectRatio      = llmtypes.WithAspectRatio
+	WithNegativePrompt   = llmtypes.WithNegativePrompt
+	WithInputImage       = llmtypes.WithInputImage
+	WithInputImageURL    = llmtypes.WithInputImageURL
+)

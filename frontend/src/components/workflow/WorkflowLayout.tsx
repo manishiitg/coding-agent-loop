@@ -22,17 +22,27 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
 }>(({ onNewChat, hideHeader, hideInput, compact }, ref) => {
   // Only pass tabId if the active tab belongs to workflow mode,
   // so we never bleed multi-agent / chat content into WorkflowLayout.
+  // Use separate primitive selectors to avoid object-identity infinite loops.
   const workflowTabId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
     return tab?.metadata?.mode === 'workflow' ? tabId : undefined
   })
+  const activePhaseId = useChatStore(state => {
+    const tabId = state.activeTabId
+    const tab = tabId ? state.chatTabs[tabId] : null
+    return tab?.metadata?.mode === 'workflow' ? tab?.metadata?.phaseId : undefined
+  })
+
+  // Show chat input for chat-compatible phases (planning, plan-improvement)
+  const effectiveHideInput = isChatCompatiblePhase(activePhaseId) ? false : hideInput
+
   return (
     <ChatArea
       ref={ref}
       onNewChat={onNewChat}
       hideHeader={hideHeader}
-      hideInput={hideInput}
+      hideInput={effectiveHideInput}
       compact={compact}
       tabId={workflowTabId ?? undefined}
     />
@@ -42,7 +52,7 @@ import { agentApi } from '../../services/api'
 import { type ExecutionOptions, type PollingEvent } from '../../services/api-types'
 import { getTypedEventData, getRawEventData } from '../../generated/event-types'
 import { usePlanData } from './hooks/usePlanData'
-import { findOrCreateWorkflowTab } from '../../utils/chatSubmitHelpers'
+import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 // hydrateTabEvents removed - no longer hydrating inactive tabs on reload to prevent page hang
 
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
@@ -934,7 +944,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     setCurrentWorkflowPhase(phaseId)
 
-    // Store pending query to submit after ChatArea mounts
+    // For chat-compatible phases, just open the tab without auto-submitting a query.
+    // The user will type naturally in the chat input.
+    if (isChatCompatiblePhase(phaseId)) {
+      logger.debug('WorkflowLayout', `Chat-compatible phase ${phaseId} — opening tab for conversation`)
+      setShowChatArea(true)
+      return
+    }
+
+    // Store pending query to submit after ChatArea mounts (non-chat phases)
     const query = `Execute workflow phase: ${phaseId}`
     pendingQueryRef.current = { query, executionOptions }
 

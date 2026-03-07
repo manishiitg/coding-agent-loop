@@ -5072,6 +5072,135 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[BROWSER_UPLOAD] Registered agent-level browser_file_upload transformer, workspace=%s", wsAbsPath)
 				}
 			}
+
+			// --- Workflow Phase Chat Mode ---
+			// Override system prompt and register plan modification tools for conversational phase editing
+			if isWorkflowPhase && workflowPhaseID != "" {
+				log.Printf("[WORKFLOW_PHASE] Setting up phase chat mode: phase=%s preset=%s", workflowPhaseID, req.PresetQueryID)
+
+				// Get workspace path and objective from preset
+				phaseWorkspacePath := ""
+				phaseObjective := ""
+				if req.PresetQueryID != "" {
+					phaseCtx, phaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer phaseCancel()
+					preset, err := api.chatDB.GetPresetQuery(phaseCtx, req.PresetQueryID)
+					if err == nil && preset != nil {
+						if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
+							phaseWorkspacePath = preset.SelectedFolder.String
+						}
+						if preset.Query != "" {
+							phaseObjective = preset.Query
+						}
+					}
+				}
+				if phaseWorkspacePath == "" {
+					phaseWorkspacePath = "default_workspace"
+				}
+
+				// Create workspace client for reading plan.json and variables.json
+				phaseWSClient := workspace.NewClient(
+					getWorkspaceAPIURL(),
+					workspace.WithUserID(currentUserID),
+				)
+
+				// readFile closure: reads file content from workspace
+				phaseReadFile := func(ctx context.Context, filePath string) (string, error) {
+					result, err := phaseWSClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: filePath})
+					if err != nil {
+						return "", err
+					}
+					var data virtualtools.WorkspaceFileContent
+					if err := json.Unmarshal([]byte(result), &data); err != nil {
+						return "", err
+					}
+					return data.Content, nil
+				}
+
+				// writeFile closure: writes content to workspace
+				phaseWriteFile := func(ctx context.Context, filePath string, content string) error {
+					_, err := phaseWSClient.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: filePath, Content: content})
+					return err
+				}
+
+				// moveFile closure: moves file in workspace
+				phaseMoveFile := func(ctx context.Context, src string, dst string) error {
+					_, err := phaseWSClient.MoveWorkspaceFile(ctx, workspace.MoveWorkspaceFileParams{SourceFilepath: src, DestinationFilepath: dst})
+					return err
+				}
+
+				// Build template vars by reading current plan and variables from workspace
+				phaseTemplateVars := map[string]string{
+					"Objective":           phaseObjective,
+					"WorkspacePath":       phaseWorkspacePath,
+					"IsCodeExecutionMode": "true",
+				}
+
+				// Read existing plan from workspace (if any)
+				existingPlanJSON := todo_creation_human.ReadPlanFromWorkspace(r.Context(), phaseWorkspacePath, phaseReadFile)
+				if existingPlanJSON != "" {
+					phaseTemplateVars["ExistingPlanJSON"] = existingPlanJSON
+					log.Printf("[WORKFLOW_PHASE] Loaded existing plan (%d bytes)", len(existingPlanJSON))
+				}
+
+				// Read variable names from workspace (if any)
+				variableNames := todo_creation_human.ReadVariablesFromWorkspace(r.Context(), phaseWorkspacePath, phaseReadFile)
+				if variableNames != "" {
+					phaseTemplateVars["VariableNames"] = variableNames
+					log.Printf("[WORKFLOW_PHASE] Loaded variable names")
+				}
+
+				// Generate phase-specific system prompt (dispatches by phaseId)
+				phaseSystemPrompt := todo_creation_human.PhaseChatSystemPrompt(workflowPhaseID, phaseTemplateVars)
+
+				// Override the agent's system prompt and clear appended prompts
+				underlyingAgent.SystemPrompt = phaseSystemPrompt
+				underlyingAgent.AppendedSystemPrompts = nil
+				log.Printf("[WORKFLOW_PHASE] Overrode system prompt (%d chars) for phase=%s", len(phaseSystemPrompt), workflowPhaseID)
+
+				// Register phase-appropriate tools
+				switch workflowPhaseID {
+				case "execution-debugger":
+					// Read-only phase — no modification tools
+					log.Printf("[WORKFLOW_PHASE] Read-only phase, no modification tools registered")
+				case "evaluation-debugger":
+					// Evaluation modification tools (update/add/delete evaluation steps)
+					if err := todo_creation_human.RegisterEvaluationModificationTools(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+						phaseWriteFile,
+						phaseMoveFile,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools: %v", err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools")
+					}
+				default:
+					// planning, plan-improvement, code-exec-debugging: plan modification tools
+					if err := todo_creation_human.RegisterPlanModificationTools(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+						phaseWriteFile,
+						phaseMoveFile,
+						fmt.Sprintf("%s chat agent", workflowPhaseID),
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register plan modification tools: %v", err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for phase=%s", workflowPhaseID)
+					}
+				}
+
+				// Rebuild code execution registry after prompt + tool changes
+				if err := underlyingAgent.UpdateCodeExecutionRegistry(); err != nil {
+					log.Printf("[WORKFLOW_PHASE] Warning: Failed to update code execution registry: %v", err)
+				}
+
+				log.Printf("[WORKFLOW_PHASE] Phase chat setup complete: phase=%s workspace=%s", workflowPhaseID, phaseWorkspacePath)
+			}
 		}
 
 		// Add event observer immediately after agent creation to capture all events

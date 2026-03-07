@@ -18,6 +18,7 @@ import { CommandEditorDialog } from './commands/CommandEditorDialog'
 import { findCommand, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
+import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import InlineSelectionPopup from './InlineSelectionPopup'
 import type { InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
@@ -121,6 +122,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  // Detect workflow phase chat (planning/plan-improvement tabs) — hide extras like browser, skills, etc.
+  const workflowPhaseId = useChatStore(state => {
+    const tabId = state.activeTabId
+    const tab = tabId ? state.chatTabs[tabId] : null
+    if (tab?.metadata?.mode !== 'workflow' || !tab?.metadata?.phaseId) return undefined
+    return isChatCompatiblePhase(tab.metadata.phaseId) ? tab.metadata.phaseId : undefined
+  })
+  const isWorkflowPhaseChat = !!workflowPhaseId
   // For plan features, treat multi-agent as always 'plan'
   const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
 
@@ -830,7 +839,27 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, tabConfig?.llmConfig, setTabConfig])
 
   // Computed values - get LLM option from tab config
+  // For phase chat: prefer the workflow preset's LLM as the default if tab hasn't been
+  // explicitly overridden by the user (detected by checking if tab config matches global workflow LLM).
   const primaryLLM = useMemo(() => {
+    // For phase chat, check if the preset defines a different LLM to use as default
+    if (isWorkflowPhaseChat) {
+      const preset = getActivePreset('workflow')
+      const presetLLM = preset?.llmConfig
+      if (presetLLM?.provider && presetLLM?.model_id) {
+        const foundPresetLLM = availableLLMs.find(llm =>
+          llm.provider === presetLLM.provider && llm.model === presetLLM.model_id
+        )
+        if (foundPresetLLM) return foundPresetLLM
+        return {
+          provider: presetLLM.provider,
+          model: presetLLM.model_id,
+          label: `${presetLLM.provider} - ${presetLLM.model_id}`,
+          description: 'Workflow preset LLM'
+        }
+      }
+    }
+
     if (tabConfig?.llmConfig) {
       const config = tabConfig.llmConfig
       // Try to find matching LLM in available list for richer metadata
@@ -851,7 +880,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return getCurrentLLMOption()
-  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption])
+  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption, isWorkflowPhaseChat, getActivePreset])
   
   // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -983,6 +1012,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [])
 
+
   // Open/close workspace sidebar based on workspace access setting
   // Also close file dialog if workspace access is disabled
   useEffect(() => {
@@ -1068,6 +1098,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Auto-resize textarea
     adjustTextareaHeight()
+
+    // Skip all special character triggers (/, @, #, !, $, ^) for workflow phase chat
+    if (isWorkflowPhaseChat) return
 
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
@@ -1325,7 +1358,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
       fileRemovalTimeoutRef.current = null
     }, 500)
-  }, [chatFileContext, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight])
+  }, [chatFileContext, removeFileFromContext, showCommandDialog, showWorkflowDialog, activeTabId, setTabConfig, enableWorkspaceAccess, adjustTextareaHeight, isWorkflowPhaseChat])
 
   // Handle manual summarization
   // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
@@ -2093,10 +2126,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoized placeholder
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
+    if (isWorkflowPhaseChat) {
+      const phaseNames: Record<string, string> = {
+        'planning': 'planning agent',
+        'plan-improvement': 'plan debugger',
+        'execution-debugger': 'execution debugger',
+        'evaluation-debugger': 'evaluation debugger',
+        'code-exec-debugging': 'code debugger',
+      }
+      return `Chat with the ${phaseNames[workflowPhaseId!] ?? 'agent'}...`
+    }
     const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
     if (isMultiAgentMode) return `Ask anything... (Shift+Tab: switch mode | ${baseHints})`
     return `Ask anything... (${baseHints})`
-  }, [isViewOnly, isMultiAgentMode])
+  }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId])
 
   // For view-only (restored) tabs, show a minimal indicator instead of the full input form
   if (isViewOnly) {
@@ -2394,8 +2437,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 {/* Server and LLM Selection */}
                 {(
                   <div className="flex items-center gap-2">
-                    
+
                       <>
+                        {!isWorkflowPhaseChat && (
                         <ServerSelectionDropdown
                           availableServers={availableServers}
                           selectedServers={manualSelectedServers}
@@ -2405,15 +2449,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           disabled={isStreaming || isSummarizing}
                           agentMode={agentMode}
                         />
-                        <SkillSelectionDropdown
-                          selectedSkills={selectedSkills}
-                          onSkillToggle={onSkillToggle}
-                          onSelectAll={onSelectAllSkills}
-                          onClearAll={onClearAllSkills}
-                          disabled={isStreaming || isSummarizing}
-                          onImportClick={() => openDialog('skillImport')}
-                        />
-                        {(effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
+                        )}
+                        {!isWorkflowPhaseChat && (
+                          <SkillSelectionDropdown
+                            selectedSkills={selectedSkills}
+                            onSkillToggle={onSkillToggle}
+                            onSelectAll={onSelectAllSkills}
+                            onClearAll={onClearAllSkills}
+                            disabled={isStreaming || isSummarizing}
+                            onImportClick={() => openDialog('skillImport')}
+                          />
+                        )}
+                        {!isWorkflowPhaseChat && (effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
                           <SubAgentSelectionDropdown
                             selectedSubAgents={selectedSubAgents}
                             onSubAgentToggle={onSubAgentToggle}
@@ -2425,7 +2472,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         )}
                       </>
 
-                    {effectiveDelegationMode !== 'plan' && (
+                    {(isWorkflowPhaseChat || effectiveDelegationMode !== 'plan') && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -2441,13 +2488,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top">
-                            <p>{llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
+                            <p>{isWorkflowPhaseChat ? 'Override phase LLM' : llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                    {/* Workspace Access Toggle - always on in multi-agent mode, toggleable in chat */}
-                    {isMultiAgentMode ? (
+                    {/* Workspace Access Toggle - hidden for phase chat, always on in multi-agent, toggleable in chat */}
+                    {isWorkflowPhaseChat ? null : isMultiAgentMode ? (
                       <div className="flex items-center gap-1 p-1.5 rounded-md border bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400">
                         <FolderOpen className="w-4 h-4 flex-shrink-0" />
                       </div>
@@ -2469,7 +2516,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </button>
                     )}
                     {/* Browser Access Toggle */}
-                    {<button
+                    {!isWorkflowPhaseChat && <button
                       type="button"
                       onClick={() => {
                         if (browserMode === 'none') {
@@ -2535,6 +2582,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </button>}
 
                     {/* Google Workspace Toggle */}
+                    {!isWorkflowPhaseChat && (
                     <button
                       type="button"
                       onClick={() => setShowGWSPopup(true)}
@@ -2559,9 +2607,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </span>
                       )}
                     </button>
+                    )}
 
                     {/* Image Generation Toggle — opens config modal directly */}
-                    <button
+                    {!isWorkflowPhaseChat && <button
                       type="button"
                       onClick={() => {
                         if (!enableImageGeneration) {
@@ -2584,7 +2633,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           Image Gen
                         </span>
                       )}
-                    </button>
+                    </button>}
 
                   </div>
                 )}
@@ -3099,7 +3148,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </div>
                 )}
 
-                {/* Secrets dropdown - always visible (independent of presets) */}
+                {/* Secrets dropdown - hidden for workflow phase chat */}
+                {!isWorkflowPhaseChat && (
                 <SecretSelectionDropdown
                   selectedSecrets={selectedSecrets}
                   onSecretToggle={onSecretToggle}
@@ -3107,6 +3157,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   onClearAll={onClearAllSecrets}
                   disabled={isStreaming || isSummarizing}
                 />
+                )}
 
                 {/* Status text - removed observer initialization message */}
               </div>

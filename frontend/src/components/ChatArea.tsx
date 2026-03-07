@@ -30,11 +30,170 @@ import {
   resolveOrCreateTab,
   createUserMessageEvent,
   validateExecutionGroups,
+  isChatCompatiblePhase,
 } from '../utils/chatSubmitHelpers'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
 const EMPTY_EVENTS: PollingEvent[] = []
+
+const STEP_TYPES = [
+  { name: 'Regular', desc: 'LLM agent executes instructions and writes output files' },
+  { name: 'Conditional', desc: 'Evaluates a condition, then runs if_true or if_false branch steps' },
+  { name: 'Decision', desc: 'Executes then evaluates output to route to different next steps' },
+  { name: 'Routing', desc: 'Multi-way conditional — evaluates a question to pick one of several routes' },
+  { name: 'Todo Task', desc: 'Dynamic task list with sub-agents delegated per task' },
+  { name: 'Human Input', desc: 'Collects user input (text, yes/no, or multiple choice)' },
+]
+
+const PHASE_CHAT_INFO: Record<string, {
+  title: string
+  description: string
+  capabilities: string[]
+  limitations: string[]
+  showStepTypes?: boolean
+}> = {
+  'planning': {
+    title: 'Planning Agent',
+    description: 'Chat with the planning agent to create and refine your execution plan.',
+    capabilities: [
+      'View and discuss the current plan',
+      'Add, update, or remove plan steps',
+      'Reorganize step order and dependencies',
+      'Refine objectives and requirements',
+    ],
+    limitations: [
+      'Cannot execute the plan — use the Execution phase for that',
+      'Cannot read execution logs or results from previous runs',
+      'Cannot modify evaluation plans or learnings',
+      'Canvas won\'t auto-refresh — re-open the tab to see plan changes',
+    ],
+    showStepTypes: true,
+  },
+  'plan-improvement': {
+    title: 'Plan Debugger',
+    description: 'Analyze execution results and improve the plan based on real outcomes.',
+    capabilities: [
+      'Review execution results, logs, and validation reports',
+      'Adjust steps based on what worked or failed',
+      'Add new steps to address gaps',
+      'Update success criteria to be more concrete',
+      'Read learnings and knowledgebase files',
+    ],
+    limitations: [
+      'Cannot execute the plan — only modifies plan.json',
+      'Cannot modify evaluation plans (use Evaluation Debugger)',
+      'Cannot modify step_config.json or tool selections',
+      'Canvas won\'t auto-refresh — re-open the tab to see plan changes',
+    ],
+    showStepTypes: true,
+  },
+  'execution-debugger': {
+    title: 'Execution Debugger',
+    description: 'Read-only analysis of execution results, logs, and plan state.',
+    capabilities: [
+      'Answer questions about what happened during execution',
+      'Read execution logs, validation reports, and outputs',
+      'Analyze step failures and identify root causes',
+      'Explain plan structure and step dependencies',
+    ],
+    limitations: [
+      'Read-only — cannot modify the plan, learnings, or any files',
+      'Cannot execute or re-run steps',
+      'Cannot modify evaluation plans',
+      'No plan modification tools available',
+    ],
+  },
+  'evaluation-debugger': {
+    title: 'Evaluation Debugger',
+    description: 'Analyze evaluation results and improve the evaluation plan.',
+    capabilities: [
+      'Review evaluation scores and reasoning',
+      'Identify low-scoring steps and suggest fixes',
+      'Update, add, or remove evaluation steps',
+      'Read execution outputs for context',
+    ],
+    limitations: [
+      'Cannot modify the execution plan (use Plan Debugger)',
+      'Cannot execute evaluations — use Evaluation Execution phase',
+      'Cannot modify learnings or knowledgebase files',
+    ],
+  },
+  'code-exec-debugging': {
+    title: 'Code Debugger',
+    description: 'Specialized debugger for code execution steps — identifies common code errors and provides fixes.',
+    capabilities: [
+      'Analyze code execution logs and conversation history',
+      'Identify hardcoded paths, wrong API endpoints, missing env vars',
+      'Check OpenAPI spec usage and per-tool endpoint format',
+      'Suggest specific fixes to plan step instructions',
+    ],
+    limitations: [
+      'Only debugs code execution steps — skips tool execution steps',
+      'Cannot execute or re-run code',
+      'Cannot modify evaluation plans',
+      'Read-only analysis — suggests changes but doesn\'t apply them',
+    ],
+  },
+}
+
+function PhaseChatEmptyState({ phaseId }: { phaseId: string }) {
+  const info = PHASE_CHAT_INFO[phaseId]
+  if (!info) return null
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full p-8 text-center overflow-y-auto">
+      <div className="mb-4 w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+        <span className="text-blue-600 dark:text-blue-400 text-lg">💬</span>
+      </div>
+      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+        {info.title}
+      </h3>
+      <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 max-w-sm">
+        {info.description}
+      </p>
+      <div className="w-full max-w-md text-left">
+        <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+          What it can do
+        </h4>
+        <div className="space-y-2 mb-5">
+          {info.capabilities.map((cap, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <div className="w-1.5 h-1.5 bg-green-500 rounded-full mt-1.5 flex-shrink-0" />
+              {cap}
+            </div>
+          ))}
+        </div>
+        <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+          What it cannot do
+        </h4>
+        <div className="space-y-2 mb-5">
+          {info.limitations.map((lim, i) => (
+            <div key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <div className="w-1.5 h-1.5 bg-red-400 rounded-full mt-1.5 flex-shrink-0" />
+              {lim}
+            </div>
+          ))}
+        </div>
+        {info.showStepTypes && (
+          <>
+            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+              Available step types
+            </h4>
+            <div className="grid grid-cols-2 gap-2">
+              {STEP_TYPES.map((st, i) => (
+                <div key={i} className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700">
+                  <div className="text-xs font-medium text-gray-800 dark:text-gray-200">{st.name}</div>
+                  <div className="text-[11px] text-gray-500 dark:text-gray-400 leading-tight mt-0.5">{st.desc}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 interface ChatAreaProps {
   // New chat handler
@@ -1787,9 +1946,24 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
       // Build LLM config
       const isMultiAgentMode = selectedModeCategory === 'multi-agent'
       const llmStore = useLLMStore.getState()
-      const baseLLMConfig = ((selectedModeCategory === 'chat' || isMultiAgentMode) && currentTab?.config)
-        ? currentTab.config.llmConfig
-        : llmStore.primaryConfig
+      // For chat, multi-agent, and workflow phase chat: use tab's LLM if set (user may override)
+      const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
+        && currentTab?.metadata?.phaseId
+        && isChatCompatiblePhase(currentTab.metadata.phaseId)
+      // For phase chat: prefer preset LLM if user hasn't explicitly overridden
+      // (tab config always has a default from workflowPrimaryConfig, so we also check the preset)
+      const presetStore = useGlobalPresetStore.getState()
+      const workflowPreset = isWorkflowPhaseChat
+        ? (presetStore.getActivePreset('workflow'))
+        : null
+      const presetLLMConfig = workflowPreset?.llmConfig?.provider && workflowPreset?.llmConfig?.model_id
+        ? workflowPreset.llmConfig
+        : null
+      const baseLLMConfig = isWorkflowPhaseChat
+        ? (currentTab?.config?.llmConfig || presetLLMConfig || llmStore.primaryConfig)
+        : ((selectedModeCategory === 'chat' || isMultiAgentMode) && currentTab?.config?.llmConfig)
+          ? currentTab.config.llmConfig
+          : llmStore.primaryConfig
       const tierConfig = llmStore.delegationTierConfig
       const effectiveLLMConfig: ExtendedLLMConfiguration = (isMultiAgentMode && tierConfig?.main?.provider && tierConfig?.main?.model_id)
         ? { ...baseLLMConfig, provider: tierConfig.main.provider as ExtendedLLMConfiguration['provider'], model_id: tierConfig.main.model_id }
@@ -2126,9 +2300,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
           >
             {/* Empty State - Show when no events and not in historical session */}
             {displayEvents.length === 0 && !isStreaming && (
-              <ModeEmptyState modeCategory={selectedModeCategory} />
+              isChatCompatiblePhase(activeTab?.metadata?.phaseId)
+                ? <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
+                : <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
-            
+
             {activeTab?.sessionId && (
               <EventDisplay events={displayEvents} onFeedbackSubmitted={handleFeedbackSubmitted} onSendMessage={submitQueryWithQuery} compact={compact} flatHierarchy={true} sessionId={activeTab.sessionId} tabId={targetTabId || undefined} />
             )}

@@ -14,6 +14,24 @@ import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useImageGenStore } from '../stores/useImageGenStore'
 import { logger } from './logger'
 
+// Workflow phases that support conversational chat mode instead of blocking human_feedback
+const CHAT_COMPATIBLE_PHASES = new Set([
+  'planning',
+  'plan-improvement',
+  'execution-debugger',
+  'evaluation-debugger',
+  'code-exec-debugging',
+])
+
+// NOTE: Backend support (server.go workflow_phase handler) currently only handles
+// planning and plan-improvement phases. The debugger phases need their own
+// system prompt templates and tools to be added in server.go before they'll
+// work end-to-end. The frontend is ready for all phases listed above.
+
+export function isChatCompatiblePhase(phaseId: string | undefined): boolean {
+  return !!phaseId && CHAT_COMPATIBLE_PHASES.has(phaseId)
+}
+
 // ---------------------------------------------------------------------------
 // 1a. determineModeFlag — deduplicate useCodeExecutionMode / useToolSearchMode
 // ---------------------------------------------------------------------------
@@ -126,7 +144,14 @@ export function buildQueryRequestPayload(params: {
 
   const isChatMode = selectedModeCategory === 'chat'
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
-  const isChatLikeMode = isChatMode || isMultiAgentMode
+  // Detect workflow phase chat mode: tab has a phaseId and the phase supports conversational editing
+  const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
+    && currentTab?.metadata?.phaseId
+    && CHAT_COMPATIBLE_PHASES.has(currentTab.metadata.phaseId)
+  // isChatLikeMode: includes phase chat for basic settings (context summarization, workspace access)
+  const isChatLikeMode = isChatMode || isMultiAgentMode || isWorkflowPhaseChat
+  // isChatWithExtras: only real chat/multi-agent modes get optional extras (browser, GWS, skills, secrets, etc.)
+  const isChatWithExtras = isChatMode || isMultiAgentMode
 
   // Context editing from workflow preset
   let enableContextEditing: boolean | undefined = undefined
@@ -144,7 +169,8 @@ export function buildQueryRequestPayload(params: {
 
   return {
     query: queryWithContext,
-    agent_mode: correctAgentMode as AgentQueryRequest['agent_mode'],
+    agent_mode: (isWorkflowPhaseChat ? 'workflow_phase' : correctAgentMode) as AgentQueryRequest['agent_mode'],
+    phase_id: isWorkflowPhaseChat ? currentTab.metadata!.phaseId : undefined,
     enabled_tools: enabledTools.map(tool => tool.name),
     enabled_servers: effectiveServers,
     selected_tools: hasActivePreset ? filteredPresetTools : undefined,
@@ -161,13 +187,13 @@ export function buildQueryRequestPayload(params: {
     enable_workspace_access: isChatLikeMode
       ? (currentTab?.config?.enableWorkspaceAccess ?? true)
       : undefined,
-    enable_browser_access: isChatLikeMode
+    enable_browser_access: isChatWithExtras
       ? ((currentTab?.config?.browserMode ?? 'none') === 'headless' || (currentTab?.config?.browserMode ?? 'none') === 'cdp')
       : undefined,
-    enable_gws_access: isChatLikeMode
+    enable_gws_access: isChatWithExtras
       ? (currentTab?.config?.enableGWSAccess ?? false)
       : undefined,
-    cdp_port: isChatLikeMode && (currentTab?.config?.browserMode ?? 'none') === 'cdp'
+    cdp_port: isChatWithExtras && (currentTab?.config?.browserMode ?? 'none') === 'cdp'
       ? (currentTab?.config?.cdpPort || 9222)
       : undefined,
     delegation_mode: isMultiAgentMode
@@ -181,22 +207,22 @@ export function buildQueryRequestPayload(params: {
     delegation_tier_config: isMultiAgentMode
       ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)
       : undefined,
-    selected_skills: isChatLikeMode && currentTab?.config?.selectedSkills?.length
+    selected_skills: isChatWithExtras && currentTab?.config?.selectedSkills?.length
       ? currentTab.config.selectedSkills
       : undefined,
-    selected_subagents: isChatLikeMode && currentTab?.config?.selectedSubAgents?.length
+    selected_subagents: isChatWithExtras && currentTab?.config?.selectedSubAgents?.length
       ? currentTab.config.selectedSubAgents
       : undefined,
     enable_context_editing: enableContextEditing,
-    decrypted_secrets: decryptedSecrets?.length ? decryptedSecrets : undefined,
-    selected_global_secrets: selectedGlobalSecrets,
-    workflow_context_paths: isChatLikeMode && currentTab?.config?.workflowContext?.length
+    decrypted_secrets: isChatWithExtras && decryptedSecrets?.length ? decryptedSecrets : undefined,
+    selected_global_secrets: isChatWithExtras ? selectedGlobalSecrets : undefined,
+    workflow_context_paths: isChatWithExtras && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
     plan_folder: isMultiAgentMode ? (currentTab?.config?.selectedPlanFolder ?? undefined) : undefined,
-    enable_image_generation: isChatLikeMode ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
+    enable_image_generation: isChatWithExtras ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
     image_gen_config: (() => {
-      if (!isChatLikeMode) return undefined
+      if (!isChatWithExtras) return undefined
       const imageGenConfig = useImageGenStore.getState().config
       const cfg = {
         provider: imageGenConfig.provider,

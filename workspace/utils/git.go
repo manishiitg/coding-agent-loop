@@ -462,15 +462,12 @@ func SyncWithGitHub(docsDir, githubBranch string, commitMessage string) error {
 		return err
 	}
 
-	// Check if there are changes to commit
-	statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
-	output, err := statusCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to check git status: %v", err)
-	}
+	// Check if there are staged changes to commit (use diff --cached to ignore untracked/unstaged files)
+	stagedCmd := exec.Command("git", "-C", docsDir, "diff", "--cached", "--quiet")
+	stagedErr := stagedCmd.Run()
 
-	// Commit changes if any
-	if len(strings.TrimSpace(string(output))) > 0 {
+	// diff --cached --quiet exits 1 if there are staged changes, 0 if none
+	if stagedErr != nil {
 		if commitMessage == "" {
 			commitMessage = fmt.Sprintf("Update documents - %s", getCurrentTimestamp())
 		}
@@ -480,7 +477,7 @@ func SyncWithGitHub(docsDir, githubBranch string, commitMessage string) error {
 		}
 		log.Printf("[GIT] Changes committed successfully")
 	} else {
-		log.Printf("[GIT] No changes to commit")
+		log.Printf("[GIT] No staged changes to commit")
 	}
 
 	// Check if remote branch exists before attempting to pull
@@ -557,15 +554,10 @@ func ForcePushLocal(docsDir, githubBranch string, commitMessage string) error {
 		return err
 	}
 
-	// Check if there are changes to commit
-	statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
-	output, err := statusCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to check git status: %v", err)
-	}
-
-	// Commit changes if any
-	if len(strings.TrimSpace(string(output))) > 0 {
+	// Check if there are staged changes to commit (exit 1 = staged changes exist, 0 = none)
+	// Using diff --cached instead of status --porcelain to avoid false positives from untracked/unstaged large files
+	stagedCmd := exec.Command("git", "-C", docsDir, "diff", "--cached", "--quiet")
+	if stagedCmd.Run() != nil {
 		if commitMessage == "" {
 			commitMessage = fmt.Sprintf("Force push local changes - %s", getCurrentTimestamp())
 		}

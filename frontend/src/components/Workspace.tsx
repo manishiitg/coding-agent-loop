@@ -174,6 +174,7 @@ export default function Workspace({
 
   const isSemanticSearchEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.semantic_search_enabled ?? false)
   const isGitSyncEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.github_sync_enabled ?? false)
+  const fetchCapabilities = useCapabilitiesStore(s => s.fetchCapabilities)
 
   // Note: moveDialog from store is shadowed by local state below
   // We should rename the local one to avoid confusion or remove the one from store if unused
@@ -329,6 +330,11 @@ export default function Workspace({
 
     return result
   }, [selectedModeCategory, workflowFolderPath])
+
+  // Fetch capabilities on mount
+  useEffect(() => {
+    fetchCapabilities()
+  }, [fetchCapabilities])
 
   // Restore expanded folders when files change
   // This runs after store's fetchFiles completes and handles workflow mode filtering

@@ -514,7 +514,6 @@ func GetSyncStatus(c *gin.Context) {
 	var fileStatuses []models.FileStatus
 
 	if len(statusLines) > 0 && statusLines[0] != "" {
-		pendingChanges = len(statusLines)
 		// Parse git status output to extract file names and status codes
 		for _, line := range statusLines {
 			if line != "" {
@@ -525,8 +524,16 @@ func GetSyncStatus(c *gin.Context) {
 					statusCode := parts[0]
 					filename := strings.Join(parts[1:], " ")
 
+					// Skip files that exceed the size limit — they get auto-unstaged
+					// during sync and will never be committed, so don't show them as pending
+					absPath := filepath.Join(docsDir, filename)
+					if info, err := os.Stat(absPath); err == nil && info.Size() > utils.MaxGitFileSize {
+						continue
+					}
+
 					// Add to simple pending files list
 					pendingFiles = append(pendingFiles, filename)
+					pendingChanges++
 
 					// Parse status code
 					stagedStatus := string(statusCode[0])

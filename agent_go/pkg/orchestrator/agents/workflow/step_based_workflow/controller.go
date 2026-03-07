@@ -94,6 +94,9 @@ type StepBasedWorkflowOrchestrator struct {
 	// Tiered LLM allocation mode
 	tierResolver  *TierResolver // nil when manual mode
 	useTieredMode bool
+
+	// Debouncer for todo task status update events (coalesces parallel sub-agent completions)
+	todoStatusDebouncer *todoTaskStatusDebouncer
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator

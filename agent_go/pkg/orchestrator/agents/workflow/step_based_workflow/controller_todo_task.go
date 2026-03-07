@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -52,6 +53,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing todo task step %d: %s", stepIndex+1, step.GetTitle()))
+
+	// Ensure any pending debounced status update is flushed when the step completes
+	defer hcpo.flushTodoTaskStatusDebouncer()
 
 	// Use provided stepPath or generate from stepIndex
 	todoTaskStepPath := stepPath
@@ -1006,12 +1010,62 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStepCompletedEvent(
 	}
 }
 
-// emitTodoTaskStatusUpdate reads tasks.md and emits a status update event after a sub-agent completes
+// todoTaskStatusDebouncer coalesces rapid-fire todo task status update events
+// from parallel sub-agent completions into a single debounced emission.
+type todoTaskStatusDebouncer struct {
+	mu       sync.Mutex
+	timer    *time.Timer
+	delay    time.Duration
+	// Latest context to use when the debounce fires
+	latestCtx     context.Context
+	latestArgs    map[string]interface{}
+	latestExecCtx *SubAgentExecutionContext
+}
+
+func newTodoTaskStatusDebouncer(delay time.Duration) *todoTaskStatusDebouncer {
+	return &todoTaskStatusDebouncer{delay: delay}
+}
+
+// emitTodoTaskStatusUpdate schedules a debounced status update event.
+// If called multiple times within the debounce window, only the last call's
+// context is used and a single event is emitted after the window expires.
 func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStatusUpdate(
 	ctx context.Context,
 	args map[string]interface{},
 	execCtx *SubAgentExecutionContext,
 ) {
+	if hcpo.todoStatusDebouncer == nil {
+		hcpo.todoStatusDebouncer = newTodoTaskStatusDebouncer(1 * time.Second)
+	}
+
+	d := hcpo.todoStatusDebouncer
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	// Store latest call context
+	d.latestCtx = ctx
+	d.latestArgs = args
+	d.latestExecCtx = execCtx
+
+	// Reset or start the debounce timer
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	d.timer = time.AfterFunc(d.delay, func() {
+		hcpo.doEmitTodoTaskStatusUpdate()
+	})
+}
+
+// doEmitTodoTaskStatusUpdate performs the actual tasks.md read and event emission.
+// Called by the debounce timer after the window expires.
+func (hcpo *StepBasedWorkflowOrchestrator) doEmitTodoTaskStatusUpdate() {
+	d := hcpo.todoStatusDebouncer
+	d.mu.Lock()
+	ctx := d.latestCtx
+	args := d.latestArgs
+	execCtx := d.latestExecCtx
+	d.mu.Unlock()
+
 	bridge := hcpo.GetContextAwareBridge()
 	if bridge == nil {
 		hcpo.GetLogger().Warn("📋 emitTodoTaskStatusUpdate: bridge is nil, skipping")
@@ -1038,15 +1092,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStatusUpdate(
 		tasksFilePath = filepath.Join("execution", stepPath, "tasks.md")
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate: reading tasks.md at '%s' (workspacePath=%s, runFolder=%s, stepPath=%s)", tasksFilePath, hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, stepPath))
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate(debounced): reading tasks.md at '%s'", tasksFilePath))
 
 	tasksContent, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
 	if err != nil || tasksContent == "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate: tasks.md not found or empty at '%s' (err=%v), skipping event", tasksFilePath, err))
-		return // No tasks.md yet, skip
+		hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate(debounced): tasks.md not found or empty at '%s' (err=%v), skipping", tasksFilePath, err))
+		return
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate: found tasks.md (%d chars), emitting event", len(tasksContent)))
+	hcpo.GetLogger().Info(fmt.Sprintf("📋 emitTodoTaskStatusUpdate(debounced): found tasks.md (%d chars), emitting event", len(tasksContent)))
 
 	routeID, _ := args["route_id"].(string)
 	todoID, _ := args["todo_id"].(string)
@@ -1074,7 +1128,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskStatusUpdate(
 	if err := bridge.HandleEvent(ctx, agentEvent); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit todo task status update event: %v", err))
 	} else {
-		hcpo.GetLogger().Info("✅ emitTodoTaskStatusUpdate: event emitted successfully")
+		hcpo.GetLogger().Info("✅ emitTodoTaskStatusUpdate(debounced): event emitted successfully")
+	}
+}
+
+// flushTodoTaskStatusDebouncer forces immediate emission of any pending debounced event.
+// Call this before the step completes to ensure the final state is emitted.
+func (hcpo *StepBasedWorkflowOrchestrator) flushTodoTaskStatusDebouncer() {
+	if hcpo.todoStatusDebouncer == nil {
+		return
+	}
+	d := hcpo.todoStatusDebouncer
+	d.mu.Lock()
+	if d.timer != nil {
+		d.timer.Stop()
+		d.timer = nil
+	}
+	hasLatest := d.latestCtx != nil
+	d.mu.Unlock()
+
+	if hasLatest {
+		hcpo.doEmitTodoTaskStatusUpdate()
 	}
 }
 

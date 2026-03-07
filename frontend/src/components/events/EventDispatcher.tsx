@@ -586,12 +586,33 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'orchestrator_agent_start')) {
     return (
       <CompactWrapper compact={compact}>
-        <OrchestratorAgentStartEventDisplay 
-          event={getEventData(event)} 
+        <OrchestratorAgentStartEventDisplay
+          event={getEventData(event)}
           isCollapsed={isCollapsed}
           eventCount={eventCount}
           onToggleCollapse={onToggleCollapse}
         />
+        {/* Render children (tool calls) when agent has grouped events via correlation_id */}
+        {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
+          <div className="mt-1 ml-1">
+            <div
+              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words"
+              style={{ maxHeight: '50vh' }}
+            >
+              <SubAgentHierarchy
+                nodes={childrenNodes}
+                onToggleNode={onToggleNode}
+                onApproveWorkflow={onApproveWorkflow}
+                onSubmitFeedback={onSubmitFeedback}
+                onFeedbackSubmitted={onFeedbackSubmitted}
+                isApproving={isApproving}
+                delegationStats={delegationStats}
+                backgroundAgentStats={backgroundAgentStats}
+                compact={true}
+              />
+            </div>
+          </div>
+        )}
       </CompactWrapper>
     )
   }

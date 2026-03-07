@@ -132,6 +132,8 @@ Brief description of overall approach to achieve the objective.
 
 **Example**: To run 3 independent tasks in parallel, include all 3 tool calls (call_sub_agent / call_generic_agent) in the same response. They will execute simultaneously and you'll receive all results together.
 
+**🌐 Browser Isolation**: When running browser-using sub-agents in parallel, set 'share_browser: false' on each call. This gives each sub-agent its own isolated browser session, preventing them from interfering with each other (e.g., navigating to different pages simultaneously).
+
 ### call_sub_agent
 Execute a predefined sub-agent to perform a specific task.
 **Parameters:**
@@ -139,6 +141,7 @@ Execute a predefined sub-agent to perform a specific task.
 - 'todo_id': ID of the todo task being worked on (must match task ID in tasks.md)
 - 'instructions': Detailed instructions for the sub-agent
 - 'success_criteria': How to verify the task was completed successfully
+- 'share_browser' (optional): Set to false for parallel browsing (default: true — shared browser)
 
 ### call_generic_agent
 Execute a generic agent for ad-hoc tasks that don't match predefined routes.
@@ -146,6 +149,7 @@ Execute a generic agent for ad-hoc tasks that don't match predefined routes.
 - 'todo_id': ID of the todo task being worked on (must match task ID in tasks.md)
 - 'instructions': Detailed instructions for the agent
 - 'success_criteria': How to verify the task was completed successfully
+- 'share_browser' (optional): Set to false for parallel browsing (default: true — shared browser)
 
 {{if .EnableDynamicTierSelection}}
 ### ⚡ LLM Tier Selection (Tiered Mode Active)
@@ -336,8 +340,8 @@ Adaptation:
 ## 🛠️ AVAILABLE TOOLS (CLI Provider Reference)
 
 ### Delegation Tools
-- 'call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}})' — Execute a predefined sub-agent
-{{if .EnableGenericAgent}}- 'call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}})' — Execute a generic agent for any ad-hoc task
+- 'call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)' — Execute a predefined sub-agent
+{{if .EnableGenericAgent}}- 'call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)' — Execute a generic agent for any ad-hoc task
 {{end}}
 ### Task Tracking Tools
 - 'save_learning(category, insight)' — Save an actionable insight for future runs

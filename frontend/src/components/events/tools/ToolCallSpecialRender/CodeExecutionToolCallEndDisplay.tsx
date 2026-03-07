@@ -164,13 +164,21 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
   if (toolName === 'execute_shell_command') {
     const output = resultText || event.result || ''
 
-    // Check for error indicators
-    const isError = output.includes('Traceback') ||
-                    output.includes('Error:') ||
-                    output.includes('error:') ||
-                    output.includes('command not found') ||
-                    output.includes('Permission denied') ||
-                    (output.trim().startsWith('{') && output.includes('"error"'))
+    // Check for error indicators - prefer exit_code from JSON if available
+    let isError = false
+    if (output.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(output)
+        isError = parsed.exit_code !== undefined ? parsed.exit_code !== 0 : false
+      } catch {
+        isError = false
+      }
+    }
+    if (!isError) {
+      isError = output.includes('Traceback') ||
+                output.includes('command not found') ||
+                output.includes('Permission denied')
+    }
 
     const bgColor = isError
       ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'

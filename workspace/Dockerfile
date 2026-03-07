@@ -1,8 +1,8 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# Build stage - Debian so the binary links against glibc
+FROM golang:1.24-bookworm AS builder
 
-# Install ripgrep and gcc/musl-dev for CGO support
-RUN apk add --no-cache ripgrep gcc musl-dev git
+# Install ripgrep and gcc for CGO support
+RUN apt-get update && apt-get install -y --no-install-recommends ripgrep gcc libc6-dev git && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -20,15 +20,29 @@ COPY . .
 ENV CGO_ENABLED=1
 RUN go build -o planner .
 
-# Final stage
-FROM alpine:3.20
+# Final stage - Debian bookworm-slim (glibc, avoids musl compatibility issues)
+FROM debian:bookworm-slim
 
 # Install system packages
-RUN apk add --no-cache \
-    ripgrep git patch py3-pip python3 python3-dev \
-    util-linux jq chromium chromium-chromedriver \
-    py3-matplotlib py3-pandas \
-    build-base curl wget bash ca-certificates gcompat nodejs npm
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    wget \
+    bash \
+    jq \
+    ripgrep \
+    git \
+    patch \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    python3-matplotlib \
+    build-essential \
+    chromium \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install agent-browser globally for browser automation
 # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents downloading extra Chromium binaries
@@ -37,12 +51,12 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 RUN npm install -g agent-browser @googleworkspace/cli && \
     rm -rf /root/.cache/ms-playwright /tmp/.cache/ms-playwright
 
-# Set Chromium path for agent-browser (system chromium on Alpine)
+# Set Chromium path for agent-browser and Playwright (system chromium on Debian)
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Configure pip: allow installs when Python is "externally managed" (PEP 668)
-RUN echo "[global]" > /etc/pip.conf && \
-    echo "break-system-packages = true" >> /etc/pip.conf
+RUN pip3 install --break-system-packages pandas
 
 # Set working directory
 WORKDIR /app

@@ -30,6 +30,10 @@ const (
 	PreferredTierContextKey subAgentContextKey = "preferred_tier"
 	// SubAgentLLMContextKey is the context key for direct LLM override for sub-agents (works in both tiered and manual modes)
 	SubAgentLLMContextKey subAgentContextKey = "sub_agent_llm"
+	// SubAgentShareBrowserKey is the context key for controlling browser session isolation in sub-agents
+	SubAgentShareBrowserKey subAgentContextKey = "share_browser"
+	// SubAgentIsolatedSessionIDKey is the context key for the isolated MCP session ID (set when share_browser=false)
+	SubAgentIsolatedSessionIDKey subAgentContextKey = "isolated_session_id"
 )
 
 // ValidateTodoExistsFunc is the function signature for validating if a task exists in tasks.md
@@ -79,6 +83,10 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 			"type":        "string",
 			"description": "How to verify the task was completed successfully. Include specific checks, file existence, data validation, etc.",
 		},
+		"share_browser": map[string]interface{}{
+			"type":        "boolean",
+			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
+		},
 	}
 	if enableTierSelection {
 		callSubAgentProperties["preferred_tier"] = map[string]interface{}{
@@ -114,6 +122,10 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 		"success_criteria": map[string]interface{}{
 			"type":        "string",
 			"description": "How to verify the task was completed successfully. Include specific checks the agent should perform.",
+		},
+		"share_browser": map[string]interface{}{
+			"type":        "boolean",
+			"description": "Whether the sub-agent shares the parent's browser session (Playwright/Camofox) or gets an isolated browser. Default: true (shared). Set to false for parallel browsing, different auth contexts, or to avoid state interference.",
 		},
 	}
 	if enableTierSelection {
@@ -177,6 +189,11 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	// Extract preferred_tier if provided (for tiered LLM allocation)
 	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
 		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
+	}
+
+	// Extract share_browser param (defaults to true — shared browser)
+	if sb, ok := args["share_browser"].(bool); ok && !sb {
+		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
 	}
 
 	// VALIDATION: Check if task exists in tasks.md before delegation
@@ -246,6 +263,11 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	// Extract preferred_tier if provided (for tiered LLM allocation)
 	if preferredTier, ok := args["preferred_tier"].(float64); ok && int(preferredTier) >= 1 && int(preferredTier) <= 3 {
 		ctx = context.WithValue(ctx, PreferredTierContextKey, int(preferredTier))
+	}
+
+	// Extract share_browser param (defaults to true — shared browser)
+	if sb, ok := args["share_browser"].(bool); ok && !sb {
+		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
 	}
 
 	// VALIDATION: Check if task exists in tasks.md before delegation

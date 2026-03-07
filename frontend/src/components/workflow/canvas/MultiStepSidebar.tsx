@@ -631,32 +631,8 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                   </div>
                 </div>
 
-                {/* Validation Agent Configuration */}
-                <div className="border-t border-gray-200 dark:border-gray-700 pt-4 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                      Validation
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={agentConfigs.disable_validation !== true}
-                        onChange={(e) => handleToggleChange('disable_validation', !e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-xs text-gray-600 dark:text-gray-400">Enabled</span>
-                    </label>
-                  </div>
-                  {agentConfigs.disable_validation !== true && (
-                    <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
-                      selectedLLM={llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption()}
-                      onLLMSelect={handleValidationLLMSelect}
-                      inModal={false}
-                      openDirection="down"
-                    />
-                  )}
-                </div>
+                {/* LLM Validation Agent Configuration — disabled (LLM validation is dead code in backend).
+                   Only pre-validation (code-based structural checks) is active. Kept commented out for reference. */}
 
                 {/* Learning Agent Configuration */}
                 <div className="border-t border-gray-200 dark:border-gray-700 pt-4 space-y-2">

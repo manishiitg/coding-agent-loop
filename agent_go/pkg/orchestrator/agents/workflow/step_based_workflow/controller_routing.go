@@ -173,13 +173,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		conditionContext = contextBuilder.String()
 	}
 
-	// Determine code execution mode
-	isCodeExecutionMode := requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
-
-	if routingStep.AgentConfigs == nil {
-		routingStep.AgentConfigs = &AgentConfigs{}
-	}
-	routingStep.AgentConfigs.UseCodeExecutionMode = &isCodeExecutionMode
+	// Code execution mode is determined by createConditionalAgent's 3-rule priority:
+	// Rule 1: CLI providers (claude-code, gemini-cli) always use code execution
+	// Rule 2: Step config if explicitly set by user
+	// Rule 3: Non-CLI providers default to false
+	// We do NOT override UseCodeExecutionMode here — let the factory decide based on the actual resolved LLM provider
 
 	// Ensure step execution folder exists
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
@@ -201,7 +199,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 
 	// Evaluate routing
 	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating routing question: %s", routingStep.RoutingQuestion))
-	routingResponse, err := conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, isCodeExecutionMode, variableNames, variableValues)
+	routingResponse, err := conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, variableNames, variableValues)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate routing step %d: %v", stepIndex+1, err), nil)
 		hcpo.EmitOrchestratorAgentError(ctx, "conditional", "routing-step-evaluation", fmt.Sprintf("Evaluate routing: %s", routingStep.RoutingQuestion), err.Error(), stepIndex, 0)

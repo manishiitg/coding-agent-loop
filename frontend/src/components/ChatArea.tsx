@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
-import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage } from '../services/api-types'
+import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatusMessage, ExecutionOptions } from '../services/api-types'
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
@@ -207,8 +207,6 @@ interface ChatAreaProps {
   // Tab ID - if provided, use this tab's session ID (works for both chat and workflow modes)
   tabId?: string
 }
-
-import type { ExecutionOptions } from '../services/api-types'
 
 // Ref interface for ChatArea component
 export interface ChatAreaRef {

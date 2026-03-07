@@ -357,7 +357,7 @@ github.com/mailru/easyjson/buffer
 github.com/mailru/easyjson/jwriter
 # github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0 => ./workspace
 ## explicit; go 1.24.4
-# github.com/manishiitg/mcpagent v1.7.2
+# github.com/manishiitg/mcpagent v1.7.3
 ## explicit; go 1.24.4
 github.com/manishiitg/mcpagent/agent
 github.com/manishiitg/mcpagent/agent/codeexec
@@ -373,22 +373,8 @@ github.com/manishiitg/mcpagent/mcpcache/openapi
 github.com/manishiitg/mcpagent/mcpclient
 github.com/manishiitg/mcpagent/oauth
 github.com/manishiitg/mcpagent/observability
-# github.com/manishiitg/multi-llm-provider-go v0.5.3
+# github.com/manishiitg/multi-llm-provider-go v0.5.4
 ## explicit; go 1.24.4
-github.com/manishiitg/multi-llm-provider-go
-github.com/manishiitg/multi-llm-provider-go/interfaces
-github.com/manishiitg/multi-llm-provider-go/internal/recorder
-github.com/manishiitg/multi-llm-provider-go/llmtypes
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/anthropic
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/bedrock
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/geminicli
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/minimax
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/openai
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/utils
-github.com/manishiitg/multi-llm-provider-go/pkg/adapters/vertex
-github.com/manishiitg/multi-llm-provider-go/pkg/utils
 # github.com/mark3labs/mcp-go v0.44.0
 ## explicit; go 1.23.0
 github.com/mark3labs/mcp-go/client

@@ -1630,7 +1630,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
         
         if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: '', selectedPlanFolder: undefined })
+          setTabConfig(activeTabId, { inputText: '' })
         }
         onSubmit(queryToSubmit)
       } else if (canSubmit && isStreaming) {
@@ -1734,7 +1734,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: '', selectedPlanFolder: undefined })
+        setTabConfig(activeTabId, { inputText: '' })
       }
       onSubmit(queryToSubmit)
     } else if (canSubmit && isStreaming) {
@@ -1879,11 +1879,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       scrollToFile(file.filepath)
     }
 
-    // If the selected file is a direct Plans/ subfolder, pre-seed it as the plan to reuse
+    // If the selected file is a direct Plans/ subfolder, write .last_used timestamp
     const isPlanFolder = file.type === 'folder' && /^Plans\/[^/]+$/.test(file.filepath)
-    if (isPlanFolder && activeTabId) {
-      setTabConfig(activeTabId, { selectedPlanFolder: file.filepath })
-      // Write .last_used timestamp so Plans Manager can show when this plan was last accessed
+    if (isPlanFolder) {
       agentApi.updatePlannerFile(`${file.filepath}/.last_used`, new Date().toISOString()).catch(() => {})
     }
 
@@ -2187,25 +2185,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         </div>
       )}
 
-      {/* Selected Plan Badge (multi-agent mode) */}
-      {isMultiAgentMode && tabConfig?.selectedPlanFolder && (
-        <div className="px-4">
-          <div className="flex items-center gap-1.5 border rounded px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700">
-            <GitBranch className="w-3 h-3 text-blue-500 dark:text-blue-400 flex-shrink-0" />
-            <span className="text-xs text-blue-700 dark:text-blue-300">
-              Continuing plan: <span className="font-mono font-semibold">{tabConfig.selectedPlanFolder.split('/').pop()}</span>
-            </span>
-            <button
-              type="button"
-              onClick={() => { if (activeTabId) setTabConfig(activeTabId, { selectedPlanFolder: undefined }) }}
-              className="ml-auto p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
-              title="Clear plan selection"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Input Form */}
       <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700">

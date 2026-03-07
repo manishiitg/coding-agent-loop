@@ -764,7 +764,17 @@ export const ModePresetBar: React.FC = () => {
         onSelectPlan={(folder) => {
           const chatStore = useChatStore.getState()
           const activeTabId = chatStore.activeTabId
-          if (activeTabId) chatStore.setTabConfig(activeTabId, { selectedPlanFolder: folder })
+          if (activeTabId) {
+            const currentConfig = chatStore.getTabConfig(activeTabId)
+            const existingFileContext = currentConfig?.fileContext ?? []
+            const planName = folder.split('/').pop() || folder
+            const alreadyInContext = existingFileContext.some(f => f.path === folder)
+            if (!alreadyInContext) {
+              chatStore.setTabConfig(activeTabId, {
+                fileContext: [...existingFileContext, { name: planName, path: folder, type: 'folder' as const }]
+              })
+            }
+          }
           agentApi.updatePlannerFile(`${folder}/.last_used`, new Date().toISOString()).catch(() => {})
         }}
       />

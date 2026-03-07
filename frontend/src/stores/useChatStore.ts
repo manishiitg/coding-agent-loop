@@ -198,6 +198,7 @@ const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat')
     browserMode: appStore?.lastBrowserMode ?? 'none',
     enableBrowserAccess: (appStore?.lastBrowserMode === 'headless' || appStore?.lastBrowserMode === 'cdp') ?? false,
     enableImageGeneration: appStore?.lastEnableImageGeneration ?? false,
+    enableGWSAccess: appStore?.lastGWSAccess ?? false,
     selectedSkills: appStore?.lastSelectedSkills ?? [],
     selectedSubAgents: appStore?.lastSelectedSubAgents ?? [],
     delegationTierConfig: mode === 'multi-agent' ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
@@ -1610,12 +1611,14 @@ export const useChatStore = create<ChatState>()(
             lastSelectedSubAgents?: string[]
             lastBrowserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
             lastEnableImageGeneration?: boolean
+            lastGWSAccess?: boolean
           }
           const sync: SyncUpdate = {}
           if (configUpdate.selectedSkills !== undefined) sync.lastSelectedSkills = configUpdate.selectedSkills
           if (configUpdate.selectedSubAgents !== undefined) sync.lastSelectedSubAgents = configUpdate.selectedSubAgents
           if (configUpdate.browserMode !== undefined) sync.lastBrowserMode = configUpdate.browserMode
           if (configUpdate.enableImageGeneration !== undefined) sync.lastEnableImageGeneration = configUpdate.enableImageGeneration
+          if (configUpdate.enableGWSAccess !== undefined) sync.lastGWSAccess = configUpdate.enableGWSAccess
           if (Object.keys(sync).length > 0) {
             console.log('[TabSettings] Syncing to AppStore:', sync)
             useAppStore.getState().syncLastTabSettings(sync)

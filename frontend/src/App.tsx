@@ -18,6 +18,7 @@ import PushToGistDialog from "./components/workspace/PushToGistDialog";
 import FileEditor from "./components/workspace/FileEditor";
 import { isValidJSON } from "./utils/event-helpers";
 import { prepareDomForPdfExport } from "./utils/pdfExport";
+import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
@@ -170,6 +171,8 @@ function App() {
   const [showPushToGistDialog, setShowPushToGistDialog] = useState(false)
   const [exportProgress, setExportProgress] = useState<string | null>(null)
   const [shareCopied, setShareCopied] = useState(false)
+  const [contentCopied, setContentCopied] = useState(false)
+  const [slackCopied, setSlackCopied] = useState(false)
   const markdownContentRef = useRef<HTMLDivElement>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
@@ -347,24 +350,32 @@ function App() {
           // Electron: printToPDF via IPC → direct file save
           await (window as any).electronAPI.printToPDF(filename)
         } else {
-          // Web: inject @media print CSS to isolate the markdown panel, then print
+          // Web: clone content into a top-level wrapper for clean full-page printing
           const printTarget = markdownContentRef.current
-          printTarget.setAttribute('data-pdf-print', 'true')
+          const clone = printTarget.cloneNode(true) as HTMLElement
+          const wrapper = document.createElement('div')
+          wrapper.id = 'pdf-print-wrapper'
+          wrapper.style.cssText = 'position:absolute;top:0;left:0;width:100%;background:white;padding:40px;z-index:99999;'
+          wrapper.appendChild(clone)
+          // Set document title to filename for the PDF name
+          const prevTitle = document.title
+          document.title = filename.replace(/\.pdf$/, '')
           const style = document.createElement('style')
           style.textContent = `@media print {
-            body * { visibility: hidden !important; }
-            [data-pdf-print] { visibility: visible !important; position: fixed !important;
-              top: 0 !important; left: 0 !important; width: 100% !important;
-              background: white !important; }
-            [data-pdf-print] * { visibility: visible !important; }
+            body > *:not(#pdf-print-wrapper) { display: none !important; }
+            #pdf-print-wrapper { position: static !important; width: 100% !important; }
+            #pdf-print-wrapper * { max-width: 100% !important; }
+            html, body { overflow: visible !important; height: auto !important; }
           }`
           document.head.appendChild(style)
+          document.body.appendChild(wrapper)
           await new Promise<void>((resolve) => {
             window.addEventListener('afterprint', resolve, { once: true })
             window.print()
           })
+          document.body.removeChild(wrapper)
           document.head.removeChild(style)
-          printTarget.removeAttribute('data-pdf-print')
+          document.title = prevTitle
         }
       } finally {
         restore()
@@ -876,6 +887,38 @@ function App() {
                           title="Download file"
                         >
                           <Download className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!fileContent) return
+                            await navigator.clipboard.writeText(fileContent)
+                            setContentCopied(true)
+                            setTimeout(() => setContentCopied(false), 2000)
+                          }}
+                          className="flex items-center gap-1 p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                          title="Copy formatted content"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" strokeWidth={2} />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                          </svg>
+                          {contentCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!fileContent) return
+                            const slack = convertToSlackMarkdown(fileContent)
+                            await navigator.clipboard.writeText(slack)
+                            setSlackCopied(true)
+                            setTimeout(() => setSlackCopied(false), 2000)
+                          }}
+                          className="flex items-center gap-1 p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                          title="Copy as Slack format"
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zm1.271 0a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zm0 1.271a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zm-1.27 0a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.163 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.163 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.163 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zm0-1.27a2.527 2.527 0 0 1-2.52-2.523 2.527 2.527 0 0 1 2.52-2.52h6.315A2.528 2.528 0 0 1 24 15.163a2.528 2.528 0 0 1-2.522 2.523h-6.315z"/>
+                          </svg>
+                          {slackCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
                         </button>
                         <button
                           onClick={() => {

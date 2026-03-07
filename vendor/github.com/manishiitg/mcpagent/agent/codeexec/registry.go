@@ -37,6 +37,11 @@ type ToolRegistry struct {
 	// Key: sessionID, Value: map of toolName -> executor
 	// When multiple workflows run concurrently, each gets its own scoped tools
 	sessionCustomTools map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
+
+	// Session-scoped virtual tools to prevent cross-workflow contamination
+	// Key: sessionID, Value: map of toolName -> executor
+	// When multiple workflows run concurrently, each gets its own virtual tool handlers
+	sessionVirtualTools map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
 }
 
 var (
@@ -68,12 +73,13 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 	if globalRegistry == nil {
 		// First initialization - create new registry
 		globalRegistry = &ToolRegistry{
-			mcpClients:         make(map[string]mcpclient.ClientInterface),
-			customTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools:       make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer:       make(map[string]string),
-			sessionCustomTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			logger:             logger,
+			mcpClients:          make(map[string]mcpclient.ClientInterface),
+			customTools:         make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:        make(map[string]string),
+			sessionCustomTools:  make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			logger:              logger,
 		}
 		logger.Debug("Creating new tool registry")
 	} else {
@@ -111,12 +117,15 @@ func InitRegistryWithVirtualTools(mcpClients map[string]mcpclient.ClientInterfac
 		}
 	}
 
-	// Merge virtual tools
+	// Merge virtual tools - UPDATE existing ones (new agent's handler should take priority)
+	// When multiple agents share a session (e.g., planning → todo task), the latest agent's
+	// virtual tool handlers must replace the old ones so get_api_spec returns the correct
+	// tool categories for the currently active agent.
 	for toolName, executor := range virtualTools {
-		if existing, exists := globalRegistry.virtualTools[toolName]; exists {
-			logger.Debug("Virtual tool already exists, keeping existing",
+		if _, exists := globalRegistry.virtualTools[toolName]; exists {
+			globalRegistry.virtualTools[toolName] = executor
+			logger.Debug("Virtual tool already exists, updating with new executor",
 				loggerv2.String("tool", toolName))
-			_ = existing // Keep existing executor
 		} else {
 			globalRegistry.virtualTools[toolName] = executor
 			logger.Debug("Added virtual tool", loggerv2.String("tool", toolName))
@@ -340,6 +349,103 @@ func CallVirtualTool(ctx context.Context, toolName string, args map[string]inter
 	return executor(ctx, args)
 }
 
+// InitRegistryVirtualToolsForSession registers virtual tools scoped to a specific session
+// This prevents cross-workflow contamination when multiple workflows run concurrently
+// Each session gets its own set of virtual tool executors
+func InitRegistryVirtualToolsForSession(sessionID string, virtualTools map[string]func(ctx context.Context, args map[string]interface{}) (string, error), logger loggerv2.Logger) {
+	if sessionID == "" {
+		if logger != nil {
+			logger.Warn("InitRegistryVirtualToolsForSession called with empty sessionID, skipping")
+		}
+		return
+	}
+
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	if logger == nil {
+		logger = loggerv2.NewNoop()
+	}
+
+	// Ensure global registry exists
+	if globalRegistry == nil {
+		globalRegistry = &ToolRegistry{
+			mcpClients:          make(map[string]mcpclient.ClientInterface),
+			customTools:         make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:        make(map[string]string),
+			sessionCustomTools:  make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			logger:              logger,
+		}
+	}
+
+	// Ensure sessionVirtualTools map is initialized
+	if globalRegistry.sessionVirtualTools == nil {
+		globalRegistry.sessionVirtualTools = make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	}
+
+	// Replace the entire session entry (each agent provides a complete set)
+	globalRegistry.sessionVirtualTools[sessionID] = make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
+	for toolName, executor := range virtualTools {
+		globalRegistry.sessionVirtualTools[sessionID][toolName] = executor
+		logger.Debug("Registered session-scoped virtual tool",
+			loggerv2.String("session_id", sessionID),
+			loggerv2.String("tool", toolName))
+	}
+
+	logger.Info("Session-scoped virtual tools registered",
+		loggerv2.String("session_id", sessionID),
+		loggerv2.Int("tool_count", len(virtualTools)),
+		loggerv2.Int("total_sessions", len(globalRegistry.sessionVirtualTools)))
+}
+
+// CallVirtualToolWithSession calls a virtual tool with session scoping
+// It first checks session-scoped tools, then falls back to global tools
+func CallVirtualToolWithSession(ctx context.Context, sessionID string, toolName string, args map[string]interface{}) (string, error) {
+	registry := GetRegistry()
+	if registry == nil {
+		return "", fmt.Errorf("tool registry not initialized")
+	}
+
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+
+	// Priority 1: Check session-scoped virtual tools first (if sessionID provided)
+	if sessionID != "" && registry.sessionVirtualTools != nil {
+		if sessionTools, exists := registry.sessionVirtualTools[sessionID]; exists {
+			if executor, exists := sessionTools[toolName]; exists {
+				if registry.logger != nil {
+					registry.logger.Debug("Using session-scoped virtual tool",
+						loggerv2.String("session_id", sessionID),
+						loggerv2.String("tool", toolName))
+				}
+				return executor(ctx, args)
+			}
+		}
+		// Session exists but tool not found in session scope - fall through to global
+		if registry.logger != nil {
+			registry.logger.Debug("Virtual tool not found in session scope, falling back to global",
+				loggerv2.String("session_id", sessionID),
+				loggerv2.String("tool", toolName))
+		}
+	}
+
+	// Priority 2: Fall back to global virtual tools
+	executor, exists := registry.virtualTools[toolName]
+	if !exists {
+		return "", fmt.Errorf("virtual tool %s not found (checked session: %s)", toolName, sessionID)
+	}
+
+	if registry.logger != nil {
+		registry.logger.Debug("Using global virtual tool (no session scope)",
+			loggerv2.String("tool", toolName),
+			loggerv2.String("session_id", sessionID))
+	}
+
+	return executor(ctx, args)
+}
+
 // InitRegistryForSession registers custom tools scoped to a specific session
 // This prevents cross-workflow contamination when multiple workflows run concurrently
 // Each session gets its own set of custom tool executors (with their own folder guard paths)
@@ -362,12 +468,13 @@ func InitRegistryForSession(sessionID string, customTools map[string]func(ctx co
 	// Ensure global registry exists
 	if globalRegistry == nil {
 		globalRegistry = &ToolRegistry{
-			mcpClients:         make(map[string]mcpclient.ClientInterface),
-			customTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			virtualTools:       make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			toolToServer:       make(map[string]string),
-			sessionCustomTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
-			logger:             logger,
+			mcpClients:          make(map[string]mcpclient.ClientInterface),
+			customTools:         make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			virtualTools:        make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			toolToServer:        make(map[string]string),
+			sessionCustomTools:  make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			sessionVirtualTools: make(map[string]map[string]func(ctx context.Context, args map[string]interface{}) (string, error)),
+			logger:              logger,
 		}
 	}
 
@@ -452,16 +559,25 @@ func CleanupSession(sessionID string) {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 
-	if globalRegistry == nil || globalRegistry.sessionCustomTools == nil {
+	if globalRegistry == nil {
 		return
 	}
 
-	if _, exists := globalRegistry.sessionCustomTools[sessionID]; exists {
-		delete(globalRegistry.sessionCustomTools, sessionID)
-		if globalRegistry.logger != nil {
-			globalRegistry.logger.Info("Cleaned up session-scoped tools",
-				loggerv2.String("session_id", sessionID))
+	if globalRegistry.sessionCustomTools != nil {
+		if _, exists := globalRegistry.sessionCustomTools[sessionID]; exists {
+			delete(globalRegistry.sessionCustomTools, sessionID)
 		}
+	}
+
+	if globalRegistry.sessionVirtualTools != nil {
+		if _, exists := globalRegistry.sessionVirtualTools[sessionID]; exists {
+			delete(globalRegistry.sessionVirtualTools, sessionID)
+		}
+	}
+
+	if globalRegistry.logger != nil {
+		globalRegistry.logger.Info("Cleaned up session-scoped tools",
+			loggerv2.String("session_id", sessionID))
 	}
 }
 

@@ -4,11 +4,12 @@ import "time"
 
 // Document represents a markdown document
 type Document struct {
-	FilePath string     `json:"filepath"`
-	Content  string     `json:"content,omitempty"`  // Omitted in list endpoints, populated for single file reads
-	Type     string     `json:"type,omitempty"`     // "file" or "folder"
-	Children []Document `json:"children,omitempty"` // For hierarchical structure
-	IsImage  bool       `json:"is_image,omitempty"` // Whether file is an image
+	FilePath     string     `json:"filepath"`
+	Content      string     `json:"content,omitempty"`       // Omitted in list endpoints, populated for single file reads
+	Type         string     `json:"type,omitempty"`          // "file" or "folder"
+	Children     []Document `json:"children,omitempty"`      // For hierarchical structure
+	IsImage      bool       `json:"is_image,omitempty"`      // Whether file is an image
+	LastModified string     `json:"last_modified,omitempty"` // RFC3339 modification time
 }
 
 // CreateDocumentRequest represents the request to create a document

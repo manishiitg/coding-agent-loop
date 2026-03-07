@@ -848,6 +848,10 @@ type QueryRequest struct {
 	// Workspace paths of workflows to inject context for (via # selector in chat)
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
 
+	// Workflow phase chat: phase ID for running a phase as a conversational chat session
+	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
+	PhaseID string `json:"phase_id,omitempty"`
+
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
 }
@@ -2987,6 +2991,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[SESSION FALLBACK] Loaded provider/model from stored session config: %s/%s", finalProvider, finalModelID)
 			}
 		}
+	}
+
+	// Handle workflow phase chat mode - convert to simple agent with phase-specific prompt + tools
+	// This runs BEFORE the workflow orchestrator branch to intercept and redirect
+	isWorkflowPhase := req.AgentMode == "workflow_phase"
+	workflowPhaseID := req.PhaseID
+	if isWorkflowPhase {
+		log.Printf("[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
+		// Convert to simple agent mode so it falls through to the standard agent path
+		req.AgentMode = "simple"
 	}
 
 	// Handle workflow mode - use workflow orchestrator

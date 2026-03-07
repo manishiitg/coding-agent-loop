@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -211,8 +213,10 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 	// Tag events with agent session ID from context (for parallel agent grouping).
 	// This allows the frontend to parent tool calls under their orchestrator_agent_start.
 	if agentSessionID, ok := ctx.Value(AgentSessionIDKey).(string); ok && agentSessionID != "" {
-		// Only tag events that don't already have a correlation_id (don't override delegation events)
-		if event.CorrelationID == "" {
+		// Only tag sub-agent events (not root agent) for grouping under agent cards.
+		// Root agent tool calls should remain at root level in the event list.
+		isSubAgent, _ := ctx.Value(orchevents.IsSubAgentContextKey).(bool)
+		if isSubAgent && !strings.HasPrefix(event.CorrelationID, "delegation-") {
 			event.CorrelationID = agentSessionID
 		}
 	}

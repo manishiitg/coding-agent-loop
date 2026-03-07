@@ -46,8 +46,9 @@ type CustomExecuteResponse struct {
 
 // VirtualExecuteRequest represents a request to execute a virtual tool
 type VirtualExecuteRequest struct {
-	Tool string                 `json:"tool"` // Tool name (e.g., "discover_code_structure")
-	Args map[string]interface{} `json:"args"` // Tool arguments
+	Tool      string                 `json:"tool"`                 // Tool name (e.g., "discover_code_structure")
+	Args      map[string]interface{} `json:"args"`                 // Tool arguments
+	SessionID string                 `json:"session_id,omitempty"` // Optional: Session ID for scoping virtual tools (prevents cross-workflow contamination)
 }
 
 // VirtualExecuteResponse represents the response from a virtual tool execution
@@ -403,7 +404,9 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	h.logger.Info("🔧 Virtual Execute request", loggerv2.String("tool", req.Tool))
+	h.logger.Info("🔧 Virtual Execute request",
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
 
 	// Validate request
 	if req.Tool == "" {
@@ -418,9 +421,11 @@ func (h *ExecutorHandlers) HandleVirtualExecute(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 
-	// Execute virtual tool using codeexec registry
-	h.logger.Info("🚀 Executing virtual tool", loggerv2.String("tool", req.Tool))
-	result, err := codeexec.CallVirtualTool(ctx, req.Tool, req.Args)
+	// Execute virtual tool using codeexec registry (session-scoped to prevent cross-workflow contamination)
+	h.logger.Info("🚀 Executing virtual tool",
+		loggerv2.String("tool", req.Tool),
+		loggerv2.String("session_id", req.SessionID))
+	result, err := codeexec.CallVirtualToolWithSession(ctx, req.SessionID, req.Tool, req.Args)
 	if err != nil {
 		h.logger.Error("Virtual tool execution failed", err, loggerv2.String("tool", req.Tool))
 		_ = json.NewEncoder(w).Encode(VirtualExecuteResponse{ //nolint:gosec // JSON encoding errors are non-critical in HTTP handlers

@@ -671,12 +671,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	// Build generic step path
 	genericStepPath := fmt.Sprintf("%s-generic-%s", stepPath, response.TodoIDToExecute)
 
-	// Get execution path
-	executionPath := filepath.Join("execution", genericStepPath)
+	// Get execution path using full workspace-relative paths (consistent with setupExecutionFolderGuard)
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	executionPath := getExecutionFolderPath(executionWorkspacePath, genericStepPath)
+	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	// Setup folder guard for generic agent
-	readPaths := []string{executionPath, "execution", filepath.Join("execution", stepPath)}
-	writePaths := []string{executionPath}
+	readPaths := []string{executionWorkspacePath, filepath.Join(executionWorkspacePath, stepPath)}
+	writePaths := []string{executionPath, downloadsPath}
+
+	// Add knowledgebase folder paths if enabled
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+		writePaths = append(writePaths, knowledgebasePath)
+	}
 
 	// Add skill folder paths to read paths (skills are read-only)
 	genericStepConfig := getAgentConfigs(genericStep)
@@ -801,12 +817,28 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	// Build sub-agent step path
 	subAgentStepPath := fmt.Sprintf("%s-sub-%s", stepPath, route.RouteID)
 
-	// Get execution path
-	executionPath := filepath.Join("execution", subAgentStepPath)
+	// Get execution path using full workspace-relative paths (consistent with setupExecutionFolderGuard)
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	var runWorkspacePath string
+	if hcpo.selectedRunFolder != "" {
+		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
+	} else {
+		runWorkspacePath = baseWorkspacePath
+	}
+	executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
+	executionPath := getExecutionFolderPath(executionWorkspacePath, subAgentStepPath)
+	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	// Setup folder guard for sub-agent
-	readPaths := []string{executionPath, "execution", filepath.Join("execution", stepPath)}
-	writePaths := []string{executionPath}
+	readPaths := []string{executionWorkspacePath, filepath.Join(executionWorkspacePath, stepPath)}
+	writePaths := []string{executionPath, downloadsPath}
+
+	// Add knowledgebase folder paths if enabled
+	if hcpo.UseKnowledgebase() {
+		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+		readPaths = append(readPaths, knowledgebasePath)
+		writePaths = append(writePaths, knowledgebasePath)
+	}
 
 	// Add skill folder paths to read paths (skills are read-only)
 	subAgentStepConfig := getAgentConfigs(stepToExecute)

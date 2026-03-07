@@ -160,17 +160,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             </button>
           )}
           
-          {/* Session collapse/expand button */}
-          {onToggleCollapse && (
-            <button 
-              onClick={onToggleCollapse}
-              className={`${colors.textSecondary} ${colors.hover} px-1`}
-              aria-label={isCollapsed ? 'Expand session' : 'Collapse session'}
-              title={isCollapsed ? 'Expand session' : 'Collapse session'}
-            >
-              {isCollapsed ? <Plus className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-            </button>
-          )}
         </div>
       </div>
 

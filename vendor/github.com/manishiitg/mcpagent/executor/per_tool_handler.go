@@ -257,12 +257,29 @@ func (h *ExecutorHandlers) HandlePerToolVirtualRequest(w http.ResponseWriter, r 
 		args = make(map[string]interface{})
 	}
 
-	h.logger.Info("Per-tool virtual request", loggerv2.String("tool", tool))
+	// Extract optional session_id from args (and remove it so it's not passed as tool arg)
+	sessionID := ""
+	if sid, ok := args["session_id"].(string); ok {
+		sessionID = sid
+		delete(args, "session_id")
+	}
+
+	// Server-side fallback: check X-Session-ID header if body doesn't have session_id
+	if sessionID == "" {
+		if hdr := r.Header.Get("X-Session-ID"); hdr != "" {
+			sessionID = hdr
+		}
+	}
+
+	h.logger.Info("Per-tool virtual request",
+		loggerv2.String("tool", tool),
+		loggerv2.String("session_id", sessionID))
 
 	// Build the standard VirtualExecuteRequest and reuse the full handler logic
 	wrappedBody := VirtualExecuteRequest{
-		Tool: tool,
-		Args: args,
+		Tool:      tool,
+		Args:      args,
+		SessionID: sessionID,
 	}
 
 	bodyBytes, err := json.Marshal(wrappedBody)

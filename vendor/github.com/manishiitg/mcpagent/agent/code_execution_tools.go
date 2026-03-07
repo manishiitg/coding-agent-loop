@@ -84,6 +84,21 @@ func (a *Agent) handleGetAPISpec(ctx context.Context, args map[string]interface{
 		a.toolFilter.IsCategoryDirectory(serverName+"_tools")
 
 	if isCustomCategory {
+		// Debug: log all custom tools and their categories for diagnosis
+		if a.Logger != nil {
+			allCategories := make(map[string][]string)
+			for tn, ct := range a.customTools {
+				allCategories[ct.Category] = append(allCategories[ct.Category], tn)
+			}
+			a.Logger.Info("get_api_spec: looking up custom category",
+				loggerv2.String("server_name", serverName),
+				loggerv2.String("session_id", a.SessionID),
+				loggerv2.Int("total_custom_tools", len(a.customTools)),
+				loggerv2.Any("categories", allCategories),
+				loggerv2.Any("want_tools", toolNames),
+				loggerv2.String("agent_ptr", fmt.Sprintf("%p", a)))
+		}
+
 		customToolsForSpec := make(map[string]openapi.CustomToolForOpenAPI)
 		for toolName, ct := range a.customTools {
 			if ct.Category == serverName || openapi.GetPackageName(ct.Category) == serverName+"_tools" {

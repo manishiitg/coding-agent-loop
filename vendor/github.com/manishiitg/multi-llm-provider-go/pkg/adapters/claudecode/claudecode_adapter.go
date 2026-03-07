@@ -301,6 +301,7 @@ func (c *ClaudeCodeAdapter) GenerateContent(ctx context.Context, messages []llmt
 	// Buffer pending tool calls to match with tool_result for complete events
 	pendingTools := make(map[string]*pendingToolCall)
 
+	var capturedStructuredOutput string
 	go func() {
 		c.logger.Infof("Starting stream decode loop...")
 		for decoder.More() {
@@ -309,7 +310,7 @@ func (c *ClaudeCodeAdapter) GenerateContent(ctx context.Context, messages []llmt
 				c.logger.Errorf("Failed to decode stream-json object: %v", err)
 				break
 			}
-			c.logger.Infof("Decoded raw stream object of type: %v, raw: %+v", raw["type"], raw)
+			// c.logger.Infof("Decoded raw stream object of type: %v, raw: %+v", raw["type"], raw)
 
 			msgType, _ := raw["type"].(string)
 			switch msgType {
@@ -366,6 +367,12 @@ func (c *ClaudeCodeAdapter) GenerateContent(ctx context.Context, messages []llmt
 				case "content_block_stop":
 					if inToolBlock {
 						toolArgs := currentToolInput.String()
+						// If this is a StructuredOutput tool call, capture its arguments
+						if currentToolName == "StructuredOutput" {
+							c.logger.Infof("Captured StructuredOutput tool call: %s", toolArgs)
+							capturedStructuredOutput = toolArgs
+						}
+						
 						// Emit ToolCallStart now that we have the full arguments
 						if opts.StreamChan != nil {
 							opts.StreamChan <- llmtypes.StreamChunk{
@@ -489,6 +496,13 @@ func (c *ClaudeCodeAdapter) GenerateContent(ctx context.Context, messages []llmt
 				var claudeResp ClaudeCodeResponse
 				jsonBytes, _ := json.Marshal(raw)
 				if err := json.Unmarshal(jsonBytes, &claudeResp); err == nil {
+					// When --json-schema is used, the result is in a tool call (StructuredOutput)
+					// but the result event summary might have it empty or containing only a generic message.
+					// If resp.Result is empty but we captured structured output, use it.
+					if claudeResp.Result == "" && capturedStructuredOutput != "" {
+						claudeResp.Result = capturedStructuredOutput
+					}
+
 					finalResponse, _ = c.mapResponseToContentResponse(&claudeResp)
 					// Detect max turns error: subtype indicates limit was hit and result is empty
 					if claudeResp.Subtype == "error_max_turns" && claudeResp.Result == "" {

@@ -11,6 +11,12 @@ type agentSessionIDKeyType struct{}
 
 var AgentSessionIDKey = agentSessionIDKeyType{}
 
+// IsSubAgentContextKey marks a context as belonging to a sub-agent (not the root agent).
+// Only sub-agent events should have their correlation_id overridden for grouping.
+type isSubAgentContextKeyType struct{}
+
+var IsSubAgentContextKey = isSubAgentContextKeyType{}
+
 // Orchestrator Event Types
 // These events are specific to the orchestrator application and are not part of the core mcpagent library
 const (

@@ -2167,6 +2167,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.SubAgentLLM)
 		}
 
+		// Before sub-agent: emit current tasks.md state so UI shows pre-execution state
+		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+		hcpo.flushTodoTaskStatusDebouncer()
+
 		// Call original executor with enriched context
 		result, err := originalExecutor(ctx, args)
 
@@ -2357,6 +2361,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 			SuccessCriteriaForSubAgent: successCriteria,
 		}
 
+		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card
+		hcpo.emitTodoTaskRouteSelectedEvent(ctx, execCtx.TodoTaskStep, execCtx.StepIndex, execCtx.StepPath, 0, response, nil, "")
+
 		// Execute using existing method
 		result, err := hcpo.executePredefinedSubAgent(
 			ctx,
@@ -2408,6 +2415,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 			InstructionsToSubAgent:     instructions,
 			SuccessCriteriaForSubAgent: successCriteria,
 		}
+
+		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card
+		hcpo.emitTodoTaskRouteSelectedEvent(ctx, execCtx.TodoTaskStep, execCtx.StepIndex, execCtx.StepPath, 0, response, nil, "")
 
 		// Execute using existing method
 		// All task info comes from tool parameters

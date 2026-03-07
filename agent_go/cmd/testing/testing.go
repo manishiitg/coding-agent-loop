@@ -80,4 +80,5 @@ func initTestingCommands() {
 	TestingCmd.AddCommand(shellSecurityTestCmd)
 	TestingCmd.AddCommand(shellOutputTestCmd)
 	TestingCmd.AddCommand(workspaceBridgeTestCmd)
+	TestingCmd.AddCommand(structuredOutputTestCmd)
 }

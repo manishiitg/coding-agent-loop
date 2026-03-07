@@ -229,6 +229,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		// CDP connectivity check (used by frontend to verify Chrome is reachable from container)
 		api.GET("/cdp-check", handlers.CheckCdpConnection)
 
+		// Google Workspace CLI routes
+		api.GET("/gws-auth-status", handlers.CheckGWSAuthStatus)
+		api.POST("/gws-sync-skills", handlers.SyncGWSSkills)
+
 		// Version management routes (separate from wildcard routes)
 		api.GET("/versions/*filepath", handlers.GetFileVersionHistory)
 		api.POST("/restore/*filepath", handlers.RestoreFileVersion)

@@ -69,12 +69,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # docker-ce-cli: MCP configs can use "command": "docker", "args": ["run", "-i", "--rm", "mcp/sonarqube"] (mount /var/run/docker.sock in deployment).
 # nodejs 20+: required for npx MCPs (mcp-remote/undici, @sylphx/pdf-reader-mcp, etc.). chromium: agent-browser/Playwright. gcc/libc6-dev: CGO and native Python deps.
 
-# Install agent-browser globally for browser automation
-RUN npm install -g agent-browser
-
-# Set Chromium path for Playwright (used by agent-browser)
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
-ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
+# Install Google Workspace CLI for GWS integration
+RUN npm install -g @googleworkspace/cli
 
 # Install uv (uvx for Python MCP servers) and pypdf (for read_pdf tool)
 RUN pip3 install --break-system-packages uv pypdf
@@ -124,4 +120,4 @@ USER appuser
 EXPOSE 8000
 
 # Set default command
-CMD ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_simple.json"]
+CMD ["./mcp-agent", "server", "--host", "0.0.0.0", "--port", "8000", "--log-file", "/app/logs/server_debug.log", "--log-level", "debug", "--mcp-config", "configs/mcp_servers_docker.json"]

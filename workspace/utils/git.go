@@ -66,7 +66,7 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 	// Use --no-edit and set GIT_MERGE_AUTOEDIT=no to prevent editor prompts
 	// Set GIT_EDITOR=true to use a no-op editor if git still tries to open one
 	// Use --allow-unrelated-histories to handle cases where local and remote have different histories
-	pullCmd := exec.Command("git", "-C", docsDir, "pull", "--no-edit", "--allow-unrelated-histories", "origin", githubBranch)
+	pullCmd := exec.Command("git", "-C", docsDir, "pull", "--no-edit", "--allow-unrelated-histories", "-X", "theirs", "origin", githubBranch)
 	pullCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_MERGE_AUTOEDIT=no", "GIT_EDITOR=true")
 	pullOutput, pullErr := pullCmd.CombinedOutput()
 	if pullErr != nil {
@@ -89,7 +89,7 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 		if strings.Contains(outputStr, "refusing to merge unrelated histories") {
 			log.Printf("[GIT] WARNING: Unrelated histories detected, retrying with --allow-unrelated-histories")
 			// Retry the pull with --allow-unrelated-histories
-			retryCmd := exec.Command("git", "-C", docsDir, "pull", "--no-edit", "--allow-unrelated-histories", "origin", githubBranch)
+			retryCmd := exec.Command("git", "-C", docsDir, "pull", "--no-edit", "--allow-unrelated-histories", "-X", "theirs", "origin", githubBranch)
 			retryCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_MERGE_AUTOEDIT=no", "GIT_EDITOR=true")
 			retryOutput, retryErr := retryCmd.CombinedOutput()
 			if retryErr != nil {
@@ -107,7 +107,7 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 			log.Printf("[GIT] WARNING: Divergent branches detected, ensuring pull.rebase=false is set")
 			exec.Command("git", "-C", docsDir, "config", "pull.rebase", "false").Run()
 			// Retry the pull
-			retryCmd := exec.Command("git", "-C", docsDir, "pull", "--no-edit", "--allow-unrelated-histories", "origin", githubBranch)
+			retryCmd := exec.Command("git", "-C", docsDir, "pull", "--no-edit", "--allow-unrelated-histories", "-X", "theirs", "origin", githubBranch)
 			retryCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_MERGE_AUTOEDIT=no", "GIT_EDITOR=true")
 			retryOutput, retryErr := retryCmd.CombinedOutput()
 			if retryErr != nil {
@@ -132,7 +132,7 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 				if behindCount != "0" {
 					log.Printf("[GIT] PullFromGitHub: Local branch is %s commits behind remote, attempting merge...", behindCount)
 					// Try to merge the remote branch with --allow-unrelated-histories
-					mergeCmd := exec.Command("git", "-C", docsDir, "merge", "--allow-unrelated-histories", fmt.Sprintf("origin/%s", githubBranch), "-m", "Merge remote changes")
+					mergeCmd := exec.Command("git", "-C", docsDir, "merge", "--allow-unrelated-histories", "-X", "theirs", fmt.Sprintf("origin/%s", githubBranch), "-m", "Merge remote changes")
 					mergeCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_MERGE_AUTOEDIT=no", "GIT_EDITOR=true")
 					mergeOutput, mergeErr := mergeCmd.CombinedOutput()
 					if mergeErr != nil {

@@ -5,16 +5,16 @@
       "args": [
         "@playwright/mcp@latest",
         "--output-dir",
-        "../workspace-docs/Downloads",
+        "/app/workspace-docs/Downloads",
         "--isolated"
       ],
-      "working_dir": "../workspace-docs/Downloads"
+      "working_dir": "/app/workspace-docs/Downloads"
     },
     "camofox": {
       "command": "camofox-mcp",
       "args": [],
       "env": {
-        "CAMOFOX_URL": "http://localhost:9377"
+        "CAMOFOX_URL": "http://host.docker.internal:9377"
       }
     }
   }

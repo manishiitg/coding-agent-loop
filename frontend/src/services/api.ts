@@ -402,7 +402,7 @@ export const agentApi = {
     failed?: { name: string; error: string }[];
     error?: string;
   }> => {
-    const response = await api.post('/api/gws-sync-skills', {}, { timeout: 120000 });
+    const response = await workspaceApi.post('/api/gws-sync-skills', {}, { timeout: 120000 });
     return response.data;
   },
 
@@ -415,7 +415,7 @@ export const agentApi = {
     scope_count?: number;
     error?: string;
   }> => {
-    const response = await api.get('/api/gws-auth-status', { timeout: 10000 });
+    const response = await workspaceApi.get('/api/gws-auth-status', { timeout: 10000 });
     return response.data;
   },
 

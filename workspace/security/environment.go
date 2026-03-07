@@ -1,9 +1,11 @@
 package security
 
+import "os"
+
 // BuildSafeEnvironment returns a whitelisted set of environment variables
 // This prevents secret leakage (DATABASE_URL, API_KEYS, etc.) to subprocess commands
 func BuildSafeEnvironment() []string {
-	return []string{
+	env := []string{
 		// Essential shell variables
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=/tmp",
@@ -29,4 +31,11 @@ func BuildSafeEnvironment() []string {
 		// - JWT_SECRET
 		// - Any other secrets from parent process
 	}
+
+	// Pass through Google Workspace CLI credentials if configured
+	if gwsCreds := os.Getenv("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"); gwsCreds != "" {
+		env = append(env, "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="+gwsCreds)
+	}
+
+	return env
 }

@@ -106,6 +106,8 @@ export interface AgentQueryRequest {
   enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
+  // Google Workspace access configuration
+  enable_gws_access?: boolean // Enable/disable Google Workspace CLI access
   // CDP port for connecting to an existing Chrome browser (local mode only)
   cdp_port?: number
   // Context editing configuration

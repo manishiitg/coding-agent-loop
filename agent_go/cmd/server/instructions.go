@@ -519,3 +519,61 @@ func buildLearningsSummary(client *skills.WorkspaceAPIClient, wsPath string) str
 
 	return strings.Join(lines, "\n")
 }
+
+// getBrowserQuickStartInstructions returns inline instructions for using the agent-browser tool.
+func getBrowserQuickStartInstructions() string {
+	return `## Browser Automation (Quick Start)
+
+You have the ` + "`agent_browser`" + ` tool for browser automation. Basic workflow:
+
+1. **Open a page:** agent_browser(command="open", args=["https://example.com"], session="default")
+2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["-i"], session="default")
+3. **Interact** using element refs from snapshot:
+   - Click: agent_browser(command="click", args=["@e1"], session="default")
+   - Fill text: agent_browser(command="fill", args=["@e2", "search query"], session="default")
+   - Press key: agent_browser(command="press", args=["Enter"], session="default")
+4. **Re-snapshot** after each interaction to see the updated page state
+5. **Screenshot:** agent_browser(command="screenshot", args=["page.png"], session="default")
+
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
+
+For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
+}
+
+// getGWSQuickStartInstructions returns inline instructions for using Google Workspace via the gws CLI.
+func getGWSQuickStartInstructions() string {
+	return `## Google Workspace CLI (Quick Start)
+
+You have access to Google Workspace services via the ` + "`gws`" + ` CLI tool. Run commands using ` + "`execute_shell_command`" + `.
+
+### Common Commands
+
+**Drive:**
+- List files: gws drive files list --params '{"pageSize":10}'
+- Search: gws drive files list --params '{"q":"name contains \"report\""}'
+- Download: gws drive files export <fileId> --mimeType 'text/plain' > file.txt
+
+**Gmail:**
+- List messages: gws gmail messages list --params '{"maxResults":5}'
+- Read message: gws gmail messages get <messageId> --params '{"format":"full"}'
+- Send email: gws gmail messages send --body '{"raw":"<base64-encoded-email>"}'
+
+**Calendar:**
+- List events: gws calendar events list <calendarId> --params '{"maxResults":10,"timeMin":"2024-01-01T00:00:00Z"}'
+- Create event: gws calendar events insert <calendarId> --body '{"summary":"Meeting","start":{"dateTime":"..."},"end":{"dateTime":"..."}}'
+
+**Sheets:**
+- Read range: gws sheets spreadsheets.values get <spreadsheetId> --range 'Sheet1!A1:D10'
+- Write range: gws sheets spreadsheets.values update <spreadsheetId> --range 'Sheet1!A1' --params '{"valueInputOption":"USER_ENTERED"}' --body '{"values":[["a","b"],["c","d"]]}'
+
+**Docs:**
+- Get document: gws docs documents get <documentId>
+
+**Slides:**
+- Get presentation: gws slides presentations get <presentationId>
+
+### Tips
+- Use ` + "`--params`" + ` for query parameters and ` + "`--body`" + ` for request body (JSON strings)
+- All IDs are Google resource IDs (long alphanumeric strings)
+- For detailed usage per service, read the gws-* skill files: execute_shell_command(command="cat skills/gws-drive/SKILL.md")`
+}

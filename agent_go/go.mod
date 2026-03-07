@@ -13,8 +13,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
-	github.com/manishiitg/mcpagent v1.7.2
-	github.com/manishiitg/multi-llm-provider-go v0.5.3
+	github.com/manishiitg/mcpagent v1.7.3
+	github.com/manishiitg/multi-llm-provider-go v0.5.4
 	github.com/mark3labs/mcp-go v0.44.0
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8

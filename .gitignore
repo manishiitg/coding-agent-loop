@@ -137,4 +137,4 @@ override.tf.json
 .terraformrc
 terraform.rc
 
-workspace-projects
+workspace-projectsgws-credentials.json

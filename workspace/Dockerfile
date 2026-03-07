@@ -34,7 +34,7 @@ RUN apk add --no-cache \
 # PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 prevents downloading extra Chromium binaries
 # We use the system-installed chromium instead via AGENT_BROWSER_EXECUTABLE_PATH
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-RUN npm install -g agent-browser && \
+RUN npm install -g agent-browser @googleworkspace/cli && \
     rm -rf /root/.cache/ms-playwright /tmp/.cache/ms-playwright
 
 # Set Chromium path for agent-browser (system chromium on Alpine)

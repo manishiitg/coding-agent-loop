@@ -116,6 +116,7 @@ export interface ChatTabConfig {
   enableWorkspaceAccess?: boolean  // Enable/disable workspace file access tools
   browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'  // Browser access mode (default: 'none')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
+  enableGWSAccess?: boolean  // Enable/disable Google Workspace CLI access
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
   cdpPort?: number  // CDP port (default 9222)
   camofoxHeaded?: boolean  // Camofox headed mode — visible browser window (default: true)

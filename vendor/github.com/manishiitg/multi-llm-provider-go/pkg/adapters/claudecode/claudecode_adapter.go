@@ -163,6 +163,15 @@ func (c *ClaudeCodeAdapter) GenerateContent(ctx context.Context, messages []llmt
 		args = append(args, "--append-system-prompt", strings.Join(systemPrompts, "\n\n"))
 	}
 
+	// Handle JSON Schema for structured output
+	if opts.JSONSchema != nil && opts.JSONSchema.Schema != nil {
+		schemaBytes, err := json.Marshal(opts.JSONSchema.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
+		}
+		args = append(args, "--json-schema", string(schemaBytes))
+	}
+
 	// Handle Custom Options
 	if opts.Metadata != nil && opts.Metadata.Custom != nil {
 		if mcpConfig, ok := opts.Metadata.Custom[MetadataKeyMCPConfig].(string); ok && mcpConfig != "" {

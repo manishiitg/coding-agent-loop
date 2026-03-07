@@ -44,7 +44,7 @@ import type { Skill } from '../types/skills'
 import type { SubAgent } from '../types/subagents'
 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
-const DEDICATED_MCP_SERVERS = new Set(['gws', 'playwright'])
+const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 
 interface ChatInputProps {
   // Handlers (callbacks only)
@@ -348,14 +348,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return 'loading' as const
   }, [toolList])
 
-  const gwsServerStatus = useMemo(() => {
-    const entry = toolList.find(t => t.server === 'gws')
-    if (!entry) return 'not_found' as const
-    if (entry.status === 'ok') return 'ok' as const
-    if (entry.status === 'error') return 'error' as const
-    return 'loading' as const
-  }, [toolList])
-
   // Camofox MCP availability: check if 'camofox' server exists in toolList
   const camofoxServerStatus = useMemo(() => {
     const entry = toolList.find(t => t.server === 'camofox')
@@ -620,17 +612,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Use tab-specific servers - memoize to prevent re-renders
   const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
   
-  const gwsEnabled = useMemo(() => manualSelectedServers.includes('gws'), [manualSelectedServers])
+  const gwsEnabled = useMemo(() => tabConfig?.enableGWSAccess ?? false, [tabConfig?.enableGWSAccess])
 
   const toggleGWSServer = useCallback(() => {
     if (!activeTabId) return
-    const currentServers = tabConfig?.selectedServers || []
-    const newServers = gwsEnabled
-      ? currentServers.filter(s => s !== 'gws')
-      : [...currentServers, 'gws']
-    setTabConfig(activeTabId, { selectedServers: newServers })
-    setChatSelectedServers(newServers)
-  }, [activeTabId, gwsEnabled, tabConfig?.selectedServers, setTabConfig, setChatSelectedServers])
+    const newEnabled = !gwsEnabled
+    setTabConfig(activeTabId, {
+      enableGWSAccess: newEnabled,
+      ...(newEnabled ? { enableWorkspaceAccess: true } : {}),
+    })
+    if (newEnabled) setWorkspaceMinimized(false)
+  }, [activeTabId, gwsEnabled, setTabConfig, setWorkspaceMinimized])
 
   // Server operations (always update tab config AND sync to chat-specific MCP store)
   // This ensures new chat tabs inherit the user's manual server selection
@@ -2318,8 +2310,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </Tooltip>
                 )}
 
-                {/* Agent Mode Selector - Only show when no preset is active */}
-                {!chatActivePreset && (
+                {/* Agent Mode Selector */}
+                {(
                   effectiveDelegationMode === 'plan' ? null : isClaudeCode ? (
                     /* Claude Code always uses code execution mode */
                     <Tooltip>
@@ -2399,8 +2391,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   )
                 )}
                 
-                {/* Server and LLM Selection - only show when no preset is active */}
-                {!chatActivePreset && (
+                {/* Server and LLM Selection */}
+                {(
                   <div className="flex items-center gap-2">
                     
                       <>
@@ -2549,13 +2541,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       disabled={isStreaming || isSummarizing}
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
                         gwsEnabled
-                          ? gwsServerStatus === 'ok'
-                            ? 'bg-green-900/40 border-green-600 text-green-400'
-                            : gwsServerStatus === 'error'
-                              ? 'bg-red-900/40 border-red-600 text-red-400'
-                              : gwsServerStatus === 'loading'
-                                ? 'bg-yellow-900/40 border-yellow-600 text-yellow-400'
-                                : 'bg-blue-900/40 border-blue-600 text-blue-400'
+                          ? 'bg-blue-900/40 border-blue-600 text-blue-400'
                           : 'bg-gray-800 border-gray-600 text-gray-500'
                       } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
                     >
@@ -2941,7 +2927,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         {/* Enable/disable toggle */}
                         <div className="flex items-center justify-between">
                           <div>
-                            <div className="text-sm font-medium text-gray-100">gws MCP Server</div>
+                            <div className="text-sm font-medium text-gray-100">Google Workspace</div>
                             <div className="text-xs text-gray-400 mt-0.5">Drive · Gmail · Calendar · Docs · Sheets · Slides</div>
                           </div>
                           <label className={`relative inline-flex items-center ${gwsEnabled || gwsChatAuthStatus?.configured ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}>
@@ -2956,51 +2942,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           </label>
                         </div>
 
-                        {/* Install prompt when gws not found */}
-                        {gwsServerStatus === 'not_found' && (
-                          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 space-y-1.5">
-                            <p className="text-xs font-medium text-amber-300">gws is not installed</p>
-                            <p className="text-xs text-amber-400/80">
-                              Install it from{' '}
-                              <a
-                                href="https://github.com/googleworkspace/cli"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-400 hover:text-blue-300 underline underline-offset-2"
-                              >
-                                github.com/googleworkspace/cli
-                              </a>
-                              , then run:
-                            </p>
-                            <code className="block text-xs font-mono bg-gray-900 text-green-400 px-2 py-1 rounded select-all">
-                              npm install -g @googleworkspace/cli
-                            </code>
-                          </div>
-                        )}
-
                         {/* Auth gate hint */}
-                        {gwsServerStatus !== 'not_found' && !gwsEnabled && !gwsChatAuthStatus?.configured && (
+                        {!gwsEnabled && !gwsChatAuthStatus?.configured && (
                           <p className="text-xs text-amber-400">
                             {gwsChatChecking ? 'Checking auth...' : 'Auth check required before enabling'}
                           </p>
-                        )}
-
-                        {/* Server status */}
-                        {gwsEnabled && (
-                          <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                              gwsServerStatus === 'ok' ? 'bg-green-500' :
-                              gwsServerStatus === 'error' ? 'bg-red-500' :
-                              gwsServerStatus === 'loading' ? 'bg-yellow-400 animate-pulse' :
-                              'bg-gray-500'
-                            }`} />
-                            <span className="text-xs text-gray-400">
-                              {gwsServerStatus === 'ok' ? 'Server connected' :
-                               gwsServerStatus === 'error' ? 'Server error' :
-                               gwsServerStatus === 'loading' ? 'Connecting...' :
-                               'Server not found — run: npm install -g @googleworkspace/cli'}
-                            </span>
-                          </div>
                         )}
 
                         {/* Auth status */}

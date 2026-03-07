@@ -164,6 +164,9 @@ export function buildQueryRequestPayload(params: {
     enable_browser_access: isChatLikeMode
       ? ((currentTab?.config?.browserMode ?? 'none') === 'headless' || (currentTab?.config?.browserMode ?? 'none') === 'cdp')
       : undefined,
+    enable_gws_access: isChatLikeMode
+      ? (currentTab?.config?.enableGWSAccess ?? false)
+      : undefined,
     cdp_port: isChatLikeMode && (currentTab?.config?.browserMode ?? 'none') === 'cdp'
       ? (currentTab?.config?.cdpPort || 9222)
       : undefined,

@@ -819,6 +819,8 @@ type QueryRequest struct {
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
 	// Browser automation access configuration
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
+	// Google Workspace access configuration
+	EnableGWSAccess *bool `json:"enable_gws_access,omitempty"` // Enable/disable Google Workspace CLI access (nil = inherit default, true/false = explicit override)
 	// CDP port for connecting to an existing Chrome browser (local mode only)
 	CdpPort *int `json:"cdp_port,omitempty"` // When set and > 0, connect to Chrome via CDP on this port instead of launching headless
 	// Image generation configuration
@@ -1216,8 +1218,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/health", api.handleHealth).Methods("GET")
 	apiRouter.HandleFunc("/capabilities", api.handleCapabilities).Methods("GET")
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
-	apiRouter.HandleFunc("/gws-auth-status", api.handleGWSAuthStatus).Methods("GET")
-	apiRouter.HandleFunc("/gws-sync-skills", api.handleGWSSyncSkills).Methods("POST")
 	apiRouter.HandleFunc("/camofox-start", api.handleCamofoxStart).Methods("POST")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
@@ -3173,25 +3173,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				// Auto-add gws-* skills when gws MCP server is in enabled servers (workflow mode)
-				for _, s := range req.EnabledServers {
-					if s == "gws" {
-						gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
-						existingSkills := make(map[string]bool)
-						for _, sk := range selectedSkills {
-							existingSkills[sk] = true
+				// Auto-add gws-* skills when GWS access is enabled (workflow mode)
+				gwsWorkflowEnabled := req.EnableGWSAccess != nil && *req.EnableGWSAccess
+				if !gwsWorkflowEnabled {
+					for _, s := range req.EnabledServers {
+						if s == "gws" {
+							gwsWorkflowEnabled = true
+							break
 						}
-						added := 0
-						for _, gs := range gwsSkills {
-							if !existingSkills[gs] {
-								selectedSkills = append(selectedSkills, gs)
-								added++
-							}
+					}
+				}
+				if gwsWorkflowEnabled {
+					gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
+					existingSkills := make(map[string]bool)
+					for _, sk := range selectedSkills {
+						existingSkills[sk] = true
+					}
+					added := 0
+					for _, gs := range gwsSkills {
+						if !existingSkills[gs] {
+							selectedSkills = append(selectedSkills, gs)
+							added++
 						}
-						if added > 0 {
-							log.Printf("[GWS] Auto-added %d gws-* skills for workflow mode (gws MCP server enabled)", added)
-						}
-						break
+					}
+					if added > 0 {
+						log.Printf("[GWS] Auto-added %d gws-* skills for workflow mode (enable_gws_access: true)", added)
 					}
 				}
 			}
@@ -4275,15 +4281,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[BROWSER] Auto-adding agent-browser skill and tool (enable_browser_access: true)")
 			}
 
-			// Auto-add gws-* skills when gws MCP server is enabled
-			gwsServerEnabled := false
-			for _, s := range req.EnabledServers {
-				if s == "gws" {
-					gwsServerEnabled = true
-					break
+			// Auto-add gws-* skills when GWS access is enabled (or gws in enabled_servers for preset compat)
+			gwsAccessEnabled := req.EnableGWSAccess != nil && *req.EnableGWSAccess
+			if !gwsAccessEnabled {
+				for _, s := range req.EnabledServers {
+					if s == "gws" {
+						gwsAccessEnabled = true
+						break
+					}
 				}
 			}
-			if gwsServerEnabled {
+			if gwsAccessEnabled {
 				gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
 				existingSkills := make(map[string]bool)
 				for _, skill := range req.SelectedSkills {
@@ -4297,7 +4305,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if added > 0 {
-					log.Printf("[GWS] Auto-added %d gws-* skills (gws MCP server enabled)", added)
+					log.Printf("[GWS] Auto-added %d gws-* skills (enable_gws_access: true)", added)
 				}
 			}
 
@@ -4921,6 +4929,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
 				}
+			}
+
+			// Add inline quick-start instructions for browser access
+			if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
+				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
+				log.Printf("[BROWSER] Added browser quick-start instructions to system prompt")
+			}
+
+			// Add inline quick-start instructions for GWS access
+			if req.EnableGWSAccess != nil && *req.EnableGWSAccess {
+				underlyingAgent.AppendSystemPrompt(getGWSQuickStartInstructions())
+				log.Printf("[GWS] Added GWS quick-start instructions to system prompt")
 			}
 
 			// Add workflow context if workflow paths are selected (via # in chat)

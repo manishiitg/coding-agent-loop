@@ -1345,8 +1345,6 @@ export interface OrchestratorAgentStartEvent {
   plan_id?: string;
   step_index?: number;
   iteration?: number;
-  use_code_execution_mode?: boolean;
-  use_tool_search_mode?: boolean;
 }
 export interface OrchestratorAgentEndEvent {
   timestamp?: string;

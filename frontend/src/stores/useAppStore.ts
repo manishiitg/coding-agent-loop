@@ -47,7 +47,8 @@ interface AppState {
   lastSelectedSubAgents: string[]
   lastBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
   lastEnableImageGeneration: boolean
-  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastSelectedSubAgents' | 'lastBrowserMode' | 'lastEnableImageGeneration'>>) => void
+  lastGWSAccess: boolean
+  syncLastTabSettings: (update: Partial<Pick<AppState, 'lastSelectedSkills' | 'lastSelectedSubAgents' | 'lastBrowserMode' | 'lastEnableImageGeneration' | 'lastGWSAccess'>>) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -149,6 +150,7 @@ export const useAppStore = create<AppState>()(
         lastSelectedSubAgents: [],
         lastBrowserMode: 'none',
         lastEnableImageGeneration: false,
+        lastGWSAccess: false,
         syncLastTabSettings: (update) => {
           set(update)
         },
@@ -168,7 +170,8 @@ export const useAppStore = create<AppState>()(
         lastSelectedSkills: state.lastSelectedSkills,
         lastSelectedSubAgents: state.lastSelectedSubAgents,
         lastBrowserMode: state.lastBrowserMode,
-        lastEnableImageGeneration: state.lastEnableImageGeneration
+        lastEnableImageGeneration: state.lastEnableImageGeneration,
+        lastGWSAccess: state.lastGWSAccess
         // delegationMode: persisted so /spawn survives page refresh
         // Note: requiresNewChat is not persisted as it's temporary state
         // File context is now mode-specific: chat tabs have their own, workflow uses preset

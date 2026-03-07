@@ -970,6 +970,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
+        console.log('[QUEUE DEBUG] Session completed/error', {
+          tabId: tab.tabId, sessionStatus, hasBgAgents,
+          willSetCompleted: !hasBgAgents,
+          currentIsCompleted: tab.isCompleted,
+          queuedMessages: tab.config?.queuedMessages?.length ?? 0,
+        })
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
           chatStore.setTabStreaming(tab.tabId, false)
@@ -2089,8 +2095,12 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
     
     // Log when execution completes or stops
     if (prevIsCompleted !== currentIsCompleted) {
-      logger.debug('ChatArea', 'Completion state changed', {
-        prev: prevIsCompleted, current: currentIsCompleted, tabId: activeTab?.tabId
+      console.log('[QUEUE DEBUG] Completion state changed', {
+        prev: prevIsCompleted, current: currentIsCompleted,
+        tabId: activeTab?.tabId,
+        hasBgAgents: activeTab?.hasRunningBgAgents,
+        queuedMessages: activeTab?.config?.queuedMessages?.length ?? 0,
+        isProcessingQueue: isProcessingQueueRef.current,
       })
     }
     

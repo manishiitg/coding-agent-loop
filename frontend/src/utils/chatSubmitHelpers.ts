@@ -219,7 +219,9 @@ export function buildQueryRequestPayload(params: {
     workflow_context_paths: isChatWithExtras && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
-    plan_folder: isMultiAgentMode ? (currentTab?.config?.selectedPlanFolder ?? undefined) : undefined,
+    plan_folder: isMultiAgentMode
+      ? (currentTab?.config?.fileContext?.find(f => /^Plans\/[^/]+$/.test(f.path))?.path ?? undefined)
+      : undefined,
     enable_image_generation: isChatWithExtras ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
     image_gen_config: (() => {
       if (!isChatWithExtras) return undefined

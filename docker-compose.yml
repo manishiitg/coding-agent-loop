@@ -101,12 +101,14 @@ services:
       - FIXED_TOKEN_THRESHOLD=200000
       - SUMMARY_KEEP_LAST_MESSAGES=4
       - LARGE_OUTPUT_THRESHOLD=50000
+      - WORKSPACE_ENABLE_GITHUB_SYNC=true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - agent_data:/app/data
       - ./agent_go/configs:/app/configs
       - ./workspace-docs:/app/workspace-docs
+      - ./agent_go/logs:/app/logs
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       workspace-api:

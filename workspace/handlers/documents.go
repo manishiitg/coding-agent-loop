@@ -226,10 +226,11 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 				}
 
 				doc := models.Document{
-					FilePath: relPathFromDocs,
-					Type:     "folder", // Mark as folder
+					FilePath:     relPathFromDocs,
+					Type:         "folder", // Mark as folder
+					LastModified: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
 				}
-				
+
 				// Apply offset and limit for folders too? Usually we want folders.
 				// For now, let's treat folders as part of the count if we want strictly flat list pagination.
 				// But mostly we want files. Let's keep folders but limit files?
@@ -289,8 +290,9 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 		if info.IsDir() {
 			// This is a folder - add it to the list
 			doc := models.Document{
-				FilePath: relPathFromDocs,
-				Type:     "folder", // Mark as folder
+				FilePath:     relPathFromDocs,
+				Type:         "folder", // Mark as folder
+				LastModified: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
 			}
 			documents = append(documents, doc)
 			// Don't count folders towards the limit to ensure full tree structure
@@ -308,9 +310,10 @@ func getAllDocumentsRecursively(searchPath, docsDir string, maxDepth int, limit,
 			isImage := isImageFile(info.Name())
 
 			doc := models.Document{
-				FilePath: relPathFromDocs,
-				Type:     "file",
-				IsImage:  isImage,
+				FilePath:     relPathFromDocs,
+				Type:         "file",
+				IsImage:      isImage,
+				LastModified: info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
 			}
 			documents = append(documents, doc)
 			count++

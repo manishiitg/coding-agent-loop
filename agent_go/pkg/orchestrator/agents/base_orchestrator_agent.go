@@ -508,13 +508,15 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 			Timestamp:     time.Now(),
 			CorrelationID: boa.agentSessionID, // Use shared session ID for correlation
 		},
-		AgentType:    string(boa.agentType),
-		AgentName:    agentName,
-		InputData:    templateVars,
-		ModelID:      boa.config.LLMConfig.Primary.ModelID,
-		Provider:     boa.config.LLMConfig.Primary.Provider,
-		ServersCount: len(boa.config.ServerNames),
-		MaxTurns:     boa.config.MaxTurns,
+		AgentType:            string(boa.agentType),
+		AgentName:            agentName,
+		InputData:            templateVars,
+		ModelID:              boa.config.LLMConfig.Primary.ModelID,
+		Provider:             boa.config.LLMConfig.Primary.Provider,
+		ServersCount:         len(boa.config.ServerNames),
+		MaxTurns:             boa.config.MaxTurns,
+		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
+		UseToolSearchMode:    boa.config.UseToolSearchMode,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentStart, eventData)

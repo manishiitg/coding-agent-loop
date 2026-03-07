@@ -2668,19 +2668,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		selectedServers = req.Servers
 	}
 
+	// Default to NO_SERVERS if none specified (user didn't select any MCP servers)
+	// This ensures the orchestrator and all sub-agents correctly get "no servers"
+	// instead of an empty slice which would be treated as "all servers" downstream
+	if len(selectedServers) == 0 {
+		selectedServers = []string{mcpclient.NoServers}
+	}
+
 	var serverList string
 	// Check for explicit "NO_SERVERS" request (pure LLM mode, no tools)
 	if len(selectedServers) == 1 && selectedServers[0] == mcpclient.NoServers {
 		// Keep NoServers constant as-is - this will be handled by integration code
 		serverList = mcpclient.NoServers
 	} else {
-		// Default to no servers if none specified (user didn't select any)
-		if len(selectedServers) == 0 {
-			serverList = mcpclient.NoServers
-		} else {
-			// Convert server array to comma-separated string for agent compatibility
-			serverList = strings.Join(selectedServers, ",")
-		}
+		// Convert server array to comma-separated string for agent compatibility
+		serverList = strings.Join(selectedServers, ",")
 	}
 
 	// Extract sessionID from header/cookie or fallback to queryID
@@ -3213,19 +3215,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
 		}
 
-		// Auto-enable code execution mode for claude-code provider (workflow path).
-		// Claude Code accesses MCP tools via the HTTP bridge, which requires code execution mode.
-		if req.Provider == "claude-code" && !useCodeExecutionMode {
-			useCodeExecutionMode = true
-			log.Printf("[CLAUDE CODE] Auto-enabled code execution mode for MCP tool access via bridge (workflow)")
-		}
-
-		// Auto-enable code execution mode for gemini-cli provider (workflow path).
-		// Gemini CLI accesses MCP tools via the pre-configured bridge, which requires code execution mode.
-		if req.Provider == "gemini-cli" && !useCodeExecutionMode {
-			useCodeExecutionMode = true
-			log.Printf("[GEMINI CLI] Auto-enabled code execution mode for MCP tool access via bridge (workflow)")
-		}
+		// NOTE: Code execution mode for claude-code/gemini-cli is NOT auto-enabled at the workflow level.
+		// Each agent determines its own mode based on its actual LLM provider (which may differ from req.Provider
+		// due to tiered config). The agent.go layer auto-enables code execution for claude-code/gemini-cli providers.
+		// See: agent.go line ~1753 (ProviderClaudeCode auto-enable) and controller_agent_factory.go (provider-based resolution).
 
 		// Use tool search mode from request if preset didn't provide any
 		if !useToolSearchMode && req.UseToolSearchMode {

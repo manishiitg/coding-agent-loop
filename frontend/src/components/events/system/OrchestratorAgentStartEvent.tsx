@@ -13,7 +13,6 @@ interface OrchestratorAgentStartEventDisplayProps {
 
 export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
   const { isExpanded: isInputsExpanded, toggle } = useExpandable(true)
-  const [isMetaExpanded, setIsMetaExpanded] = React.useState(false)
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
@@ -127,14 +126,18 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             <div className="min-w-0 flex-1">
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Started: {event.agent_name}
+                {event.use_code_execution_mode && (
+                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Code Execution Mode">💻 Code Exec</span>
+                )}
+                {event.use_tool_search_mode && (
+                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800" title="Tool Search Mode">🔍 Tool Search</span>
+                )}
+                <span className={`text-xs font-normal ${colors.textSecondary}`}>
+                  {' '}| Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
+                  {event.step_index !== undefined && ` | Step: ${event.step_index}`}
+                </span>
                 {isCollapsed && eventCount !== undefined && (
                   <span className={`text-xs font-normal ${colors.textSecondary}`}> | {eventCount} events collapsed</span>
-                )}
-                {isMetaExpanded && (
-                  <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                    {' '}| Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
-                    {event.step_index !== undefined && ` | Step: ${event.step_index}`}
-                  </span>
                 )}
               </div>
             </div>
@@ -147,17 +150,6 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             <div className={`text-xs ${colors.textSecondary}`}>
               {formatTimestamp(event.timestamp)}
             </div>
-          )}
-
-          {/* Toggle for meta details (model, servers, turns) */}
-          {!isCollapsed && (
-            <button
-              onClick={() => setIsMetaExpanded(!isMetaExpanded)}
-              className={`p-0.5 ${colors.hover} rounded ${colors.text} transition-colors`}
-              title={isMetaExpanded ? "Hide details" : "Show details"}
-            >
-              {isMetaExpanded ? <Minus className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
-            </button>
           )}
 
           {/* Toggle for inputs/details */}

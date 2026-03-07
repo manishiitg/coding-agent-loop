@@ -316,16 +316,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	return readPaths, writePaths
 }
 
-// getCodeExecutionMode determines code execution mode with priority: step config > preset default
+// getCodeExecutionMode determines code execution mode with priority: step config > workflow/preset default
+// Note: The workflow/preset default reflects what the user explicitly set. Server.go no longer
+// auto-enables code execution mode for the entire workflow. Provider-based auto-enable
+// (claude-code/gemini-cli) is handled per-agent in applyStepConfigToAgentConfig and createConditionalAgent.
 func (hcpo *StepBasedWorkflowOrchestrator) getCodeExecutionMode(stepConfig *AgentConfigs) bool {
-	var isCodeExecutionMode bool
 	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *stepConfig.UseCodeExecutionMode
+		isCodeExecutionMode := *stepConfig.UseCodeExecutionMode
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v", isCodeExecutionMode))
-	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset code execution mode: %v", isCodeExecutionMode))
+		return isCodeExecutionMode
 	}
+	isCodeExecutionMode := hcpo.GetUseCodeExecutionMode()
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workflow/preset code execution mode: %v", isCodeExecutionMode))
 	return isCodeExecutionMode
 }
 
@@ -657,22 +659,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		}
 	}
 
-	// Code execution mode: Priority: step config > preset default (already resolved above)
-	// Note: config.UseCodeExecutionMode is set by CreateStandardAgentConfigWithLLM based on orchestrator setting
-	// We override it based on step config or preset default
-	config.UseCodeExecutionMode = isCodeExecutionMode
-	if isCodeExecutionMode {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode enabled for execution-only agent - MCP tools will be accessed via Python code and per-tool HTTP API"))
+	// Determine execution mode using 3-rule priority:
+	// Rule 1: claude-code/gemini-cli providers ALWAYS use code execution mode
+	// Rule 2: Step-specific config (if explicitly set)
+	// Rule 3: Workflow/preset default
+	actualProvider := config.LLMConfig.Primary.Provider
+	if actualProvider == "claude-code" || actualProvider == "gemini-cli" {
+		// Rule 1: CLI providers always use code execution mode
+		config.UseCodeExecutionMode = true
+		config.UseToolSearchMode = false
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
+	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
+		// Rule 2: Step explicitly set code execution mode
+		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
+		isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
+		config.UseToolSearchMode = isToolSearchMode
+		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
 	} else {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode disabled for execution-only agent - MCP tools will be exposed directly"))
-	}
-
-	// Tool search mode: Priority: step config > preset default
-	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
-	config.UseToolSearchMode = isToolSearchMode
-	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
-	if isToolSearchMode {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Tool search mode enabled for execution-only agent - tools discovered on-demand via search_tools"))
+		// Rule 3: Workflow/preset default — but code execution auto-enable from server.go
+		// should NOT apply to non-CLI providers. Only use the preset value if it was
+		// explicitly set by the user (not auto-enabled for claude-code at workflow level).
+		// For non-CLI providers, code execution mode is false unless step explicitly enables it.
+		config.UseCodeExecutionMode = false
+		isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
+		config.UseToolSearchMode = isToolSearchMode
+		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Provider '%s': code execution mode disabled (not CLI provider), tool search mode: %v", actualProvider, config.UseToolSearchMode))
 	}
 
 	// Set EnableContextOffloading if specified
@@ -1560,16 +1573,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional tools: %v", config.SelectedTools))
 	}
 
-	// Code execution mode: Priority: step config > orchestrator default (same as execution agent)
-	var isCodeExecutionMode bool
-	if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional agent: %v", isCodeExecutionMode))
+	// Code execution mode: 3-rule priority (same as execution agent)
+	// Rule 1: CLI providers always use code execution
+	// Rule 2: Step config if explicitly set
+	// Rule 3: Non-CLI providers default to false
+	conditionalProvider := config.LLMConfig.Primary.Provider
+	if conditionalProvider == "claude-code" || conditionalProvider == "gemini-cli" {
+		config.UseCodeExecutionMode = true
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for conditional agent CLI provider '%s'", conditionalProvider))
+	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
+		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional agent: %v", config.UseCodeExecutionMode))
 	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for conditional agent: %v", isCodeExecutionMode))
+		config.UseCodeExecutionMode = false
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Conditional agent provider '%s': code execution mode disabled", conditionalProvider))
 	}
-	config.UseCodeExecutionMode = isCodeExecutionMode
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
@@ -1695,15 +1713,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator tools: %v", config.SelectedTools))
 	}
 
-	// Code execution mode: Priority: step config > orchestrator default
-	// Use helper method for consistency
-	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
-	config.UseCodeExecutionMode = isCodeExecutionMode
-
-	// Tool search mode: Priority: step config > orchestrator default
-	isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
-	config.UseToolSearchMode = isToolSearchMode
-	config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+	// Determine execution mode using 3-rule priority:
+	// Rule 1: claude-code/gemini-cli providers ALWAYS use code execution mode
+	// Rule 2: Step-specific config (if explicitly set)
+	// Rule 3: Workflow/preset default (code execution only for CLI providers)
+	orchestrationProvider := config.LLMConfig.Primary.Provider
+	if orchestrationProvider == "claude-code" || orchestrationProvider == "gemini-cli" {
+		config.UseCodeExecutionMode = true
+		config.UseToolSearchMode = false
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for orchestration agent CLI provider '%s'", orchestrationProvider))
+	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
+		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
+		config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for orchestration agent: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
+	} else {
+		config.UseCodeExecutionMode = false
+		config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Orchestration agent provider '%s': code execution mode disabled, tool search mode: %v", orchestrationProvider, config.UseToolSearchMode))
+	}
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
@@ -1784,7 +1813,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 
 	// Post-setup: folder guard paths (orchestration orchestrator agent may use code execution mode, so registry update may be needed)
 	// Note: Folder guard paths are already set on orchestrator by caller, but we need to apply them to the agent
-	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
+	if err := hcpo.applyPostSetupToAgent(agent, agentName, config.UseCodeExecutionMode); err != nil {
 		return nil, fmt.Errorf("failed to apply post-setup to orchestration orchestrator agent: %w", err)
 	}
 

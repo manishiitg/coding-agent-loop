@@ -52,17 +52,19 @@ func (e *OrchestratorErrorEvent) GetEventType() events.EventType {
 // Orchestrator Agent Events
 type OrchestratorAgentStartEvent struct {
 	events.BaseEventData
-	AgentType    string            `json:"agent_type"`           // planning, execution, validation, organizer
-	AgentName    string            `json:"agent_name"`           // specific agent name
-	Objective    string            `json:"objective"`            // what the agent is trying to accomplish
-	InputData    map[string]string `json:"input_data"`           // template variables passed to agent
-	ModelID      string            `json:"model_id"`             // which LLM model
-	Provider     string            `json:"provider"`             // which LLM provider
-	ServersCount int               `json:"servers_count"`        // number of MCP servers available
-	MaxTurns     int               `json:"max_turns"`            // maximum conversation turns
-	PlanID       string            `json:"plan_id,omitempty"`    // associated plan ID
-	StepIndex    int               `json:"step_index,omitempty"` // which step in the plan
-	Iteration    int               `json:"iteration,omitempty"`  // which iteration of the loop
+	AgentType            string            `json:"agent_type"`                       // planning, execution, validation, organizer
+	AgentName            string            `json:"agent_name"`                       // specific agent name
+	Objective            string            `json:"objective"`                        // what the agent is trying to accomplish
+	InputData            map[string]string `json:"input_data"`                       // template variables passed to agent
+	ModelID              string            `json:"model_id"`                         // which LLM model
+	Provider             string            `json:"provider"`                         // which LLM provider
+	ServersCount         int               `json:"servers_count"`                    // number of MCP servers available
+	MaxTurns             int               `json:"max_turns"`                        // maximum conversation turns
+	PlanID               string            `json:"plan_id,omitempty"`                // associated plan ID
+	StepIndex            int               `json:"step_index,omitempty"`             // which step in the plan
+	Iteration            int               `json:"iteration,omitempty"`              // which iteration of the loop
+	UseCodeExecutionMode bool              `json:"use_code_execution_mode,omitempty"` // code execution mode enabled
+	UseToolSearchMode    bool              `json:"use_tool_search_mode,omitempty"`    // tool search mode enabled
 }
 
 func (e *OrchestratorAgentStartEvent) GetEventType() events.EventType {

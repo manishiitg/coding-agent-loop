@@ -26,10 +26,14 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium text-blue-700 dark:text-blue-300">
               🤖 Agent Started: {event.agent_type || 'Unknown'}
+              {event.use_code_execution_mode && (
+                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Code Execution Mode">💻 Code Exec</span>
+              )}
+              {event.use_tool_search_mode && (
+                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800" title="Tool Search Mode">🔍 Tool Search</span>
+              )}
               {isMetaExpanded && (
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
-                  {event.use_code_execution_mode && ' | Mode: Code Exec'}
-                  {event.use_tool_search_mode && ' | Mode: Tool Search'}
                   {' | Model: '}{event.model_id || 'Unknown'}
                   {' | Provider: '}{event.provider || 'Unknown'}
                   {(event.metadata?.max_turns !== undefined) &&

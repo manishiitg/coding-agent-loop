@@ -225,7 +225,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	hasValidConditionalLLM := agentConfigs != nil && agentConfigs.ConditionalLLM != nil && agentConfigs.ConditionalLLM.Provider != "" && agentConfigs.ConditionalLLM.ModelID != ""
 	hasStepSpecificConfig := agentConfigs != nil && (hasValidConditionalLLM || agentConfigs.UseCodeExecutionMode != nil)
 
-	// Determine code execution mode
+	// Determine code execution mode: step config > workflow/preset default
 	var isCodeExecutionMode bool
 	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
 		isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode

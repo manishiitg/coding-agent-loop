@@ -102,7 +102,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 	// Read learnings separately (passed as separate learningHistory variable, not in conditionContext)
 	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, conditionalStepPath, "conditional")
 
-	// Determine code execution mode: Priority: step config > orchestrator default
+	// Determine code execution mode: step config > workflow/preset default
+	// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in createConditionalAgent.
 	var isCodeExecutionMode bool
 	agentConfigs := getAgentConfigs(step)
 	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
@@ -110,7 +111,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for conditional evaluation: %v", isCodeExecutionMode))
 	} else {
 		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator code execution mode for conditional evaluation: %v", isCodeExecutionMode))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workflow/preset code execution mode for conditional evaluation: %v", isCodeExecutionMode))
 	}
 
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)

@@ -350,7 +350,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	// Step folder path used as ShellWorkingDirectory in agent prompts
 	shellWorkingDirectory := filepath.Join(hcpo.GetWorkspacePath(), executionPath)
 
-	// Get step config for code execution mode
+	// Get step config for code execution mode: step config > workflow/preset default
 	stepConfig := getAgentConfigs(step)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
 

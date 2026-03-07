@@ -1035,7 +1035,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		// Execution agent workspace path includes run folder: workspacePath/runs/{selectedRunFolder}/execution
 		runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 		executionWorkspacePath := fmt.Sprintf("%s/execution", runWorkspacePath)
-		// Determine code execution mode: Priority: step config > preset default
+		// Determine code execution mode: step config > workflow/preset default
+		// Note: Provider-based auto-enable (claude-code/gemini-cli) is handled in applyStepConfigToAgentConfig.
 		var isCodeExecutionMode bool
 		agentConfigs := getAgentConfigs(step)
 		if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
@@ -1043,7 +1044,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v", isCodeExecutionMode))
 		} else {
 			isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset code execution mode: %v", isCodeExecutionMode))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workflow/preset code execution mode: %v", isCodeExecutionMode))
 		}
 		// Determine tool search mode: Priority: step config > preset default
 		isToolSearchMode := hcpo.getToolSearchMode(agentConfigs)

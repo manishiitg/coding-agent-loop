@@ -14,8 +14,9 @@ func BuildSafeEnvironment() []string {
 		"LANG=C.UTF-8",
 		"LC_ALL=C.UTF-8",
 
-		// Browser automation (agent-browser uses system chromium on Alpine)
-		"AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser",
+		// Browser automation (agent-browser + Playwright use system chromium)
+		"AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium",
+		"PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium",
 
 		// Python: disable output buffering so stdout/stderr are captured even if the process is killed (timeout/signal)
 		"PYTHONUNBUFFERED=1",

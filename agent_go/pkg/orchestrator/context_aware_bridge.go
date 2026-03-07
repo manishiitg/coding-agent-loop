@@ -6,6 +6,7 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	orchevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"sync"
 )
 
@@ -18,6 +19,12 @@ type TokenPersister interface {
 type PhaseTokenPersister interface {
 	PersistPhaseTokenUsage(ctx context.Context, phaseTokenData *PhaseTokenData, modelTokenData *ModelTokenData) error
 }
+
+// AgentSessionIDKey is re-exported from orchestrator/events for convenience.
+// Use events.AgentSessionIDKey to inject agent session ID into context.
+// When set, the ContextAwareEventBridge tags events with this correlation ID,
+// enabling the frontend to group tool calls under their parent orchestrator_agent_start.
+var AgentSessionIDKey = orchevents.AgentSessionIDKey
 
 // orchestratorContext holds a snapshot of orchestrator context for stack operations
 type orchestratorContext struct {
@@ -201,6 +208,15 @@ func (c *ContextAwareEventBridge) ClearCurrentStepID() {
 
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
+	// Tag events with agent session ID from context (for parallel agent grouping).
+	// This allows the frontend to parent tool calls under their orchestrator_agent_start.
+	if agentSessionID, ok := ctx.Value(AgentSessionIDKey).(string); ok && agentSessionID != "" {
+		// Only tag events that don't already have a correlation_id (don't override delegation events)
+		if event.CorrelationID == "" {
+			event.CorrelationID = agentSessionID
+		}
+	}
+
 	// Copy orchestrator and batch context while holding read lock
 	c.mu.RLock()
 	currentPhase := c.currentPhase

@@ -431,6 +431,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // When an intermediate parent within a delegation is evicted, its children become orphans.
     // Instead of showing them as root events in the main chat, re-parent them to delegation_start.
     const delegationIdToEventId = new Map<string, string>();
+    // Build agent session correlation_id -> orchestrator_agent_start event ID map.
+    // This enables grouping tool calls from parallel agents under their respective agent card.
+    const agentSessionToEventId = new Map<string, string>();
     for (const event of filteredEvents) {
       if (event.type === 'delegation_start' && event.data && typeof event.data === 'object') {
         const data = event.data as Record<string, unknown>;
@@ -441,13 +444,28 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           delegationIdToEventId.set(delegationId, event.id);
         }
       }
+      // Map orchestrator_agent_start correlation_id to its event ID
+      if (event.type === 'orchestrator_agent_start' && event.data && typeof event.data === 'object') {
+        const data = event.data as Record<string, unknown>;
+        const innerData = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data;
+        const cid = (innerData?.correlation_id ?? data.correlation_id) as string | undefined;
+        if (cid) {
+          agentSessionToEventId.set(cid, event.id);
+        }
+      }
     }
+
+    // Helper: extract correlation_id from event data
+    const getCorrelationId = (event: PollingEvent): string | undefined => {
+      if (!event.data || typeof event.data !== 'object') return undefined;
+      const data = event.data as Record<string, unknown>;
+      return (data.correlation_id as string | undefined)
+        ?? ((data.data && typeof data.data === 'object') ? (data.data as Record<string, unknown>).correlation_id as string | undefined : undefined);
+    };
 
     // Helper: extract delegation correlation_id from event
     const getDelegationCorrelationId = (event: PollingEvent): string | undefined => {
-      if (!event.data || typeof event.data !== 'object') return undefined;
-      const data = event.data as Record<string, unknown>;
-      const cid = data.correlation_id as string | undefined;
+      const cid = getCorrelationId(event);
       return (cid && cid.startsWith('delegation-')) ? cid : undefined;
     };
 
@@ -464,6 +482,19 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           const delegStartId = delegationIdToEventId.get(delegCid);
           if (delegStartId) {
             parentId = delegStartId;
+          }
+        }
+      }
+
+      // Parent events under their orchestrator_agent_start via correlation_id.
+      // This groups tool calls from parallel agents under their respective agent card.
+      if (!parentId || !filteredEventIds.has(parentId)) {
+        const cid = getCorrelationId(event);
+        if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)) {
+          const agentStartId = agentSessionToEventId.get(cid)!;
+          // Don't parent the agent_start under itself
+          if (event.id !== agentStartId) {
+            parentId = agentStartId;
           }
         }
       }
@@ -486,24 +517,25 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     };
 
     const rootEvents = filteredEvents.filter(event => {
+      // Check if this event was parented under an agent session or delegation via childrenMap
+      const cid = getCorrelationId(event);
+
+      // Never promote delegation child events to root — they belong inside delegation cards.
+      if (cid && cid.startsWith('delegation-')) {
+        const delegStartId = delegationIdToEventId.get(cid);
+        if (delegStartId && event.id !== delegStartId) return false;
+      }
+
+      // Never promote agent session child events to root — they belong inside agent cards.
+      if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)) {
+        const agentStartId = agentSessionToEventId.get(cid)!;
+        if (event.id !== agentStartId) return false; // Child of agent session, not root
+      }
+
       const parentId = getParentId(event);
       // Standard root check: no parent or parent not in filtered set
       const isOrphan = !parentId || !filteredEventIds.has(parentId);
       if (!isOrphan) return false;
-
-      // Never promote delegation child events to root — they belong inside delegation cards.
-      // If their delegation_start was evicted (shouldn't happen with structural preservation),
-      // hide them rather than polluting the main chat.
-      if (parentId) {
-        const delegCid = getDelegationCorrelationId(event);
-        if (delegCid) {
-          // Check if this event was re-parented to a delegation_start in childrenMap
-          const delegStartId = delegationIdToEventId.get(delegCid);
-          if (delegStartId) return false; // Already re-parented, don't show as root
-          // delegation_start was evicted entirely — suppress orphan
-          return false;
-        }
-      }
 
       return true;
     });
@@ -517,10 +549,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const flatten = (node: EventNode, key: string) => {
       list.push({ node, uniqueKey: key });
 
-      // If this is a delegation_start (sub-agent), we STOP flattening its children into the main list.
-      // They will be rendered internally by the sub-agent card's scrollable logs area.
-      // This is also what guarantees sub-agent tool calls never appear in main agent groups.
+      // If this is a delegation_start or orchestrator_agent_start with children,
+      // we STOP flattening its children into the main list.
+      // They will be rendered internally by the sub-agent/agent card's scrollable logs area.
+      // This guarantees parallel agents' tool calls never merge into one big "+N tools" group.
       if (node.event.type === 'delegation_start') {
+        return;
+      }
+      if (node.event.type === 'orchestrator_agent_start' && node.children.length > 0) {
         return;
       }
 

@@ -126,13 +126,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
             <div className="min-w-0 flex-1">
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Started: {event.agent_name}
-                {event.use_code_execution_mode && (
-                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Code Execution Mode">💻 Code Exec</span>
-                )}
-                {event.use_tool_search_mode && (
-                  <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800" title="Tool Search Mode">🔍 Tool Search</span>
-                )}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
+                  {event.use_code_execution_mode && ' | Code Exec'}
+                  {event.use_tool_search_mode && ' | Tool Search'}
                   {' '}| Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                 </span>

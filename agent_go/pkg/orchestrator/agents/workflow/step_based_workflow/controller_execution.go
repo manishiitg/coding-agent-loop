@@ -1816,8 +1816,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 				}
 
-				// LLM validation is always disabled — validation agent removed.
-				// Pre-validation (code-based) and learning still run.
+				// LLM validation is always disabled — validation agent is dead code.
+				// Only pre-validation (code-based structural checks via RunPreValidation) is active
+				// and runs separately in controller_todo_task.go and controller_orchestration.go.
+				// Learning still runs.
 				agentConfigs = getAgentConfigs(step)
 				enableLLMValidation := false
 				if !enableLLMValidation {

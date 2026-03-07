@@ -165,6 +165,9 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
+	// Inject agent session ID into context for per-agent event grouping
+	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
+
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
 	if boa.userMessageProcessor != nil {
@@ -206,7 +209,7 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	// Use AskWithHistoryStructured from mcpagent
 	// Note: schema parameter needs to be a zero value of type T for the schema type, and schemaString is the JSON schema string
 	var schemaType T
-	result, updatedHistory, err := mcpagent.AskWithHistoryStructured[T](baseAgent.agent, ctx, messages, schemaType, schema)
+	result, updatedHistory, err := mcpagent.AskWithHistoryStructured[T](baseAgent.agent, agentCtx, messages, schemaType, schema)
 
 	duration := time.Since(startTime)
 
@@ -253,6 +256,9 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
+	// Inject agent session ID into context for per-agent event grouping
+	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
+
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
 	if boa.userMessageProcessor != nil {
@@ -291,7 +297,7 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 	}
 
 	// Use AskWithHistoryStructuredViaTool from mcpagent
-	result, err := mcpagent.AskWithHistoryStructuredViaTool[T](baseAgent.agent, ctx, messages, toolName, toolDescription, schema)
+	result, err := mcpagent.AskWithHistoryStructuredViaTool[T](baseAgent.agent, agentCtx, messages, toolName, toolDescription, schema)
 	updatedHistory := result.Messages
 
 	duration := time.Since(startTime)
@@ -377,6 +383,10 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
+	// Inject agent session ID into context so the ContextAwareEventBridge can tag
+	// tool call events with this correlation ID (enables per-agent grouping in UI)
+	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
+
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
 	if boa.userMessageProcessor != nil {
@@ -394,7 +404,7 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	}
 
 	// Delegate to template's Execute method which enforces event patterns
-	result, updatedConversationHistory, err := boa.baseAgent.Execute(ctx, userMessage, conversationHistory, systemPrompt, overwriteSystemPrompt)
+	result, updatedConversationHistory, err := boa.baseAgent.Execute(agentCtx, userMessage, conversationHistory, systemPrompt, overwriteSystemPrompt)
 
 	duration := time.Since(startTime)
 
@@ -477,10 +487,14 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType basee
 	}
 
 	// Create agent event
+	// Set CorrelationID to this agent's own session ID so the bridge doesn't
+	// override it with a parent agent's ID from context (prevents sub-agent events
+	// from being incorrectly parented under the parent orchestrator agent).
 	agentEvent := &baseevents.AgentEvent{
-		Type:      eventType,
-		Timestamp: time.Now(),
-		Data:      data,
+		Type:          eventType,
+		Timestamp:     time.Now(),
+		Data:          data,
+		CorrelationID: boa.agentSessionID,
 	}
 
 	// Emit through event bridge

@@ -155,20 +155,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 	// Read learnings for the decision step (learnings are stored under the step's ID)
 	learningHistory, _ := hcpo.LoadStepLearningHistory(ctx, step.GetID(), stepIndex, decisionStepPath, "decision")
 
-	// 🔧 DECISION STEP EVALUATION ALWAYS USES SIMPLE AGENT MODE (non-code execution)
-	// This ensures structured output tools (like submit_decision_result) are called directly by the LLM
-	// rather than via code execution, which prevents "tool was called but not found in messages" errors
-	// UNLESS the provider requires code execution mode (claude-code, gemini-cli)
-	isCodeExecutionMode := requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Decision step evaluation code execution mode: %v (provider requires it: %v)", isCodeExecutionMode, requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)))
-
-	// Ensure step config has UseCodeExecutionMode set appropriately
-	// This ensures getConditionalAgentForStep creates a step-specific agent with the correct mode
-	if decisionStep.AgentConfigs == nil {
-		decisionStep.AgentConfigs = &AgentConfigs{}
-	}
-	decisionStep.AgentConfigs.UseCodeExecutionMode = &isCodeExecutionMode
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting UseCodeExecutionMode=%v in step config for decision evaluation", isCodeExecutionMode))
+	// Code execution mode is determined by createConditionalAgent's 3-rule priority:
+	// Rule 1: CLI providers (claude-code, gemini-cli) always use code execution
+	// Rule 2: Step config if explicitly set by user
+	// Rule 3: Non-CLI providers default to false
+	// We do NOT override UseCodeExecutionMode here — let the factory decide based on the actual resolved LLM provider
 
 	// Ensure step execution folder exists before creating conditional agent (agent needs to write to this folder)
 	runWorkspacePath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
@@ -190,7 +181,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		variableValues = FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
 	}
 
-	decisionResponse, err := conditionalAgent.EvaluateDecision(ctx, executionResult, decisionStep.DecisionEvaluationQuestion, stepIndex, 0, isCodeExecutionMode, learningHistory, variableNames, variableValues)
+	decisionResponse, err := conditionalAgent.EvaluateDecision(ctx, executionResult, decisionStep.DecisionEvaluationQuestion, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, learningHistory, variableNames, variableValues)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate decision step %d: %v", stepIndex+1, err), nil)
 		// Emit error event using centralized method

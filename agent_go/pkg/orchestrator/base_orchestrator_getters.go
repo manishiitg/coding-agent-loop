@@ -248,3 +248,4 @@ func (bo *BaseOrchestrator) GetBrowserDownloadsPath() string {
 func (bo *BaseOrchestrator) SetBrowserDownloadsPath(path string) {
 	bo.browserDownloadsPath = path
 }
+

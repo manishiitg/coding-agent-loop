@@ -4,6 +4,13 @@ import (
 	"github.com/manishiitg/mcpagent/events"
 )
 
+// AgentSessionIDKey is a context key for injecting agent session ID into event context.
+// When set, the ContextAwareEventBridge tags events with this correlation ID,
+// enabling the frontend to group tool calls under their parent orchestrator_agent_start.
+type agentSessionIDKeyType struct{}
+
+var AgentSessionIDKey = agentSessionIDKeyType{}
+
 // Orchestrator Event Types
 // These events are specific to the orchestrator application and are not part of the core mcpagent library
 const (

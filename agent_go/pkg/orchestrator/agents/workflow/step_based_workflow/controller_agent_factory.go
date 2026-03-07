@@ -736,6 +736,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 			"workspace_advanced:*",
 			"human_tools:*",
 		}
+		// Auto-include browser tools if agent_browser exists in the workspace tools pool
+		// (present when preset has enable_browser_access: true)
+		for _, tool := range hcpo.WorkspaceTools {
+			if tool.Function != nil && tool.Function.Name == "agent_browser" {
+				defaultEnabledTools = append(defaultEnabledTools, "workspace_browser:*")
+				break
+			}
+		}
 		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
 			hcpo.WorkspaceTools,
 			hcpo.WorkspaceToolExecutors,
@@ -1210,6 +1218,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		hcpo.GetLogger().Info("🔧 Parallel tool execution DISABLED for execution-only agent via step config")
 	}
 
+	// Check for isolated browser session ID (from share_browser=false in sub-agent tools)
+	if isolatedSessionID, ok := ctx.Value(virtualtools.SubAgentIsolatedSessionIDKey).(string); ok && isolatedSessionID != "" {
+		config.MCPSessionID = isolatedSessionID
+		hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: overriding MCPSessionID to %s", isolatedSessionID))
+	}
+
 	// 5. Prepare custom tools (filtered by step config)
 	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
 
@@ -1267,6 +1281,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		}
 	}
 
+	// Browser isolation: for agent-browser skill, inject system prompt with unique session name
+	if isolatedSessionID, ok := ctx.Value(virtualtools.SubAgentIsolatedSessionIDKey).(string); ok && isolatedSessionID != "" {
+		for _, skill := range effectiveSkills {
+			if skill == "agent-browser" {
+				mcpAgent.AppendSystemPrompt(fmt.Sprintf(
+					"## Browser Isolation\nYou have an isolated browser session. When using the agent_browser tool, use session name %q instead of \"default\" to avoid sharing browser state with other agents.",
+					isolatedSessionID,
+				))
+				hcpo.GetLogger().Info("Added browser isolation guidance to sub-agent system prompt for agent-browser")
+				break
+			}
+		}
+	}
+
 	// Add secrets to execution agent's system prompt
 	effectiveSecrets := GetEffectiveSecrets(hcpo.BaseOrchestrator)
 	if len(effectiveSecrets) > 0 {
@@ -1313,6 +1341,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 }
 
 // createValidationAgent creates a validation agent for the current iteration
+// Deprecated: LLM validation is disabled (enableLLMValidation is hardcoded to false in controller_execution.go).
+// Only pre-validation (code-based structural checks via RunPreValidation) is active.
+// This function is dead code — kept for backward compatibility only.
 func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Context, phase string, step int, stepID string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (read-only for validation agents)
 	readPaths, writePaths := hcpo.setupValidationFolderGuard()
@@ -1333,10 +1364,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Con
 	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM validation agent
 
 	// Code execution mode and tool search mode only apply to execution agents, not validation agents
-	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
+	// Use the agent's ACTUAL provider (from its LLM config), not the phase LLM provider.
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
+		Provider: config.LLMConfig.Primary.Provider,
+		ModelID:  config.LLMConfig.Primary.ModelID,
+	})
 	config.UseToolSearchMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Validation agent code execution mode: %v (provider requires it: %v)", config.UseCodeExecutionMode, requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Validation agent code execution mode: %v (provider: %s)", config.UseCodeExecutionMode, config.LLMConfig.Primary.Provider))
 
 	// Set EnableContextOffloading if specified
 	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
@@ -1421,8 +1455,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 
 	// Code execution mode and tool search mode only apply to execution agents, not learning agents
 	// CRITICAL: Override orchestrator-level code execution mode and tool search mode setting - learning agents are pure LLM analysis agents
-	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
+	// Use the agent's ACTUAL provider (from its LLM config), not the phase LLM provider.
+	// The phase LLM may be claude-code but the learning agent uses a different provider (e.g., MiniMax).
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
+		Provider: config.LLMConfig.Primary.Provider,
+		ModelID:  config.LLMConfig.Primary.ModelID,
+	})
 	config.UseToolSearchMode = false
 	if wasCodeExecutionMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Execution was in code execution mode - using code execution learning agent (but agent itself does NOT use code execution mode)"))
@@ -2129,13 +2167,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.SubAgentLLM)
 		}
 
-		// Before calling sub-agent, emit current tasks.md state (it may already exist)
-		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
-
 		// Call original executor with enriched context
 		result, err := originalExecutor(ctx, args)
 
-		// After sub-agent completes, emit tasks.md state again (may have been updated)
+		// After sub-agent completes, emit tasks.md state (debounced to coalesce parallel completions)
 		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
 
 		return result, err
@@ -2302,6 +2337,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 	return func(ctx context.Context, routeID, todoID, instructions, successCriteria string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing predefined sub-agent via tool: route=%s, todo=%s", routeID, todoID))
 
+		// Browser isolation: generate isolated session ID when share_browser=false
+		if sb, ok := ctx.Value(virtualtools.SubAgentShareBrowserKey).(bool); ok && !sb {
+			isolatedSessionID := fmt.Sprintf("%s-isolated-%d", hcpo.getSessionID(), time.Now().UnixNano())
+			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
+			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
+			defer func() {
+				mcpagent.CloseSession(isolatedSessionID)
+				hcpo.GetLogger().Info(fmt.Sprintf("Closed isolated browser session: %s", isolatedSessionID))
+			}()
+		}
+
 		// Build a TodoTaskResponse to reuse existing execution logic
 		response := &TodoTaskResponse{
 			NextAction:                 "delegate",
@@ -2341,6 +2387,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 ) virtualtools.ExecuteGenericAgentFunc {
 	return func(ctx context.Context, todoID, instructions, successCriteria string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing generic agent via tool: todo=%s", todoID))
+
+		// Browser isolation: generate isolated session ID when share_browser=false
+		if sb, ok := ctx.Value(virtualtools.SubAgentShareBrowserKey).(bool); ok && !sb {
+			isolatedSessionID := fmt.Sprintf("%s-isolated-%d", hcpo.getSessionID(), time.Now().UnixNano())
+			ctx = context.WithValue(ctx, virtualtools.SubAgentIsolatedSessionIDKey, isolatedSessionID)
+			hcpo.GetLogger().Info(fmt.Sprintf("Browser isolation: sub-agent gets session %s", isolatedSessionID))
+			defer func() {
+				mcpagent.CloseSession(isolatedSessionID)
+				hcpo.GetLogger().Info(fmt.Sprintf("Closed isolated browser session: %s", isolatedSessionID))
+			}()
+		}
 
 		// Build a TodoTaskResponse to reuse existing execution logic
 		// All task info comes from the tool parameters, not from a file
@@ -2409,9 +2466,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
 	// Scoring agents always use NoServers (pure LLM analysis agent)
-	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
+	// Use the agent's ACTUAL provider, not the phase LLM provider.
 	config.ServerNames = []string{mcpclient.NoServers}
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
+		Provider: config.LLMConfig.Primary.Provider,
+		ModelID:  config.LLMConfig.Primary.ModelID,
+	})
 	config.UseToolSearchMode = false
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)
@@ -2546,6 +2606,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 }
 
 // createOrchestrationLearningAgent creates an orchestration learning agent for analyzing orchestrator decisions
+// Deprecated: Kept for backward compatibility. Orchestration learning should be unified with the standard learning agent.
 // stepIndex: 0-based step index for token tracking
 func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx context.Context, phase string, learningPathIdentifier string, agentName string, stepConfig *AgentConfigs, stepID string, stepPath string, stepIndex int) (agents.OrchestratorAgent, error) {
 	// 1. Setup folder guard (extracted method)
@@ -2575,7 +2636,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationLearningAgent(ctx 
 	config.ServerNames = []string{mcpclient.NoServers}
 
 	// Code execution mode and tool search mode don't apply to learning agents
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(hcpo.presetPhaseLLM)
+	// Use the agent's ACTUAL provider, not the phase LLM provider.
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
+		Provider: config.LLMConfig.Primary.Provider,
+		ModelID:  config.LLMConfig.Primary.ModelID,
+	})
 	config.UseToolSearchMode = false
 
 	// Setup Downloads folder for browser tools (Playwright or agent-browser)

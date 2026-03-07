@@ -232,7 +232,7 @@ echo "=========================================" >> "$LOG_PATH"
 echo "" >> "$LOG_PATH"
 
 # Start background log rotation: keep only last 10000 lines every 30 seconds
-LOG_ROTATE_LINES=10000
+LOG_ROTATE_LINES=50000
 log_rotate_daemon() {
     while true; do
         sleep 30

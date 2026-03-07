@@ -436,6 +436,7 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			OpenAI:     a.APIKeys.OpenAI,
 			Anthropic:  a.APIKeys.Anthropic,
 			Vertex:     a.APIKeys.Vertex,
+			GeminiCLI:  a.APIKeys.GeminiCLI,
 			MiniMax:    a.APIKeys.MiniMax,
 		}
 		if a.APIKeys.Bedrock != nil {
@@ -466,6 +467,8 @@ func (a *Agent) executeLLM(ctx context.Context, model LLMModel, messages []llmty
 			apiKeys.Vertex = model.APIKey
 		case llmproviders.ProviderMiniMax:
 			apiKeys.MiniMax = model.APIKey
+		case llmproviders.ProviderGeminiCLI:
+			apiKeys.GeminiCLI = model.APIKey
 		}
 	}
 

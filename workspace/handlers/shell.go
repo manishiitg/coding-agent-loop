@@ -140,6 +140,24 @@ func ExecuteShellCommand(c *gin.Context) {
 			}
 		}
 
+		// Pre-create write path directories in the real filesystem before isolation.
+		// The mount script relies on these existing so it can bind-mount them as writable;
+		// if they don't exist, the "if [ -e $tempPath ]" check in step 4 fails and the
+		// mount point is never created, causing step 5 to error with "does not exist".
+		for _, wp := range req.FolderGuard.WritePaths {
+			physicalPath := wp
+			if userID != "" && utils.IsPerUserPath(wp) {
+				physicalPath = filepath.Join(utils.UsersDirectory, userID, wp)
+			}
+			// Resolve relative to docsDir if not already absolute
+			if !filepath.IsAbs(physicalPath) {
+				physicalPath = filepath.Join(docsDir, physicalPath)
+			}
+			if mkErr := os.MkdirAll(physicalPath, 0755); mkErr != nil {
+				fmt.Printf("[SHELL ISOLATOR] Warning: failed to pre-create write path %s: %v\n", physicalPath, mkErr)
+			}
+		}
+
 		// Use isolated execution with filesystem restrictions
 		isolator := &security.Isolator{
 			ReadPaths:         req.FolderGuard.ReadPaths,

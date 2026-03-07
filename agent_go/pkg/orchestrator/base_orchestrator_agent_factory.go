@@ -143,6 +143,8 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 				OpenAI:     llmConfig.APIKeys.OpenAI,
 				Anthropic:  llmConfig.APIKeys.Anthropic,
 				Vertex:     llmConfig.APIKeys.Vertex,
+				GeminiCLI:  llmConfig.APIKeys.GeminiCLI,
+				MiniMax:    llmConfig.APIKeys.MiniMax,
 			}
 			if llmConfig.APIKeys.Bedrock != nil {
 				config.APIKeys.Bedrock = &agents.BedrockAgentConfig{

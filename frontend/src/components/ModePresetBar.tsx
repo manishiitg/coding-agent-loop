@@ -119,13 +119,18 @@ export const ModePresetBar: React.FC = () => {
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
 
-  // Fetch workflow schedule count for badge
+  // Fetch workflow schedule count for badge (filtered to current workflow)
   useEffect(() => {
     if (selectedModeCategory !== 'workflow') return
+    const currentPresetId = activePreset?.id
     schedulerApi.listJobs({ entity_type: 'workflow' })
-      .then(resp => setWorkflowScheduleCount(resp.jobs?.length ?? 0))
+      .then(resp => {
+        const jobs = resp.jobs ?? []
+        const filtered = currentPresetId ? jobs.filter(j => j.preset_query_id === currentPresetId) : []
+        setWorkflowScheduleCount(filtered.length)
+      })
       .catch(() => {})
-  }, [selectedModeCategory, showSchedulePopup, showRunsPanel]) // refresh after schedule/runs panel closes
+  }, [selectedModeCategory, showSchedulePopup, showRunsPanel, activePreset?.id]) // refresh after schedule/runs panel closes or workflow changes
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {

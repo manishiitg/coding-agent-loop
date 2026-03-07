@@ -131,6 +131,8 @@ func CreateLLMInstance(
 			OpenAI:     config.APIKeys.OpenAI,
 			Anthropic:  config.APIKeys.Anthropic,
 			Vertex:     config.APIKeys.Vertex,
+			GeminiCLI:  config.APIKeys.GeminiCLI,
+			MiniMax:    config.APIKeys.MiniMax,
 		}
 		if config.APIKeys.Bedrock != nil {
 			llmAPIKeys.Bedrock = &llm.BedrockConfig{
@@ -163,6 +165,10 @@ func CreateLLMInstance(
 			llmAPIKeys.Anthropic = config.LLMConfig.Primary.APIKey
 		case "openrouter":
 			llmAPIKeys.OpenRouter = config.LLMConfig.Primary.APIKey
+		case "minimax":
+			llmAPIKeys.MiniMax = config.LLMConfig.Primary.APIKey
+		case "gemini-cli":
+			llmAPIKeys.GeminiCLI = config.LLMConfig.Primary.APIKey
 		case "azure":
 			// For Azure, per-model API key only sets the key, not endpoint/version
 			// If Azure config exists, update just the key

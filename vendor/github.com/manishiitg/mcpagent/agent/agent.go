@@ -961,6 +961,7 @@ type AgentAPIKeys struct {
 	OpenAI     *string
 	Anthropic  *string
 	Vertex     *string
+	GeminiCLI  *string
 	MiniMax    *string
 	Bedrock    *AgentBedrockConfig
 	Azure      *AgentAzureConfig
@@ -1097,6 +1098,8 @@ func extractAPIKeysFromLLM(model llmtypes.Model) *AgentAPIKeys {
 			OpenAI:     providerKeys.OpenAI,
 			Anthropic:  providerKeys.Anthropic,
 			Vertex:     providerKeys.Vertex,
+			GeminiCLI:  providerKeys.GeminiCLI,
+			MiniMax:    providerKeys.MiniMax,
 		}
 		if providerKeys.Bedrock != nil {
 			agentKeys.Bedrock = &AgentBedrockConfig{

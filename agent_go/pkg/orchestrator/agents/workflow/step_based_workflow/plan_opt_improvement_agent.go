@@ -224,7 +224,9 @@ Example: {"summary": "brief", "details_file": "step_X_details.md"}
 ### Workspace Tools
 - 'execute_shell_command(command)' — Run shell commands using full workspace-relative paths
 - 'human_feedback(question, response_type)' — Ask user for approval or input (**call before any plan change**)
-{{end}}`)
+{{end}}
+
+{{"{{TOOL_STRUCTURE}}"}}`)
 
 var improvementUserTemplate = MustRegisterTemplate("improvementUser", `{{if .UserImprovementRequest}}{{.UserImprovementRequest}}{{else}}What would you like help with regarding the plan?{{end}}`)
 

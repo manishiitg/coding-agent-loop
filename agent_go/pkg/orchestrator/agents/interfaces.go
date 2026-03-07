@@ -153,6 +153,8 @@ type AgentAPIKeys struct {
 	OpenAI     *string
 	Anthropic  *string
 	Vertex     *string
+	GeminiCLI  *string
+	MiniMax    *string
 	Bedrock    *BedrockAgentConfig
 	Azure      *AzureAgentConfig
 }

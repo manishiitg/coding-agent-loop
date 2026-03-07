@@ -286,6 +286,7 @@ func (hctpooa *WorkflowOrchestrationOrchestratorAgent) orchestrationOrchestrator
 		"LearningHistory":           templateVars["LearningHistory"],
 		"CodeExecutionInstructions": "",
 		"SkipExecutionCleanup":      templateVars["SkipExecutionCleanup"],
+		"UseKnowledgebase":          templateVars["UseKnowledgebase"],
 	}
 
 	if isCodeExecutionMode {

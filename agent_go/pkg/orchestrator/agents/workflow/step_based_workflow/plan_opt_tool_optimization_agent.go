@@ -1976,6 +1976,8 @@ For each step being converted to Tool Search Mode, present:
 ### File Locations
 - **Learnings**: Check both learnings/ (base) and learnings/{step_id}/ (step-specific) at workspace root
 - **Logs**: Check runs/{iteration}/logs/step-{X}/execution/ for conversation history files
+
+{{TOOL_STRUCTURE}}
 `
 }
 

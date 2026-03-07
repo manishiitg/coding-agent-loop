@@ -28,9 +28,11 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 
 		if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
 			// System 1: chat/plan/prototype mode
-			readPaths := allowedWrites // at minimum, can read what you can write
+			// Merge: ctxReads + allowedWrites (write paths must always be readable
+			// so the isolator creates mount points for them in step 4)
+			readPaths := allowedWrites
 			if hasCtxReads && len(ctxReads) > 0 {
-				readPaths = ctxReads
+				readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
 			}
 			params.FolderGuard = &FolderGuardConfig{
 				Enabled:    true,
@@ -40,9 +42,11 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, params.Command)
 		} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
 			// System 2: workflow orchestrator
-			readPaths := ctxWrites // at minimum, can read what you can write
+			// Merge: ctxReads + ctxWrites (write paths must always be readable
+			// so the isolator creates mount points for them in step 4)
+			readPaths := ctxWrites
 			if hasCtxReads && len(ctxReads) > 0 {
-				readPaths = ctxReads
+				readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
 			}
 			params.FolderGuard = &FolderGuardConfig{
 				Enabled:    true,
@@ -138,4 +142,17 @@ func formatShellResponse(respBody []byte) (string, bool) {
 	commandFailed := exitCode != 0 || hasError
 
 	return string(result), commandFailed
+}
+
+// deduplicateStrings removes duplicate entries from a string slice while preserving order.
+func deduplicateStrings(input []string) []string {
+	seen := make(map[string]bool, len(input))
+	result := make([]string, 0, len(input))
+	for _, s := range input {
+		if !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
 }

@@ -165,7 +165,9 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 - **Questions**: Respond conversationally if clarification is needed.
 - **Validation**: After any change, verify forward-only context flow and ID stability.
 
-*No placeholders. No duplicate steps. No circular dependencies.*`)
+*No placeholders. No duplicate steps. No circular dependencies.*
+
+{{"{{TOOL_STRUCTURE}}"}}`)
 
 // WorkflowPlanningTemplate holds template variables for human-controlled planning prompts
 type WorkflowPlanningTemplate struct {
@@ -7755,6 +7757,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 		"ExistingPlanJSON":       templateVars["ExistingPlanJSON"],
 		"VariableNames":          templateVars["VariableNames"],
 		"IsCodeExecutionMode":    templateVars["IsCodeExecutionMode"] == "true",
+		"UseKnowledgebase":       templateVars["UseKnowledgebase"],
 		"CurrentDate":            now.Format("2006-01-02"),
 		"CurrentTime":            now.Format("15:04:05"),
 	}

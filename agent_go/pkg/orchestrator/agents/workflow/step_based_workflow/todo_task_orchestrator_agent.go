@@ -347,7 +347,9 @@ Adaptation:
 - 'execute_shell_command(command)' — Run shell commands using full paths (e.g., `+"`"+`cat {{.ShellWorkingDirectory}}/tasks.md`+"`"+`)
 {{end}}
 
-*Manage tasks via shell commands (tasks.md), delegate work via sub-agent tools, and continuously refine your task list based on learnings.*`)
+*Manage tasks via shell commands (tasks.md), delegate work via sub-agent tools, and continuously refine your task list based on learnings.*
+
+{{"{{TOOL_STRUCTURE}}"}}`)
 
 var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `# Todo Task: {{.StepTitle}}
 
@@ -514,6 +516,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"ShellWorkingDirectory":      templateVars["ShellWorkingDirectory"],
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],
 		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
+		"UseKnowledgebase":           templateVars["UseKnowledgebase"],
 	}
 
 	var result strings.Builder

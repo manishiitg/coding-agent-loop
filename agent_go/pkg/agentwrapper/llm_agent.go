@@ -453,6 +453,7 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			OpenAI:     config.APIKeys.OpenAI,
 			Anthropic:  config.APIKeys.Anthropic,
 			Vertex:     config.APIKeys.Vertex,
+			GeminiCLI:  config.APIKeys.GeminiCLI,
 			MiniMax:    config.APIKeys.MiniMax,
 		}
 		if config.APIKeys.Bedrock != nil {

@@ -158,9 +158,19 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 
 // WrapWorkspaceToolsWithFolderGuard wraps workspace tool executors with path validation
 // Uses folderGuardReadPaths and folderGuardWritePaths if set, otherwise falls back to workspacePath
+// IMPORTANT: Snapshots folder guard paths at wrap time (not at call time) to prevent race conditions
+// when multiple parallel agents share the same orchestrator instance.
 func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[string]interface{}) map[string]interface{} {
+	// Snapshot folder guard paths at wrap time to avoid race conditions with parallel sub-agents.
+	// Each agent gets its own wrapper closure with the paths that were active when it was created,
+	// preventing one agent's setup from clobbering another's folder guard.
+	snapshotReadPaths := make([]string, len(bo.folderGuardReadPaths))
+	copy(snapshotReadPaths, bo.folderGuardReadPaths)
+	snapshotWritePaths := make([]string, len(bo.folderGuardWritePaths))
+	copy(snapshotWritePaths, bo.folderGuardWritePaths)
+
 	// Check if folder guard paths are set
-	useFolderGuardPaths := len(bo.folderGuardReadPaths) > 0 || len(bo.folderGuardWritePaths) > 0
+	useFolderGuardPaths := len(snapshotReadPaths) > 0 || len(snapshotWritePaths) > 0
 	workspacePath := bo.GetWorkspacePath()
 
 	// If no folder guard paths and no workspace path, return executors unchanged
@@ -228,20 +238,22 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 		isWriteCopy := isWrite
 		wrappedExecutor := func(ctx context.Context, args map[string]interface{}) (string, error) {
 			// Determine which paths to use for validation
+			// Uses snapshotted paths (captured at wrap time) to prevent race conditions
+			// when parallel sub-agents share the same orchestrator instance
 			var allowedPaths []string
 
 			if useFolderGuardPaths {
 				if isWriteCopy {
 					// Write operations use writePaths only
-					allowedPaths = bo.folderGuardWritePaths
+					allowedPaths = snapshotWritePaths
 				} else if isReadOnlyCopy {
 					// Read operations can use both readPaths AND writePaths (if you can write, you can read)
 					// Combine readPaths and writePaths, removing duplicates
 					allowedPathsMap := make(map[string]bool)
-					for _, path := range bo.folderGuardReadPaths {
+					for _, path := range snapshotReadPaths {
 						allowedPathsMap[path] = true
 					}
-					for _, path := range bo.folderGuardWritePaths {
+					for _, path := range snapshotWritePaths {
 						allowedPathsMap[path] = true
 					}
 					// Convert map back to slice
@@ -252,10 +264,10 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 				} else {
 					// Unknown tool type - use readPaths + writePaths as default (read-like behavior)
 					allowedPathsMap := make(map[string]bool)
-					for _, path := range bo.folderGuardReadPaths {
+					for _, path := range snapshotReadPaths {
 						allowedPathsMap[path] = true
 					}
-					for _, path := range bo.folderGuardWritePaths {
+					for _, path := range snapshotWritePaths {
 						allowedPathsMap[path] = true
 					}
 					allowedPaths = make([]string, 0, len(allowedPathsMap))
@@ -309,9 +321,9 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 
 			// Inject event emitter into context before calling executor
 			ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, bo.contextAwareBridge)
-			// Inject folder guard paths into context for shell execution
-			ctx = context.WithValue(ctx, virtualtools.FolderGuardReadPathsKey, bo.folderGuardReadPaths)
-			ctx = context.WithValue(ctx, virtualtools.FolderGuardWritePathsKey, bo.folderGuardWritePaths)
+			// Inject snapshotted folder guard paths into context for shell execution
+			ctx = context.WithValue(ctx, virtualtools.FolderGuardReadPathsKey, snapshotReadPaths)
+			ctx = context.WithValue(ctx, virtualtools.FolderGuardWritePathsKey, snapshotWritePaths)
 			// Inject browser downloads path into context for agent-browser executor
 			if bo.browserDownloadsPath != "" {
 				ctx = context.WithValue(ctx, common.BrowserDownloadsPathKey, bo.browserDownloadsPath)

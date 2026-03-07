@@ -350,6 +350,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         }
       }
 
+      // Mark completed orchestrator agent sessions
+      if (type === 'orchestrator_agent_end') {
+        const cid = data.correlation_id as string | undefined
+        if (cid && dStats.has(cid)) {
+          dStats.get(cid)!.completed = true
+        }
+      }
+
       // Collect delegation_start for bgStats (resolved after loop)
       if (type === 'delegation_start') {
         const delegationData = (data.data && typeof data.data === 'object')

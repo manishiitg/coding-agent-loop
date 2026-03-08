@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState } from 'react'
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, type ForwardedRef } from 'react'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { useShallow } from 'zustand/react/shallow'
 import { agentApi, resetSessionId, getSessionId } from '../services/api'
@@ -224,7 +224,7 @@ export interface ChatAreaRef {
 let globalHasRestored = false
 
 // Inner component for chat area
-const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
+const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
   
   // Store subscriptions
@@ -1956,12 +1956,11 @@ const ChatAreaInner = forwardRef<ChatAreaRef, ChatAreaProps>((props, ref) => {
         && isChatCompatiblePhase(currentTab.metadata.phaseId)
       // For phase chat: prefer preset LLM if user hasn't explicitly overridden
       // (tab config always has a default from workflowPrimaryConfig, so we also check the preset)
-      const presetStore = useGlobalPresetStore.getState()
-      const workflowPreset = isWorkflowPhaseChat
+      const phaseChatPreset = isWorkflowPhaseChat
         ? (presetStore.getActivePreset('workflow'))
         : null
-      const presetLLMConfig = workflowPreset?.llmConfig?.provider && workflowPreset?.llmConfig?.model_id
-        ? workflowPreset.llmConfig
+      const presetLLMConfig = phaseChatPreset?.llmConfig?.provider && phaseChatPreset?.llmConfig?.model_id
+        ? phaseChatPreset.llmConfig
         : null
       const baseLLMConfig = isWorkflowPhaseChat
         ? (currentTab?.config?.llmConfig || presetLLMConfig || llmStore.primaryConfig)

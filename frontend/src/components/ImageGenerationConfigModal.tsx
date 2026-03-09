@@ -25,6 +25,7 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
   const [localConfig, setLocalConfig] = useState({ ...config })
   const [testState, setTestState] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
   const [testMessage, setTestMessage] = useState('')
+  const [testImageSrc, setTestImageSrc] = useState<string | null>(null)
 
   const handleSave = () => {
     setConfig(localConfig)
@@ -40,6 +41,7 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
   const handleTest = async () => {
     setTestState('loading')
     setTestMessage('')
+    setTestImageSrc(null)
     try {
       const result = await agentApi.testImageGen({
         provider: localConfig.provider,
@@ -49,6 +51,11 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
       if (result.valid) {
         setTestState('ok')
         setTestMessage(result.message || 'Image generation is working')
+        if (result.image_data) {
+          setTestImageSrc(`data:image/png;base64,${result.image_data}`)
+        } else if (result.image_url) {
+          setTestImageSrc(result.image_url)
+        }
       } else {
         setTestState('error')
         setTestMessage(result.error || 'Test failed')
@@ -124,7 +131,7 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
               <input
                 type={showApiKey ? 'text' : 'password'}
                 value={localConfig.apiKey}
-                onChange={(e) => { setLocalConfig({ ...localConfig, apiKey: e.target.value }); setTestState('idle') }}
+                onChange={(e) => { setLocalConfig({ ...localConfig, apiKey: e.target.value }); setTestState('idle'); setTestImageSrc(null) }}
                 placeholder={localConfig.provider === 'minimax' ? 'sk-api-...' : 'AIza...'}
                 className="w-full bg-gray-800 border border-gray-600 text-white text-sm rounded-md px-3 py-2 pr-10 focus:outline-none focus:ring-1 focus:ring-purple-500 placeholder-gray-600"
               />
@@ -154,6 +161,13 @@ export const ImageGenerationConfigModal: React.FC<ImageGenerationConfigModalProp
               {testState === 'ok' && <CheckCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />}
               {testState === 'error' && <XCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />}
               <span>{testState === 'loading' ? 'Testing… generating a sample image' : testMessage}</span>
+            </div>
+          )}
+
+          {/* Generated test image */}
+          {testImageSrc && (
+            <div className="rounded-md overflow-hidden border border-gray-700">
+              <img src={testImageSrc} alt="Test generated image" className="w-full object-contain max-h-48" />
             </div>
           )}
         </div>

@@ -4,6 +4,41 @@ import { CircularProgress, type ContextOnlyTokenUsage } from '../../../ui/Circul
 import { TooltipProvider } from '../../../ui/tooltip'
 import { useExpandable } from '../../useExpandable'
 import { Plus, Minus } from 'lucide-react'
+import { MarkdownRenderer } from '../../../ui/MarkdownRenderer'
+import { CsvRenderer } from '../../../ui/CsvRenderer'
+
+type OutputFormat = 'markdown' | 'json' | 'csv' | null
+
+function detectOutputFormat(text: string): OutputFormat {
+  if (!text || text.length < 10) return null
+  const trimmed = text.trim()
+
+  // JSON: starts with { or [
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { JSON.parse(trimmed); return 'json' } catch { /* not json */ }
+  }
+
+  // CSV: has consistent comma-separated lines (at least 2 lines, 2+ columns)
+  const lines = trimmed.split('\n').filter(l => l.trim())
+  if (lines.length >= 2) {
+    const cols = lines[0].split(',').length
+    if (cols >= 2 && lines.slice(0, 5).every(l => l.split(',').length === cols)) {
+      return 'csv'
+    }
+  }
+
+  // Markdown: headings, bold, lists, tables, blockquotes, code fences
+  if (text.length >= 30 && (
+    /^#{1,6}\s/m.test(text) ||
+    /\*\*.+?\*\*/s.test(text) ||
+    /^\s*[-*+]\s\S/m.test(text) ||
+    /^\|.+\|/m.test(text) ||
+    /^>\s/m.test(text) ||
+    /```[\s\S]*```/s.test(text)
+  )) return 'markdown'
+
+  return null
+}
 
 interface CodeExecutionToolCallEndDisplayProps {
   event: ToolCallEndEvent
@@ -29,6 +64,7 @@ const formatDuration = (durationNs: number) => {
 
 export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndDisplayProps> = ({ event }) => {
   const { isExpanded: isOutputExpanded, toggle } = useExpandable(false)
+  const [isRawMode, setIsRawMode] = React.useState(false)
 
   // Extract context usage information for CircularProgress
   const contextUsagePercent = event.context_usage_percent
@@ -162,23 +198,36 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
 
   // Handle execute_shell_command tool response
   if (toolName === 'execute_shell_command') {
-    const output = resultText || event.result || ''
+    const rawOutput = resultText || event.result || ''
+
+    // Extract stdout/stderr from parsed JSON if available
+    const stdout = typeof parsedResult.stdout === 'string' && parsedResult.stdout
+      ? parsedResult.stdout
+      : rawOutput
+    const stderr = typeof parsedResult.stderr === 'string' ? parsedResult.stderr : ''
 
     // Check for error indicators - prefer exit_code from JSON if available
     let isError = false
-    if (output.trim().startsWith('{')) {
+    if (typeof parsedResult.exit_code === 'number') {
+      isError = parsedResult.exit_code !== 0
+    } else if (rawOutput.trim().startsWith('{')) {
       try {
-        const parsed = JSON.parse(output)
+        const parsed = JSON.parse(rawOutput)
         isError = parsed.exit_code !== undefined ? parsed.exit_code !== 0 : false
       } catch {
         isError = false
       }
     }
     if (!isError) {
-      isError = output.includes('Traceback') ||
-                output.includes('command not found') ||
-                output.includes('Permission denied')
+      isError = stdout.includes('Traceback') ||
+                stdout.includes('command not found') ||
+                stdout.includes('Permission denied')
     }
+
+    // Use stderr for errors when available, otherwise stdout
+    const output = isError && stderr ? stderr : stdout
+    const detectedFormat = isError ? null : detectOutputFormat(output)
+    const isFormatted = !!detectedFormat && !isRawMode
 
     const bgColor = isError
       ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
@@ -225,20 +274,52 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
 
         {output.trim() && isOutputExpanded && (
           <div className="mt-2">
-            <div className="bg-gray-900 dark:bg-gray-950 border border-gray-700 rounded-md p-3">
+            <div className={`border rounded-md p-3 ${isFormatted ? 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-700' : 'bg-gray-900 dark:bg-gray-950 border-gray-700'}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`text-xs font-medium ${isError ? 'text-red-400' : 'text-gray-400'}`}>
+                <div className={`text-xs font-medium ${isError ? 'text-red-400' : isFormatted ? 'text-gray-600 dark:text-gray-400' : 'text-gray-400'}`}>
                   {isError ? 'Error Output' : 'Shell Output'}
                 </div>
-                <div className="text-xs text-gray-500">
-                  {output.split('\n').length} line{output.split('\n').length !== 1 ? 's' : ''} • {output.length} chars
+                <div className="flex items-center gap-2">
+                  <div className={`text-xs ${isFormatted ? 'text-gray-400 dark:text-gray-500' : 'text-gray-500'}`}>
+                    {output.split('\n').length} line{output.split('\n').length !== 1 ? 's' : ''} • {output.length} chars
+                  </div>
+                  {detectedFormat && (
+                    <button
+                      onClick={() => setIsRawMode(r => !r)}
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                        isFormatted
+                          ? 'bg-blue-600 border-blue-500 text-white hover:bg-blue-700'
+                          : 'bg-gray-600 border-gray-500 text-white hover:bg-gray-500'
+                      }`}
+                      title={isFormatted ? 'Show raw text' : `Render as ${detectedFormat}`}
+                    >
+                      {isFormatted ? detectedFormat.toUpperCase() : 'RAW'}
+                    </button>
+                  )}
                 </div>
               </div>
-              <pre className={`text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto ${
-                isError ? 'text-red-300' : 'text-green-300'
-              }`}>
-                {output}
-              </pre>
+              {isFormatted && detectedFormat === 'markdown' && (
+                <div className="max-h-96 overflow-y-auto overflow-x-auto">
+                  <MarkdownRenderer content={output} />
+                </div>
+              )}
+              {isFormatted && detectedFormat === 'json' && (
+                <div className="max-h-96 overflow-y-auto overflow-x-auto">
+                  <MarkdownRenderer content={'```json\n' + JSON.stringify(JSON.parse(output.trim()), null, 2) + '\n```'} />
+                </div>
+              )}
+              {isFormatted && detectedFormat === 'csv' && (
+                <div className="max-h-96 overflow-y-auto overflow-x-auto">
+                  <CsvRenderer content={output} />
+                </div>
+              )}
+              {!isFormatted && (
+                <pre className={`text-xs font-mono whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto ${
+                  isError ? 'text-red-300' : 'text-green-300'
+                }`}>
+                  {output}
+                </pre>
+              )}
             </div>
           </div>
         )}

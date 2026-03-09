@@ -1230,6 +1230,12 @@ export const agentApi = {
     return response.data
   },
 
+  // Test image generation config by attempting to generate a sample image
+  testImageGen: async (config: { provider: string; model_id: string; api_key?: string }): Promise<{ valid: boolean; message?: string; error?: string; image_url?: string; image_data?: string }> => {
+    const response = await api.post('/api/image-gen/test', config)
+    return response.data
+  },
+
 }
 
 export const healthApi = {
@@ -1366,12 +1372,6 @@ export const sessionShareApi = {
   // Get a shared session (no auth required)
   getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
     const response = await api.get(`/api/shared/${shareToken}`)
-    return response.data
-  },
-
-  // Test image generation config by attempting to generate a sample image
-  testImageGen: async (config: { provider: string; model_id: string; api_key?: string }): Promise<{ valid: boolean; message?: string; error?: string }> => {
-    const response = await api.post('/api/image-gen/test', config)
     return response.data
   },
 }

@@ -21,7 +21,11 @@ Design complex business processes visually. The orchestrator drives a 7-phase ex
 
 ### 🧠 Self-Optimizing Cognitive Architecture
 Move beyond static prompts. Our platform features an **"Explore vs. Exploit" Learning Engine**. 
+
 - **[Validation & Learning](docs/learnings_and_validation_architecture.md):** As your agents execute workflows, the system tracks trajectory success rates. Once a pattern stabilizes, the orchestrator automatically locks the step and cascades to faster, more cost-effective LLMs.
+- **[Deterministic Pre-Validation](docs/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
+- **[Evaluation & Benchmarking](docs/evaluation_system.md):** A dedicated testing suite that executes workflows in isolated environments to generate performance, cost, and accuracy metrics—essential for production readiness.
+- **[Continuous Observability](docs/workflow_monitoring.md):** Real-time **Execution Logs** and step-by-step visibility into the orchestrator's 7-phase reasoning cycle.
 - **[Swarm Delegation](docs/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
 - **[Task Orchestration](docs/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
 
@@ -33,13 +37,22 @@ Deploy with confidence using deterministic controls designed for strict complian
 
 ### 👁️ Omni-Channel Automation & Browser Stealth
 Interact with the real world, safely and reliably.
+- **[Google Workspace (GWS)](docs/google_workspace_integration.md):** Native CLI injection grants agents deterministic, scoped access to Gmail, Drive, Calendar, Docs, and Sheets.
+- **[Vercel Agent-Browser](https://github.com/vercel-labs/agent-browser):** High-level browser automation engine used for complex web interactions, DOM analysis, and visual grounding.
 - **[Camoufox Stealth Integration](docs/camoufox_stealth_browser.md):** Native integration with Camoufox, providing agents with anti-detect browser automation capable of bypassing the most aggressive enterprise bot-protections.
 - **[Local CDP Bridging](docs/cdp_local_browser.md):** Connect cloud agents directly to your local Chrome instance via CDP for real-time monitoring and session hijacking.
 - **[Bot Connectors](docs/bot_connector_system.md):** Expose your specialized agent swarms directly to Slack, Discord, or custom webhooks.
 
-### 🤝 Human-AI Symbiosis
-Keep humans in the loop for critical decision-making.
-- **[Interactive Feedback System](docs/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via browser notifications or delayed Slack alerts before taking destructive actions.
+### 🤝 Human-AI Symbiosis (Slack & Web)
+Keep humans in the loop for critical decision-making with a seamless multi-channel feedback loop.
+
+- **[Human Feedback System](docs/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via real-time browser notifications or the visual dashboard.
+- **[Slack Human Connector](docs/human_feedback_system.md#slack-configuration):** 
+    - **Smart Delayed Notifications**: If a user doesn't respond in the UI within 2 minutes, the orchestrator automatically pings a configured Slack channel.
+    - **Threaded Conversations**: Users can reply directly in the Slack thread to provide the required information, which is then fed back to the agent's context in real-time.
+    - **Multi-User Collaboration**: Entire teams can monitor agent progress and intervene via Slack without ever opening the dashboard.
+
+---
 
 ### 🧩 Supported Cognitive Engines (LLM Providers)
 
@@ -54,7 +67,7 @@ MCP Agent Builder is provider-agnostic, allowing you to switch between the world
 *   **OpenRouter**: Unified access to 200+ open-source and frontier models with a single API key.
 
 #### 🛠️ Local CLI Agents (Coding Plans)
-Seamlessly bridge your existing CLI-based coding agents into the visual orchestrator:
+Seamlessly bridge your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/mcp_bridge_layer.md)**:
 *   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI.
 *   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
 *   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.

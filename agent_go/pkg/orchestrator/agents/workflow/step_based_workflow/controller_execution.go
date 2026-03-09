@@ -1392,7 +1392,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
 
 			// Check if learning is disabled - if so, skip reading learnings entirely
-			isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+			// Learning is disabled if explicitly set via step config, or if this is a routing step.
+				// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
+				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
 			isLearningDetailLevelNone := false
 			if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 				isLearningDetailLevelNone = true
@@ -2145,7 +2147,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 						// Check step-specific learning detail level
 						agentConfigs := getAgentConfigs(step)
-						isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+						// Learning is disabled if explicitly set via step config, or if this is a routing step.
+				// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
+				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
 						isLearningDetailLevelNone := false
 						if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 							isLearningDetailLevelNone = true
@@ -2373,7 +2377,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 							// Check step-specific learning detail level
 							agentConfigs := getAgentConfigs(step)
-							isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+							// Learning is disabled if explicitly set via step config, or if this is a routing step.
+				// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
+				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
 							isLearningDetailLevelNone := false
 							if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 								isLearningDetailLevelNone = true
@@ -2540,7 +2546,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				isFastExecuteStep := execCtx.FastExecuteMode && stepIndex <= execCtx.FastExecuteEndStep
 				// Check step-specific learning detail level
 				agentConfigs = getAgentConfigs(step)
-				isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+				// Learning is disabled if explicitly set via step config, or if this is a routing step.
+				// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
+				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
 				isLearningDetailLevelNone := false
 				if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 					isLearningDetailLevelNone = true
@@ -2747,7 +2755,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								if retryAttempt < maxRetryAttempts {
 									// Check if learning is disabled before re-reading
 									agentConfigs := getAgentConfigs(step)
-									isLearningDisabledStep := agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning
+									// Learning is disabled if explicitly set via step config, or if this is a routing step.
+				// Routing steps are pure decision/evaluation logic — they don't produce learnable outcomes.
+				isLearningDisabledStep := (agentConfigs != nil && agentConfigs.DisableLearning != nil && *agentConfigs.DisableLearning) || isRoutingStep(step)
 									isLearningDetailLevelNone := false
 									if agentConfigs != nil && agentConfigs.LearningDetailLevel == "none" {
 										isLearningDetailLevelNone = true

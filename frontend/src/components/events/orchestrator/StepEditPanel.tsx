@@ -1375,22 +1375,28 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                     <p className="text-[10px] text-gray-500 dark:text-gray-500 mb-1">
                       Which tier for the orchestrator agent itself
                     </p>
-                    <select
-                      value={agentConfigs.todo_task_orchestrator_tier ?? ''}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setAgentConfigs((prev) => ({
-                          ...prev,
-                          todo_task_orchestrator_tier: val ? parseInt(val) : undefined,
-                        }));
-                      }}
-                      className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    >
-                      <option value="">Auto (default)</option>
-                      <option value="1">Tier 1 - High Reasoning</option>
-                      <option value="2">Tier 2 - Medium Reasoning</option>
-                      <option value="3">Tier 3 - Low Reasoning</option>
-                    </select>
+                    {agentConfigs.execution_llm?.provider && agentConfigs.execution_llm?.model_id ? (
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                        ⚠️ Execution LLM is set — it takes precedence over tier for the orchestrator. Clear Execution LLM above to use tier-based selection.
+                      </p>
+                    ) : (
+                      <select
+                        value={agentConfigs.todo_task_orchestrator_tier ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAgentConfigs((prev) => ({
+                            ...prev,
+                            todo_task_orchestrator_tier: val ? parseInt(val) : undefined,
+                          }));
+                        }}
+                        className="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">Auto (default)</option>
+                        <option value="1">Tier 1 - High Reasoning</option>
+                        <option value="2">Tier 2 - Medium Reasoning</option>
+                        <option value="3">Tier 3 - Low Reasoning</option>
+                      </select>
+                    )}
                   </div>
 
                   {/* Dynamic Tier Selection */}

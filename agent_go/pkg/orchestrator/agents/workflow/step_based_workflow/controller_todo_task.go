@@ -444,20 +444,51 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	return templateVars
 }
 
-// selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator
-// Priority when dynamic tier selection is enabled: Tiered mode > OrchestratorLLM > selectExecutionLLM fallback
-// Priority when dynamic tier selection is disabled: OrchestratorLLM (direct override) > Tiered mode > selectExecutionLLM fallback
+// selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator.
+//
+// Priority:
+//  1. step config OrchestratorLLM  — explicit orchestrator-specific LLM; always wins
+//  2. step config ExecutionLLM     — when user sets a step-level LLM, apply it to the orchestrator too
+//  3. TodoTaskOrchestratorTier     — tiered mode with an explicit tier pinned on the step
+//  4. selectExecutionLLM fallback  — handles dynamic tier selection, preset, and orchestrator main LLM
 func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
 	stepID string,
 	stepPath string,
 ) *orchestrator.LLMConfig {
-	// Check if dynamic tier selection is enabled
-	dynamicTierEnabled := stepConfig != nil && stepConfig.EnableDynamicTierSelection != nil && *stepConfig.EnableDynamicTierSelection
+	// 1. STEP CONFIG OVERRIDE: OrchestratorLLM always takes highest precedence.
+	// This beats tiered mode and dynamic tier selection — explicit config is authoritative.
+	if stepConfig != nil && stepConfig.OrchestratorLLM != nil &&
+		stepConfig.OrchestratorLLM.Provider != "" && stepConfig.OrchestratorLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Todo task orchestrator using step-config OrchestratorLLM: %s/%s",
+			stepConfig.OrchestratorLLM.Provider, stepConfig.OrchestratorLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.OrchestratorLLM.Provider,
+				ModelID:  stepConfig.OrchestratorLLM.ModelID,
+			},
+			APIKeys: hcpo.GetAPIKeys(),
+		}
+	}
 
-	// TIERED MODE (takes precedence when dynamic tier selection is enabled):
-	// Use configured orchestrator tier if set
+	// 2. EXECUTION LLM FALLBACK: If user set a step-level ExecutionLLM, use it for the orchestrator too.
+	// This handles the common case where users set one LLM for the step expecting it to apply everywhere.
+	// OrchestratorLLM (above) takes precedence if they need the orchestrator to differ from sub-agents.
+	if stepConfig != nil && stepConfig.ExecutionLLM != nil &&
+		stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Todo task orchestrator using step-config ExecutionLLM: %s/%s",
+			stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.ExecutionLLM.Provider,
+				ModelID:  stepConfig.ExecutionLLM.ModelID,
+			},
+			APIKeys: hcpo.GetAPIKeys(),
+		}
+	}
+
+	// 3. TIERED MODE: Use configured orchestrator tier if pinned on the step (only when no explicit LLM is set).
 	if hcpo.useTieredMode && hcpo.tierResolver != nil && stepConfig != nil &&
 		stepConfig.TodoTaskOrchestratorTier != nil {
 		tier := TierLevel(*stepConfig.TodoTaskOrchestratorTier)
@@ -471,27 +502,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 		}
 	}
 
-	// DIRECT LLM OVERRIDE: Use orchestrator_llm if set (skipped when dynamic tier resolved above)
-	if stepConfig != nil && stepConfig.OrchestratorLLM != nil &&
-		stepConfig.OrchestratorLLM.Provider != "" && stepConfig.OrchestratorLLM.ModelID != "" {
-		if dynamicTierEnabled {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] orchestrator_llm (%s/%s) skipped because enable_dynamic_tier_selection is true (tier resolution takes precedence)",
-				stepConfig.OrchestratorLLM.Provider, stepConfig.OrchestratorLLM.ModelID))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 [DIRECT] Todo task orchestrator using direct LLM override: %s/%s",
-				stepConfig.OrchestratorLLM.Provider, stepConfig.OrchestratorLLM.ModelID))
-			return &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: stepConfig.OrchestratorLLM.Provider,
-					ModelID:  stepConfig.OrchestratorLLM.ModelID,
-				},
-				APIKeys: hcpo.GetAPIKeys(),
-			}
-		}
-	}
-
-	// Fallback: selectExecutionLLM with learningsFolderEmpty=true since orchestrators don't accumulate learnings
-	// This will skip tempLLM logic and use step config > preset > orchestrator fallback
+	// 4. Fallback: selectExecutionLLM with learningsFolderEmpty=true since orchestrators don't accumulate learnings.
+	// This handles dynamic tier selection, preset LLM, and the orchestrator main LLM as final fallback.
 	return hcpo.selectExecutionLLM(
 		ctx,
 		stepConfig,

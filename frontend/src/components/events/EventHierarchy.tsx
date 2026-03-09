@@ -561,18 +561,25 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     const flatten = (node: EventNode, key: string) => {
       list.push({ node, uniqueKey: key });
 
-      // If this is a delegation_start or orchestrator_agent_start with children,
-      // we STOP flattening its children into the main list.
-      // They will be rendered internally by the sub-agent/agent card's scrollable logs area.
-      // This guarantees parallel agents' tool calls never merge into one big "+N tools" group.
+      // If this is a delegation_start, we STOP flattening its children into the main list.
+      // They will be rendered internally by the sub-agent card's scrollable logs area.
       if (node.event.type === 'delegation_start') {
         return;
       }
-      if (node.event.type === 'orchestrator_agent_start' && node.children.length > 0) {
+
+      // For orchestrator_agent_start in non-flat mode: stop flattening so tool calls appear
+      // inside the collapsible agent card (rendered via childrenNodes in EventDispatcher).
+      // In flat-hierarchy mode (workflow tab): the expand button is invisible (indent=0 → left=-25px),
+      // so we MUST inline the children here — otherwise tool calls are inaccessible.
+      if (!flatHierarchy && node.event.type === 'orchestrator_agent_start' && node.children.length > 0) {
         return;
       }
 
-      if (node.isExpanded && node.children.length > 0) {
+      // In flat-hierarchy mode always expand orchestrator_agent_start children inline,
+      // otherwise respect the user's explicit expand/collapse state.
+      const shouldExpand = (flatHierarchy && node.event.type === 'orchestrator_agent_start')
+        || node.isExpanded;
+      if (shouldExpand && node.children.length > 0) {
         node.children.forEach((child, index) => {
           flatten(child, `${key}-child-${index}`);
         });
@@ -669,7 +676,7 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     }
 
     return list;
-  }, [eventTree, hideToolCalls, expandedGroups]);
+  }, [eventTree, hideToolCalls, expandedGroups, flatHierarchy]);
 
   // --- Render tracking (filter by [Render] or [Memo] in console) ---
   useRenderLogger('EventHierarchy', {

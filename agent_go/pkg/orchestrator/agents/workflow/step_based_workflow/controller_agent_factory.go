@@ -403,12 +403,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 }
 
 // selectExecutionLLM selects the LLM config with cascading fallback logic
-// Priority:
-// - HIGHEST: SubAgentLLM from context (direct LLM override for sub-agents, works in both modes)
-// - If tiered mode: preferred_tier from context > maturity-based resolution
-// - If disable_temp_llm is true: step config > preset (skip tempLLM)
-// - Otherwise: tempLLM1 (attempt 1) > tempLLM2 (attempt 2) > step config > preset default
-// Only uses tempLLM if learnings folder has files (has existing learnings to improve upon)
+//
+// Priority for sub-agents (sub_agent_llm set in context):
+//  1. sub_agent_llm from context  — skipped if enable_dynamic_tier_selection=true
+//  2. (falls through to main step chain below)
+//
+// Priority for main step execution:
+//  1. tempLLM2 / tempLLM1        — highest; requires learnings exist and disable_temp_llm=false
+//  2. step config ExecutionLLM   — explicit per-step override; used when tempLLM is off/unavailable
+//  3. tiered mode                — maturity-based tier resolution (preferred_tier ctx > maturity)
+//  4. presetExecutionLLM         — workflow-level default
+//  5. orchestrator main LLM      — final fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
@@ -418,42 +423,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	stepPath string,
 	learningsFolderEmpty bool,
 ) *orchestrator.LLMConfig {
-	// Check if dynamic tier selection is enabled for this step
-	dynamicTierEnabled := stepConfig != nil && stepConfig.EnableDynamicTierSelection != nil && *stepConfig.EnableDynamicTierSelection
-
-	// TIERED MODE (takes precedence when dynamic tier selection is enabled):
-	// When enabled, preferred_tier from the orchestrator's tool call determines the LLM,
-	// so sub_agent_llm direct override is skipped.
-	if hcpo.useTieredMode && hcpo.tierResolver != nil {
-		// Check for preferred tier override from sub-agent tool context
-		if preferredTier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && preferredTier >= 1 && preferredTier <= 3 {
-			tier := TierLevel(preferredTier)
-			llmConfig := hcpo.tierResolver.ResolveTier(tier)
-			if llmConfig != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent using PREFERRED Tier %d (%s) for step %s: %s/%s",
-					preferredTier, TierLevelLabel(tier), stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-			}
-			return llmConfig
-		}
-		// Fall through to maturity-based resolution
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
-		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
-		if llmConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
-				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
-		}
-		return llmConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
+	if orchestratorLLMConfig == nil {
+		orchestratorLLMConfig = &orchestrator.LLMConfig{}
 	}
 
-	// DIRECT SUB-AGENT LLM OVERRIDE: Use sub_agent_llm from context if set
-	// Skipped when dynamic tier selection is enabled (tier system takes precedence)
+	// ── 1. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
+	// When the todo-task orchestrator spawns a child agent, sub_agent_llm is
+	// injected into context. Use it directly unless enable_dynamic_tier_selection
+	// is set (which lets the orchestrator pick tiers dynamically instead).
+	dynamicTierEnabled := stepConfig != nil && stepConfig.EnableDynamicTierSelection != nil && *stepConfig.EnableDynamicTierSelection
 	if subAgentLLM, ok := ctx.Value(virtualtools.SubAgentLLMContextKey).(*AgentLLMConfig); ok &&
 		subAgentLLM != nil && subAgentLLM.Provider != "" && subAgentLLM.ModelID != "" {
 		if dynamicTierEnabled {
 			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] sub_agent_llm (%s/%s) skipped for step %s because enable_dynamic_tier_selection is true",
 				subAgentLLM.Provider, subAgentLLM.ModelID, stepPath))
 		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 [DIRECT] Execution agent using direct sub_agent_llm override for step %s: %s/%s",
+			hcpo.GetLogger().Info(fmt.Sprintf("🎯 [SUB-AGENT] Using sub_agent_llm override for step %s: %s/%s",
 				stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
 			return &orchestrator.LLMConfig{
 				Primary: orchestrator.LLMModel{
@@ -465,169 +452,156 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		}
 	}
 
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	// Guard against nil — scheduler-triggered sessions may not have an orchestrator LLM set.
-	// An empty config still falls through to the "no valid LLM" error at the end.
-	if orchestratorLLMConfig == nil {
-		orchestratorLLMConfig = &orchestrator.LLMConfig{}
-	}
-	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
-
-	// Check if step config explicitly disables tempLLM
+	// ── 2. TEMP LLM ──────────────────────────────────────────────────────────
+	// tempLLM takes highest priority for main-step execution.
+	// Skipped entirely when: disable_temp_llm=true, learnings folder is empty,
+	// or fallback_to_original_llm_on_failure is triggered on tempLLM1.
 	disableTempLLM := stepConfig != nil && stepConfig.DisableTempLLM != nil && *stepConfig.DisableTempLLM
-	if disableTempLLM {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step %s has disable_temp_llm=true - skipping tempLLM override and using base LLM (step config > preset)", stepPath))
-		// Skip tempLLM entirely and go straight to step config > preset
-		if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
-			return &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: stepConfig.ExecutionLLM.Provider,
-					ModelID:  stepConfig.ExecutionLLM.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-			}
-		} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-			return &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: hcpo.presetExecutionLLM.Provider,
-					ModelID:  hcpo.presetExecutionLLM.ModelID,
-				},
-				APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-			}
-		} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback (disable_temp_llm path): %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-			return orchestratorLLMConfig
-		} else {
-			err := fmt.Errorf("no valid LLM configuration found for execution agent: step config, preset execution LLM, and workflow LLM are all empty or invalid")
-			hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: step config, preset execution LLM, and workflow LLM are all empty or invalid", err)
-			return nil
-		}
-	}
-
-	// Cascading LLM selection based on retry attempt:
-	// - retryAttempt == 1: Use tempLLM1 (if available AND learnings folder has files)
-	// - retryAttempt == 2: Use tempLLM2 (if tempLLM1 was used and tempLLM2 is available AND learnings folder has files)
-	// - retryAttempt >= 3: Use step LLM (step config > preset)
+	shouldSkipTempOverride := isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure
 	hasTempLLM1 := hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != ""
 	hasTempLLM2 := hcpo.tempOverrideLLM2 != nil && hcpo.tempOverrideLLM2.Provider != "" && hcpo.tempOverrideLLM2.ModelID != ""
 
-	if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed - skipping temp override LLM and falling back to original LLM (fallback_to_original_llm_on_failure enabled)"))
-	}
+	if !disableTempLLM {
+		if shouldSkipTempOverride && (hasTempLLM1 || hasTempLLM2) {
+			hcpo.GetLogger().Info("🔄 Validation failed - skipping temp override LLM and falling back (fallback_to_original_llm_on_failure enabled)")
+		}
 
-	if learningsFolderEmpty && (hasTempLLM1 || hasTempLLM2) {
-		hcpo.GetLogger().Info(fmt.Sprintf("📚 Step %s has no learnings - skipping temp override LLM and using original LLM (learnings folder is empty)", stepPath))
+		if learningsFolderEmpty && (hasTempLLM1 || hasTempLLM2) {
+			hcpo.GetLogger().Info(fmt.Sprintf("📚 Step %s has no learnings - skipping temp override LLM (learnings folder is empty)", stepPath))
 
-		// Emit event when tempLLM is skipped due to learnings folder being empty
-		eventBridge := hcpo.GetContextAwareBridge()
-		if eventBridge != nil {
-			stepTitle := ""
-			stepId := stepID
-			if stepId == "" {
-				stepId = stepPath
-			}
-
-			// Determine which tempLLM was skipped (tempLLM1 or tempLLM2)
-			var tempLLMProvider, tempLLMModel string
-			if retryAttempt == 1 && hasTempLLM1 {
-				tempLLMProvider = hcpo.tempOverrideLLM.Provider
-				tempLLMModel = hcpo.tempOverrideLLM.ModelID
-			} else if retryAttempt == 2 && hasTempLLM2 {
-				tempLLMProvider = hcpo.tempOverrideLLM2.Provider
-				tempLLMModel = hcpo.tempOverrideLLM2.ModelID
-			} else if hasTempLLM1 {
-				// Default to tempLLM1 if available
-				tempLLMProvider = hcpo.tempOverrideLLM.Provider
-				tempLLMModel = hcpo.tempOverrideLLM.ModelID
-			}
-
-			baseWorkspacePath := hcpo.GetWorkspacePath()
-			stepLearningsPath := fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath)
-			pathInfo := parseStepPath(stepPath)
-			tempLLMSkippedEvent := &orchestrator_events.TempLLMSkippedEvent{
-				BaseEventData: baseevents.BaseEventData{
+			// Emit event so UI shows why tempLLM was skipped
+			eventBridge := hcpo.GetContextAwareBridge()
+			if eventBridge != nil {
+				stepId := stepID
+				if stepId == "" {
+					stepId = stepPath
+				}
+				var tempLLMProvider, tempLLMModel string
+				if retryAttempt == 1 && hasTempLLM1 {
+					tempLLMProvider = hcpo.tempOverrideLLM.Provider
+					tempLLMModel = hcpo.tempOverrideLLM.ModelID
+				} else if retryAttempt == 2 && hasTempLLM2 {
+					tempLLMProvider = hcpo.tempOverrideLLM2.Provider
+					tempLLMModel = hcpo.tempOverrideLLM2.ModelID
+				} else if hasTempLLM1 {
+					tempLLMProvider = hcpo.tempOverrideLLM.Provider
+					tempLLMModel = hcpo.tempOverrideLLM.ModelID
+				}
+				baseWorkspacePath := hcpo.GetWorkspacePath()
+				pathInfo := parseStepPath(stepPath)
+				eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
+					Type:      orchestrator_events.TempLLMSkipped,
 					Timestamp: time.Now(),
-					Component: "orchestrator",
-				},
-				StepID:          stepId,
-				StepIndex:       pathInfo.ParentStepNumber - 1, // 0-based
-				StepTitle:       stepTitle,
-				StepPath:        stepPath,
-				IsBranchStep:    pathInfo.IsBranchStep,
-				Reason:          "learnings_folder_empty",
-				TempLLMProvider: tempLLMProvider,
-				TempLLMModel:    tempLLMModel,
-				LearningsPath:   stepLearningsPath,
-				RunFolder:       hcpo.selectedRunFolder,
-				WorkspacePath:   baseWorkspacePath,
+					Data: &orchestrator_events.TempLLMSkippedEvent{
+						BaseEventData: baseevents.BaseEventData{
+							Timestamp: time.Now(),
+							Component: "orchestrator",
+						},
+						StepID:          stepId,
+						StepIndex:       pathInfo.ParentStepNumber - 1,
+						StepPath:        stepPath,
+						IsBranchStep:    pathInfo.IsBranchStep,
+						Reason:          "learnings_folder_empty",
+						TempLLMProvider: tempLLMProvider,
+						TempLLMModel:    tempLLMModel,
+						LearningsPath:   fmt.Sprintf("%s/learnings/%s", baseWorkspacePath, stepPath),
+						RunFolder:       hcpo.selectedRunFolder,
+						WorkspacePath:   baseWorkspacePath,
+					},
+				})
+				hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted temp_llm_skipped event for %s (skipped tempLLM: %s/%s)", stepPath, tempLLMProvider, tempLLMModel))
 			}
-			eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
-				Type:      orchestrator_events.TempLLMSkipped,
-				Timestamp: time.Now(),
-				Data:      tempLLMSkippedEvent,
-			})
-			hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted temp_llm_skipped event for %s: %s (learnings folder empty, skipped tempLLM: %s/%s)", stepPath, stepPath, tempLLMProvider, tempLLMModel))
 		}
+
+		// tempLLM2: attempt 2, or new loop iteration after validation failure
+		shouldUseTempLLM2 := !learningsFolderEmpty && hasTempLLM2 && (retryAttempt == 2 || (isRetryAfterValidationFailure && retryAttempt == 1))
+		if shouldUseTempLLM2 {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, learnings exist): %s/%s",
+				retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
+			return &orchestrator.LLMConfig{
+				Primary: orchestrator.LLMModel{
+					Provider: hcpo.tempOverrideLLM2.Provider,
+					ModelID:  hcpo.tempOverrideLLM2.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys,
+			}
+		}
+
+		// tempLLM1: attempt 1 (not blocked by shouldSkipTempOverride)
+		if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d, learnings exist): %s/%s",
+				retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
+			return &orchestrator.LLMConfig{
+				Primary: orchestrator.LLMModel{
+					Provider: hcpo.tempOverrideLLM.Provider,
+					ModelID:  hcpo.tempOverrideLLM.ModelID,
+				},
+				APIKeys: orchestratorLLMConfig.APIKeys,
+			}
+		}
+	} else {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step %s has disable_temp_llm=true - skipping tempLLM", stepPath))
 	}
 
-	// Cascading logic: tempLLM1 → tempLLM2 → step LLM
-	// Only use tempLLM if learnings folder has files (has existing learnings to improve upon)
-	// Note: shouldSkipTempOverride only applies to tempLLM1, not tempLLM2
-	// tempLLM2 is part of the cascading fallback strategy and should be used even after tempLLM1 fails
-
-	// Check tempLLM2 FIRST (on attempt 2 OR new loop iteration after failure) - it's part of the cascading fallback and should take priority
-	// This ensures tempLLM2 is used even if other conditions might match
-	// Use tempLLM2 when: (1) retryAttempt == 2 (normal retry), OR (2) isRetryAfterValidationFailure && retryAttempt == 1 (new loop iteration after failure)
-	shouldUseTempLLM2 := !learningsFolderEmpty && hasTempLLM2 && (retryAttempt == 2 || (isRetryAfterValidationFailure && retryAttempt == 1))
-	if shouldUseTempLLM2 {
-		// Second attempt or new loop iteration after failure: Use tempLLM2 (can be used independently or as fallback after tempLLM1)
-		// Note: tempLLM2 is NOT blocked by shouldSkipTempOverride - it's part of the cascading fallback strategy
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 2 (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM2.Provider, hcpo.tempOverrideLLM2.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.tempOverrideLLM2.Provider,
-				ModelID:  hcpo.tempOverrideLLM2.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-	} else if !shouldSkipTempOverride && !learningsFolderEmpty && retryAttempt == 1 && hasTempLLM1 {
-		// First attempt: Use tempLLM1
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using TEMPORARY OVERRIDE LLM 1 (attempt %d, learnings folder has files): %s/%s", retryAttempt, hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.tempOverrideLLM.Provider,
-				ModelID:  hcpo.tempOverrideLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-	} else if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only LLM: %s/%s", stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
+	// ── 3. STEP CONFIG ExecutionLLM ──────────────────────────────────────────
+	// Explicit per-step model override — beats tiered mode when tempLLM is
+	// off (disabled, no learnings, or all attempts exhausted).
+	if stepConfig != nil && stepConfig.ExecutionLLM != nil && stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step ExecutionLLM for step %s: %s/%s",
+			stepPath, stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
 				Provider: stepConfig.ExecutionLLM.Provider,
 				ModelID:  stepConfig.ExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution-only LLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	}
+
+	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
+	// Maturity-based tier resolution when no explicit step override is set.
+	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+		if preferredTier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && preferredTier >= 1 && preferredTier <= 3 {
+			tier := TierLevel(preferredTier)
+			llmConfig := hcpo.tierResolver.ResolveTier(tier)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent using PREFERRED Tier %d (%s) for step %s: %s/%s",
+					preferredTier, TierLevelLabel(tier), stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			}
+			return llmConfig
+		}
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
+		if llmConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
+				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
+		}
+		return llmConfig
+	}
+
+	// ── 5. PRESET ────────────────────────────────────────────────────────────
+	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM: %s/%s",
+			hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
 				Provider: hcpo.presetExecutionLLM.Provider,
 				ModelID:  hcpo.presetExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
-	} else if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig
-	} else {
-		err := fmt.Errorf("no valid LLM configuration found for execution agent: temp override, step config, preset execution LLM, and workflow LLM are all empty or invalid")
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for execution agent: temp override, step config, preset execution LLM, and workflow LLM are all empty or invalid", err)
-		return nil
 	}
+
+	// ── 6. ORCHESTRATOR MAIN LLM ─────────────────────────────────────────────
+	if orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback: %s/%s",
+			orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+		return orchestratorLLMConfig
+	}
+
+	err := fmt.Errorf("no valid LLM configuration found for execution agent (step %s): tempLLM, step config, tiered mode, preset, and workflow LLM are all empty/unavailable", stepPath)
+	hcpo.GetLogger().Error("❌ "+err.Error(), err)
+	return nil
 }
 
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config
@@ -832,6 +806,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) addPrerequisiteDetectionTool(
 // selectValidationLLM selects the LLM config for validation agents
 // Priority: step config > preset default
 func (hcpo *StepBasedWorkflowOrchestrator) selectValidationLLM(stepConfig *AgentConfigs) *orchestrator.LLMConfig {
+	// STEP-SPECIFIC OVERRIDE: If step has explicit ValidationLLM, it takes highest precedence
+	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Step has explicit ValidationLLM - overriding tiered mode: %s/%s",
+			stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: stepConfig.ValidationLLM.Provider,
+				ModelID:  stepConfig.ValidationLLM.ModelID,
+			},
+			APIKeys: hcpo.GetAPIKeys(),
+		}
+	}
+
 	// TIERED MODE: Bypass all manual selection logic
 	if hcpo.useTieredMode && hcpo.tierResolver != nil {
 		llmConfig, tier := hcpo.tierResolver.ResolveForValidation()
@@ -993,61 +980,50 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaxTurns(stepConfig *Agent
 }
 
 // selectLearningLLM selects the LLM config for learning agents
-// Priority: tempLearningLLM (if learnings exist) > cost-optimization (tempLLM if >50% stable) > step config > preset default
-// Note: If learnings already exist for a step, use tempLearningLLM if configured. For new learning (no learnings), always use default LLM.
+//
+// Priority:
+//  1. tempLearningLLM            — if learnings already exist for this step
+//  2. cost-optimization tempLLM  — if stability threshold reached (>50% of runs stable)
+//  3. step config LearningLLM    — explicit per-step override; beats tiered mode
+//  4. tiered mode                — maturity-based tier resolution
+//  5. presetLearningLLM          — workflow-level default
 func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context, stepConfig *AgentConfigs, stepID string, stepPath string) *orchestrator.LLMConfig {
-	// TIERED MODE: Bypass all manual selection logic
-	if hcpo.useTieredMode && hcpo.tierResolver != nil {
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
-		llmConfig, tier := hcpo.tierResolver.ResolveForLearning(maturity)
-		if llmConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learning agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
-				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
-		}
-		return llmConfig
+	orchestratorLLMConfig := hcpo.GetLLMConfig()
+	if orchestratorLLMConfig == nil {
+		orchestratorLLMConfig = &orchestrator.LLMConfig{}
 	}
 
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-
-	// 0. TEMP LEARNING LLM: Check if learnings exist for this step and use tempLearningLLM if configured
-	// If learnings exist, we can use a cheaper LLM. If no learnings exist (new learning), always use default LLM for quality.
+	// ── 1. TEMP LEARNING LLM ─────────────────────────────────────────────────
+	// If learnings already exist, use tempLearningLLM (cheaper model) for incremental updates.
+	// For new learning (no existing learnings), skip so the best model is used for quality.
 	if stepID != "" {
-		// Check if learnings folder exists and has content
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath) // stepIndex not needed for this check
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath)
 		if err == nil && !learningsEmpty {
-			// Learnings exist - check if tempLearningLLM is configured
 			if hcpo.executionOptions != nil && hcpo.executionOptions.TempLearningLLM != nil &&
 				hcpo.executionOptions.TempLearningLLM.Provider != "" && hcpo.executionOptions.TempLearningLLM.ModelID != "" {
-				hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Using temp learning LLM (%s/%s) because learnings already exist for step %s",
-					hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID, stepID))
+				hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Learnings exist for step %s - using temp learning LLM: %s/%s",
+					stepID, hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID))
 				return &orchestrator.LLMConfig{
 					Primary: orchestrator.LLMModel{
 						Provider: hcpo.executionOptions.TempLearningLLM.Provider,
 						ModelID:  hcpo.executionOptions.TempLearningLLM.ModelID,
 					},
-					APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+					APIKeys: orchestratorLLMConfig.APIKeys,
 				}
 			}
 		} else if err == nil && learningsEmpty {
-			// No learnings exist (new learning) - always use default LLM for quality
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] No learnings exist for step %s - using default LLM for new learning", stepID))
 		}
 	}
 
-	// 1. COST OPTIMIZATION: Check if we should switch to cheaper tempLLM based on stability threshold
-	// If stable runs reach 50% of threshold, use tempLLM for learning
+	// ── 2. COST-OPTIMIZATION TEMP LLM ────────────────────────────────────────
+	// Switch to cheaper tempLLM once a step reaches 50% of its stability threshold.
+	// TODO: Turn-based classification is unreliable across models — needs a better metric.
 	if stepID != "" {
 		metadata, err := hcpo.readStepLearningMetadata(ctx, stepID, stepPath)
 		if err == nil {
-			// Thresholds: Simple (3), Medium (5), Complex (10)
-			// 50% Thresholds: Simple (2), Medium (3), Complex (5)
-			//
-			// TODO: Turn-based classification is not reliable - turn count varies significantly based on
-			// the LLM model used (e.g., Claude vs GPT vs cheaper models) and doesn't reflect actual
-			// step complexity. We need to develop a better complexity metric.
 			shouldUseTempLLM := false
 			reason := ""
-
 			if metadata.LastTurnCount < 100 {
 				if metadata.SuccessfulRunsSimple >= 2 {
 					shouldUseTempLLM = true
@@ -1064,44 +1040,61 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 					reason = fmt.Sprintf("stability threshold reached 50%% (Complex: %d/10)", metadata.SuccessfulRunsComplex)
 				}
 			}
-
 			if shouldUseTempLLM && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
-				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Switching learning agent to cheaper tempLLM (%s/%s): %s", hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID, reason))
+				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Learning agent using cheaper tempLLM (%s/%s): %s",
+					hcpo.tempOverrideLLM.Provider, hcpo.tempOverrideLLM.ModelID, reason))
 				return &orchestrator.LLMConfig{
 					Primary: orchestrator.LLMModel{
 						Provider: hcpo.tempOverrideLLM.Provider,
 						ModelID:  hcpo.tempOverrideLLM.ModelID,
 					},
-					APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+					APIKeys: orchestratorLLMConfig.APIKeys,
 				}
 			}
 		}
 	}
 
-	// 2. Fallback to normal priority
+	// ── 3. STEP CONFIG LearningLLM ───────────────────────────────────────────
+	// Explicit per-step override beats tiered mode when tempLLM is unavailable.
 	if stepConfig != nil && stepConfig.LearningLLM != nil && stepConfig.LearningLLM.Provider != "" && stepConfig.LearningLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific learning LLM: %s/%s", stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Using step LearningLLM for step %s: %s/%s",
+			stepPath, stepConfig.LearningLLM.Provider, stepConfig.LearningLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
 				Provider: stepConfig.LearningLLM.Provider,
 				ModelID:  stepConfig.LearningLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
-	} else if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM: %s/%s", hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
+	}
+
+	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
+	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+		llmConfig, tier := hcpo.tierResolver.ResolveForLearning(maturity)
+		if llmConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learning agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
+				stepPath, int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID, int(maturity)))
+		}
+		return llmConfig
+	}
+
+	// ── 5. PRESET ────────────────────────────────────────────────────────────
+	if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM: %s/%s",
+			hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
 				Provider: hcpo.presetLearningLLM.Provider,
 				ModelID:  hcpo.presetLearningLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
-	} else {
-		err := fmt.Errorf("no valid LLM configuration found for learning agent: step config and preset learning LLM are both empty or invalid")
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for learning agent: step config and preset learning LLM are both empty or invalid", err)
-		return nil
 	}
+
+	err := fmt.Errorf("no valid LLM configuration found for learning agent (step %s): tempLLM, step config, tiered mode, and preset are all empty/unavailable", stepPath)
+	hcpo.GetLogger().Error("❌ "+err.Error(), err)
+	return nil
 }
 
 // applyPostSetupToAgent applies post-setup configuration to an agent after base factory setup

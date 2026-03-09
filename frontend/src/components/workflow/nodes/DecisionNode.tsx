@@ -207,12 +207,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [learningDisabled, stepOverride?.learning_llm, stepConfig?.agent_configs?.learning_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level: override > step config (defaults to 'exact', but 'exact' in code exec mode)
-  const learningDetailLevel = useMemo(() => {
-    if (learningDisabled) return null
-    if (useCodeExecutionMode) return 'exact'
-    return stepOverride?.learning_detail_level || stepConfig?.agent_configs?.learning_detail_level || 'exact'
-  }, [learningDisabled, useCodeExecutionMode, stepOverride?.learning_detail_level, stepConfig?.agent_configs?.learning_detail_level])
 
   // Lock learnings: override > step config
   const lockLearnings = useMemo(() => {
@@ -682,7 +676,7 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
           executionLLM={executionLLM}
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}
-          learningDetailLevel={learningDetailLevel}
+
           lockLearnings={lockLearnings}
           effectiveServers={effectiveServers}
           toolsDisplayInfo={toolsDisplayInfo}

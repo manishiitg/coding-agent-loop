@@ -496,9 +496,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
       // Parent events under their orchestrator_agent_start via correlation_id.
       // This groups tool calls from parallel agents under their respective agent card.
+      // Exclude orchestrator_agent_end — it should remain visible as a standalone event.
       if (!parentId || !filteredEventIds.has(parentId)) {
         const cid = getCorrelationId(event);
-        if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)) {
+        if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)
+            && event.type !== 'orchestrator_agent_end') {
           const agentStartId = agentSessionToEventId.get(cid)!;
           // Don't parent the agent_start under itself
           if (event.id !== agentStartId) {
@@ -535,7 +537,9 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       }
 
       // Never promote agent session child events to root — they belong inside agent cards.
-      if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)) {
+      // orchestrator_agent_end is excluded: it should show at the top level after the agent card.
+      if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)
+          && event.type !== 'orchestrator_agent_end') {
         const agentStartId = agentSessionToEventId.get(cid)!;
         if (event.id !== agentStartId) return false; // Child of agent session, not root
       }

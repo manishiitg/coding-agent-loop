@@ -16,9 +16,9 @@ The `step_config.json` file stores step-specific agent configurations (LLM model
 | Component | File Path | Key Functions |
 |-----------|-----------|---------------|
 | **Frontend Parser** | [`frontend/src/components/workflow/hooks/usePlanData.ts`](../frontend/src/components/workflow/hooks/usePlanData.ts) | `normalizeStepConfigFile()`, `saveStepConfig()` |
-| **Backend Parser** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go) | `ParseStepConfigContent()`, `ReadStepConfigs()`, `WriteStepConfigs()` |
+| **Backend Parser** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go) | `ParseStepConfigContent()`, `ReadStepConfigs()`, `WriteStepConfigs()` |
 | **Type Definitions** | [`frontend/src/utils/stepConfigMatching.ts`](../frontend/src/utils/stepConfigMatching.ts) | `StepConfig`, `AgentConfigs` |
-| **Backend Types** | [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `AgentConfigs` struct definition |
+| **Backend Types** | [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `AgentConfigs` struct definition |
 
 ## 📂 File Locations
 
@@ -32,7 +32,7 @@ The `step_config.json` file can exist in two locations (with priority):
    - Used when no run folder is selected or run-specific config doesn't exist
    - Shared across all runs
 
-**File**: [`step_config.go:40-76`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go#L40)
+**File**: [`step_config.go:40-76`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go#L40)
 
 The backend automatically checks run-specific config first, then falls back to default config.
 
@@ -133,7 +133,7 @@ await agentApi.updatePlannerFile(stepConfigPath, content, `Updated step config f
 
 ### Backend Implementation
 
-**File:** [`agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/step_config.go)
+**File:** [`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/step_config.go)
 
 **Read:**
 ```go
@@ -160,7 +160,7 @@ content, err := json.MarshalIndent(file, "", "  ")
 
 ## ⚙️ Configuration Fields
 
-**File**: [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) - `AgentConfigs` struct
+**File**: [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) - `AgentConfigs` struct
 
 ### LLM Configuration
 

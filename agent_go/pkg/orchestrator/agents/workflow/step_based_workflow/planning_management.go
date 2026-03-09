@@ -205,6 +205,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Passing variable names to planning agent (for placeholder preservation)"))
 	}
 
+	// Add capabilities context so the planner knows which MCP servers, browser tools,
+	// skills, and secrets are available — critical for generating accurate step descriptions.
+	if capabilities := BuildPlanningCapabilitiesContext(hcpo); capabilities != "" {
+		planningTemplateVars["AvailableCapabilities"] = capabilities
+		hcpo.GetLogger().Info("✅ Passing capabilities context to planning agent (servers, browser, skills, secrets)")
+	}
+
 	// Determine user message based on mode
 	// - For CREATE mode: concise, action-oriented instruction
 	// - For UPDATE mode: use human feedback if provided, otherwise a short update/fix instruction
@@ -473,18 +480,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 
 // createPlanningAgent creates a planning agent for the current iteration
 func (hcpo *StepBasedWorkflowOrchestrator) createPlanningAgent(ctx context.Context, phase string, step, iteration int) (agents.OrchestratorAgent, error) {
-	// Set folder guard paths: allow reads from learnings, planning, and runs (for execution logs), writes to both planning and learnings (for folder syncing)
+	// Set folder guard paths: allow reads from learnings, planning, and runs (for execution logs), writes to learnings only (for folder syncing)
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	learningsPath := fmt.Sprintf("%s/learnings", baseWorkspacePath)
 	runsPath := fmt.Sprintf("%s/runs", baseWorkspacePath)
 
-	// Read paths: learnings (for reading existing folders), runs (for execution logs), planning is automatically readable since it's in writePaths
-	readPaths := []string{learningsPath, runsPath}
-	// Write paths: planning (for plan.json) and learnings (for renaming folders when step numbering changes)
-	writePaths := []string{planningPath, learningsPath}
+	// Read paths: planning (read plan.json), learnings (read existing folders), runs (execution logs)
+	// planning/ is read-only here — all writes to plan.json go through dedicated plan modification tools
+	// (update_regular_step, add_regular_step, delete_plan_steps, etc.) which call WriteWorkspaceFile
+	// directly and bypass folder guard. This prevents shell/write_workspace_file from writing
+	// malformed JSON or bypassing schema validation and learnings-unlock logic.
+	readPaths := []string{planningPath, learningsPath, runsPath}
+	// Write paths: learnings only (for renaming folders when step numbering changes after plan edits)
+	writePaths := []string{learningsPath}
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (read access to runs/ for execution logs, write access to learnings/ for folder syncing)", readPaths, writePaths))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for planning agent - Read paths: %v, Write paths: %v (planning/ read-only via guard; plan writes go through dedicated tools only)", readPaths, writePaths))
 
 	// Determine LLM config: Priority: presetPhaseLLM only
 	var llmConfigToUse *orchestrator.LLMConfig

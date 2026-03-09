@@ -1,35 +1,51 @@
-# Playwright MCP artifacts and output location
+# Playwright MCP Artifacts and Output Location
 
 ## Summary
 
-When using the Playwright MCP server with `--output-dir` (e.g. `workspace-docs/Downloads` or a workflow `execution/Downloads`), **downloads and auto-generated artifacts** go to that directory. **Custom filenames** (e.g. `screenshot.png`, `snapshot.html`) used to be written to the workspace or process root because Playwright MCP resolved them relative to the process cwd ([upstream issue #1390](https://github.com/microsoft/playwright-mcp/issues/1390)).
+When using the Playwright MCP server, handling downloads and auto-generated artifacts (like screenshots) requires careful configuration of the working directory and output paths to ensure files are accessible to the agent and the workspace.
 
-## Fix in this repo
+## The Problem
 
-The MCP client (mcpagent) now supports a **working directory** for stdio servers:
+By default, `@playwright/mcp` might save artifacts in the current working directory of the process that spawned it. In a containerized environment, this often leads to files being lost in temporary directories or scattered across the repository root, making them invisible to the agent's file-searching tools.
 
-1. **`MCPServerConfig.WorkingDir`** and **`RuntimeConfigOverride.WorkingDir`** — when set, the Playwright MCP subprocess is started with this directory as its current working directory, so relative custom filenames resolve there.
-2. **Workflow orchestrator** — when configuring Playwright for a run, it sets both `--output-dir` and `WorkingDir` to the same path (e.g. `runs/{runFolder}/execution/Downloads`). So screenshots/snapshots with custom names go to the same folder as downloads.
+## The Solution: `working_dir` Injection
 
-So in **workflow runs**, Playwright artifacts (including custom-named screenshots/snapshots) should now land in the run’s `execution/Downloads` folder.
+The project uses a custom MCP client that supports a `working_dir` property in the server configuration. This ensures that the Playwright process is launched with its base path set correctly.
 
-## Static config (e.g. chat mode)
-
-For non-workflow usage you can set `working_dir` in the Playwright server config so the subprocess cwd matches your `--output-dir`:
+### Configuration (`agent_go/configs/mcp_servers_clean.json`)
 
 ```json
 "playwright": {
   "command": "npx",
-  "args": ["@playwright/mcp@latest", "--output-dir", "/path/to/workspace-docs/Downloads", "--isolated"],
-  "working_dir": "/path/to/workspace-docs/Downloads"
+  "args": [
+    "@playwright/mcp@latest",
+    "--output-dir",
+    "../workspace-docs/Downloads",
+    "--isolated"
+  ],
+  "working_dir": "../workspace-docs/Downloads"
 }
 ```
 
-## Fallback: `.gitignore`
+### Key Parameters:
+1.  **`working_dir`**: Sets the OS-level working directory for the spawned `npx` process.
+2.  **`--output-dir`**: Specifically tells Playwright where to save browser snapshots and traces.
+3.  **`--isolated`**: Ensures that browser data (cookies, storage) doesn't leak between sessions.
 
-The repo root `.gitignore` still includes patterns for Playwright artifacts at repo/agent_go root, in case any path still resolves outside the output dir.
+## Benefits
 
-## Upstream
+1.  **Visibility**: Artifacts land in `workspace-docs/Downloads`, which is indexed by the agent's semantic search and listed by the `list_directory` tool.
+2.  **Persistence**: Files survive session restarts because they are stored in the persistent `workspace-docs` volume.
+3.  **Cleanliness**: Prevents the repository root from being cluttered with `screenshot_123.png` or `download.pdf`.
 
-- Issue: [browser_take_screenshot: custom filenames bypass --output-dir](https://github.com/microsoft/playwright-mcp/issues/1390) (closed with “run MCP with cwd pointing to output location”)
-- Check for a fixed `@playwright/mcp` release and upgrade if available.
+## Interaction with CDP Mode
+
+When using **CDP Mode** (connecting to your local Chrome), the `working_dir` injection is still active. This means even if the agent is controlling your local browser, any downloads it triggers via Playwright tools will still be routed into the designated workspace folder.
+
+## Troubleshooting
+
+### "File not found" after download
+Check the `working_dir` path in your MCP config. If it's relative, it's relative to the `agent_go` directory. Ensure the path exists and has write permissions.
+
+### Duplicate filenames
+The Playwright MCP server typically appends a timestamp or UUID to screenshots to prevent overwriting. If you need a specific filename, you must use the `take_screenshot` tool which supports custom paths.

@@ -853,15 +853,6 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                                   </div>
                                 )}
                                 
-                                {metadata?.learning_detail_level && (
-                                  <span className={`text-xs px-2 py-1 rounded font-medium border ${
-                                    metadata.learning_detail_level === 'general'
-                                      ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-300 dark:border-blue-800'
-                                      : 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-300 dark:border-purple-800'
-                                  }`}>
-                                    {metadata.learning_detail_level === 'general' ? 'General Mode' : 'Exact Mode'}
-                                  </span>
-                                )}
 
                                 <span className={`text-xs px-2 py-1 rounded font-medium border flex items-center gap-1.5 ${
                                   effectiveUseCodeExecutionMode

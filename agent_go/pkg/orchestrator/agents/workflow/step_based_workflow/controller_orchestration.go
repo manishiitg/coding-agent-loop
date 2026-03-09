@@ -415,8 +415,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestrationStep(
 
 			var validationResponse *ValidationResponse
 
-			// LLM validation is always disabled — validation agent removed.
-			// Always auto-approve orchestration steps.
+			// Pre-validation runs above (emits pre_validation_completed event with empty results for orchestration steps).
+			// LLM validation is always disabled -- auto-approve orchestration steps.
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d - LLM validation disabled, auto-approving", stepIndex+1))
 			validationResponse = &ValidationResponse{
 				IsSuccessCriteriaMet: true,

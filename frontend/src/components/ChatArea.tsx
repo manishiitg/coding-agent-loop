@@ -2306,10 +2306,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             onWorkflowPhaseChange={setCurrentWorkflowPhase}
           >
             {/* Empty State - Show when no events and not in historical session */}
-            {displayEvents.length === 0 && !isStreaming && (
-              isChatCompatiblePhase(activeTab?.metadata?.phaseId)
-                ? <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
-                : <ModeEmptyState modeCategory={selectedModeCategory} />
+            {displayEvents.length === 0 && !isStreaming && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
+              <ModeEmptyState modeCategory={selectedModeCategory} />
+            )}
+            {/* Phase Chat Help - Show for chat-compatible phases when user has no messages yet */}
+            {!activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'user_message') && (
+              <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
             )}
 
             {activeTab?.sessionId && (

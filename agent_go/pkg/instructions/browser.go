@@ -31,6 +31,28 @@ When a website has a file upload input (e.g. file picker, drag-and-drop zone), u
 
 // GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.
 // Only appended when the camofox MCP server is in the enabled servers list.
+// GetAgentBrowserQuickStartInstructions returns inline instructions for using the agent-browser tool.
+// Appended to the agent's system prompt when browser access (agent-browser skill) is enabled.
+func GetAgentBrowserQuickStartInstructions() string {
+	return `## Browser Automation (Quick Start)
+
+You have the ` + "`agent_browser`" + ` tool for browser automation. Basic workflow:
+
+1. **Open a page:** agent_browser(command="open", args=["https://example.com"], session="default")
+2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["-i"], session="default")
+3. **Interact** using element refs from snapshot:
+   - Click: agent_browser(command="click", args=["@e1"], session="default")
+   - Fill text: agent_browser(command="fill", args=["@e2", "search query"], session="default")
+   - Press key: agent_browser(command="press", args=["Enter"], session="default")
+4. **Re-snapshot** after each interaction to see the updated page state
+5. **Screenshot:** agent_browser(command="screenshot", args=["page.png"], session="default")
+
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
+
+For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
+}
+
+// GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.
 func GetCamofoxInstructions() string {
 	return `
 

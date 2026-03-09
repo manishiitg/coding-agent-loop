@@ -222,7 +222,7 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars map[string]string) string {
 	learningDetailLevel := templateVars["LearningDetailLevel"]
 	if learningDetailLevel == "" {
-		learningDetailLevel = "general"
+		learningDetailLevel = "exact"
 	}
 
 	workspacePath := templateVars["WorkspacePath"]
@@ -254,7 +254,7 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 func (agent *WorkflowLearningAgent) learningUserMessageProcessor(templateVars map[string]string) string {
 	learningDetailLevel := templateVars["LearningDetailLevel"]
 	if learningDetailLevel == "" {
-		learningDetailLevel = "general"
+		learningDetailLevel = "exact"
 	}
 
 	workspacePath := templateVars["WorkspacePath"]

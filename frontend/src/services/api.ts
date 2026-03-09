@@ -410,6 +410,7 @@ export const agentApi = {
     configured: boolean;
     auth_method?: string;
     token_valid?: boolean;
+    token_error?: string;
     enabled_api_count?: number;
     enabled_apis?: string[];
     scope_count?: number;

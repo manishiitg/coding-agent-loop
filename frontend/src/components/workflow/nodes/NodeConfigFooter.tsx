@@ -30,7 +30,6 @@ interface NodeConfigFooterProps {
   executionLLM?: string | null
   executionMaxTurns?: number
   learningLLM?: string | null
-  learningDetailLevel?: string | null
   lockLearnings?: boolean
   effectiveServers?: string[]
   toolsDisplayInfo?: ToolsDisplayInfo[]
@@ -57,7 +56,6 @@ export const NodeConfigFooter = memo(({
   executionLLM,
   executionMaxTurns = 100,
   learningLLM,
-  learningDetailLevel,
   lockLearnings = false,
   effectiveServers = [],
   toolsDisplayInfo = [],
@@ -133,7 +131,7 @@ export const NodeConfigFooter = memo(({
         )}
         {learningLLM && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/30 text-amber-600 dark:text-amber-400">
-            Learn: {learningLLM}{learningDetailLevel && ` (${learningDetailLevel})`}{lockLearnings && ' 🔒'}
+            Learn: {learningLLM} (Exact){lockLearnings && ' 🔒'}
           </span>
         )}
         {lockLearnings && !learningLLM && (

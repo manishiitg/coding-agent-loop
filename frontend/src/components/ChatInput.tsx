@@ -334,7 +334,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [showGWSPopup, setShowGWSPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
   const [gwsChatAuthStatus, setGwsChatAuthStatus] = useState<{
-    configured?: boolean; auth_method?: string; token_valid?: boolean;
+    configured?: boolean; auth_method?: string; token_valid?: boolean; token_error?: string;
     enabled_api_count?: number; scope_count?: number; error?: string;
   } | null>(null)
   const [gwsChatChecking, setGwsChatChecking] = useState(false)
@@ -806,7 +806,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     getCurrentLLMOption,
     refreshAvailableLLMs: onRefreshAvailableLLMs,
     llmConfigLocked,
-    delegationTierConfig
+    delegationTierConfig,
+    workflowPrimaryConfig
   } = useLLMStore()
 
   const { scrollToFile } = useWorkspaceStore()
@@ -839,18 +840,30 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, tabConfig?.llmConfig, setTabConfig])
 
   // Computed values - get LLM option from tab config
-  // For phase chat: prefer the workflow preset's LLM as the default if tab hasn't been
-  // explicitly overridden by the user (detected by checking if tab config matches global workflow LLM).
   const primaryLLM = useMemo(() => {
-    // For phase chat, check if the preset defines a different LLM to use as default
     if (isWorkflowPhaseChat) {
+      // Show the phase_llm from preset (what the backend actually uses)
       const preset = getActivePreset('workflow')
+      const phaseLLM = preset?.llmConfig?.phase_llm
+      if (phaseLLM?.provider && phaseLLM?.model_id) {
+        const found = availableLLMs.find(llm =>
+          llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
+        )
+        if (found) return found
+        return {
+          provider: phaseLLM.provider,
+          model: phaseLLM.model_id,
+          label: `${phaseLLM.provider} - ${phaseLLM.model_id}`,
+          description: 'Phase LLM'
+        }
+      }
+      // Fallback to preset primary LLM
       const presetLLM = preset?.llmConfig
       if (presetLLM?.provider && presetLLM?.model_id) {
-        const foundPresetLLM = availableLLMs.find(llm =>
+        const found = availableLLMs.find(llm =>
           llm.provider === presetLLM.provider && llm.model === presetLLM.model_id
         )
-        if (foundPresetLLM) return foundPresetLLM
+        if (found) return found
         return {
           provider: presetLLM.provider,
           model: presetLLM.model_id,
@@ -862,14 +875,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     if (tabConfig?.llmConfig) {
       const config = tabConfig.llmConfig
-      // Try to find matching LLM in available list for richer metadata
       const foundLLM = availableLLMs.find(llm =>
         llm.provider === config.provider && llm.model === config.model_id
       )
       if (foundLLM) return foundLLM
 
-      // If not found in available list, create option from tab config
-      // This preserves user's selection even if model list hasn't loaded
       if (config.provider && config.model_id) {
         return {
           provider: config.provider,
@@ -880,7 +890,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
     return getCurrentLLMOption()
-  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption, isWorkflowPhaseChat, getActivePreset])
+  }, [tabConfig?.llmConfig, availableLLMs, getCurrentLLMOption, isWorkflowPhaseChat, getActivePreset, workflowPrimaryConfig])
   
   // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -2334,7 +2344,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
                 {/* Agent Mode Selector */}
                 {(
-                  effectiveDelegationMode === 'plan' ? null : isClaudeCode ? (
+                  (effectiveDelegationMode === 'plan' || isWorkflowPhaseChat) ? null : isClaudeCode ? (
                     /* Claude Code always uses code execution mode */
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -2461,13 +2471,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 selectedLLM={primaryLLM}
                                 onLLMSelect={onPrimaryLLMSelect}
                                 onRefresh={onRefreshAvailableLLMs}
-                                disabled={isStreaming || isSummarizing}
+                                disabled={isStreaming || isSummarizing || isWorkflowPhaseChat}
                                 openDirection="up"
                               />
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top">
-                            <p>{isWorkflowPhaseChat ? 'Override phase LLM' : llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
+                            <p>{isWorkflowPhaseChat ? 'Phase LLM is set in the preset settings' : llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -2958,12 +2968,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <div className="text-sm font-medium text-gray-100">Google Workspace</div>
                             <div className="text-xs text-gray-400 mt-0.5">Drive · Gmail · Calendar · Docs · Sheets · Slides</div>
                           </div>
-                          <label className={`relative inline-flex items-center ${gwsEnabled || gwsChatAuthStatus?.configured ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}>
+                          <label className={`relative inline-flex items-center ${gwsEnabled || (gwsChatAuthStatus?.configured && gwsChatAuthStatus?.token_valid !== false) ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}>
                             <input
                               type="checkbox"
                               checked={gwsEnabled}
                               onChange={toggleGWSServer}
-                              disabled={!gwsEnabled && !gwsChatAuthStatus?.configured}
+                              disabled={!gwsEnabled && !(gwsChatAuthStatus?.configured && gwsChatAuthStatus?.token_valid !== false)}
                               className="sr-only peer"
                             />
                             <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -2971,7 +2981,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </div>
 
                         {/* Auth gate hint */}
-                        {!gwsEnabled && !gwsChatAuthStatus?.configured && (
+                        {!gwsEnabled && !(gwsChatAuthStatus?.configured && gwsChatAuthStatus?.token_valid !== false) && (
                           <p className="text-xs text-amber-400">
                             {gwsChatChecking ? 'Checking auth...' : 'Auth check required before enabling'}
                           </p>
@@ -2989,7 +2999,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               {gwsChatChecking ? 'Checking...' : 'Check Auth Status'}
                             </button>
                             {gwsChatAuthStatus && (
-                              gwsChatAuthStatus.configured ? (
+                              gwsChatAuthStatus.configured && gwsChatAuthStatus.token_valid !== false ? (
                                 <div className="flex items-center gap-1.5">
                                   <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
                                   <span className="text-xs text-green-400">
@@ -3000,7 +3010,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               ) : (
                                 <div className="flex items-center gap-1.5">
                                   <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                                  <span className="text-xs text-red-400">{gwsChatAuthStatus.error ?? 'Not configured'}</span>
+                                  <span className="text-xs text-red-400">
+                                    {gwsChatAuthStatus.token_valid === false
+                                      ? `Token invalid — run gws auth login${gwsChatAuthStatus.token_error ? ` (${gwsChatAuthStatus.token_error})` : ''}`
+                                      : (gwsChatAuthStatus.error ?? 'Not configured')}
+                                  </span>
                                 </div>
                               )
                             )}

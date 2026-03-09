@@ -31,7 +31,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	}
 
 	// Use a special run folder for evaluation results
-	// This will cause outputs to go to evaluation/runs/<targetRunFolder>/execution/ and progress to evaluation/runs/<targetRunFolder>/steps_done.json
+	// This will cause outputs to go to evaluation/runs/<targetRunFolder>/execution/ and progress to evaluation/runs/<targetRunFolder>/execution/steps_done.json
 	if targetRunFolder == "" {
 		hcpo.GetLogger().Error("❌ targetRunFolder is empty", nil)
 		return "", fmt.Errorf("targetRunFolder is required for evaluation execution")

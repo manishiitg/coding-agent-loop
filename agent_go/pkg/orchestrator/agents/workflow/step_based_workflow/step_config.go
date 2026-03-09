@@ -378,6 +378,13 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	if source.SelectedTools != nil {
 		target.SelectedTools = source.SelectedTools
 	}
+	if source.EnabledCustomTools != nil {
+		target.EnabledCustomTools = source.EnabledCustomTools
+		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - enabled_custom_tools: %v", stepID, source.EnabledCustomTools))
+	}
+	if source.EnabledCustomToolCategories != nil {
+		target.EnabledCustomToolCategories = source.EnabledCustomToolCategories
+	}
 	if source.EnabledSkills != nil {
 		target.EnabledSkills = source.EnabledSkills
 	}

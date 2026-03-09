@@ -446,17 +446,19 @@ func (ptom *PlanToolOptimizationManager) createPlanToolOptimizationAgent(ctx con
 	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
 
-	// Agent has read-only access to planning/ folder (for plan.json), learnings folder (for learning files), and runs/ folder (for logs/)
-	// Write access to planning/step_config.json only
+	// Agent has read-only access to planning/, learnings/, and runs/ folders via folder guard.
+	// step_config.json writes go through the dedicated update_step_config_tools custom tool,
+	// which calls WriteWorkspaceFile directly (bypassing folder guard) — same pattern as
+	// plan.json writes going through update_regular_step / add_regular_step etc.
 	readPaths := []string{planningPath, learningsPath, runsPath}
 
 	// Step-specific learnings are always enabled - folders are at workspace root using step IDs
 	ptom.GetLogger().Info(fmt.Sprintf("📁 Step-specific learnings enabled - agent can access step-specific folders in learnings/ (using step IDs from plan.json)"))
 	ptom.GetLogger().Info(fmt.Sprintf("📁 Logs access enabled - agent can access execution logs in runs/*/logs/step-*/"))
 
-	writePaths := []string{planningPath} // Write access to planning/ folder (for step_config.json)
+	writePaths := []string{} // No shell write access to planning/ — update_step_config_tools handles all writes
 	ptom.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	ptom.GetLogger().Info(fmt.Sprintf("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (read-only access to planning/, learnings/, and runs/ folders, write access to planning/step_config.json)", readPaths, writePaths))
+	ptom.GetLogger().Info(fmt.Sprintf("🔧 Setting folder guard for plan tool optimization agent - Read paths: %v, Write paths: %v (planning/ read-only via guard; step_config.json writes go through dedicated tool)", readPaths, writePaths))
 
 	// Use preset phase LLM only
 	var llmConfigToUse *orchestrator.LLMConfig

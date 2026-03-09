@@ -195,11 +195,6 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [learningDisabled, stepOverride?.learning_llm, stepConfig?.agent_configs?.learning_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level: override > step config
-  const learningDetailLevel = useMemo(() => {
-    if (learningDisabled) return null
-    return stepOverride?.learning_detail_level || stepConfig?.agent_configs?.learning_detail_level || 'general'
-  }, [learningDisabled, stepOverride?.learning_detail_level, stepConfig?.agent_configs?.learning_detail_level])
 
   // Check if learnings exist in backend
   const [learningsExist, setLearningsExist] = useState<boolean | null>(null)
@@ -709,7 +704,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           executionLLM={executionLLM}
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}
-          learningDetailLevel={learningDetailLevel}
+
           lockLearnings={lockLearnings}
           effectiveServers={effectiveServers}
           toolsDisplayInfo={toolsDisplayInfo}

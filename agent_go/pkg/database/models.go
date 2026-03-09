@@ -290,6 +290,11 @@ type PresetLLMConfig struct {
 	EnableContextSummarization *bool `json:"enable_context_summarization,omitempty"` // nil/true = enabled (default), false = disabled
 	EnableContextEditing       *bool `json:"enable_context_editing,omitempty"`       // nil/false = disabled (default), true = enabled
 
+	// Image generation
+	EnableImageGeneration *bool  `json:"enable_image_generation,omitempty"` // nil/false = disabled, true = enabled
+	ImageGenProvider      string `json:"image_gen_provider,omitempty"`      // e.g., "vertex", "openai", "bedrock"
+	ImageGenModelID       string `json:"image_gen_model_id,omitempty"`      // e.g., "gemini-2.5-flash-image", "dall-e-3"
+
 	// Tiered LLM allocation mode
 	LLMAllocationMode string              `json:"llm_allocation_mode,omitempty"` // "manual" (default) or "tiered"
 	TieredConfig      *TieredLLMConfig    `json:"tiered_config,omitempty"`

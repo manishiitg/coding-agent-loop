@@ -143,7 +143,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     learning_llm?: { provider?: string; model_id?: string }
     disable_learning?: boolean
     lock_learnings?: boolean
-    learning_detail_level?: 'exact' | 'general'
+    learning_detail_level?: string
     learning_after_loop_iteration?: boolean
     selected_servers?: string[]
     selected_tools?: string[]
@@ -222,12 +222,6 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     return llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
   }, [learningDisabled, stepOverride?.learning_llm, stepConfig?.agent_configs?.learning_llm, activePreset?.llmConfig, availableLLMs])
 
-  // Learning detail level: override > step config (defaults to 'exact', but 'exact' in code exec mode)
-  const learningDetailLevel = useMemo(() => {
-    if (learningDisabled) return null
-    if (useCodeExecutionMode) return 'exact'
-    return stepOverride?.learning_detail_level || stepConfig?.agent_configs?.learning_detail_level || 'exact'
-  }, [learningDisabled, useCodeExecutionMode, stepOverride?.learning_detail_level, stepConfig?.agent_configs?.learning_detail_level])
 
   // Lock learnings: override > step config
   const lockLearnings = useMemo(() => {
@@ -630,7 +624,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
         executionLLM={executionLLM}
         executionMaxTurns={executionMaxTurns}
         learningLLM={learningLLM}
-        learningDetailLevel={learningDetailLevel}
+
         lockLearnings={lockLearnings}
         effectiveServers={effectiveServers}
         toolsDisplayInfo={toolsDisplayInfo}

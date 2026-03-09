@@ -754,12 +754,12 @@ This requires:
 
 | Component | File | Key Functions/Types |
 |-----------|------|---------------------|
-| **Schema Definition** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | `ValidationSchema`, `FileValidationRule`, `JSONValidationCheck`, `ConsistencyRule` |
-| **Pre-Validation** | [`pre_validation.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/pre_validation.go) | `RunPreValidation()`, `validateWithSchema()`, `WorkspaceVerificationResult`, `formatWorkspaceResults()` |
-| **Integration** | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go) | Pre-validation call before validation agent (lines 1560-1624) |
-| **Orchestration Integration** | [`controller_orchestration.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_orchestration.go) | Pre-validation for orchestration steps |
-| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/validation_agent.go) | Updated to receive and use pre-validation results |
-| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go) | Schema generation/parsing from success_criteria |
+| **Schema Definition** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | `ValidationSchema`, `FileValidationRule`, `JSONValidationCheck`, `ConsistencyRule` |
+| **Pre-Validation** | [`pre_validation.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/pre_validation.go) | `RunPreValidation()`, `validateWithSchema()`, `WorkspaceVerificationResult`, `formatWorkspaceResults()` |
+| **Integration** | [`controller_execution.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go) | Pre-validation call before validation agent (lines 1560-1624) |
+| **Orchestration Integration** | [`controller_orchestration.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_orchestration.go) | Pre-validation for orchestration steps |
+| **Validation Agent** | [`validation_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/validation_agent.go) | Updated to receive and use pre-validation results |
+| **Planning Agent** | [`planning_agent.go`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go) | Schema generation/parsing from success_criteria |
 | **JSONPath Library** | `github.com/PaesslerAG/jsonpath` | JSON path evaluation for validation checks |
 
 ---
@@ -769,7 +769,7 @@ This requires:
 
 ### 1. Plan Structure
 
-**File**: [`planning_agent.go:271`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/planning_agent.go#L271)
+**File**: [`planning_agent.go:271`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go#L271)
 
 Plan.json includes optional `validation_schema` field in `CommonStepFields`:
 
@@ -823,7 +823,7 @@ Plan.json example:
 
 ### 2. Pre-Validation Flow
 
-**File**: [`controller_execution.go:1560-1624`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1560)
+**File**: [`controller_execution.go:1560-1624`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1560)
 
 ```mermaid
 sequenceDiagram
@@ -866,7 +866,7 @@ sequenceDiagram
 
 ### 3. Validation Agent Integration
 
-**File**: [`controller_execution.go:1590-1624`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1590)
+**File**: [`controller_execution.go:1590-1624`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1590)
 
 Validation agent receives pre-validation results:
 
@@ -1045,7 +1045,7 @@ Focus on:
 
 ### Phase 3: Integration
 
-**File**: [`controller_execution.go:1560-1624`](../agent_go/pkg/orchestrator/agents/workflow/todo_creation_human/controller_execution.go#L1560)
+**File**: [`controller_execution.go:1560-1624`](../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go#L1560)
 
 ```go
 // Get validation schema from step

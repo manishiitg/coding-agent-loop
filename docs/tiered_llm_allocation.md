@@ -29,7 +29,7 @@ The tier resolver selects the LLM based on agent type and learning maturity:
 | Agent Type | No Learnings (0 files) | Has Learnings (1 file) | Mature (2+ files) |
 |---|---|---|---|
 | Execution | Tier 1 | Tier 2 | Tier 2 |
-| Learning | Tier 1 | Tier 2 | Tier 3 |
+| Learning | Tier 2 | Tier 2 | Tier 3 |
 | Validation | Tier 3 | Tier 3 | Tier 3 |
 | Phase Agents | Phase LLM (or Tier 1 fallback) | Phase LLM (or Tier 1 fallback) | Phase LLM (or Tier 1 fallback) |
 | Conditional | Tier 1 | Tier 2 | Tier 2 |

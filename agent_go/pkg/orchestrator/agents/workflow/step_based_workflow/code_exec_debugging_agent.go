@@ -216,11 +216,13 @@ func (cdm *CodeExecDebuggingManager) createCodeExecDebuggingAgent(ctx context.Co
 
 	writePaths := []string{
 		learningsPath, // Write access to learnings folder
-		planningPath,  // Write access to plan.json (required for plan fixes)
+		// planning/ is intentionally excluded — plan fixes go through dedicated plan modification
+		// tools (update_regular_step, add_regular_step, etc.) which call WriteWorkspaceFile directly
+		// and bypass folder guard. This prevents shell from writing malformed JSON to plan.json.
 	}
 
 	cdm.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	cdm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for code execution debugging agent - Read paths: %v, Write paths: %v", readPaths, writePaths))
+	cdm.GetLogger().Info(fmt.Sprintf("🔍 Setting folder guard for code execution debugging agent - Read paths: %v, Write paths: %v (planning/ read-only via guard; plan writes go through dedicated tools)", readPaths, writePaths))
 
 	// Determine LLM config (use preset phase LLM only)
 	var llmConfigToUse *orchestrator.LLMConfig

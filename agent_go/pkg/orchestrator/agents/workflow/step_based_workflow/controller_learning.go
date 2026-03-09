@@ -180,11 +180,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Resolve variables in step title before using in agent name
 	resolvedTitle := ResolveVariables(step.GetTitle(), hcpo.variableValues)
 	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
-	// Include learning mode in agent name (exact or general)
-	learningMode := "general"
-	if learningDetailLevel == "exact" {
-		learningMode = "exact"
-	}
+	// Include learning mode in agent name
+	learningMode := "exact"
 	successLearningAgentName := fmt.Sprintf("%s-success-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
 	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, successLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {
@@ -544,11 +541,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	// Resolve variables in step title before using in agent name
 	resolvedTitle := ResolveVariables(step.GetTitle(), hcpo.variableValues)
 	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
-	// Include learning mode in agent name (exact or general)
+	// Include learning mode in agent name
 	learningMode := "exact"
-	if learningDetailLevel == "general" {
-		learningMode = "general"
-	}
 	failureLearningAgentName := fmt.Sprintf("%s-failure-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
 	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, failureLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {

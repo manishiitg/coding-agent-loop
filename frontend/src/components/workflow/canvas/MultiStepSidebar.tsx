@@ -659,17 +659,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                         inModal={false}
                         openDirection="down"
                       />
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs text-gray-600 dark:text-gray-400">Detail Level:</label>
-                        <select
-                          value={agentConfigs.learning_detail_level || 'exact'}
-                          onChange={(e) => setAgentConfigs(prev => ({ ...prev, learning_detail_level: e.target.value as 'exact' | 'general' }))}
-                          className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs"
-                        >
-                          <option value="exact">Exact</option>
-                          <option value="general">General</option>
-                        </select>
-                      </div>
                     </div>
                   )}
                 </div>

@@ -946,7 +946,7 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 		// Only read progress for the latest N iterations (most likely to be selected)
 		if i < maxFoldersWithProgress {
 			// Try to read steps_done.json for this folder
-			stepsFilePath := workspacePath + "/runs/" + folderName + "/steps_done.json"
+			stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
 			progress, err := readProgressForFolder(r.Context(), stepsFilePath)
 			if err == nil && progress != nil {
 				folderInfo.Progress = progress
@@ -1039,7 +1039,7 @@ func (api *StreamingAPI) handleGetProgress(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Build path to steps_done.json
-	stepsFilePath := workspacePath + "/runs/" + runFolder + "/steps_done.json"
+	stepsFilePath := workspacePath + "/runs/" + runFolder + "/execution/steps_done.json"
 
 	// URL-encode the filepath segments
 	pathSegments := strings.Split(stepsFilePath, "/")

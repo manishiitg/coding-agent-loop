@@ -744,6 +744,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 				break
 			}
 		}
+		// Auto-include image gen tools if workspace_image_gen exists in the workspace tools pool
+		for _, tool := range hcpo.WorkspaceTools {
+			if tool.Function != nil && tool.Function.Name == "workspace_image_gen" {
+				defaultEnabledTools = append(defaultEnabledTools, "workspace_image_gen:*")
+				defaultEnabledTools = append(defaultEnabledTools, "workspace_image_edit:*")
+				break
+			}
+		}
 		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
 			hcpo.WorkspaceTools,
 			hcpo.WorkspaceToolExecutors,

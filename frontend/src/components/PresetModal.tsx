@@ -66,7 +66,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [cdpChecking, setCdpChecking] = useState(false);
   const [gwsChecking, setGwsChecking] = useState(false);
   const [gwsAuthStatus, setGwsAuthStatus] = useState<{
-    configured?: boolean; auth_method?: string; token_valid?: boolean;
+    configured?: boolean; auth_method?: string; token_valid?: boolean; token_error?: string;
     enabled_api_count?: number; scope_count?: number; error?: string;
   } | null>(null);
   const [gwsSyncing, setGwsSyncing] = useState(false);
@@ -1337,20 +1337,21 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                         {gwsSyncing ? 'Syncing...' : 'Sync Skills from GitHub'}
                       </button>
                       {gwsAuthStatus && (
-                        gwsAuthStatus.configured ? (
+                        gwsAuthStatus.configured && gwsAuthStatus.token_valid !== false ? (
                           <div className="flex items-center gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
                             <span className="text-xs text-green-600 dark:text-green-400">
                               Auth OK · {gwsAuthStatus.enabled_api_count ?? 0} APIs · {gwsAuthStatus.scope_count ?? 0} scopes
                               {gwsAuthStatus.auth_method ? ` (${gwsAuthStatus.auth_method})` : ''}
-                              {gwsAuthStatus.token_valid === false ? ' ⚠ token invalid' : ''}
                             </span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
                             <span className="text-xs text-red-600 dark:text-red-400">
-                              {gwsAuthStatus.error ?? 'Not configured — run gws auth login'}
+                              {gwsAuthStatus.token_valid === false
+                                ? `Token invalid — run gws auth login${gwsAuthStatus.token_error ? ` (${gwsAuthStatus.token_error})` : ''}`
+                                : (gwsAuthStatus.error ?? 'Not configured — run gws auth login')}
                             </span>
                           </div>
                         )

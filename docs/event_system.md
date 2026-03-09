@@ -1,6 +1,6 @@
 # Event System Architecture
 
-This document provides a comprehensive overview of the event system in the Multi Agent Builder, covering type safety, event grouping, and workspace file operation events.
+This document provides a comprehensive overview of the event system in the Multi-Agent Builder, covering type safety, filtering layers, frontend delivery mechanisms, and hierarchical grouping.
 
 ---
 
@@ -18,185 +18,114 @@ The event type system uses a **TypeScript Discriminated Union** pattern to enfor
 ### 📊 Wire Format (Actual Structure)
 
 ```
-PollingEvent (event_store.go)
+PollingEvent (Backend: event_store.go)
 ├── id: string
 ├── type: "tool_call_start"          ← Event type discriminator
 ├── timestamp: ISO string
 ├── session_id?: string
 ├── error?: string
-└── data: AgentEvent
+└── data: AgentEvent                 ← Unified payload for Orchestrator & MCP
     ├── type: "tool_call_start"      ← Same as parent
     ├── timestamp: ISO string
     ├── event_index: number
     ├── trace_id?: string
     ├── hierarchy_level: number
+    ├── correlation_id?: string      ← Used for delegation grouping
+    ├── parent_id?: string           ← Used for direct parenting
     └── data: ToolCallStartEvent     ← Actual typed event data
         ├── tool_name: string
         ├── tool_params: object
         └── server_name: string
 ```
 
-**Key Insight**: Event data is at `event.data.data`, not `event.data`.
-
-### 🔧 How to Use
-
-#### Type-Safe Event Handling
-
-```typescript
-import { isEventType, getEventData, getTypedEventData } from '../../generated/event-types';
-import type { ToolCallStartEvent } from '../../generated/event-types';
-
-// Option 1: Type guard with automatic narrowing (recommended)
-if (isEventType(event, 'tool_call_start')) {
-  // event is now narrowed to the correct type
-  const data = getEventData(event);  // Returns ToolCallStartEvent
-  console.log(data.tool_name);  // TypeScript knows this exists!
-}
-
-// Option 2: Combined type guard and extraction
-const data = getTypedEventData(event, 'tool_call_start');
-if (data) {
-  console.log(data.tool_name);  // TypeScript knows the type
-}
-```
-
-#### Available Helper Functions
-
-| Function | Purpose | Returns |
-|----------|---------|---------|
-| `isEventType(event, type)` | Type guard for narrowing | `boolean` (type predicate) |
-| `getEventData(event)` | Extract typed data (use after type guard) | `EventTypeToDataMap[T]` |
-| `getTypedEventData(event, type)` | Combined guard + extraction | `EventTypeToDataMap[T] \| undefined` |
-| `assertEventType(event, type)` | Assert type (throws if wrong) | `EventTypeToDataMap[T]` |
-| `getEventDataOrDefault(event, type, default)` | Safe extraction with fallback | `EventTypeToDataMap[T]` |
-
-### 📁 Key Files
-
-| File | Description |
-|------|-------------|
-| `mcpagent/events/data.go` | All event struct definitions |
-| `mcpagent/events/types.go` | EventType constants |
-| `agent_go/cmd/schema-gen/main.go` | JSON Schema generator |
-| `agent_go/schemas/polling-event.schema.json` | Generated schema |
-| `frontend/src/generated/events-bridge.ts` | Generated TypeScript (from json-schema-to-typescript) |
-| `frontend/src/generated/event-types.ts` | Type utilities and discriminated unions |
+**Key Insight**: Event data is located at `event.data.data`, not `event.data`.
 
 ---
 
-## 2. Workspace File Operation Event
+## 2. Event Filtering & Storage Flow
+
+The system uses multiple layers of filtering to manage performance, bandwidth, and storage space.
+
+### Layer 1: Emission Filtering (`SKIP_EVENTS`)
+**File:** `agent_go/cmd/server/event_bridge/base_bridge.go`  
+Events in this map are **discarded immediately** and never reach the memory store or database.
+- **Types:** `tool_execution`, `tool_output`, `tool_response`, `tool_call_progress`, and all `cache_*` events.
+
+### Layer 2: Database Storage Filtering (`DB_SKIP_EVENTS`)
+**File:** `agent_go/cmd/server/event_bridge/base_bridge.go`  
+Events in this map are kept in memory (for real-time SSE and polling) but **never saved to the database**. This saves massive amounts of space and enables "Micro Mode" by default.
+- **Types:** `step_progress_updated`, `llm_generation_start`, `conversation_turn`, `streaming_chunk`.
+- **CRITICAL EXCEPTION:** `llm_generation_end` and `agent_end` are **NOT** skipped. They are required to clear the "Generating..." state when a session is restored.
+
+### Layer 3: Polling Layer Filtering (`NEVER_SHOW_EVENTS`)
+**File:** `agent_go/internal/events/event_store.go`  
+Acts as a safety net at the polling layer. It filters out events that might have been stored in the database before `SKIP_EVENTS` was implemented.
+- **Types:** Mirrors `SKIP_EVENTS` + ephemeral `streaming_start/chunk` events.
+
+### Layer 4: UI Visibility Filtering (`HIDDEN_EVENTS` & Runtime Logic)
+**File:** `agent_go/internal/events/event_store.go` & `EventHierarchy.tsx`  
+These events reach the frontend and are available in the state (e.g., for token usage calculations) but are **hidden from the main event list**.
+- **Types:** `llm_generation_start`, `agent_start`, `conversation_start`.
+- **Runtime Filtering:** `token_usage` events with `context: 'conversation_total'` are stripped from the main view to reduce UI noise.
+
+---
+
+## 3. Delivery Lifecycle: SSE, Resiliency, and Fallback
+
+### Real-Time Delivery (SSEConnection)
+The frontend establishes a Server-Sent Events (SSE) connection to receive real-time updates.
+- **Store:** Events are deduplicated and stored by session in `useChatStore` (`tabEvents`).
+- **Streaming Chunks:** `streaming_chunk` events bypass the database and polling completely. They are delivered exclusively via the SSE buffer for real-time text rendering.
+
+### Auto-Catchup Mechanism
+The frontend tracks the highest `event_index` received per session (`tabEventIndices`). 
+- On reconnection, the `SSEConnection` sends this index via the `Last-Event-ID` header.
+- The backend uses this to automatically replay any events missed during the network drop before resuming real-time delivery.
+
+### Polling Fallback
+If the SSE connection fails consecutively (e.g., 5 network failures), the frontend `ChatArea.tsx` orchestration gracefully degrades to HTTP polling (`pollEvents`) to ensure the session remains responsive.
+
+---
+
+## 4. Sub-Agent Isolation & Workflow Grouping
+
+**File:** `frontend/src/components/events/EventHierarchy.tsx`
+
+The UI reconstructs complex multi-agent and workflow executions into an expandable tree using `correlation_id` and `parent_id`.
+
+### Sub-Agent / Delegation Grouping
+When a sub-agent is spawned, it generates many events. To prevent these from cluttering the main orchestrator's timeline:
+1. The frontend scans for events with a `correlation_id` starting with `delegation-`.
+2. These child events are extracted from the flat timeline.
+3. They are visually re-parented under the specific `delegation_start` node (rendered as an expandable Sub-Agent Card).
+
+### Parallel Agent Grouping
+For concurrent workflows, parallel tool calls are parented under their respective `orchestrator_agent_start` node via `correlation_id`. This guarantees parallel agent tool executions don't incorrectly merge.
+
+### Tool Call Collapsing
+To further reduce noise in the main timeline, consecutive tool-related events (`tool_call_start`, `tool_call_end`, `token_usage`, `llm_generation_end`) are collapsed into a single `+ N tool calls` inline button. 
+- Because sub-agent events are removed from the flat list (as described above), they never interfere with or get swallowed by the main agent's tool call groups.
+
+---
+
+## 5. Workspace File Operation Events
 
 ### 📋 Overview
-
-The `workspace_file_operation` event system replaces frontend Go code parsing with dedicated backend events. These events are emitted directly from workspace tool handlers, simplifying architecture and improving reliability.
-
-**Key Benefits:**
-- **Separation of Concerns**: Backend knows what happened, frontend just displays
-- **No Go Code Parsing**: Eliminates complex parsing logic in frontend
-- **Single Event Type**: One event for all workspace operations
-- **Better Performance**: No parsing overhead in frontend, O(1) file lookups via index
-- **More Reliable**: Backend has exact information about operations
-
-### Backend Implementation
+The `workspace_file_operation` event system replaces frontend Go code parsing with dedicated backend events emitted directly from workspace tool handlers.
 
 #### Event Data Structure
-
-**File**: `mcpagent/events/data.go`
+**File**: `agent_go/pkg/workspace/tools.go`
 
 ```go
 type WorkspaceFileOperationEvent struct {
     BaseEventData
     Operation       string `json:"operation"`        // "read", "update", "delete", "list", "patch", "move"
-    Filepath        string `json:"filepath"`         // File path (empty for list operations)
+    Filepath        string `json:"filepath"`         // File path
     Folder          string `json:"folder,omitempty"` // Folder path (for list operations)
     Turn            int    `json:"turn"`
     ServerName      string `json:"server_name"`
-    ShouldHighlight bool   `json:"should_highlight,omitempty"` // Whether to highlight this file in the UI
+    ShouldHighlight bool   `json:"should_highlight,omitempty"`
 }
 ```
 
-**Logs Folder Exclusion**: `should_highlight` automatically defaults to `false` for files/folders containing "logs/" in their path.
-
-#### Event Emission
-
-All workspace tool handlers emit events after successful operations:
-- **handleReadWorkspaceFile**: Emits "read" event
-- **handleUpdateWorkspaceFile**: Emits "update" event
-- **handleDeleteWorkspaceFile**: Emits "delete" event
-- **handleListWorkspaceFiles**: Emits "list" event
-- **handleDiffPatchWorkspaceFile**: Emits "patch" event
-- **handleMoveWorkspaceFile**: Emits "move" event
-
-### Frontend Implementation
-
-#### Event Handler
-
-**File**: `frontend/src/stores/useWorkspaceStore.ts`
-
-The `processWorkspaceEvent` function handles `workspace_file_operation` events:
-
-**Operation Handling**:
-1. **Read/Update/Patch Operations**:
-   - Uses file index for O(1) lookup to check if file exists
-   - Highlights file and expands folders to show it
-   - Respects `should_highlight` flag
-
-2. **Delete Operations**:
-   - Removes file from file tree
-   - Rebuilds file index after removal
-
-3. **Move Operations**:
-   - Handled as separate delete (source) and update (destination) events
-
-#### Performance Optimizations
-
-- **File Index**: `Map<string, PlannerFile>` provides O(1) lookups instead of O(n) tree traversal
-- **Index Keys**: Files indexed by `filepath`, `originalFilepath`, and filename
-- **Auto-Rebuild**: Index rebuilds automatically when files change
-
----
-
-## 3. Step-Based Event Grouping
-
-### Objective
-Add mode-aware event grouping: agent sessions in chat mode, step-based grouping in workflow mode.
-
-### Implementation Details
-
-#### 1. Mode Detection
-```typescript
-import { useModeStore } from '../../stores/useModeStore';
-const { selectedModeCategory } = useModeStore();
-const isWorkflowMode = selectedModeCategory === 'workflow';
-```
-
-#### 2. Step Key Extraction
-Create `getStepKey` function similar to `getAgentSessionKey`:
-- Extract `step_id` from `step_execution_start` and `step_execution_end` events
-- Handle nested data structures
-- Return `step_session:${step_id}` or null
-
-#### 3. Step Event Grouping
-Create `findEventsBetweenStepStartEnd` memo:
-- Map step_id -> Set of event IDs between start/end
-- Only process `step_execution_start` and `step_execution_end` events
-
-#### 4. UI Integration
-Update `renderEventNode` in `EventHierarchy.tsx`:
-- For `step_execution_start` events in workflow mode:
-  - Add collapse/expand button (similar to agent sessions)
-  - Show event count when collapsed
-  - Pass `isCollapsed`, `eventCount`, `onToggleCollapse` to EventDispatcher
-
-#### 5. Auto-Collapse Logic
-For workflow mode:
-- Keep current step (most recent `step_execution_start`) expanded
-- Collapse completed steps (have `step_execution_end`)
-- Track step completion order
-- Respect manually expanded steps
-
-### Data Structure
-Step events have:
-- `step_id`: string (required identifier)
-- `step_index`: number (0-based)
-- `step_title`: string
-- `step_path`: string (e.g., "step-1" or "step-1-if-true-0")
+**Auto-Highlighting:** `should_highlight` automatically defaults to `false` for files containing "logs/" to reduce sidebar noise.

@@ -57,15 +57,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) CalculateStepHash(step PlanStepInterf
 		sb.WriteString(strings.Join(sortedDeps, ","))
 	}
 
-	// Add LearningDetailLevel to hash - changing it should reset learnings
-	// This ensures that if user switches from "general" to "exact", we restart learning to capture the new detail level
+	// Add SelectedServers and SelectedTools to hash - changing MCPs should reset learnings
+	// since the agent now has different tools available which affects what it can learn
 	agentConfigs := getAgentConfigs(step)
-	learningDetailLevel := "exact" // default
-	if agentConfigs != nil && agentConfigs.LearningDetailLevel != "" {
-		learningDetailLevel = agentConfigs.LearningDetailLevel
+	if agentConfigs != nil {
+		if len(agentConfigs.SelectedServers) > 0 {
+			sortedServers := make([]string, len(agentConfigs.SelectedServers))
+			copy(sortedServers, agentConfigs.SelectedServers)
+			sort.Strings(sortedServers)
+			sb.WriteString("|servers:")
+			sb.WriteString(strings.Join(sortedServers, ","))
+		}
+		if len(agentConfigs.SelectedTools) > 0 {
+			sortedTools := make([]string, len(agentConfigs.SelectedTools))
+			copy(sortedTools, agentConfigs.SelectedTools)
+			sort.Strings(sortedTools)
+			sb.WriteString("|tools:")
+			sb.WriteString(strings.Join(sortedTools, ","))
+		}
 	}
-	sb.WriteString("|")
-	sb.WriteString(learningDetailLevel)
 
 	// Calculate SHA256
 	hash := sha256.Sum256([]byte(sb.String()))
@@ -124,12 +134,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CheckAndResetStepHash(
 	}
 
 	// Log components used for hash calculation
-	agentConfigs := getAgentConfigs(stepToHash)
-	learningDetailLevel := "exact"
-	if agentConfigs != nil && agentConfigs.LearningDetailLevel != "" {
-		learningDetailLevel = agentConfigs.LearningDetailLevel
-	}
-
 	deps := stepToHash.GetContextDependencies()
 	sortedDeps := make([]string, len(deps))
 	copy(sortedDeps, deps)
@@ -149,7 +153,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) CheckAndResetStepHash(
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Description: '%s' (Length: %d)", desc, len(stepToHash.GetDescription())))
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Success Criteria: '%s' (Length: %d)", crit, len(stepToHash.GetSuccessCriteria())))
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Dependencies: %v", sortedDeps))
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [HASH DEBUG] Learning Detail Level: '%s'", learningDetailLevel))
 
 	// Reset counters and unlock learnings
 	return hcpo.ResetLearningMetadata(ctx, stepID, stepIndex, stepPath, currentHash, "plan_changed")

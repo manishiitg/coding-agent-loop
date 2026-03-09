@@ -21,3 +21,5 @@
 45. implement nanobana2 generate image  - PROGRESS
 
 46. update memory how it works we need to have entities - PROGRESS
+
+47. human controlled workflows... 

@@ -1,394 +1,139 @@
-# 🚀 MCP Agent - Multi-Server AI Orchestrator
+# 🚀 MCP Agent Builder - Enterprise AI Orchestrator
 
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/manishiitg/mcp-agent-builder-go)
-
-
 [![Security Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Secret%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
 [![Dependency Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Dependency%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
 [![Go Version](https://img.shields.io/badge/Go-1.24.4-blue.svg)](https://golang.org/)
 [![React](https://img.shields.io/badge/React-19.1.1-blue.svg)](https://reactjs.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-A sophisticated **Go-based MCP (Model Context Protocol) Agent** featuring a complete **3-agent orchestrator system** that combines intelligent planning, tool execution, and fact-checking validation for enterprise-grade AI workflows. Includes a modern React frontend and comprehensive security scanning.
+**MCP Agent Builder** is a next-generation visual orchestration platform for building, simulating, and deploying **multi-agent swarms**. Built on a high-performance Go backend and a React Flow canvas, it transforms raw LLM capabilities into deterministic, scalable, and secure enterprise workflows using the Model Context Protocol (MCP).
 
-## 🎯 **What is MCP Agent?**
-
-MCP Agent is a production-ready AI orchestrator that connects to **12+ MCP servers** across multiple protocols (HTTP, SSE, stdio) to provide intelligent automation across AWS, GitHub, Kubernetes, databases, monitoring tools, and more. It features both **Simple** and **ReAct** agent modes with comprehensive observability and security scanning.
-
-**Note**: The core MCP agent library (`mcpagent`) is now a separate independent package. This repository contains the server application (`agent_go`) that uses the `mcpagent` library.
-
-## 🏗️ **Workflow Orchestration**
-
-MCP Agent provides sophisticated workflow orchestration capabilities for complex AI automation:
-
-### **📚 Available Workflows**
-
-- **[Workflow Orchestrator](docs/workflow_orchestrator.md)**: Comprehensive multi-phase orchestration system with 7 isolated phases (variable extraction, planning, execution, anonymization, plan improvement, alignment, tool optimization) and 10 specialized agents. Features human-in-the-loop control, conditional branching, loop execution, learning capture, and preset LLM configuration.
-
-- **[Human Feedback Tool](docs/human_feedback_system.md)**: Interactive virtual tool that pauses LLM execution to request real-time user input via browser notifications and UI, enabling human-in-the-loop workflows for 2FA, confirmations, and critical decisions.
-
-- **[Sub-Agent Delegation](docs/sub_agent_delegation.md)**: Enable agents to spawn independent sub-agents for parallel task execution. Sub-agents inherit the same tools and can work autonomously on delegated tasks. Toggle with `/spawn` and `/nospawn` commands.
-
-**Core MCP Agent Library Features**:
-
-- **[Code Execution Mode](docs/code_execution_mode.md)**: Specialized agent for executing Go code with security sandboxing and comprehensive error handling.
-
-- **[Tool Search Mode](docs/tool_search_mode.md)**: On-demand tool discovery that reduces token usage when working with large tool catalogs. Agents use `search_tools` to find relevant tools dynamically instead of loading all tools upfront.
-
-- **Standard Tool-Use Agent**: The default agent mode where the LLM interacts with the system by invoking tools directly through the LLM provider's native tool calling capability.
-
-- **Smart Routing**: Advanced optimization that dynamically filters tools based on conversation context to reduce token usage.
-
-- **LLM Resilience**: Comprehensive system for handling API errors, rate limits, and context window exhaustion with multi-phase fallbacks.
-
-- **Large Tool Output Handling**: Automatic system for handling tool outputs that exceed context window limits by saving to files and providing specialized query tools.
-
-- **MCP Cache System**: Multi-layer caching system that reduces MCP server connection times by 60-85% through intelligent caching of tool definitions and server metadata.
-
-- **[Folder Guard System](docs/folder_guard.md)**: Fine-grained access control mechanism that restricts agent file operations to specific directories with separate read/write permissions for both simple and code execution modes.
-
-
-See the [docs/](docs/) folder for detailed documentation on each workflow and agent.
-
-## 🚀 **Quick Start**
-
-### **Prerequisites**
-- Go 1.24.4+
-- Node.js 20+
-- Docker & Docker Compose (optional)
-
-### **1. Clone the Repository**
-```bash
-git clone https://github.com/manishiitg/mcp-agent-builder-go.git
-cd mcp-agent-builder-go
-```
-
-### **2. Environment Setup**
-```bash
-# Copy environment template
-cp agent_go/env.example agent_go/.env
-
-# Edit with your API keys
-nano agent_go/.env
-```
-
-**Required Environment Variables:**
-```bash
-# OpenAI
-OPENAI_API_KEY=your_openai_key
-
-# AWS Bedrock (optional)
-AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
-
-# Langfuse (optional)
-LANGFUSE_PUBLIC_KEY=your_public_key
-LANGFUSE_SECRET_KEY=your_secret_key
-TRACING_PROVIDER=langfuse
-
-# Multi-User Mode (optional)
-MULTI_USER_MODE=true
-AUTH_PROVIDERS=simple
-AUTH_USERS=admin:password123
-AUTH_SECRET=your-secret-key
-```
-
-See [Environment Variables](docs/env-api-key-defaults.md) for all configuration options and [Multi-User Authentication](docs/multi_user_authentication.md) for authentication setup.
-
-### **3. Build and Run**
-
-#### **Option A: Docker Compose (Recommended)**
-```bash
-# Start all services
-docker-compose up -d
-
-# Access the application
-open http://localhost:5173  # Frontend
-open http://localhost:8000  # API
-```
-
-#### **Option B: Manual Build**
-```bash
-# Build Go agent
-cd agent_go
-go build -o ../bin/orchestrator .
-
-# Install frontend dependencies
-cd ../frontend
-npm install
-
-# Start services
-npm run dev &  # Frontend on :5173
-../bin/orchestrator server &  # API on :8000
-```
-
-### **4. Test the Agent**
-```bash
-# Test with AWS cost analysis
-cd agent_go
-../bin/orchestrator test agent --comprehensive-aws --provider bedrock
-
-# Test all MCP servers
-../bin/orchestrator test aws-test --config configs/mcp_server_actual.json
-```
-
-## 📖 **Usage Examples**
-
-### **Simple Agent Mode**
-```bash
-# Direct tool usage without explicit reasoning
-../bin/orchestrator agent --simple --provider bedrock --query "What's the status of my AWS EC2 instances?"
-```
-
-### **ReAct Agent Mode**
-```bash
-# Step-by-step reasoning with tool integration
-../bin/orchestrator agent --react --provider openai --query "Analyze my GitHub repository for security vulnerabilities and provide recommendations"
-```
-
-### **3-Agent Orchestrator**
-```bash
-# Complete planning → execution → validation workflow
-../bin/orchestrator orchestrator --query "Create a comprehensive security assessment of my AWS infrastructure"
-```
-
-### **Using MCP Agent Library**
-The MCP agent library (`mcpagent`) is now a separate independent package. See the [MCP Agent Library README](../mcpagent/README.md) and [examples](../mcpagent/examples/) for detailed usage examples.
-
-## 🔧 **Configuration**
-
-### **MCP Server Configuration**
-Edit `agent_go/configs/mcp_server_actual.json` to configure your MCP servers. See the [Configuration Guide](agent_go/configs/) for detailed examples.
-
-### **Agent Configuration**
-The agent supports flexible configuration through functional options. See the [MCP Agent Library README](../mcpagent/README.md) and [examples](../mcpagent/examples/) for detailed configuration options and examples.
-
-## 🧪 **Testing**
-
-### **Comprehensive Testing Suite**
-```bash
-# Test all MCP servers
-../bin/orchestrator test aws-test --config configs/mcp_server_actual.json
-
-# Test agent modes
-../bin/orchestrator test agent --simple --provider bedrock
-../bin/orchestrator test agent --react --provider openai
-
-# Test external SSE servers
-./test_external_sse.sh
-
-# Test complex AWS cost analysis
-./test_single_observer.sh
-./test_polling_api.sh
-```
-
-### **Security Testing**
-```bash
-# Run gitleaks scan
-./scripts/scan-secrets.sh
-
-# Test pre-commit hook
-git add .
-git commit -m "Test commit"
-```
-
-## 🔒 **Security Features**
-
-### **Automated Secret Scanning**
-- **Gitleaks Integration**: Pre-commit hooks prevent secret leaks
-- **GitHub Actions**: Continuous security monitoring
-- **Custom Rules**: Project-specific secret detection patterns
-- **False Positive Handling**: Optimized for Go and Node.js projects
-
-### **Dependency Security**
-- **NPM Audit**: Frontend dependency vulnerability scanning
-- **Go Vulnerability Check**: Backend dependency scanning
-- **Dependabot**: Automated security updates
-- **SARIF Reporting**: GitHub Security tab integration
-
-### **Security Policies**
-- **Responsible Disclosure**: Clear security reporting process
-- **Issue Templates**: Structured security vulnerability reporting
-- **Pull Request Templates**: Security checklist integration
-
-## 📊 **Monitoring & Observability**
-
-### **Langfuse Integration**
-- **Complete Tracing**: All agent activities traced
-- **Token Usage**: Accurate cost monitoring
-- **Performance Metrics**: Real-time performance monitoring
-- **Dashboard Access**: https://us.cloud.langfuse.com
-
-### **Event Architecture**
-- **System Events**: `system_prompt`, `user_message`
-- **LLM Events**: `llm_generation_start`, `llm_generation_end`, `token_usage`
-- **Tool Events**: `tool_call_start`, `tool_call_end`, `tool_call_error`
-- **Completion Events**: `conversation_end`, `agent_end`
-
-## 🐳 Docker Support
-
-### Full Stack Deployment
-```bash
-# Start all services
-docker-compose up -d
-
-# Services included:
-# - Frontend (React): http://localhost:5173
-# - API (Go): http://localhost:8000
-# - Planner API: http://localhost:8081
-# - Qdrant Vector DB: http://localhost:6333
-```
-
-### Individual Services
-```bash
-# Build Go agent
-docker build -t mcp-agent ./agent_go
-
-# Build frontend
-docker build -t mcp-frontend ./frontend
-
-# Build planner
-docker build -t mcp-planner ./planner
-```
-
-## ☁️ Cloud Deployment (Azure)
-
-The project includes a robust, production-ready deployment stack for **Microsoft Azure** using **Terraform** and **Virtual Machines (VMs)**.
-
-This architecture is chosen to support advanced filesystem isolation features (using Linux namespaces/`unshare`) that are not available in standard serverless container environments.
-
-### **Infrastructure Architecture**
-- **Compute**: Azure Virtual Machine (Standard_D2s_v3 or similar) running Ubuntu Linux.
-- **Orchestration**: Docker Compose manages the application stack (Agent, Workspace API, Frontend).
-- **Networking**: **Caddy Reverse Proxy** handles automatic HTTPS (Let's Encrypt), domain routing, and secure exposure of services.
-- **Storage**: Local high-performance SSDs for workspace data, ensuring full compatibility with file locking and permission guards.
-- **Database**: Supports managed **Azure Database for PostgreSQL** or local SQLite.
-
-### **Deployment Workflow**
-A unified deployment script (`deploy/azure/deploy_vm.sh`) handles the entire lifecycle:
-1.  **Builds** optimized Docker images locally or via Azure Container Registry (ACR).
-2.  **Pushes** images to your private ACR.
-3.  **Configures** the remote VM with the latest `docker-compose.yml` and Caddy configuration.
-4.  **Deploys** the new version with zero-touch restart.
-
-### **How to Deploy**
-
-**1. Provision Infrastructure (One-time setup)**
-Use Terraform to create the VM, Network, and Public IP.
-```bash
-cd deploy/azure/terraform
-terraform init
-terraform apply -var="ssh_public_key=$(cat ~/.ssh/id_rsa.pub)"
-# Note the output 'public_ip_address'
-```
-
-**2. Deploy Application**
-Run the deployment script with your VM's IP address (or DNS name).
-```bash
-cd deploy/azure
-./deploy_vm.sh <VM_IP_ADDRESS> all
-```
-
-**3. Access Application**
-- **Frontend**: `https://<VM_DNS_NAME>` (Automatic HTTPS)
-- **Agent API**: `https://<VM_DNS_NAME>/api/health`
-- **Workspace API**: `https://<VM_DNS_NAME>/workspace/health`
-
-See the **[Azure Deployment Guide](deploy/azure/README.md)** for detailed setup instructions, including secret management and DNS configuration.
-
-## 📁 Project Structure
-
-
-```
-mcp-agent-builder-go/
-├── agent_go/                 # Go-based MCP Agent Server
-│   ├── pkg/
-│   │   ├── orchestrator/    # Workflow orchestrator system
-│   │   └── database/        # Database layer
-│   ├── cmd/                 # CLI commands and server
-│   ├── configs/             # MCP server configurations
-│   └── internal/            # Internal packages
-├── mcpagent/                 # MCP Agent Library (separate package)
-│   ├── agent/               # Core agent implementation
-│   ├── mcpclient/           # MCP client layer
-│   ├── examples/            # Usage examples
-│   └── docs/                # Library documentation
-├── frontend/                 # React frontend
-│   ├── src/                 # React components
-│   └── public/              # Static assets
-├── scripts/                  # Utility scripts
-├── .github/workflows/        # GitHub Actions
-└── docker-compose.yml       # Docker services
-```
-
-## 📚 **Architecture & Implementation Details**
-
-Key architectural documentation and implementation plans:
-
-### **Authentication & Security**
-- **[Multi-User Authentication](docs/multi_user_authentication.md)**: Multi-provider authentication system (Simple, Cognito, Supabase) with JWT tokens and per-user workspace isolation
-- **[MCP Server OAuth](docs/oauth.md)**: OAuth 2.0 authentication for MCP servers with auto-discovery, PKCE, and automatic cache invalidation
-
-### **Workflow Engine**
-- **[Learnings Architecture](docs/learnings_architecture.md)**: Details the "Explore vs. Exploit" learning system and turn-count based auto-locking.
-- **[Conditional Agent Logic](docs/conditional_agent_implementation.md)**: Explains how the conditional agent evaluates branching decisions.
-- **[Routing Step Implementation](docs/routing_step_implementation.md)**: Details on how the orchestrator handles path routing and decision branches.
-- **[Prerequisite Failure Handling](docs/prerequisite_failure_implementation.md)**: Architecture for detecting missing dependencies and navigating back to previous steps.
-- **[Step Config Specification](docs/step_config_format_specification.md)**: Detailed specification for the `step_config.json` format.
-- **[Variable Groups Plan](docs/variable_groups_implementation_plan.md)**: Plan for handling batch execution and variable group isolation.
-
-### **Frontend & API**
-- **[Frontend Chat Architecture](docs/multi_tab_chat_architecture.md)**: Overview of the multi-tab chat system and frontend data flow.
-- **[Sub-Agent Delegation](docs/sub_agent_delegation.md)**: Architecture for spawning sub-agents to handle delegated tasks in parallel.
-- **[Workflow Canvas Implementation](docs/react_flow_workflow_canvas.md)**: Implementation details for the React Flow-based workflow visualization.
-- **[Frontend API & Data Model](docs/frontend_api_structure_data_model.md)**: The contract between the Go backend and React frontend.
-- **[Event System Structure](docs/event_type_discriminated_union.md)**: Technical detail on the event system's data structure for the frontend.
-
-### **Advanced Logic**
-- **[Temp LLM Cascading Flow](docs/temp_llm_cascading_flow.md)**: Detailed logic for the LLM fallback system (tempLLM1 → tempLLM2 → Base LLM).
-- **[Validation Schema Implementation](docs/validation_schema_implementation.md)**: How structured output and validation schemas are enforced.
-- **[Evaluation Phase Plan](docs/evaluation_phase_implementation_plan.md)**: Plan for the evaluation phase implementation.
-
-## 🤝 **Contributing**
-
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
-
-### **Development Setup**
-```bash
-# Install pre-commit hooks
-./scripts/install-git-hooks.sh
-
-# Run tests
-cd agent_go && go test ./...
-cd frontend && npm test
-
-# Run security scan
-./scripts/scan-secrets.sh
-```
-
-### **Security Reporting**
-If you discover a security vulnerability, please report it responsibly:
-1. **Public Issues**: Use the [Security Vulnerability Template](.github/ISSUE_TEMPLATE/security-vulnerability.md)
-2. **Private Reporting**: See [SECURITY.md](SECURITY.md) for private reporting methods
-
-## 📄 **License**
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 **Acknowledgments**
-
-- **MCP Protocol**: Built on the [Model Context Protocol](https://modelcontextprotocol.io/)
-- **LangChain Go**: Powered by [LangChain Go](https://github.com/tmc/langchaingo)
-- **React**: Modern frontend with [React 19](https://reactjs.org/)
-- **Gitleaks**: Security scanning with [Gitleaks](https://github.com/gitleaks/gitleaks)
-
-## 📞 **Support**
-
-- **Issues**: [GitHub Issues](https://github.com/manishiitg/mcp-agent-builder-go/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/manishiitg/mcp-agent-builder-go/discussions)
-- **Security**: [SECURITY.md](SECURITY.md)
+Stop wrestling with fragile chat scripts. Start visually engineering **self-optimizing cognitive architectures**.
 
 ---
 
-**Made with ❤️ for the AI community**
+## ⚡ The Platform: Visual Agentic Programming
+
+At the core of MCP Agent Builder is the **[Workflow Orchestrator](docs/workflow_orchestrator.md)**—a directed acyclic graph (DAG) engine managed entirely through a rich **[React Flow Canvas](docs/react_flow_workflow_canvas.md)**. 
+
+Design complex business processes visually. The orchestrator drives a 7-phase execution pipeline (Extraction, Planning, Execution, Anonymization, Improvement, Alignment, Optimization) powered by 13 specialized node types.
+
+### 🧠 Self-Optimizing Cognitive Architecture
+Move beyond static prompts. Our platform features an **"Explore vs. Exploit" Learning Engine**. 
+- **[Validation & Learning](docs/learnings_and_validation_architecture.md):** As your agents execute workflows, the system tracks trajectory success rates. Once a pattern stabilizes, the orchestrator automatically locks the step and cascades to faster, more cost-effective LLMs.
+- **[Swarm Delegation](docs/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
+- **[Task Orchestration](docs/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
+
+### 🛡️ Enterprise-Grade Security & Guardrails
+Deploy with confidence using deterministic controls designed for strict compliance environments.
+- **[Zero-Trust Workspace (FolderGuard)](docs/multi_user_authentication.md):** Strict per-user filesystem isolation utilizing Linux namespaces. Agents operate in sandboxed environments, preventing cross-tenant data contamination.
+- **[Restricted Configuration Mode](docs/env-api-key-defaults.md):** Lock down the entire UI. Force the engine to route through environment-injected API keys (`LLM_CONFIG_LOCKED`), guaranteeing secrets never touch the browser.
+- **[Secure MCP OAuth](docs/oauth.md):** Seamless, auto-discovering OAuth 2.0 flows for connecting enterprise MCP servers safely.
+
+### 👁️ Omni-Channel Automation & Browser Stealth
+Interact with the real world, safely and reliably.
+- **[Camoufox Stealth Integration](docs/camoufox_stealth_browser.md):** Native integration with Camoufox, providing agents with anti-detect browser automation capable of bypassing the most aggressive enterprise bot-protections.
+- **[Local CDP Bridging](docs/cdp_local_browser.md):** Connect cloud agents directly to your local Chrome instance via CDP for real-time monitoring and session hijacking.
+- **[Bot Connectors](docs/bot_connector_system.md):** Expose your specialized agent swarms directly to Slack, Discord, or custom webhooks.
+
+### 🤝 Human-AI Symbiosis
+Keep humans in the loop for critical decision-making.
+- **[Interactive Feedback System](docs/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via browser notifications or delayed Slack alerts before taking destructive actions.
+
+### 🧩 Supported Cognitive Engines (LLM Providers)
+
+MCP Agent Builder is provider-agnostic, allowing you to switch between the world's most powerful models or use them in combination across different workflow steps:
+
+*   **OpenAI**: GPT-4o, GPT-4-turbo, and the O1 series.
+*   **Anthropic**: Full support for the Claude 3.5 & 4 series (Sonnet, Opus, Haiku).
+*   **Google Gemini**: Integration via Vertex AI or Google AI Studio (Flash, Pro, Ultra).
+*   **AWS Bedrock**: Enterprise-grade access to Llama, Claude, and Mistral models.
+*   **Azure AI Foundry**: Optimized support for Azure OpenAI, including specialized **Responses API** routing for agentic models like `gpt-5.2-codex`.
+*   **MiniMax**: Support for high-performance MiniMax models.
+*   **OpenRouter**: Unified access to 200+ open-source and frontier models with a single API key.
+
+#### 🛠️ Local CLI Agents (Coding Plans)
+Seamlessly bridge your existing CLI-based coding agents into the visual orchestrator:
+*   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI.
+*   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
+*   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.
+
+---
+
+## 🚀 Quick Start (Local Development)
+
+### 1. Initialize Workspace
+```bash
+git clone https://github.com/manishiitg/mcp-agent-builder-go.git
+cd mcp-agent-builder-go
+cp agent_go/env.example agent_go/.env
+```
+
+### 2. Configure Cognitive Engines (`agent_go/.env`)
+```bash
+# Power your swarms (Configure at least one)
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key
+
+# Optional: Enable Enterprise Lockdown Mode
+LLM_CONFIG_LOCKED=true
+SUPPORTED_LLM_PROVIDERS=openai,anthropic
+```
+
+### 3. Ignite the Platform
+```bash
+# Spin up the Visual Canvas, Execution API, Planner, and Vector DB
+docker-compose up -d
+
+# Open the command center
+open http://localhost:5173
+```
+
+---
+
+## ☁️ Production Deployment Topologies
+
+Deploy your agentic infrastructure where it makes sense for your security posture.
+
+### **1. Azure Virtual Machine (Maximum Security Isolation)**
+The recommended topology for enterprise deployments. Leverages Azure VMs to utilize deep Linux kernel features (namespaces, `unshare`) for absolute filesystem isolation between agent runs.
+```bash
+cd deploy/azure/terraform
+terraform init && terraform apply
+cd .. && ./deploy_vm.sh <VM_IP_ADDRESS> all
+```
+> **[Read the Azure VM Deployment Blueprint](deploy/azure/README.md)**
+
+### **2. Kubernetes (High-Availability Swarms)**
+Designed for massive scale and resilience using standard Helm-like manifests.
+```bash
+./deploy/k8s/scripts/deploy-k8s.sh --build
+```
+> **[Read the Kubernetes Deployment Blueprint](deploy/k8s/README.md)**
+
+---
+
+## 🤝 Join the Revolution
+
+We are building the future of deterministic AI orchestration. Contributions are highly encouraged!
+
+```bash
+# Setup development guardrails
+./scripts/install-git-hooks.sh
+
+# Run the Go orchestration test suite
+cd agent_go && go test ./...
+
+# Audit for secrets
+./scripts/scan-secrets.sh
+```
+
+## 📄 License & Architecture Foundations
+
+Licensed under the MIT License - see the [LICENSE](LICENSE) file.
+
+**Built Upon:**
+- **[Model Context Protocol (MCP)](https://modelcontextprotocol.io/):** The universal standard for AI tool integration.
+- **[LangChain Go](https://github.com/tmc/langchaingo):** High-performance LLM routing.
+- **[React Flow](https://reactflow.dev/):** The industry standard for node-based visual editing.

@@ -18,7 +18,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getStepsProgressPath() (string, error
 		return "", fmt.Errorf(fmt.Sprintf("selectedRunFolder not set - run folder must be resolved before accessing steps_done.json"), nil)
 	}
 	// Return relative path - ReadWorkspaceFile/WriteWorkspaceFile will prepend workspacePath
-	return fmt.Sprintf("runs/%s/steps_done.json", hcpo.selectedRunFolder), nil
+	return fmt.Sprintf("runs/%s/execution/steps_done.json", hcpo.selectedRunFolder), nil
 }
 
 // loadStepProgress loads progress from steps_done.json

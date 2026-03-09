@@ -101,6 +101,11 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 
 ---
 
+{{if .AvailableCapabilities}}
+{{.AvailableCapabilities}}
+---
+
+{{end}}
 {{if .VariableNames}}
 ## 🔑 VARIABLES
 {{.VariableNames}}
@@ -377,7 +382,7 @@ type AgentConfigs struct {
 	DisableLearning             *bool              `json:"disable_learning,omitempty"`               // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration  bool               `json:"learning_after_loop_iteration,omitempty"`  // run learning after each loop iteration
-	LearningDetailLevel         string             `json:"learning_detail_level,omitempty"`          // "exact", "general", or "none" (default: "exact")
+	LearningDetailLevel         string             `json:"learning_detail_level,omitempty"`          // "exact" or "none" (default: "exact")
 	SelectedServers             []string           `json:"selected_servers,omitempty"`               // step-level MCP server selection (subset of preset servers)
 	SelectedTools               []string           `json:"selected_tools,omitempty"`                 // step-level tool selection (format: "server:tool" or "server:*" for all tools)
 	EnabledCustomToolCategories []string           `json:"enabled_custom_tool_categories,omitempty"` // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
@@ -3255,12 +3260,11 @@ func getUpdateSuccessCriteriaSchema() string {
 	}`
 }
 
-// readPlanFromFile reads plan.json from the workspace using BaseOrchestrator's ReadWorkspaceFile
-// NOTE: workspacePath parameter is kept for API compatibility but NOT used in path construction
-// ReadWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
+// readPlanFromFile reads plan.json from the workspace.
+// Uses normalizePathForWorkspaceAPI to build the full path, so the readFile function
+// does not need to auto-prepend the workspace path (works with both orchestrator and chat-mode readers).
 func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(context.Context, string) (string, error)) (*PlanningResponse, error) {
-	// Use relative path only - ReadWorkspaceFile auto-prepends workspacePath
-	planPath := filepath.Join("planning", "plan.json")
+	planPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "plan.json"), workspacePath)
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
@@ -3278,13 +3282,11 @@ func readPlanFromFile(ctx context.Context, workspacePath string, readFile func(c
 	return &plan, nil
 }
 
-// writePlanToFile writes PlanningResponse to plan.json in the workspace using BaseOrchestrator's WriteWorkspaceFile
-// Validates that all steps have IDs before saving (planning agent should always generate them)
-// NOTE: workspacePath parameter is kept for API compatibility but NOT used in path construction
-// WriteWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
+// writePlanToFile writes PlanningResponse to plan.json in the workspace.
+// Validates that all steps have IDs before saving (planning agent should always generate them).
+// Uses normalizePathForWorkspaceAPI to build the full path.
 func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningResponse, _ func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, logger loggerv2.Logger) error {
-	// Use relative path only - WriteWorkspaceFile auto-prepends workspacePath
-	planPath := filepath.Join("planning", "plan.json")
+	planPath := normalizePathForWorkspaceAPI(filepath.Join("planning", "plan.json"), workspacePath)
 
 	planFileMutex.Lock()
 	defer planFileMutex.Unlock()
@@ -7758,6 +7760,7 @@ func planningSystemPromptProcessorForUpdate(templateVars map[string]string) stri
 		"VariableNames":          templateVars["VariableNames"],
 		"IsCodeExecutionMode":    templateVars["IsCodeExecutionMode"] == "true",
 		"UseKnowledgebase":       templateVars["UseKnowledgebase"],
+		"AvailableCapabilities":  templateVars["AvailableCapabilities"],
 		"CurrentDate":            now.Format("2006-01-02"),
 		"CurrentTime":            now.Format("15:04:05"),
 	}

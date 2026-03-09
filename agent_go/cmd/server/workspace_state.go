@@ -177,7 +177,7 @@ func (api *StreamingAPI) loadVariablesManifestInternal(ctx context.Context, work
 // loadProgressInternal loads progress for a specific folder (extracted from handleGetProgress)
 func (api *StreamingAPI) loadProgressInternal(ctx context.Context, workspacePath, folderName string) (*StepProgress, error) {
 	// Use the same file and helper function as the folder loading logic
-	stepsFilePath := workspacePath + "/runs/" + folderName + "/steps_done.json"
+	stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
 	fmt.Printf("[DEBUG] loadProgressInternal: workspacePath=%s, folderName=%s, stepsFilePath=%s\n", workspacePath, folderName, stepsFilePath)
 	progress, err := readProgressForFolder(ctx, stepsFilePath)
 	if err != nil {
@@ -291,7 +291,7 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 	// Load progress for all iterations/groups
 	// This ensures progress is shown for all folders in the dropdown
 	for i := range folderInfos {
-		stepsFilePath := workspacePath + "/runs/" + folderInfos[i].Name + "/steps_done.json"
+		stepsFilePath := workspacePath + "/runs/" + folderInfos[i].Name + "/execution/steps_done.json"
 		if progress, err := readProgressForFolder(ctx, stepsFilePath); err == nil && progress != nil {
 			folderInfos[i].Progress = progress
 		}

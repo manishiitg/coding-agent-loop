@@ -49,7 +49,7 @@ type StepBasedWorkflowOrchestrator struct {
 	isEvaluationMode bool // Whether we're running evaluation steps
 
 	// Learning detail level preference (set once before execution, used for all learning phases)
-	learningDetailLevel string // "exact" or "general"
+	learningDetailLevel string // always "exact"
 
 	// Approved plan storage
 	approvedPlan *PlanningResponse // Store approved plan

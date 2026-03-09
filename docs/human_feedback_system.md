@@ -487,6 +487,6 @@ type HumanFeedbackStore struct {
 ## 📖 Related Documentation
 
 - [Workflow Orchestrator](workflow_orchestrator.md) - Uses human feedback for approvals
-- [Todo Creation Human Workflow](todo_creation_human_workflow.md) - Uses human feedback for plan approval and variable confirmation
+- [Todo Creation Human Workflow](step_based_workflow.md) - Uses human feedback for plan approval and variable confirmation
 - [Virtual Tools]() - Overview of all virtual tools
 - [Event System]() - How events coordinate frontend/backend

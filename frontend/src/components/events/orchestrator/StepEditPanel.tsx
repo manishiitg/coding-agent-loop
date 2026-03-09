@@ -815,9 +815,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }
     if (valLLM && agentConfigs.disable_validation === false) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
-      const detailLevel = agentConfigs.learning_detail_level || 'exact';
-      const detailLabel = detailLevel === 'exact' ? 'Exact' : 'General';
-      parts.push(`Learn: ${learnLLM.label} (${detailLabel})`);
+      parts.push(`Learn: ${learnLLM.label} (Exact)`);
     }
     if (agentConfigs.disable_validation !== false) parts.push('Val: Disabled');
     if (agentConfigs.disable_learning) parts.push('Learn: Disabled');
@@ -1483,36 +1481,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                         openDirection="down"
                       />
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <label className="text-xs text-gray-600 dark:text-gray-400 whitespace-nowrap">Detail Level:</label>
-                    {(() => {
-                      const effectiveCodeExecMode = agentConfigs.use_code_execution_mode !== undefined 
-                        ? agentConfigs.use_code_execution_mode 
-                        : presetUseCodeExecutionMode;
-                      const isDisabled = effectiveCodeExecMode;
-                      
-                      return (
-                        <select
-                          value={agentConfigs.learning_detail_level || 'exact'}
-                          onChange={(e) => {
-                            if (!isDisabled) {
-                              const value = e.target.value as 'exact' | 'general';
-                              setAgentConfigs((prev): AgentConfigs => ({
-                                ...prev,
-                                learning_detail_level: value,
-                              }));
-                            }
-                          }}
-                          disabled={isDisabled}
-                          title={isDisabled ? "Learning detail level is automatically set to 'exact' in Code Exec mode" : undefined}
-                          className="px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          <option value="general">General Patterns</option>
-                          <option value="exact">Exact MCP Tools</option>
-                        </select>
-                      );
-                    })()}
                   </div>
                   <div className="flex items-center gap-2 pt-1">
                     <label className="flex items-center gap-1.5 cursor-pointer">

@@ -1816,27 +1816,70 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 				}
 
-				// LLM validation is always disabled — validation agent is dead code.
-				// Only pre-validation (code-based structural checks via RunPreValidation) is active
-				// and runs separately in controller_todo_task.go and controller_orchestration.go.
-				// Learning still runs.
+				// Run pre-validation (code-based structural checks) -- always active, independent of LLM validation.
 				agentConfigs = getAgentConfigs(step)
+				preValidationSchema := getValidationSchema(step)
+				preValidationResults, preValidationErr := RunPreValidation(ctx, preValidationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
+				if preValidationErr != nil {
+					hcpo.GetLogger().Warn(fmt.Sprintf("Pre-validation error for step %d: %v", stepIndex+1, preValidationErr))
+					preValidationResults = &WorkspaceVerificationResult{
+						OverallPass:  false,
+						FilesChecked: []FileCheckResult{},
+						Summary: ValidationSummary{
+							TotalChecks:  0,
+							PassedChecks: 0,
+							FailedChecks: 1,
+							SchemaErrors: 0,
+							Errors: []ValidationError{{
+								File:      "",
+								Path:      "",
+								CheckType: "pre_validation_error",
+								Expected:  "pre-validation to run successfully",
+								Actual:    "error occurred",
+								Message:   fmt.Sprintf("Pre-validation failed to run: %v", preValidationErr),
+							}},
+							SchemaWarnings: []ValidationError{},
+						},
+					}
+				} else if preValidationSchema == nil || len(preValidationSchema.Files) == 0 {
+					hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation skipped for step %d (no validation schema)", stepIndex+1))
+				}
+				hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isBranchStep, preValidationResults)
+
+				// LLM validation is always disabled -- validation agent is dead code. Learning still runs.
 				enableLLMValidation := false
 				if !enableLLMValidation {
-					hcpo.GetLogger().Info(fmt.Sprintf("⏭️ LLM validation disabled for step %d - auto-approving (pre-validation and learning will still run)", stepIndex+1))
-					// Auto-approve: create a success validation response
-					// NOTE: LLM validation being disabled does NOT prevent pre-validation or learning from running
-					validationResponse = &ValidationResponse{
-						IsSuccessCriteriaMet: true,
-						ExecutionStatus:      "COMPLETED",
-						Reasoning:            "LLM validation disabled - step auto-approved",
-					}
-					if hasLoop(step) {
-						// For loop steps, mark condition as met when LLM validation is disabled
-						validationResponse.LoopConditionMet = true
-						loopConditionMet = true
+					if !preValidationResults.OverallPass {
+						hcpo.GetLogger().Warn(fmt.Sprintf("Pre-validation failed for step %d - rejecting", stepIndex+1))
+						validationResponse = &ValidationResponse{
+							IsSuccessCriteriaMet: false,
+							ExecutionStatus:      "FAILED",
+							Reasoning:            formatWorkspaceResults(preValidationResults) + "\n\nPre-validation failed - structural issues must be fixed before the step can complete.",
+							Feedback: []ValidationFeedback{{
+								Type:        "structural_validation",
+								Description: "Pre-validation failed - output structure does not meet requirements",
+								Severity:    "HIGH",
+							}},
+						}
+						if hasLoop(step) {
+							validationResponse.LoopConditionMet = false
+							validationResponse.LoopReasoning = "Loop condition cannot be evaluated due to pre-validation failure"
+						}
+					} else {
+						hcpo.GetLogger().Info(fmt.Sprintf("LLM validation disabled for step %d - auto-approving", stepIndex+1))
+						validationResponse = &ValidationResponse{
+							IsSuccessCriteriaMet: true,
+							ExecutionStatus:      "COMPLETED",
+							Reasoning:            "LLM validation disabled - step auto-approved",
+						}
+						if hasLoop(step) {
+							validationResponse.LoopConditionMet = true
+							loopConditionMet = true
+						}
 					}
 				} else {
+					// DEAD CODE: LLM validation is always disabled (enableLLMValidation is hardcoded false).
+					// Pre-validation (RunPreValidation) is active and runs above, before this block.
 					// Always validate step execution
 					hcpo.GetLogger().Info(fmt.Sprintf("🔍 Validating step %d execution (attempt %d)", stepIndex+1, retryAttempt))
 
@@ -2614,10 +2657,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 				} else {
-					// Ensure validationResponse exists - validation is always disabled, assume success
+					// Pre-validation result drives validationResponse (set above).
+					// Safety guard: if somehow nil, default to success so learning can run.
 					if validationResponse == nil {
-						// LLM validation is disabled but response is nil - create success response for learning
-						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ LLM validation disabled for step %d - creating success response for learning", stepIndex+1))
+						hcpo.GetLogger().Info(fmt.Sprintf("Pre-validation result missing for step %d - defaulting to success for learning", stepIndex+1))
 						validationResponse = &ValidationResponse{
 							IsSuccessCriteriaMet: true,
 							ExecutionStatus:      "COMPLETED",
@@ -2625,8 +2668,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 
-					// Run appropriate learning phase based on validation result
-					// If validation is disabled, we assume IsSuccessCriteriaMet = true
+					// Run appropriate learning phase based on pre-validation result.
+					// Pre-validation failure sets IsSuccessCriteriaMet=false, triggering failure learning.
 					if validationResponse != nil && validationResponse.IsSuccessCriteriaMet {
 						// Success Learning Agent - analyze what worked well and update plan.json
 						learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)

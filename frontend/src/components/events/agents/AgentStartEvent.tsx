@@ -7,6 +7,20 @@ interface AgentStartEventProps {
   event: AgentStartEvent
 }
 
+const MINIMAX_CODING_PLAN_NAMES: Record<string, string> = {
+  'claude-opus-4-6': 'Claude Opus 4.6 (MiniMax)',
+  'claude-sonnet-4-5': 'Claude Sonnet 4.5 (MiniMax)',
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5 (MiniMax)',
+}
+
+function getModelDisplayName(modelId?: string, provider?: string): string {
+  if (!modelId) return 'Unknown'
+  if (provider === 'minimax-coding-plan') {
+    return MINIMAX_CODING_PLAN_NAMES[modelId] ?? modelId
+  }
+  return modelId
+}
+
 export function AgentStartEventComponent({ event }: AgentStartEventProps) {
   const { isExpanded, toggle } = useExpandable()
   const [isMetaExpanded, setIsMetaExpanded] = useState(false)
@@ -30,7 +44,7 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
                 <span className="text-xs font-normal text-blue-600 dark:text-blue-400">
                   {event.use_code_execution_mode && ' | Code Exec'}
                   {event.use_tool_search_mode && ' | Tool Search'}
-                  {' | Model: '}{event.model_id || 'Unknown'}
+                  {' | Model: '}{getModelDisplayName(event.model_id, event.provider)}
                   {' | Provider: '}{event.provider || 'Unknown'}
                   {(event.metadata?.max_turns !== undefined) &&
                     ` | Max Turns: ${event.metadata.max_turns as number}`}
@@ -78,7 +92,7 @@ export function AgentStartEventComponent({ event }: AgentStartEventProps) {
               <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Model Details:</div>
               <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
                 {event.model_id && (
-                  <div>Model: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">{event.model_id}</code></div>
+                  <div>Model: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">{getModelDisplayName(event.model_id, event.provider)}</code></div>
                 )}
                 {event.provider && (
                   <div>Provider: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">{event.provider}</code></div>

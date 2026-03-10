@@ -330,11 +330,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
         provider: presetLLMConfig.provider,
         model_id: presetLLMConfig.model_id
       } : undefined);
-    } else if (agentType === 'validation') {
-      config = presetLLMConfig.validation_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
-        provider: presetLLMConfig.provider,
-        model_id: presetLLMConfig.model_id
-      } : undefined);
     } else if (agentType === 'learning') {
       config = presetLLMConfig.learning_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider,
@@ -573,14 +568,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     }));
   };
 
-  // Update validation LLM
-  const handleValidationLLMSelect = (llm: LLMOption) => {
-    setAgentConfigs((prev) => ({
-      ...prev,
-      validation_llm: optionToLLMConfig(llm),
-    }));
-  };
-
   // Update learning LLM
   const handleLearningLLMSelect = (llm: LLMOption) => {
     setAgentConfigs((prev) => ({
@@ -798,7 +785,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   const getAgentConfigSummary = () => {
     // Priority: step config > preset default > global default
     const execLLM = llmConfigToOption(agentConfigs.execution_llm) || getPresetDefaultLLM('execution') || getCurrentLLMOption();
-    const valLLM = llmConfigToOption(agentConfigs.validation_llm) || getPresetDefaultLLM('validation') || getCurrentLLMOption();
     const learnLLM = llmConfigToOption(agentConfigs.learning_llm) || getPresetDefaultLLM('learning') || getCurrentLLMOption();
     
     // Get effective code execution mode (step config > preset default)
@@ -813,7 +799,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       if (agentConfigs.use_tool_search_mode) codeExecLabel = 'Tool Search';
       parts.push(`Exec: ${execLLM.label} (${codeExecLabel})`);
     }
-    if (valLLM && agentConfigs.disable_validation === false) parts.push(`Val: ${valLLM.label}`);
     if (learnLLM && !agentConfigs.disable_learning) {
       parts.push(`Learn: ${learnLLM.label} (Exact)`);
     }

@@ -39,6 +39,7 @@ export interface AgentConfigs {
   orchestrator_llm?: AgentLLMConfig;          // Direct LLM override for orchestrator (works in both tiered and manual modes)
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
+  disable_tier_optimization?: boolean;        // If true, always use Tier 1 (high reasoning) regardless of learning maturity
 }
 
 // PrerequisiteRule represents a single prerequisite rule with one step dependency and one description

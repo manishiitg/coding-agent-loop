@@ -4,6 +4,20 @@ import { ConversationMarkdownRenderer } from '../../ui/MarkdownRenderer';
 import { useExpandable } from '../useExpandable';
 import { Plus, Minus } from 'lucide-react';
 
+const MINIMAX_CODING_PLAN_NAMES: Record<string, string> = {
+  'claude-opus-4-6': 'Claude Opus 4.6 (MiniMax)',
+  'claude-sonnet-4-5': 'Claude Sonnet 4.5 (MiniMax)',
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5 (MiniMax)',
+}
+
+function getModelDisplayName(modelId?: string, provider?: string): string {
+  if (!modelId) return 'Unknown'
+  if (provider === 'minimax-coding-plan') {
+    return MINIMAX_CODING_PLAN_NAMES[modelId] ?? modelId
+  }
+  return modelId
+}
+
 interface OrchestratorAgentStartEventDisplayProps {
   event: OrchestratorAgentStartEvent;
   isCollapsed?: boolean;
@@ -129,7 +143,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
                   {event.use_code_execution_mode && ' | Code Exec'}
                   {event.use_tool_search_mode && ' | Tool Search'}
-                  {' '}| Model: {event.model_id} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
+                  {' '}| Model: {getModelDisplayName(event.model_id, event.provider)} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                 </span>
                 {isCollapsed && eventCount !== undefined && (

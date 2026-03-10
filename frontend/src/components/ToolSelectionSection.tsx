@@ -1,7 +1,9 @@
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Checkbox } from './ui/checkbox';
 import { Check, Loader2 } from 'lucide-react';
 import { useToolSelectionStore } from '../stores/useToolSelectionStore';
+import { useMCPStore } from '../stores';
+import { agentApi } from '../services/api';
 
 interface ToolSelectionSectionProps {
   availableServers: string[];
@@ -44,6 +46,48 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
     getInstanceState: useToolSelectionStore.getState().getInstanceState,
   }), []);
   
+  // Get MCP server connection status
+  const mcpToolList = useMCPStore((state) => state.toolList);
+  const serverStatusMap = useMemo(() => {
+    const map: Record<string, 'ok' | 'error' | 'loading' | 'unknown'> = {};
+    mcpToolList.forEach(tool => {
+      if (tool.server) {
+        const current = map[tool.server];
+        const toolStatus = (tool.status as string) || 'unknown';
+        // ok wins over error wins over loading wins over unknown
+        if (!current || (toolStatus === 'ok') || (current !== 'ok' && toolStatus === 'error')) {
+          map[tool.server] = toolStatus as 'ok' | 'error' | 'loading' | 'unknown';
+        }
+      }
+    });
+    return map;
+  }, [mcpToolList]);
+
+  // Camofox browser connection status (mirrors chat input behaviour)
+  const [camofoxConnected, setCamofoxConnected] = useState<boolean | null>(null)
+  const [camofoxStarting, setCamofoxStarting] = useState(false)
+  const camofoxCheckRef = useRef(false)
+  const hasCamofox = availableServers.includes('camofox')
+
+  useEffect(() => {
+    if (!hasCamofox || camofoxCheckRef.current) return
+    camofoxCheckRef.current = true
+    let cancelled = false
+    const check = async () => {
+      setCamofoxStarting(true)
+      try {
+        const result = await agentApi.startCamofox(true)
+        if (!cancelled) setCamofoxConnected(result.connected)
+      } catch {
+        if (!cancelled) setCamofoxConnected(false)
+      } finally {
+        if (!cancelled) setCamofoxStarting(false)
+      }
+    }
+    const t = setTimeout(check, 300)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [hasCamofox])
+
   // Use fallback instance to avoid null checks everywhere
   // Create a stable default instance that won't change
   const defaultInstance = useMemo(() => ({
@@ -303,7 +347,8 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
           return (
             <div key={serverName} className="border-b border-gray-200 dark:border-gray-700 last:border-b-0">
               {/* Server Row */}
-              <div className="flex items-center p-3 hover:bg-gray-100 dark:hover:bg-gray-700">
+              <div className="flex flex-col p-3 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <div className="flex items-center">
                 <Checkbox
                   id={`server-${serverName}`}
                   checked={isServerSelected}
@@ -312,7 +357,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                 
                 <label
                   htmlFor={`server-${serverName}`}
-                  className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer flex-1 select-none"
+                  className="ml-2 text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer flex-1 select-none flex items-center gap-1.5"
                   onClick={(e) => {
                     // Only expand if server is selected and not already expanded
                     if (isServerSelected && !isExpanded) {
@@ -321,13 +366,45 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                     }
                   }}
                 >
+                  {/* Connection status dot */}
+                  {(() => {
+                    const st = serverStatusMap[serverName];
+                    if (st === 'ok') return <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" title="Connected" />;
+                    if (st === 'error') return <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" title="Error" />;
+                    if (st === 'loading') return <span className="w-2 h-2 rounded-full bg-yellow-400 flex-shrink-0" title="Connecting..." />;
+                    return <span className="w-2 h-2 rounded-full bg-gray-400 flex-shrink-0" title="Unknown / not started" />;
+                  })()}
                   {serverName}
                   {isServerSelected && isServerToolsArray && serverTools.length > 0 && (
-                    <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                    <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">
                       ({toolMode === 'all' ? 'all tools' : `${selectedTools.filter(t => t.startsWith(`${serverName}:`) && !t.endsWith(':*')).length}/${serverTools.length} tools`})
                     </span>
                   )}
                 </label>
+                </div>
+                {/* Camofox browser status — mirrors chat input */}
+                {serverName === 'camofox' && (
+                  <div className="ml-6 mt-1">
+                    {camofoxStarting && (
+                      <div className="text-xs text-yellow-500 flex items-center gap-1">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Checking camofox-browser...
+                      </div>
+                    )}
+                    {!camofoxStarting && camofoxConnected === true && (
+                      <div className="text-xs text-green-500 flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
+                        camofox-browser connected
+                      </div>
+                    )}
+                    {!camofoxStarting && camofoxConnected === false && (
+                      <div className="text-xs text-red-400 flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                        camofox-browser not running
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Tool Mode Selection and Tool List (when expanded) */}

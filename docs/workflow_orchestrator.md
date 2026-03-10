@@ -757,9 +757,9 @@ Located at `runs/{iteration}/execution/steps_done.json`:
 
 #### Tiered LLM Allocation
 The system supports a **Tiered LLM** mode where LLMs are allocated based on task difficulty and learning maturity (0, 1, or 2+ learning files).
-- **Tier 1 (High Reasoning)**: Used for planning, validation, and steps with no prior learnings.
-- **Tier 2 (Medium Reasoning)**: Used for execution steps that have 1 prior learning file.
-- **Tier 3 (Low Reasoning)**: Used for highly mature execution steps (2+ learning files) and learning consolidation.
+- **Tier 1 (High Reasoning)**: Used for planning, validation, and execution/conditional steps with 0 or 1 learning files.
+- **Tier 2 (Medium Reasoning)**: Used for execution/conditional steps with 2+ learning files.
+- **Tier 3 (Low Reasoning)**: Used for the learning agent on mature steps (2+ learning files) and learning consolidation.
 *(See [Tiered LLM Allocation](tiered_llm_allocation.md) for full details).*
 
 ### Skills & Secrets Integration

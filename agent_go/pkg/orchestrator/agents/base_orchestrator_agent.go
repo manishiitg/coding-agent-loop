@@ -647,7 +647,8 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 			Anthropic:  boa.config.APIKeys.Anthropic,
 			Vertex:     boa.config.APIKeys.Vertex,
 			GeminiCLI:  boa.config.APIKeys.GeminiCLI,
-			MiniMax:    boa.config.APIKeys.MiniMax,
+			MiniMax:           boa.config.APIKeys.MiniMax,
+			MiniMaxCodingPlan: boa.config.APIKeys.MiniMaxCodingPlan,
 		}
 		if boa.config.APIKeys.Bedrock != nil {
 			llmAPIKeys.Bedrock = &llm.BedrockConfig{

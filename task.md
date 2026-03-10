@@ -23,3 +23,5 @@
 46. update memory how it works we need to have entities - PROGRESS
 
 47. human controlled workflows... 
+
+48. add minimax coding plan and explore alibaba plan also

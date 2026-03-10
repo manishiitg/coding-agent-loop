@@ -137,7 +137,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
       // Initialize agentConfigs from first step
       setAgentConfigs({
         execution_llm: configs.execution_llm,
-        validation_llm: configs.validation_llm,
         learning_llm: configs.learning_llm,
         execution_max_turns: configs.execution_max_turns,
         disable_validation: configs.disable_validation,
@@ -190,10 +189,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
     let config: AgentLLMConfig | undefined
     if (agentType === 'execution') {
       config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
-        provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id
-      } : undefined)
-    } else if (agentType === 'validation') {
-      config = presetLLMConfig.validation_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
         provider: presetLLMConfig.provider, model_id: presetLLMConfig.model_id
       } : undefined)
     } else if (agentType === 'learning') {
@@ -382,9 +377,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
   // LLM handlers
   const handleExecutionLLMSelect = (llm: LLMOption) => {
     setAgentConfigs(prev => ({ ...prev, execution_llm: optionToLLMConfig(llm) }))
-  }
-  const handleValidationLLMSelect = (llm: LLMOption) => {
-    setAgentConfigs(prev => ({ ...prev, validation_llm: optionToLLMConfig(llm) }))
   }
   const handleLearningLLMSelect = (llm: LLMOption) => {
     setAgentConfigs(prev => ({ ...prev, learning_llm: optionToLLMConfig(llm) }))

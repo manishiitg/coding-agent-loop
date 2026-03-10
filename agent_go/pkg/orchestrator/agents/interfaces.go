@@ -154,9 +154,10 @@ type AgentAPIKeys struct {
 	Anthropic  *string
 	Vertex     *string
 	GeminiCLI  *string
-	MiniMax    *string
-	Bedrock    *BedrockAgentConfig
-	Azure      *AzureAgentConfig
+	MiniMax            *string
+	MiniMaxCodingPlan  *string
+	Bedrock            *BedrockAgentConfig
+	Azure              *AzureAgentConfig
 }
 
 // BedrockAgentConfig represents Bedrock-specific configuration (for agent config)

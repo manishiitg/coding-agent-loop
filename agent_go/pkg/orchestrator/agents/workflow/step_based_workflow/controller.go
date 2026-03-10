@@ -244,7 +244,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	// TIERED MODE: Use tier resolver for conditional agents
 	if hcpo.useTieredMode && hcpo.tierResolver != nil {
 		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
-		llmConfig, _ = hcpo.tierResolver.ResolveForConditional(maturity)
+		if agentConfigs != nil && agentConfigs.DisableTierOptimization != nil && *agentConfigs.DisableTierOptimization {
+			llmConfig = hcpo.tierResolver.ResolveTier(TierHigh)
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using Tier 1 (High) — tier optimization disabled", step.GetTitle()))
+		} else {
+			llmConfig, _ = hcpo.tierResolver.ResolveForConditional(maturity)
+		}
 		if llmConfig == nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Tiered mode: No valid LLM configuration for conditional agent step '%s'", step.GetTitle()))
 			return nil

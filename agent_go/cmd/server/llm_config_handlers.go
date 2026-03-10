@@ -20,7 +20,7 @@ import (
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
-	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "minimax", "claude-code", "gemini-cli"}
+	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "minimax", "minimax-coding-plan", "claude-code", "gemini-cli"}
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
 	if envValue == "" {
 		return allProviders
@@ -177,6 +177,9 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
 	}
+	if s := os.Getenv("MINIMAX_CODING_PLAN_API_KEY"); s != "" {
+		keys.MiniMaxCodingPlan = &s
+	}
 	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
 		apiKey := os.Getenv("AZURE_AI_API_KEY")
 		apiVer := os.Getenv("AZURE_AI_API_VERSION")
@@ -242,7 +245,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "minimax"}
+	providers := []string{"azure", "bedrock", "openrouter", "openai", "anthropic", "vertex", "minimax", "minimax-coding-plan"}
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -314,16 +317,17 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 
 	// Build response (same shape as before)
 	response := map[string]interface{}{
-		"primary_config":      defaults.PrimaryConfig,
-		"openrouter_config":   defaults.OpenrouterConfig,
-		"bedrock_config":      defaults.BedrockConfig,
-		"openai_config":       defaults.OpenaiConfig,
-		"anthropic_config":    defaults.AnthropicConfig,
-		"azure_config":        defaults.AzureConfig,
-		"minimax_config":      defaults.MinimaxConfig,
-		"available_models":    defaults.AvailableModels,
-		"supported_providers": getSupportedProviders(),
-		"locked_providers":    lockedProviders,
+		"primary_config":              defaults.PrimaryConfig,
+		"openrouter_config":           defaults.OpenrouterConfig,
+		"bedrock_config":              defaults.BedrockConfig,
+		"openai_config":               defaults.OpenaiConfig,
+		"anthropic_config":            defaults.AnthropicConfig,
+		"azure_config":                defaults.AzureConfig,
+		"minimax_config":              defaults.MinimaxConfig,
+		"minimax_coding_plan_config":  defaults.MinimaxCodingPlanConfig,
+		"available_models":            defaults.AvailableModels,
+		"supported_providers":         getSupportedProviders(),
+		"locked_providers":            lockedProviders,
 	}
 
 	// Helper to safely strip secrets from a specific config map
@@ -357,6 +361,8 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 				stripSecrets("vertex_config")
 			case "minimax":
 				stripSecrets("minimax_config")
+			case "minimax-coding-plan":
+				stripSecrets("minimax_coding_plan_config")
 			}
 		}
 	}

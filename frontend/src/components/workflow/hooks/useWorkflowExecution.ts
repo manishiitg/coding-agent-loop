@@ -6,6 +6,7 @@ import { usePresetApplication } from '../../../stores/useGlobalPresetStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useModeStore } from '../../../stores/useModeStore'
 import { EXECUTION_PHASE_ID } from '../../../constants/workflow'
+import { buildLLMConfigWithApiKeys } from '../../../utils/chatSubmitHelpers'
 
 export type WorkflowExecutionStatus =
   | 'idle'
@@ -173,6 +174,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         ? tabConfig.cdpPort
         : undefined
 
+      const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(llmConfig)
       const requestPayload = {
         query: `Execute workflow for preset: ${presetQueryId}`,
         agent_mode: 'workflow' as const,
@@ -181,7 +183,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         selected_tools: filteredPresetTools.length > 0 ? filteredPresetTools : undefined,
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
-        llm_config: llmConfig,
+        llm_config: llmConfigWithApiKeys,
         preset_query_id: presetQueryId,
         use_code_execution_mode: activePreset?.useCodeExecutionMode,
         cdp_port: cdpPort
@@ -253,6 +255,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         : undefined
 
       // Build request payload with step_id
+      const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(llmConfig)
       const requestPayload = {
         query: `Execute step ${stepId} for preset: ${presetQueryId}`,
         agent_mode: 'workflow' as const,
@@ -261,7 +264,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         selected_tools: filteredPresetTools.length > 0 ? filteredPresetTools : undefined,
         provider: llmConfig.provider,
         model_id: llmConfig.model_id,
-        llm_config: llmConfig,
+        llm_config: llmConfigWithApiKeys,
         preset_query_id: presetQueryId,
         step_id: stepId,
         use_code_execution_mode: activePreset?.useCodeExecutionMode,

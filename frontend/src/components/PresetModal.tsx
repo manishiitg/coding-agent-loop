@@ -112,7 +112,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   }, [])
 
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
-  const [validationLLM, setValidationLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
   const [llmAllocationMode, setLlmAllocationMode] = useState<'manual' | 'tiered'>('manual');
@@ -260,7 +259,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setCamofoxHeaded(editingPreset.camofoxHeaded !== false); // Default true
       // Load agent-specific configs if available
       setExecutionLLM(presetLLM.execution_llm || null);
-      setValidationLLM(presetLLM.validation_llm || null);
       setLearningLLM(presetLLM.learning_llm || null);
       setPhaseLLM(presetLLM.phase_llm || null);
       // Load tiered LLM allocation config
@@ -294,7 +292,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setCamofoxHeaded(true); // Default headed
       // Initialize agent-specific configs to null (will use legacy default)
       setExecutionLLM(null);
-      setValidationLLM(null);
       setLearningLLM(null);
       setPhaseLLM(null);
       // Initialize tiered config
@@ -353,7 +350,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       });
       
       // Build LLM config with agent-specific defaults for workflow mode
-      // Save execution_llm, validation_llm, learning_llm, and phase_llm
+      // Save execution_llm, learning_llm, and phase_llm (validation_llm removed — LLM validation is deprecated)
       let finalLLMConfig: PresetLLMConfig | undefined = llmConfig || undefined;
       if (effectiveAgentMode === 'workflow') {
         // For workflow mode, always include all 4 agent configs
@@ -367,7 +364,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         finalLLMConfig = {
           ...(llmConfig || {}),
           execution_llm: executionLLM || defaultAgentLLM,
-          validation_llm: validationLLM || defaultAgentLLM,
           learning_llm: learningLLM || defaultAgentLLM,
           phase_llm: phaseLLM || (llmAllocationMode === 'tiered' && tier1LLM ? tier1LLM : defaultAgentLLM),
           use_knowledgebase: useKnowledgebase,
@@ -383,7 +379,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       }
       console.log('[PRESET_MODAL] Agent LLM configs being saved:', {
         executionLLM: executionLLM,
-        validationLLM: validationLLM,
         learningLLM: learningLLM,
         phaseLLM: phaseLLM,
         defaultAgentLLM: llmConfig?.provider && llmConfig?.model_id ? { provider: llmConfig.provider, model_id: llmConfig.model_id } : undefined,
@@ -434,7 +429,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, validationLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -814,41 +809,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                       />
                       <div className="text-xs text-gray-500 mt-1">
                         Performs the actual work - calling tools, reading files, executing commands.
-                      </div>
-                    </div>
-                    {/* Validation Agent */}
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                          Validation Agent
-                        </label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Evaluates whether each step succeeded by checking the execution output against defined success criteria. Can be a lighter model since it only judges results.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
-                        selectedLLM={validationLLM ? availableLLMs.find(llm =>
-                          llm.provider === validationLLM.provider && llm.model === validationLLM.model_id
-                        ) || null : currentLLMOption}
-                        onLLMSelect={(llm) => setValidationLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                          model_id: llm.model
-                        })}
-                        onRefresh={refreshAvailableLLMs}
-                        disabled={false}
-                        inModal={true}
-                        openDirection="down"
-                      />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Evaluates execution results and determines if success criteria were met.
                       </div>
                     </div>
                     {/* Learning Agent */}

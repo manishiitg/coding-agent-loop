@@ -62,6 +62,17 @@ You have access to the Camofox stealth browser — an anti-detect Firefox fork t
 Use the camofox MCP tools (snapshot, click, type_text, navigate, etc.) to interact with websites.
 Always prefer snapshot over screenshot — it returns an accessibility tree which is much more token-efficient.
 
+### Tab Management (IMPORTANT)
+
+**Before creating a new tab, always check for existing ones:**
+1. Call list_tabs() first — reuse an existing tab if one is already open rather than creating a new one.
+2. Only call create_tab() if no suitable tab exists.
+
+**Always clean up when done:**
+- Close individual tabs with close_tab(tabId="...") when you no longer need them.
+- At the very end of your task, call camofox_close_session() to close ALL remaining tabs and free resources.
+- Never leave tabs open after completing your work — each run should start fresh.
+
 ### File Upload (Camofox)
 Camofox does not have a direct file upload tool. To upload a file to a website:
 1. Use snapshot(tabId) to find the file input element ref

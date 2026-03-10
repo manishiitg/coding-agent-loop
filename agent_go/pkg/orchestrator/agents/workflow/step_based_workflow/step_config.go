@@ -399,6 +399,10 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 		target.DisableParallelToolExecution = source.DisableParallelToolExecution
 		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_parallel_tool_execution: %v", stepID, *source.DisableParallelToolExecution))
 	}
+	if source.DisableTierOptimization != nil {
+		target.DisableTierOptimization = source.DisableTierOptimization
+		logger.Info(fmt.Sprintf("🔧 Using step config (ID: %s) - disable_tier_optimization: %v", stepID, *source.DisableTierOptimization))
+	}
 }
 
 // ApplyStepConfigFromFile loads step_config.json and applies matched config to the step.

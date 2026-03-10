@@ -5,7 +5,7 @@ import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching
 
 // New LLM Configuration types (Tiered Fallback System)
 export interface LLMModel {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan'
   model_id: string
 
   // Auth per model (each model carries its own credentials)
@@ -39,7 +39,7 @@ export interface AgentLLMConfiguration {
 
 // Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan'
   model_id: string
   fallback_models: string[]
   cross_provider_fallback?: {
@@ -179,6 +179,7 @@ export interface LLMDefaultsResponse {
   anthropic_config?: ExtendedLLMConfiguration
   azure_config?: ExtendedLLMConfiguration
   minimax_config?: ExtendedLLMConfiguration
+  minimax_coding_plan_config?: ExtendedLLMConfiguration
   available_models: {
     bedrock: string[]
     openrouter: string[]
@@ -187,8 +188,9 @@ export interface LLMDefaultsResponse {
     anthropic?: string[]
     azure?: string[]
     minimax?: string[]
+    'minimax-coding-plan'?: string[]
   }
-  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax')[]
+  supported_providers?: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan')[]
   /** When true, LLM config is locked by admin; do not show editable modal, use server env only */
   llm_config_locked?: boolean
   /** Default published LLMs from server (e.g. one "Gemini" entry); when locked, list is read-only */
@@ -201,7 +203,7 @@ export interface LLMDefaultsResponse {
 
 // API Key Validation Request/Response
 export interface APIKeyValidationRequest {
-  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax'
+  provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan'
   api_key?: string // Optional for Bedrock (uses IAM credentials)
   model_id?: string // Optional model ID for Bedrock validation
   endpoint?: string // Azure endpoint URL

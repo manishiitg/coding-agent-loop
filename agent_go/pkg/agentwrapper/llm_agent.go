@@ -454,7 +454,8 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 			Anthropic:  config.APIKeys.Anthropic,
 			Vertex:     config.APIKeys.Vertex,
 			GeminiCLI:  config.APIKeys.GeminiCLI,
-			MiniMax:    config.APIKeys.MiniMax,
+			MiniMax:           config.APIKeys.MiniMax,
+			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
 		}
 		if config.APIKeys.Bedrock != nil {
 			agentAPIKeys.Bedrock = &mcpagent.AgentBedrockConfig{

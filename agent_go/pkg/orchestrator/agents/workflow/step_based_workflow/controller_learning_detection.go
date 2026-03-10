@@ -37,7 +37,8 @@ type ConsolidationHistoryEntry struct {
 type LearningMetadata struct {
 	StepID                   string                      `json:"step_id"`
 	StepPath                 string                      `json:"step_path"`
-	StepHash                 string                      `json:"step_hash,omitempty"` // SHA256 of step definition
+	StepHash                 string                      `json:"step_hash,omitempty"`                // SHA256 of step definition
+	LearningContentHash      string                      `json:"learning_content_hash,omitempty"`    // SHA256 of learning file contents — if changed, force exploration mode
 	TotalIterations          int                         `json:"total_iterations"`
 	ConsecutiveNoNewLearning int                         `json:"consecutive_no_new_learning"` // Legacy - keeping for backward compatibility
 	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Successful runs for TurnCount < 100 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)

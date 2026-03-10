@@ -78,6 +78,7 @@ export function buildLLMConfigWithApiKeys(
       bedrock: store.bedrockConfig,
       azure: store.azureConfig,
       minimax: store.minimaxConfig,
+      'minimax-coding-plan': store.minimaxCodingPlanConfig,
     }
   })()
 
@@ -88,6 +89,7 @@ export function buildLLMConfigWithApiKeys(
   const br = configs.bedrock as ExtendedLLMConfiguration | undefined
   const az = configs.azure as ExtendedLLMConfiguration | undefined
   const mm = configs.minimax as ExtendedLLMConfiguration | undefined
+  const mmcp = configs['minimax-coding-plan'] as ExtendedLLMConfiguration | undefined
 
   return {
     ...effectiveLLMConfig,
@@ -101,6 +103,7 @@ export function buildLLMConfigWithApiKeys(
         ? { azure: { endpoint: az.endpoint, api_key: az.api_key, api_version: (az.options?.api_version as string) || undefined, region: az.region || undefined } }
         : {}),
       ...(mm?.api_key ? { minimax: mm.api_key } : {}),
+      ...(mmcp?.api_key ? { 'minimax-coding-plan': mmcp.api_key } : {}),
       ...(() => {
         const geminiKey = useLLMStore.getState().geminiCliApiKey
         return geminiKey ? { gemini_cli: geminiKey } : {}

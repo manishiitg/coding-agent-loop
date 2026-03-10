@@ -103,6 +103,41 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 	return content, true, nil
 }
 
+// writeFileToWorkspace writes content to a file in the workspace via the workspace API
+func writeFileToWorkspace(ctx context.Context, filePath, content string) error {
+	pathSegments := strings.Split(filePath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	requestBodyJSON, err := json.Marshal(map[string]interface{}{"content": content})
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath
+	req, err := http.NewRequestWithContext(ctx, "PUT", apiURL, strings.NewReader(string(requestBodyJSON)))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // aggregateGroupTokenUsage scans a parent iteration folder for group subfolders
 // and aggregates their token_usage.json files into a combined view
 // Returns nil if no group token usage files are found
@@ -3175,6 +3210,22 @@ func (api *StreamingAPI) handleUpdateStepConfig(w http.ResponseWriter, r *http.R
 	if err := writeStepConfigToWorkspace(r.Context(), req.WorkspacePath, configs); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to write step config: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// If manually unlocking (lock_learnings = false), also clear auto-lock fields from metadata
+	if agentConfigs != nil && agentConfigs.LockLearnings != nil && !*agentConfigs.LockLearnings {
+		metadataPath := req.WorkspacePath + "/learnings/" + req.StepID + "/.learning_metadata.json"
+		if content, exists, err := readFileFromWorkspace(r.Context(), metadataPath); err == nil && exists {
+			var metadata map[string]interface{}
+			if err := json.Unmarshal([]byte(content), &metadata); err == nil {
+				metadata["auto_locked_at"] = ""
+				metadata["auto_lock_reason"] = ""
+				metadata["auto_lock_iteration"] = 0
+				if metadataJSON, err := json.MarshalIndent(metadata, "", "  "); err == nil {
+					_ = writeFileToWorkspace(r.Context(), metadataPath, string(metadataJSON))
+				}
+			}
+		}
 	}
 
 	// Return updated config

@@ -13,6 +13,7 @@ import { AzureSection } from './AzureSection'
 import { ClaudeCodeSection } from './ClaudeCodeSection'
 import { GeminiCLISection } from './GeminiCLISection'
 import { MiniMaxSection } from './MiniMaxSection'
+import { MiniMaxCodingPlanSection } from './MiniMaxCodingPlanSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
 import { FallbacksTab } from './llm/FallbacksTab'
 import { LibraryTab } from './llm/LibraryTab'
@@ -23,10 +24,10 @@ interface LLMConfigurationModalProps {
 }
 
 // Provider type for reuse
-type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax'
+type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan'
 
 // Providers that use API keys (excludes claude-code which uses local CLI)
-type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax'
+type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan'
 
 // Tab type for the modal
 type TabType = 'fallbacks' | 'library' | ProviderType
@@ -65,6 +66,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     anthropicConfig,
     azureConfig,
     minimaxConfig,
+    minimaxCodingPlanConfig,
     setOpenrouterConfig,
     setBedrockConfig,
     setOpenaiConfig,
@@ -72,6 +74,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     setAnthropicConfig,
     setAzureConfig,
     setMinimaxConfig,
+    setMinimaxCodingPlanConfig,
     testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
@@ -119,9 +122,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     vertex: { config: vertexConfig, setConfig: setVertexConfig },
     anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig },
     azure: { config: azureConfig, setConfig: setAzureConfig },
-    minimax: { config: minimaxConfig, setConfig: setMinimaxConfig }
-  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, minimaxConfig,
-      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setMinimaxConfig])
+    minimax: { config: minimaxConfig, setConfig: setMinimaxConfig },
+    'minimax-coding-plan': { config: minimaxCodingPlanConfig, setConfig: setMinimaxCodingPlanConfig }
+  }), [openrouterConfig, bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig, minimaxConfig, minimaxCodingPlanConfig,
+      setOpenrouterConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig, setMinimaxConfig, setMinimaxCodingPlanConfig])
 
   // Metadata state - Driven purely by backend
   const [metadata, setMetadata] = useState<ModelMetadata[]>([])
@@ -190,7 +194,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     vertex: 'idle',
     anthropic: 'idle',
     azure: 'idle',
-    minimax: 'idle'
+    minimax: 'idle',
+    'minimax-coding-plan': 'idle'
   })
 
   const [apiKeyErrors, setApiKeyErrors] = useState<APIKeyError>({
@@ -200,7 +205,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     vertex: null,
     anthropic: null,
     azure: null,
-    minimax: null
+    minimax: null,
+    'minimax-coding-plan': null
   })
 
   const [activeTab, setActiveTab] = useState<TabType>('library')
@@ -213,7 +219,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   }, [isOpen, defaultsLoaded, loadDefaultsFromBackend])
 
   // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'minimax', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
+  const handleTestAPIKey = useCallback(async (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>, temperature?: number) => {
     // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
     if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
       return
@@ -451,7 +457,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 </button>
 
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'claude-code', 'gemini-cli'] as const)
+                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'minimax-coding-plan', 'claude-code', 'gemini-cli'] as const)
                   .filter(provider => {
                     const supported = isProviderSupported(provider)
                     console.log('[LLMModal] provider', provider, 'supported:', supported)
@@ -466,9 +472,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }`}
                   >
                     <div className="flex-1">
-                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider === 'gemini-cli' ? 'Gemini CLI' : provider === 'minimax' ? 'MiniMax' : provider}</div>
+                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider === 'gemini-cli' ? 'Gemini CLI' : provider === 'minimax' ? 'MiniMax' : provider === 'minimax-coding-plan' ? 'MiniMax Coding Plan' : provider}</div>
                       <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : provider === 'gemini-cli' ? 'Local CLI (no API key)' : 'API Key'}
+                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : provider === 'gemini-cli' ? 'Local CLI (no API key)' : provider === 'minimax-coding-plan' ? 'Coding Plan Key (sk-cp-)' : 'API Key'}
                       </div>
                     </div>
                     {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
@@ -493,7 +499,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {/* Locked provider read-only banner */}
-              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && isProviderLocked(activeTab) && (
+              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && (activeTab as string) in providerConfigMap && isProviderLocked(activeTab) && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
                   <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
@@ -582,6 +588,17 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax', apiKey, modelId, options, temperature)}
                   apiKeyStatus={apiKeyStatus.minimax}
                   apiKeyError={apiKeyErrors.minimax}
+                  metadata={metadata}
+                />
+              )}
+
+              {activeTab === 'minimax-coding-plan' && !isProviderLocked('minimax-coding-plan') && (
+                <MiniMaxCodingPlanSection
+                  config={minimaxCodingPlanConfig}
+                  onUpdate={(config) => handleProviderConfigUpdate('minimax-coding-plan', config)}
+                  onTestAPIKey={(apiKey, modelId, options, temperature) => handleTestAPIKey('minimax-coding-plan', apiKey, modelId, options, temperature)}
+                  apiKeyStatus={apiKeyStatus['minimax-coding-plan']}
+                  apiKeyError={apiKeyErrors['minimax-coding-plan']}
                   metadata={metadata}
                 />
               )}

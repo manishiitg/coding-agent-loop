@@ -26,6 +26,64 @@ import (
 // Phase 1: Helper Methods (Extracted for Reusability)
 // ============================================================================
 
+// normalizeServerNames ensures an empty server list is replaced with the NoServers
+// sentinel so the connection layer doesn't interpret [] as "connect to all servers".
+func normalizeServerNames(servers []string) []string {
+	if len(servers) == 0 {
+		return []string{mcpclient.NoServers}
+	}
+	return servers
+}
+
+// filterServersByWorkflow intersects stepServers with workflowServers so that the
+// workflow-level server list acts as a hard cap. If the workflow has no servers
+// (user removed all MCPs), no step can bypass that restriction.
+// Returns mcpclient.NoServers sentinel when the result is empty, because an empty
+// []string is treated as "all servers" by the connection layer.
+func filterServersByWorkflow(stepServers, workflowServers []string) []string {
+	if len(workflowServers) == 0 {
+		return []string{mcpclient.NoServers}
+	}
+	workflowSet := make(map[string]bool, len(workflowServers))
+	for _, s := range workflowServers {
+		workflowSet[s] = true
+	}
+	result := make([]string, 0, len(stepServers))
+	for _, s := range stepServers {
+		if workflowSet[s] {
+			result = append(result, s)
+		}
+	}
+	if len(result) == 0 {
+		return []string{mcpclient.NoServers}
+	}
+	return result
+}
+
+// filterToolsByWorkflow filters stepTools keeping only those whose server prefix
+// is allowed by workflowServers. Workflow is the hard cap — if a server was
+// removed from the workflow no step can re-enable it via its own tool list.
+func filterToolsByWorkflow(stepTools, workflowServers []string) []string {
+	if len(workflowServers) == 0 {
+		return []string{}
+	}
+	workflowSet := make(map[string]bool, len(workflowServers))
+	for _, s := range workflowServers {
+		workflowSet[s] = true
+	}
+	result := make([]string, 0, len(stepTools))
+	for _, t := range stepTools {
+		serverName := t
+		if idx := strings.Index(t, ":"); idx >= 0 {
+			serverName = t[:idx]
+		}
+		if workflowSet[serverName] {
+			result = append(result, t)
+		}
+	}
+	return result
+}
+
 // getWorkspaceDocsRoot returns the absolute path to the workspace-docs root directory.
 // This is used specifically for resolving absolute paths for Playwright Downloads.
 //
@@ -108,10 +166,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 	// Check if any browser tool is available (Playwright server OR agent-browser skill)
 	// Downloads folder is needed for any browser automation tool
 
-	// Check effective servers (step config takes precedence over orchestrator defaults)
+	// Check effective servers (step config intersected with workflow — workflow is the hard cap)
 	var effectiveServers []string
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		effectiveServers = stepConfig.SelectedServers
+		effectiveServers = filterServersByWorkflow(stepConfig.SelectedServers, hcpo.GetSelectedServers())
 	} else {
 		effectiveServers = hcpo.GetSelectedServers()
 	}
@@ -570,6 +628,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			}
 			return llmConfig
 		}
+		// If disable_tier_optimization is set, always use Tier 1 regardless of learning maturity
+		if stepConfig != nil && stepConfig.DisableTierOptimization != nil && *stepConfig.DisableTierOptimization {
+			llmConfig := hcpo.tierResolver.ResolveTier(TierHigh)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier 1 (High) — tier optimization disabled: %s/%s",
+					stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			}
+			return llmConfig
+		}
 		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
 		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
 		if llmConfig != nil {
@@ -606,15 +673,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config
 func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *agents.OrchestratorAgentConfig, stepConfig *AgentConfigs, isCodeExecutionMode bool) {
-	// Use step-specific servers if provided, otherwise use orchestrator defaults
-	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	workflowServers := hcpo.GetSelectedServers()
+	// Use step-specific servers if provided, filtered against workflow-level servers.
+	// Workflow is the hard cap: if a server was removed from the workflow no step can use it.
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		// Step has explicit server selection (including NO_SERVERS) - use it
-		config.ServerNames = stepConfig.SelectedServers
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only servers: %v", stepConfig.SelectedServers))
+		filtered := filterServersByWorkflow(stepConfig.SelectedServers, workflowServers)
+		config.ServerNames = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only servers (workflow-filtered): %v → %v", stepConfig.SelectedServers, filtered))
 	} else {
 		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
-		config.ServerNames = hcpo.GetSelectedServers()
+		config.ServerNames = normalizeServerNames(workflowServers)
 		if stepConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
 		} else {
@@ -622,8 +690,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
-		config.SelectedTools = stepConfig.SelectedTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only tools: %v", stepConfig.SelectedTools))
+		filtered := filterToolsByWorkflow(stepConfig.SelectedTools, workflowServers)
+		config.SelectedTools = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific execution-only tools (workflow-filtered): %v → %v", stepConfig.SelectedTools, filtered))
 	} else {
 		// Explicitly set orchestrator defaults when stepConfig is nil or SelectedTools is empty
 		config.SelectedTools = hcpo.GetSelectedTools()
@@ -694,6 +763,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 		if !hasAdvanced {
 			enabledTools = append(enabledTools, "workspace_advanced:*")
 			hcpo.GetLogger().Info("🔧 Auto-including workspace_advanced:* (migrated from old workspace_basic config)")
+		}
+
+		// Auto-include workspace_browser:* if agent_browser exists in the workspace tools pool
+		// (present when preset has enable_browser_access: true) and not already listed.
+		hasBrowserCategory := false
+		for _, entry := range enabledTools {
+			if strings.HasPrefix(entry, "workspace_browser") {
+				hasBrowserCategory = true
+				break
+			}
+		}
+		if !hasBrowserCategory {
+			for _, tool := range hcpo.WorkspaceTools {
+				if tool.Function != nil && tool.Function.Name == "agent_browser" {
+					enabledTools = append(enabledTools, "workspace_browser:*")
+					hcpo.GetLogger().Info("🔧 Auto-including workspace_browser:* (headless browser enabled at workflow level)")
+					break
+				}
+			}
 		}
 
 		// Filter tools based on unified format (category:tool or category:*)
@@ -1589,15 +1677,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
-	// Use step-specific servers if provided, otherwise use orchestrator defaults
-	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	workflowServersConditional := hcpo.GetSelectedServers()
+	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		// Step has explicit server selection (including NO_SERVERS) - use it
-		config.ServerNames = stepConfig.SelectedServers
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional servers: %v", stepConfig.SelectedServers))
+		filtered := filterServersByWorkflow(stepConfig.SelectedServers, workflowServersConditional)
+		config.ServerNames = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional servers (workflow-filtered): %v → %v", stepConfig.SelectedServers, filtered))
 	} else {
 		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
-		config.ServerNames = hcpo.GetSelectedServers()
+		config.ServerNames = normalizeServerNames(workflowServersConditional)
 		if stepConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
 		} else {
@@ -1605,8 +1693,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
-		config.SelectedTools = stepConfig.SelectedTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional tools: %v", stepConfig.SelectedTools))
+		filtered := filterToolsByWorkflow(stepConfig.SelectedTools, workflowServersConditional)
+		config.SelectedTools = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific conditional tools (workflow-filtered): %v → %v", stepConfig.SelectedTools, filtered))
 	} else {
 		config.SelectedTools = hcpo.GetSelectedTools()
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default conditional tools: %v", config.SelectedTools))
@@ -1729,15 +1818,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatText, llmConfig)
 
-	// Use step-specific servers if provided, otherwise use orchestrator defaults
-	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	workflowServersOrchestration := hcpo.GetSelectedServers()
+	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		// Step has explicit server selection (including NO_SERVERS) - use it
-		config.ServerNames = stepConfig.SelectedServers
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator servers: %v", stepConfig.SelectedServers))
+		filtered := filterServersByWorkflow(stepConfig.SelectedServers, workflowServersOrchestration)
+		config.ServerNames = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator servers (workflow-filtered): %v → %v", stepConfig.SelectedServers, filtered))
 	} else {
 		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
-		config.ServerNames = hcpo.GetSelectedServers()
+		config.ServerNames = normalizeServerNames(workflowServersOrchestration)
 		if stepConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
 		} else {
@@ -1745,8 +1834,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
-		config.SelectedTools = stepConfig.SelectedTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator tools: %v", stepConfig.SelectedTools))
+		filtered := filterToolsByWorkflow(stepConfig.SelectedTools, workflowServersOrchestration)
+		config.SelectedTools = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator tools (workflow-filtered): %v → %v", stepConfig.SelectedTools, filtered))
 	} else {
 		config.SelectedTools = hcpo.GetSelectedTools()
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator tools: %v", config.SelectedTools))
@@ -1911,15 +2001,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// Create agent config with custom LLM if needed
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
-	// Use step-specific servers if provided, otherwise use orchestrator defaults
-	// NO_SERVERS is a valid config value - if step explicitly sets it, use it
+	workflowServersTodo := hcpo.GetSelectedServers()
+	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
 	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		// Step has explicit server selection (including NO_SERVERS) - use it
-		config.ServerNames = stepConfig.SelectedServers
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator servers: %v", stepConfig.SelectedServers))
+		filtered := filterServersByWorkflow(stepConfig.SelectedServers, workflowServersTodo)
+		config.ServerNames = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator servers (workflow-filtered): %v → %v", stepConfig.SelectedServers, filtered))
 	} else {
 		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
-		config.ServerNames = hcpo.GetSelectedServers()
+		config.ServerNames = normalizeServerNames(workflowServersTodo)
 		if stepConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
 		} else {
@@ -1927,8 +2017,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		}
 	}
 	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
-		config.SelectedTools = stepConfig.SelectedTools
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator tools: %v", stepConfig.SelectedTools))
+		filtered := filterToolsByWorkflow(stepConfig.SelectedTools, workflowServersTodo)
+		config.SelectedTools = filtered
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator tools (workflow-filtered): %v → %v", stepConfig.SelectedTools, filtered))
 	} else {
 		config.SelectedTools = hcpo.GetSelectedTools()
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default todo task orchestrator tools: %v", config.SelectedTools))

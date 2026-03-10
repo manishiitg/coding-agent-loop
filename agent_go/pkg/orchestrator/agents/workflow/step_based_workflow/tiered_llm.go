@@ -85,13 +85,13 @@ func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
 }
 
 // ResolveForExecution returns the LLM for execution agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings: Tier 2 (Medium), Mature: Tier 2 (Medium)
+// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium)
 func (tr *TierResolver) ResolveForExecution(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
 	switch maturity {
-	case NoLearnings:
-		return tr.ResolveTier(TierHigh), TierHigh
-	default:
+	case MatureLearnings:
 		return tr.ResolveTier(TierMedium), TierMedium
+	default:
+		return tr.ResolveTier(TierHigh), TierHigh
 	}
 }
 
@@ -115,13 +115,13 @@ func (tr *TierResolver) ResolveForValidation() (*orchestrator.LLMConfig, TierLev
 // No resolver method is needed since phase agents don't have maturity-based selection.
 
 // ResolveForConditional returns the LLM for conditional agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings: Tier 2 (Medium), Mature: Tier 2 (Medium)
+// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium)
 func (tr *TierResolver) ResolveForConditional(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
 	switch maturity {
-	case NoLearnings:
-		return tr.ResolveTier(TierHigh), TierHigh
-	default:
+	case MatureLearnings:
 		return tr.ResolveTier(TierMedium), TierMedium
+	default:
+		return tr.ResolveTier(TierHigh), TierHigh
 	}
 }
 

@@ -4,7 +4,7 @@ import { Button } from "../ui/Button";
 import { useLLMStore, useGlobalPresetStore } from "../../stores";
 import { useCapabilitiesStore } from "../../stores/useCapabilitiesStore";
 import {
-  getToolsByCategory,
+  WORKSPACE_ADVANCED_TOOLS,
 } from "../../utils/customToolNames";
 import type {
   AgentLLMConfig,
@@ -327,6 +327,8 @@ export default function BulkStepConfigModal({
       hasMaxTurnsOverride: ov.execution_max_turns !== undefined,
       enabledCustomTools: ov.enabled_custom_tools,
       hasToolAccessOverride: ov.enabled_custom_tools !== undefined && ov.enabled_custom_tools.length > 0,
+      disableTierOptimization: ov.disable_tier_optimization === true,
+      hasDisableTierOptimizationOverride: ov.disable_tier_optimization !== undefined,
     };
   }, [stepOverride]);
 
@@ -343,18 +345,13 @@ export default function BulkStepConfigModal({
     return { enabled: allSteps.length === 0 || disabledCount === 0 };
   }, [plan, getAllSteps, overrideStatus]);
 
-  // Check parallel tool execution state - prefer override, fallback to per-step check
+  // Check parallel tool execution state - prefer override, fallback to true (backend default)
   const parallelToolExecState = useMemo(() => {
     if (overrideStatus.hasParallelToolExecOverride) {
       return { enabled: !overrideStatus.parallelToolExecDisabled };
     }
-    if (!plan) return { enabled: true };
-    const allSteps = getAllSteps();
-    const disabledCount = allSteps.filter(({ step }) =>
-      step.agent_configs?.disable_parallel_tool_execution === true
-    ).length;
-    return { enabled: allSteps.length === 0 || disabledCount === 0 };
-  }, [plan, getAllSteps, overrideStatus]);
+    return { enabled: true };
+  }, [overrideStatus]);
 
   // Handle immediate action via step_override.json
   const handleImmediateAction = async (
@@ -365,6 +362,7 @@ export default function BulkStepConfigModal({
       | "set_learning_llm"
       | "enable_only_advanced_tools"
       | "disable_read_image_access"
+      | "disable_read_pdf_access"
       | "disable_human_tools"
       | "set_execution_max_turns"
       | "set_code_execution_mode"
@@ -373,7 +371,9 @@ export default function BulkStepConfigModal({
       | "enable_context_offloading"
       | "disable_context_offloading"
       | "enable_parallel_tool_exec"
-      | "disable_parallel_tool_exec",
+      | "disable_parallel_tool_exec"
+      | "enable_disable_tier_optimization"
+      | "disable_disable_tier_optimization",
     llm?: LLMOption | null,
     maxTurns?: number
   ) => {
@@ -409,43 +409,49 @@ export default function BulkStepConfigModal({
             };
           }
           break;
-        case "enable_only_advanced_tools": {
-          const advancedTools = getToolsByCategory("workspace_advanced", capabilities?.workspace);
+        case "disable_read_image_access": {
+          const currentEnabledTools = newOverrides.enabled_custom_tools || [];
+          // Expand workspace_advanced:* → specific tools minus read_image
+          const advancedWithoutImage = WORKSPACE_ADVANCED_TOOLS
+            .filter(t => t !== "read_image")
+            .map(t => `workspace_advanced:${t}`);
+          const hasHumanTools = currentEnabledTools.length === 0 ||
+            currentEnabledTools.some(e => e.startsWith("human_tools"));
+          const baseTools = currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_advanced:*")
+            ? advancedWithoutImage
+            : currentEnabledTools.filter(e => e !== "workspace_advanced:read_image" && e !== "workspace_advanced:*")
+                .concat(advancedWithoutImage.filter(t => !currentEnabledTools.includes(t)));
           newOverrides.enabled_custom_tools = [
-            ...advancedTools.map((tool) => `workspace_tools:${tool}`),
-            "human_tools:human_feedback",
+            ...baseTools,
+            ...(hasHumanTools ? ["human_tools:*"] : []),
           ];
           break;
         }
-        case "disable_read_image_access": {
+        case "disable_read_pdf_access": {
           const currentEnabledTools = newOverrides.enabled_custom_tools || [];
-          if (currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_tools:*")) {
-            const allWorkspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
-            newOverrides.enabled_custom_tools = [
-              ...allWorkspaceTools
-                .filter((tool) => tool !== "read_image")
-                .map((tool) => `workspace_tools:${tool}`),
-              "human_tools:human_feedback",
-            ];
-          } else {
-            newOverrides.enabled_custom_tools = currentEnabledTools
-              .filter((entry) => entry !== "workspace_tools:read_image" && entry !== "workspace_tools:*");
-          }
+          const advancedWithoutPdf = WORKSPACE_ADVANCED_TOOLS
+            .filter(t => t !== "read_pdf")
+            .map(t => `workspace_advanced:${t}`);
+          const hasHumanTools = currentEnabledTools.length === 0 ||
+            currentEnabledTools.some(e => e.startsWith("human_tools"));
+          const baseTools = currentEnabledTools.length === 0 || currentEnabledTools.includes("workspace_advanced:*")
+            ? advancedWithoutPdf
+            : currentEnabledTools.filter(e => e !== "workspace_advanced:read_pdf" && e !== "workspace_advanced:*")
+                .concat(advancedWithoutPdf.filter(t => !currentEnabledTools.includes(t)));
+          newOverrides.enabled_custom_tools = [
+            ...baseTools,
+            ...(hasHumanTools ? ["human_tools:*"] : []),
+          ];
           break;
         }
         case "disable_human_tools": {
           const currentEnabledTools = newOverrides.enabled_custom_tools || [];
-          if (currentEnabledTools.length === 0 || currentEnabledTools.includes("human_tools:*")) {
-            const workspaceTools = getToolsByCategory("workspace_tools", capabilities?.workspace);
-            newOverrides.enabled_custom_tools = workspaceTools.map(
-              (tool) => `workspace_tools:${tool}`
-            );
+          if (currentEnabledTools.length === 0) {
+            // Default is workspace_advanced:* + human_tools:*, just drop human_tools
+            newOverrides.enabled_custom_tools = ["workspace_advanced:*"];
           } else {
             newOverrides.enabled_custom_tools = currentEnabledTools.filter(
-              (entry) => {
-                const parts = entry.split(":");
-                return parts.length !== 2 || parts[0] !== "human_tools";
-              }
+              entry => !entry.startsWith("human_tools")
             );
           }
           break;
@@ -480,6 +486,12 @@ export default function BulkStepConfigModal({
           break;
         case "disable_parallel_tool_exec":
           newOverrides.disable_parallel_tool_execution = true;
+          break;
+        case "enable_disable_tier_optimization":
+          newOverrides.disable_tier_optimization = true;
+          break;
+        case "disable_disable_tier_optimization":
+          delete newOverrides.disable_tier_optimization;
           break;
       }
 
@@ -554,22 +566,17 @@ export default function BulkStepConfigModal({
     const wsTools = tools.filter(t => t.startsWith('workspace_tools:')).map(t => t.split(':')[1]);
     const humanTools = tools.filter(t => t.startsWith('human_tools:'));
 
-    const advancedTools = getToolsByCategory('workspace_advanced', capabilities?.workspace);
-
-    const isAdvancedOnly = wsTools.length === advancedTools.length && wsTools.every(t => advancedTools.includes(t));
-
     const parts: string[] = [];
-    if (isAdvancedOnly) parts.push('Advanced tools only');
-    else parts.push(`${wsTools.length} workspace tools`);
+    parts.push(`${wsTools.length} workspace tools`);
 
     if (humanTools.length === 0) parts.push('no human tools');
 
-    if (!isAdvancedOnly && !wsTools.includes('read_image')) {
+    if (!wsTools.includes('read_image')) {
       parts.push('no images');
     }
 
     return parts.join(', ');
-  }, [overrideStatus.enabledCustomTools, capabilities]);
+  }, [overrideStatus.enabledCustomTools]);
 
   if (!isOpen) return null;
 
@@ -653,117 +660,119 @@ export default function BulkStepConfigModal({
           )}
 
           {/* ── Models ── */}
-          <SectionHeader label="Models" />
+          {!isTieredMode && (
+            <>
+              <SectionHeader label="Models" />
 
-          <div className="space-y-3">
-            {isTieredMode && (
-              <div className="text-xs text-muted-foreground py-1">
-                Tiered Auto mode is active. Overrides below will take priority.
-              </div>
-            )}
+              <div className="space-y-3">
+                {/* Execution LLM */}
+                <div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 w-28 shrink-0">
+                        {overrideStatus.hasExecutionLLMOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+                        <span className="text-sm font-medium">Execution LLM</span>
+                      </div>
+                      <div className="flex-1">
+                        <LLMSelectionDropdown
+                          availableLLMs={availableLLMs}
+                          selectedLLM={selectedExecutionLLM}
+                          onLLMSelect={setSelectedExecutionLLM}
+                          onRefresh={refreshAvailableLLMs}
+                          inModal={true}
+                          openDirection="down"
+                          title="Select Execution LLM"
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleImmediateAction("set_execution_llm", selectedExecutionLLM)}
+                        disabled={!selectedExecutionLLM || isBusy}
+                        className="px-3 h-8"
+                      >
+                        {applyingAction === "set_execution_llm" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
+                      </Button>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1 ml-[calc(7rem+0.375rem)]">
+                      {overrideStatus.hasExecutionLLMOverride
+                        ? <span className="text-primary">Override: {overrideStatus.executionLLM?.provider}/{overrideStatus.executionLLM?.model_id}</span>
+                        : presetExecutionLLM
+                          ? `Preset: ${presetExecutionLLM.provider}/${presetExecutionLLM.model}`
+                          : 'Using preset default'
+                      }
+                    </div>
+                  </div>
 
-            {/* Execution LLM */}
-            <div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 w-28 shrink-0">
-                    {overrideStatus.hasExecutionLLMOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
-                    <span className="text-sm font-medium">Execution LLM</span>
+                  {/* Learning LLM */}
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 w-28 shrink-0">
+                        {overrideStatus.hasLearningLLMOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
+                        <span className="text-sm font-medium">Learning LLM</span>
+                      </div>
+                      <div className="flex-1">
+                        <LLMSelectionDropdown
+                          availableLLMs={availableLLMs}
+                          selectedLLM={selectedLearningLLM}
+                          onLLMSelect={setSelectedLearningLLM}
+                          onRefresh={refreshAvailableLLMs}
+                          inModal={true}
+                          openDirection="down"
+                          title="Select Learning LLM"
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleImmediateAction("set_learning_llm", selectedLearningLLM)}
+                        disabled={!selectedLearningLLM || isBusy}
+                        className="px-3 h-8"
+                      >
+                        {applyingAction === "set_learning_llm" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
+                      </Button>
+                    </div>
+                    <div className="text-[10px] text-muted-foreground mt-1 ml-[calc(7rem+0.375rem)]">
+                      {overrideStatus.hasLearningLLMOverride
+                        ? <span className="text-primary">Override: {overrideStatus.learningLLM?.provider}/{overrideStatus.learningLLM?.model_id}</span>
+                        : presetLearningLLM
+                          ? `Preset: ${presetLearningLLM.provider}/${presetLearningLLM.model}`
+                          : 'Using preset default'
+                      }
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
-                      selectedLLM={selectedExecutionLLM}
-                      onLLMSelect={setSelectedExecutionLLM}
-                      onRefresh={refreshAvailableLLMs}
-                      inModal={true}
-                      openDirection="down"
-                      title="Select Execution LLM"
-                    />
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => handleImmediateAction("set_execution_llm", selectedExecutionLLM)}
-                    disabled={!selectedExecutionLLM || isBusy}
-                    className="px-3 h-8"
-                  >
-                    {applyingAction === "set_execution_llm" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
-                  </Button>
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-1 ml-[calc(7rem+0.375rem)]">
-                  {overrideStatus.hasExecutionLLMOverride
-                    ? <span className="text-primary">Override: {overrideStatus.executionLLM?.provider}/{overrideStatus.executionLLM?.model_id}</span>
-                    : presetExecutionLLM
-                      ? `Preset: ${presetExecutionLLM.provider}/${presetExecutionLLM.model}`
-                      : 'Using preset default'
-                  }
-                </div>
               </div>
-
-              {/* Learning LLM */}
-              <div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5 w-28 shrink-0">
-                    {overrideStatus.hasLearningLLMOverride && <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" />}
-                    <span className="text-sm font-medium">Learning LLM</span>
-                  </div>
-                  <div className="flex-1">
-                    <LLMSelectionDropdown
-                      availableLLMs={availableLLMs}
-                      selectedLLM={selectedLearningLLM}
-                      onLLMSelect={setSelectedLearningLLM}
-                      onRefresh={refreshAvailableLLMs}
-                      inModal={true}
-                      openDirection="down"
-                      title="Select Learning LLM"
-                    />
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => handleImmediateAction("set_learning_llm", selectedLearningLLM)}
-                    disabled={!selectedLearningLLM || isBusy}
-                    className="px-3 h-8"
-                  >
-                    {applyingAction === "set_learning_llm" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Apply"}
-                  </Button>
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-1 ml-[calc(7rem+0.375rem)]">
-                  {overrideStatus.hasLearningLLMOverride
-                    ? <span className="text-primary">Override: {overrideStatus.learningLLM?.provider}/{overrideStatus.learningLLM?.model_id}</span>
-                    : presetLearningLLM
-                      ? `Preset: ${presetLearningLLM.provider}/${presetLearningLLM.model}`
-                      : 'Using preset default'
-                  }
-                </div>
-              </div>
-          </div>
+            </>
+          )}
 
           {/* ── Execution Mode ── */}
-          <SectionHeader label="Execution Mode" />
+          {!isTieredMode && (
+            <>
+              <SectionHeader label="Execution Mode" />
 
-          <div className="flex gap-2">
-            {([
-              { key: 'code_exec', label: 'Code Execution', action: 'set_code_execution_mode' as const },
-              { key: 'tool_search', label: 'Tool Search', action: 'set_tool_search_mode' as const },
-              { key: 'simple', label: 'Simple', action: 'set_simple_mode' as const },
-            ]).map(mode => (
-              <button
-                key={mode.key}
-                onClick={() => handleImmediateAction(mode.action)}
-                disabled={isBusy}
-                className={`flex-1 py-2 px-3 text-sm rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  activeExecutionMode === mode.key
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-background border-border hover:bg-muted'
-                }`}
-              >
-                {applyingAction === mode.action ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
-                ) : (
-                  mode.label
-                )}
-              </button>
-            ))}
-          </div>
+              <div className="flex gap-2">
+                {([
+                  { key: 'code_exec', label: 'Code Execution', action: 'set_code_execution_mode' as const },
+                  { key: 'tool_search', label: 'Tool Search', action: 'set_tool_search_mode' as const },
+                  { key: 'simple', label: 'Simple', action: 'set_simple_mode' as const },
+                ]).map(mode => (
+                  <button
+                    key={mode.key}
+                    onClick={() => handleImmediateAction(mode.action)}
+                    disabled={isBusy}
+                    className={`flex-1 py-2 px-3 text-sm rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                      activeExecutionMode === mode.key
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background border-border hover:bg-muted'
+                    }`}
+                  >
+                    {applyingAction === mode.action ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mx-auto" />
+                    ) : (
+                      mode.label
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* ── Step Overrides ── */}
           <SectionHeader label="Step Overrides" />
@@ -794,6 +803,17 @@ export default function BulkStepConfigModal({
                 parallelToolExecState.enabled ? "disable_parallel_tool_exec" : "enable_parallel_tool_exec"
               )}
             />
+            {isTieredMode && (
+              <ToggleRow
+                label="Don't Optimize Tier For Learnings"
+                enabled={overrideStatus.disableTierOptimization}
+                hasOverride={overrideStatus.hasDisableTierOptimizationOverride}
+                disabled={isBusy}
+                onToggle={() => handleImmediateAction(
+                  overrideStatus.disableTierOptimization ? "disable_disable_tier_optimization" : "enable_disable_tier_optimization"
+                )}
+              />
+            )}
           </div>
 
           {/* ── Preset Settings ── */}
@@ -814,13 +834,6 @@ export default function BulkStepConfigModal({
               disabled={isBusy || !activePreset}
               onToggle={() => handleToggleFeature('enable_context_summarization', !enableContextSummarization)}
             />
-            <ToggleRow
-              label="Context Editing"
-              enabled={enableContextEditing}
-              hasOverride={false}
-              disabled={isBusy || !activePreset}
-              onToggle={() => handleToggleFeature('enable_context_editing', !enableContextEditing)}
-            />
           </div>
 
           {/* ── Tools ── */}
@@ -833,8 +846,8 @@ export default function BulkStepConfigModal({
 
           <div className="flex flex-wrap gap-2">
             {([
-              { label: 'Advanced Only', action: 'enable_only_advanced_tools' as const },
-              { label: 'No Images', action: 'disable_read_image_access' as const },
+              { label: 'No Read Image', action: 'disable_read_image_access' as const },
+              { label: 'No PDF', action: 'disable_read_pdf_access' as const },
               { label: 'No Human Tools', action: 'disable_human_tools' as const },
             ]).map(tool => (
               <button

@@ -2864,7 +2864,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			MaxTurns:           req.MaxTurns,
 			ToolChoice:         "auto",
 			StreamingChunkSize: 50,
-			Timeout:            2 * time.Minute,
+			Timeout:            0, // No per-Invoke timeout; streamCtx (3h) provides the outer bound
 			ToolTimeout: func() time.Duration {
 				if envVal := os.Getenv("TOOL_EXECUTION_TIMEOUT"); envVal != "" {
 					if timeout, err := time.ParseDuration(envVal); err == nil && timeout > 0 {
@@ -2918,6 +2918,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					llmKeys.Vertex = req.LLMConfig.APIKeys.Vertex
 					llmKeys.GeminiCLI = req.LLMConfig.APIKeys.GeminiCLI
 					llmKeys.MiniMax = req.LLMConfig.APIKeys.MiniMax
+					llmKeys.MiniMaxCodingPlan = req.LLMConfig.APIKeys.MiniMaxCodingPlan
 
 					if req.LLMConfig.APIKeys.Bedrock != nil {
 						llmKeys.Bedrock = &llm.BedrockConfig{
@@ -2962,6 +2963,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				if globalLocked || isProviderLocked("minimax") {
 					llmKeys.MiniMax = envKeys.MiniMax
+				}
+				if globalLocked || isProviderLocked("minimax-coding-plan") {
+					llmKeys.MiniMaxCodingPlan = envKeys.MiniMaxCodingPlan
 				}
 
 				return llmKeys
@@ -6265,6 +6269,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		apiKeys.Vertex = parentReq.LLMConfig.APIKeys.Vertex
 		apiKeys.GeminiCLI = parentReq.LLMConfig.APIKeys.GeminiCLI
 		apiKeys.MiniMax = parentReq.LLMConfig.APIKeys.MiniMax
+		apiKeys.MiniMaxCodingPlan = parentReq.LLMConfig.APIKeys.MiniMaxCodingPlan
 		if parentReq.LLMConfig.APIKeys.Bedrock != nil {
 			apiKeys.Bedrock = &llm.BedrockConfig{Region: parentReq.LLMConfig.APIKeys.Bedrock.Region}
 		}
@@ -6325,6 +6330,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 		if isProviderLocked("minimax") {
 			apiKeys.MiniMax = envKeys.MiniMax
+		}
+		if isProviderLocked("minimax-coding-plan") {
+			apiKeys.MiniMaxCodingPlan = envKeys.MiniMaxCodingPlan
 		}
 	}
 

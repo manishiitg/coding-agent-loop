@@ -3,6 +3,8 @@ package step_based_workflow
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1350,43 +1352,34 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			var learningFilePaths string // File paths for user message when KeepLearningFull is false
 
 			// Determine KeepLearningFull flag
-			// Priority: step config > environment variable > dynamic logic (based on successful runs)
+			// Dynamic logic only: switch based on successful runs in metadata
 			agentConfigs := getAgentConfigs(step)
 			var keepLearningFull bool
 			var keepLearningFullSource string
 
-			if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
-				keepLearningFull = *agentConfigs.KeepLearningFull
-				keepLearningFullSource = "step config"
-			} else if envVal := os.Getenv("KEEP_LEARNING_FULL"); envVal != "" {
-				keepLearningFull = envVal == "true" || envVal == "1"
-				keepLearningFullSource = "environment variable"
-			} else {
-				// Dynamic Logic: Switch based on successful runs
-				// Default to Exploration Mode (False - paths only) to encourage trying different ways
-				keepLearningFull = false
+			// Default to Exploration Mode (false - paths only) to encourage trying different ways
+			keepLearningFull = false
 
-				// Read metadata to check successful runs
-				learningPathIdentifier := step.GetID() // Use ID as identifier
-				metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
-				if err == nil && metadata != nil {
-					// Check thresholds: Simple >= 2, Medium >= 3, Complex >= 5
-					if metadata.SuccessfulRunsSimple >= 2 {
-						keepLearningFull = true
-						keepLearningFullSource = "dynamic (simple threshold met)"
-					} else if metadata.SuccessfulRunsMedium >= 3 {
-						keepLearningFull = true
-						keepLearningFullSource = "dynamic (medium threshold met)"
-					} else if metadata.SuccessfulRunsComplex >= 5 {
-						keepLearningFull = true
-						keepLearningFullSource = "dynamic (complex threshold met)"
-					} else {
-						keepLearningFullSource = "dynamic (exploration phase)"
-					}
+			// Read metadata to check successful runs
+			learningPathIdentifier := step.GetID()
+			metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+			if err == nil && metadata != nil {
+				// Check thresholds: Simple >= 2, Medium >= 3, Complex >= 5
+				if metadata.SuccessfulRunsSimple >= 2 {
+					keepLearningFull = true
+					keepLearningFullSource = "dynamic (simple threshold met)"
+				} else if metadata.SuccessfulRunsMedium >= 3 {
+					keepLearningFull = true
+					keepLearningFullSource = "dynamic (medium threshold met)"
+				} else if metadata.SuccessfulRunsComplex >= 5 {
+					keepLearningFull = true
+					keepLearningFullSource = "dynamic (complex threshold met)"
 				} else {
-					// No metadata (first run) or error reading -> Stay in Exploration Mode
-					keepLearningFullSource = "dynamic (initial exploration)"
+					keepLearningFullSource = "dynamic (exploration phase)"
 				}
+			} else {
+				// No metadata (first run) or error reading -> Stay in Exploration Mode
+				keepLearningFullSource = "dynamic (initial exploration)"
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
@@ -1416,6 +1409,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				)
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to read learning history for step %d: %w", stepIndex+1, err)
+				}
+
+				// Hash-based exploration reset: if learning content changed since last run, force exploration mode
+				if formattedLearningHistory != "" && metadata != nil {
+					h := sha256.Sum256([]byte(formattedLearningHistory))
+					currentHash := hex.EncodeToString(h[:])
+					if metadata.LearningContentHash != "" && metadata.LearningContentHash != currentHash {
+						keepLearningFull = false
+						keepLearningFullSource = "dynamic (learning content changed — exploration reset)"
+						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Learning content changed for step '%s' — forcing exploration mode (hash: %s → %s)", step.GetTitle(), metadata.LearningContentHash[:8], currentHash[:8]))
+					}
+					// Store the current hash in metadata for next comparison (saved when metadata is persisted later)
+					metadata.LearningContentHash = currentHash
 				}
 
 				// Get learning file paths for user message (when KeepLearningFull is false)
@@ -1517,14 +1523,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Set HasLearnings flag to explicitly indicate whether learnings exist (prevents agent from searching)
 				templateVars["HasLearnings"] = fmt.Sprintf("%t", formattedLearningHistory != "")
 
-				// Set KeepLearningFull feature flag (already determined above, just log and set template var)
-				if agentConfigs != nil && agentConfigs.KeepLearningFull != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step config KeepLearningFull: %v", keepLearningFull))
-				} else if envVal := os.Getenv("KEEP_LEARNING_FULL"); envVal != "" {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using environment variable KEEP_LEARNING_FULL: %v", keepLearningFull))
-				} else {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using default KeepLearningFull: true (full content in system prompt)"))
-				}
 				templateVars["KeepLearningFull"] = fmt.Sprintf("%t", keepLearningFull)
 				templateVars["LearningFilePaths"] = learningFilePaths // Set file paths for user message when KeepLearningFull is false
 

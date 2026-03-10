@@ -32,6 +32,7 @@ interface LLMState extends StoreActions {
   anthropicConfig: ExtendedLLMConfiguration
   azureConfig: ExtendedLLMConfiguration
   minimaxConfig: ExtendedLLMConfiguration
+  minimaxCodingPlanConfig: ExtendedLLMConfiguration
 
   // CLI provider API keys
   geminiCliApiKey: string
@@ -46,6 +47,7 @@ interface LLMState extends StoreActions {
   customVertexModels: string[]
   customAzureModels: string[]
   customMinimaxModels: string[]
+  customMinimaxCodingPlanModels: string[]
 
   // Available models from backend
   availableBedrockModels: string[]
@@ -55,7 +57,8 @@ interface LLMState extends StoreActions {
   availableAnthropicModels: string[]
   availableAzureModels: string[]
   availableMinimaxModels: string[]
-  
+  availableMinimaxCodingPlanModels: string[]
+
   // Modal state
   showLLMModal: boolean
   
@@ -68,7 +71,7 @@ interface LLMState extends StoreActions {
   defaultsLoaded: boolean
 
   // Supported providers (from backend, not persisted)
-  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax')[]
+  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan')[]
   isProviderSupported: (provider: string) => boolean
 
   // Delegation tier configuration
@@ -98,6 +101,7 @@ interface LLMState extends StoreActions {
   setAnthropicConfig: (config: ExtendedLLMConfiguration) => void
   setAzureConfig: (config: ExtendedLLMConfiguration) => void
   setMinimaxConfig: (config: ExtendedLLMConfiguration) => void
+  setMinimaxCodingPlanConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
@@ -118,16 +122,18 @@ interface LLMState extends StoreActions {
   removeCustomAzureModel: (model: string) => void
   addCustomMinimaxModel: (model: string) => void
   removeCustomMinimaxModel: (model: string) => void
+  addCustomMinimaxCodingPlanModel: (model: string) => void
+  removeCustomMinimaxCodingPlanModel: (model: string) => void
 
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax') => void
+  updateProvider: (provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan') => void
   updateModel: (modelId: string) => void
   updateFallbacks: (fallbacks: string[]) => void
   updateCrossProviderFallback: (fallback: LLMConfiguration['cross_provider_fallback']) => void
   refreshAvailableLLMs: () => Promise<void>
   
   // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'minimax', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null, correctedOptions?: Record<string, unknown>}>
+  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null, correctedOptions?: Record<string, unknown>}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -219,6 +225,13 @@ export const useLLMStore = create<LLMState>()(
           cross_provider_fallback: undefined,
           api_key: ''
         },
+        minimaxCodingPlanConfig: {
+          provider: 'minimax-coding-plan',
+          model_id: '',
+          fallback_models: [],
+          cross_provider_fallback: undefined,
+          api_key: ''
+        },
 
         // CLI provider API keys
         geminiCliApiKey: '',
@@ -237,6 +250,7 @@ export const useLLMStore = create<LLMState>()(
         customVertexModels: [],
         customAzureModels: [],
         customMinimaxModels: [],
+        customMinimaxCodingPlanModels: [],
 
         // Available models from backend
         availableBedrockModels: [],
@@ -246,7 +260,8 @@ export const useLLMStore = create<LLMState>()(
         availableAnthropicModels: [],
         availableAzureModels: [],
         availableMinimaxModels: [],
-        
+        availableMinimaxCodingPlanModels: [],
+
         // Modal state
         showLLMModal: false,
         
@@ -259,7 +274,7 @@ export const useLLMStore = create<LLMState>()(
         delegationTierConfig: null,
 
         // Supported providers (always load fresh from backend, default to all)
-        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'minimax'],
+        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'minimax', 'minimax-coding-plan'],
         llmConfigLocked: false,
         lockedProviders: [],
         defaultPublishedLLMsLocked: false,
@@ -336,6 +351,10 @@ export const useLLMStore = create<LLMState>()(
           set({ minimaxConfig: config, error: null })
         },
 
+        setMinimaxCodingPlanConfig: (config) => {
+          set({ minimaxCodingPlanConfig: config, error: null })
+        },
+
         setShowLLMModal: (show) => {
           set({ showLLMModal: show })
         },
@@ -355,6 +374,7 @@ export const useLLMStore = create<LLMState>()(
               bedrock: state.bedrockConfig,
               azure: state.azureConfig,
               minimax: state.minimaxConfig,
+              'minimax-coding-plan': state.minimaxCodingPlanConfig,
             }
             const tierConfig = config as Record<string, { provider?: string }>
             for (const tier of ['high', 'medium', 'low']) {
@@ -492,6 +512,18 @@ export const useLLMStore = create<LLMState>()(
           set({ customMinimaxModels: customMinimaxModels.filter(m => m !== model) })
         },
 
+        addCustomMinimaxCodingPlanModel: (model) => {
+          const { customMinimaxCodingPlanModels } = get()
+          if (!customMinimaxCodingPlanModels.includes(model)) {
+            set({ customMinimaxCodingPlanModels: [...customMinimaxCodingPlanModels, model] })
+          }
+        },
+
+        removeCustomMinimaxCodingPlanModel: (model) => {
+          const { customMinimaxCodingPlanModels } = get()
+          set({ customMinimaxCodingPlanModels: customMinimaxCodingPlanModels.filter(m => m !== model) })
+        },
+
         // Load defaults from backend
         loadDefaultsFromBackend: async () => {
           try {
@@ -616,6 +648,16 @@ export const useLLMStore = create<LLMState>()(
                 api_key: ''
                 }
               ),
+              minimaxCodingPlanConfig: preserveUserConfig(
+                currentState.minimaxCodingPlanConfig,
+                defaults.minimax_coding_plan_config || {
+                provider: 'minimax-coding-plan',
+                model_id: '',
+                fallback_models: [],
+                cross_provider_fallback: undefined,
+                api_key: ''
+                }
+              ),
               savedLLMs: newSavedLLMs,
               availableBedrockModels: defaults.available_models.bedrock,
               availableOpenRouterModels: defaults.available_models.openrouter,
@@ -624,8 +666,9 @@ export const useLLMStore = create<LLMState>()(
               availableAnthropicModels: defaults.available_models.anthropic || [],
               availableAzureModels: defaults.available_models.azure || [],
               availableMinimaxModels: defaults.available_models.minimax || [],
+              availableMinimaxCodingPlanModels: defaults.available_models['minimax-coding-plan'] || [],
               supportedProviders: (() => {
-                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'minimax']
+                const sp = defaults.supported_providers || ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'minimax', 'minimax-coding-plan']
                 console.log('[useLLMStore] supported_providers from backend:', defaults.supported_providers, '→ using:', sp)
                 return sp
               })(),
@@ -979,12 +1022,14 @@ export const useLLMStore = create<LLMState>()(
           anthropicConfig: state.anthropicConfig,
           azureConfig: state.azureConfig,
           minimaxConfig: state.minimaxConfig,
+          minimaxCodingPlanConfig: state.minimaxCodingPlanConfig,
           customBedrockModels: state.customBedrockModels,
           customOpenRouterModels: state.customOpenRouterModels,
           customOpenAIModels: state.customOpenAIModels,
           customVertexModels: state.customVertexModels,
           customAzureModels: state.customAzureModels,
           customMinimaxModels: state.customMinimaxModels,
+          customMinimaxCodingPlanModels: state.customMinimaxCodingPlanModels,
           geminiCliApiKey: state.geminiCliApiKey,
           geminiCliModel: state.geminiCliModel,
           showLLMModal: state.showLLMModal,

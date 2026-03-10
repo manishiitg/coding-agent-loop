@@ -1728,8 +1728,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// 2. Reactivate session if it was stopped/completed/error
-		if chatSession.Status == "stopped" || chatSession.Status == "completed" || chatSession.Status == "error" {
+		// 2. Reactivate session if it was completed/error (but NOT stopped - user-stopped sessions should not auto-resume)
+		if chatSession.Status == "completed" || chatSession.Status == "error" {
 			updateReq.Status = "active"
 			updateReq.CompletedAt = nil // Clear completion timestamp when reactivating
 			shouldUpdate = true

@@ -1,4 +1,6 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
+
+const DBG = '[skill-popup]'
 import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download, Bot, Server, ImagePlus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
@@ -1041,11 +1043,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Lazy-load skills when ! popup opens (always re-fetch to pick up new skills)
   useEffect(() => {
+    console.log(DBG + ' showSkillPopup changed:', showSkillPopup)
     if (showSkillPopup) {
       setSkillsLoading(true)
       skillsApi.listSkills()
-        .then(res => setAllSkills(res.skills || []))
-        .catch(() => {})
+        .then(res => {
+          const raw = res.skills || []
+          const seen = new Set<string>()
+          const unique = raw.filter((s: { file_path?: string; folder_name: string }) => {
+            if (seen.has(s.folder_name)) return false
+            seen.add(s.folder_name)
+            return true
+          })
+          console.log(DBG + ' skills loaded:', raw.length, '→ deduplicated:', unique.length)
+          setAllSkills(unique)
+        })
+        .catch((err: unknown) => { console.error(DBG + ' skills load error:', err) })
         .finally(() => setSkillsLoading(false))
     }
   }, [showSkillPopup])
@@ -1197,11 +1210,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     else if (lastExclamationIndex >= 0 && closestTrigger === exclamationDistance) {
       const textAfterExcl = textBeforeCursor.substring(lastExclamationIndex + 1)
       const hasValidExcl = textAfterExcl === '' || textAfterExcl.match(/^[a-zA-Z0-9_-]*$/)
+      console.log(DBG + ' ! trigger — textAfterExcl:', JSON.stringify(textAfterExcl), 'hasValidExcl:', hasValidExcl)
 
       if (hasValidExcl) {
         setExclamationPosition(lastExclamationIndex)
         setSkillPopupSearchQuery(textAfterExcl)
         setShowSkillPopup(true)
+        console.log(DBG + ' ! trigger — setSkillPopupSearchQuery:', JSON.stringify(textAfterExcl))
         setShowCommandDialog(false)
         setShowFileDialog(false)
         setShowWorkflowDialog(false)
@@ -1307,6 +1322,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     } else {
       // Close all dialogs if none is active
+      console.log(DBG + ' no trigger matched — closing all popups. textBeforeCursor:', JSON.stringify(textBeforeCursor), 'closestTrigger:', closestTrigger)
       setShowFileDialog(false)
       setAtPosition(-1)
       setFileSearchQuery('')
@@ -2081,31 +2097,46 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [caretPosition, inputText, subAgentPopupSearchQuery, activeTabId, setTabConfig])
 
   // Memoized items arrays for inline popups
-  const skillPopupItems: InlineSelectionItem[] = useMemo(() =>
-    allSkills.map(s => ({
-      id: s.folder_name,
-      name: s.frontmatter.name,
-      description: s.frontmatter.description,
-      isSelected: selectedSkills.includes(s.folder_name)
-    }))
+  const skillPopupItems: InlineSelectionItem[] = useMemo(() => {
+    const seen = new Set<string>()
+    return allSkills
+      .filter(s => {
+        if (seen.has(s.folder_name)) return false
+        seen.add(s.folder_name)
+        return true
+      })
+      .map(s => ({
+        id: s.folder_name,
+        name: s.frontmatter.name,
+        description: s.frontmatter.description,
+        isSelected: selectedSkills.includes(s.folder_name)
+      }))
+  }
   , [allSkills, selectedSkills])
 
   const serverPopupItems: InlineSelectionItem[] = useMemo(() =>
-    availableServers.map(name => ({
+    [...new Set(availableServers)].map(name => ({
       id: name,
       name,
       isSelected: manualSelectedServers.includes(name)
     }))
   , [availableServers, manualSelectedServers])
 
-  const subAgentPopupItems: InlineSelectionItem[] = useMemo(() =>
-    allSubAgents.map(sa => ({
-      id: sa.folder_name,
-      name: sa.frontmatter.name,
-      description: sa.frontmatter.description,
-      isSelected: selectedSubAgents.includes(sa.folder_name)
-    }))
-  , [allSubAgents, selectedSubAgents])
+  const subAgentPopupItems: InlineSelectionItem[] = useMemo(() => {
+    const seen = new Set<string>()
+    return allSubAgents
+      .filter(sa => {
+        if (seen.has(sa.folder_name)) return false
+        seen.add(sa.folder_name)
+        return true
+      })
+      .map(sa => ({
+        id: sa.folder_name,
+        name: sa.frontmatter.name,
+        description: sa.frontmatter.description,
+        isSelected: selectedSubAgents.includes(sa.folder_name)
+      }))
+  }, [allSubAgents, selectedSubAgents])
 
   // When user presses → on a folder in the file dialog, set search context to that folder (input after @ becomes folder path)
   const handleNavigateIntoFolder = useCallback((folderPath: string) => {
@@ -2968,12 +2999,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <div className="text-sm font-medium text-gray-100">Google Workspace</div>
                             <div className="text-xs text-gray-400 mt-0.5">Drive · Gmail · Calendar · Docs · Sheets · Slides</div>
                           </div>
-                          <label className={`relative inline-flex items-center ${gwsEnabled || (gwsChatAuthStatus?.configured && gwsChatAuthStatus?.token_valid !== false) ? 'cursor-pointer' : 'cursor-not-allowed opacity-40'}`}>
+                          <label className={`relative inline-flex items-center ${gwsChatAuthStatus?.token_valid === false || (!gwsEnabled && !gwsChatAuthStatus?.configured) ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}`}>
                             <input
                               type="checkbox"
                               checked={gwsEnabled}
                               onChange={toggleGWSServer}
-                              disabled={!gwsEnabled && !(gwsChatAuthStatus?.configured && gwsChatAuthStatus?.token_valid !== false)}
+                              disabled={gwsChatAuthStatus?.token_valid === false || (!gwsEnabled && !gwsChatAuthStatus?.configured)}
                               className="sr-only peer"
                             />
                             <div className="w-11 h-6 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
@@ -2981,7 +3012,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </div>
 
                         {/* Auth gate hint */}
-                        {!gwsEnabled && !(gwsChatAuthStatus?.configured && gwsChatAuthStatus?.token_valid !== false) && (
+                        {gwsChatAuthStatus?.token_valid === false ? (
+                          <p className="text-xs text-amber-400">
+                            Token invalid — run <code className="text-amber-300">gws auth login</code> to re-authenticate
+                          </p>
+                        ) : !gwsEnabled && !gwsChatAuthStatus?.configured && (
                           <p className="text-xs text-amber-400">
                             {gwsChatChecking ? 'Checking auth...' : 'Auth check required before enabling'}
                           </p>
@@ -3006,6 +3041,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                     Auth OK · {gwsChatAuthStatus.enabled_api_count ?? 0} APIs
                                     {gwsChatAuthStatus.auth_method ? ` (${gwsChatAuthStatus.auth_method})` : ''}
                                   </span>
+                                </div>
+                              ) : gwsChatAuthStatus.configured && gwsChatAuthStatus.token_valid === false ? (
+                                <div className="flex items-center gap-1.5">
+                                  <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                                  <span className="text-xs text-amber-400">Token invalid</span>
                                 </div>
                               ) : (
                                 <div className="flex items-center gap-1.5">

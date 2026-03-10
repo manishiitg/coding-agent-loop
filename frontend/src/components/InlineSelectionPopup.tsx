@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { Check, Loader2 } from 'lucide-react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { Check, Loader2, Search } from 'lucide-react'
+
+const DBG = '[skill-popup]'
 
 export interface InlineSelectionItem {
   id: string
@@ -26,7 +28,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
   onClose,
   onToggleItem,
   items,
-  searchQuery,
+  searchQuery: externalSearchQuery,
   position,
   title,
   icon,
@@ -34,90 +36,130 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
   isLoading = false
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [filteredItems, setFilteredItems] = useState<InlineSelectionItem[]>([])
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const [localQuery, setLocalQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    if (!isOpen) return
+  // Use refs so keyboard handler always has fresh values without re-registering
+  const selectedIndexRef = useRef(selectedIndex)
+  const onCloseRef = useRef(onClose)
+  const onToggleItemRef = useRef(onToggleItem)
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-      } else if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        if (filteredItems.length > 0 && selectedIndex >= 0 && selectedIndex < filteredItems.length) {
-          onToggleItem(filteredItems[selectedIndex].id)
-        }
-      } else if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setSelectedIndex(prev => Math.min(prev + 1, filteredItems.length - 1))
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setSelectedIndex(prev => Math.max(prev - 1, 0))
-      }
+  useEffect(() => { selectedIndexRef.current = selectedIndex }, [selectedIndex])
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
+  useEffect(() => { onToggleItemRef.current = onToggleItem }, [onToggleItem])
+
+  // Sync external search query (from typing after ! in textarea) into local input
+  useEffect(() => {
+    console.log(`${DBG} externalSearchQuery changed:`, externalSearchQuery, 'isOpen:', isOpen)
+    if (isOpen) {
+      setLocalQuery(externalSearchQuery)
     }
+  }, [externalSearchQuery, isOpen])
 
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose, onToggleItem, filteredItems, selectedIndex])
-
-  // Filter items based on search query
+  // Auto-focus search input when popup opens; reset on close
   useEffect(() => {
-    if (!searchQuery.trim()) {
-      setFilteredItems(items)
+    console.log(`${DBG} isOpen changed:`, isOpen, 'items count:', items.length)
+    if (isOpen) {
       setSelectedIndex(0)
-      return
+      setTimeout(() => {
+        const focused = searchInputRef.current?.focus()
+        console.log(`${DBG} focused input:`, !!searchInputRef.current)
+      }, 50)
+    } else {
+      setLocalQuery('')
+      setSelectedIndex(0)
     }
+  }, [isOpen])
 
-    const query = searchQuery.toLowerCase().trim()
+  // Log items changes
+  useEffect(() => {
+    console.log(`${DBG} items updated, count:`, items.length, items.map(i => i.name))
+  }, [items])
+
+  // Filter items synchronously (useMemo, no render-cycle delay)
+  const filteredItems = useMemo(() => {
+    console.log(`${DBG} filtering — localQuery: "${localQuery}", items:`, items.length)
+    if (!localQuery.trim()) return items
+
+    const query = localQuery.toLowerCase().trim()
     const filtered = items.filter(item =>
       item.name.toLowerCase().includes(query) ||
       item.id.toLowerCase().includes(query) ||
       (item.description && item.description.toLowerCase().includes(query))
     )
 
-    // Sort by relevance
     filtered.sort((a, b) => {
       const aExact = a.name.toLowerCase() === query
       const bExact = b.name.toLowerCase() === query
       if (aExact && !bExact) return -1
       if (!aExact && bExact) return 1
-
       const aStarts = a.name.toLowerCase().startsWith(query)
       const bStarts = b.name.toLowerCase().startsWith(query)
       if (aStarts && !bStarts) return -1
       if (!aStarts && bStarts) return 1
-
       return a.name.localeCompare(b.name)
     })
 
-    setFilteredItems(filtered)
+    console.log(`${DBG} filtered result:`, filtered.length, filtered.map(i => i.name))
+    return filtered
+  }, [localQuery, items])
+
+  // Keep a ref to filteredItems for use in keyboard handler
+  const filteredItemsRef = useRef(filteredItems)
+  useEffect(() => { filteredItemsRef.current = filteredItems }, [filteredItems])
+
+  // Reset selected index when results change
+  useEffect(() => {
     setSelectedIndex(0)
-  }, [searchQuery, items])
+  }, [localQuery, items])
 
   // Scroll selected item into view
   useEffect(() => {
     if (listRef.current && selectedIndex >= 0) {
-      const selectedElement = listRef.current.children[selectedIndex] as HTMLElement
-      if (selectedElement) {
-        selectedElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-      }
+      const el = listRef.current.children[selectedIndex] as HTMLElement
+      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
   }, [selectedIndex])
+
+  // Single stable document-level keydown listener using refs (no stale closures)
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const items = filteredItemsRef.current
+      const idx = selectedIndexRef.current
+      console.log(`${DBG} keydown: "${e.key}", filteredItems: ${items.length}, selectedIndex: ${idx}`)
+
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onCloseRef.current()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        console.log(`${DBG} Enter — toggling:`, items[idx]?.id)
+        if (items.length > 0 && idx >= 0 && idx < items.length) {
+          onToggleItemRef.current(items[idx].id)
+        }
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedIndex(prev => Math.min(prev + 1, filteredItemsRef.current.length - 1))
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedIndex(prev => Math.max(prev - 1, 0))
+      }
+    }
+    console.log(`${DBG} registered keydown listener`)
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen])
 
   if (!isOpen) return null
 
   return (
     <div
-      ref={dialogRef}
       className="fixed z-50 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg min-w-[300px] max-w-[400px]"
-      style={{
-        bottom: `${position.bottom}px`,
-        left: `${position.left}px`
-      }}
+      style={{ bottom: `${position.bottom}px`, left: `${position.left}px` }}
     >
       {/* Header */}
       <div className="px-3 py-2 border-b border-border bg-secondary">
@@ -127,11 +169,44 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
         </div>
       </div>
 
-      {/* Item List */}
-      <div
-        ref={listRef}
-        className="overflow-y-auto max-h-96"
-      >
+      {/* Search input */}
+      <div className="px-3 py-2 border-b border-border">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder={`Search ${title.toLowerCase()}...`}
+            value={localQuery}
+            onChange={e => setLocalQuery(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                e.stopPropagation()
+                const items = filteredItemsRef.current
+                const idx = selectedIndexRef.current
+                console.log(`${DBG} input Enter — toggling:`, items[idx]?.id)
+                if (items.length > 0 && idx >= 0 && idx < items.length) {
+                  onToggleItemRef.current(items[idx].id)
+                }
+              } else if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setSelectedIndex(prev => Math.min(prev + 1, filteredItemsRef.current.length - 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setSelectedIndex(prev => Math.max(prev - 1, 0))
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                onCloseRef.current()
+              }
+            }}
+            className="w-full pl-7 pr-2 py-1.5 text-xs rounded-md border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+        </div>
+      </div>
+
+      {/* Item list */}
+      <div ref={listRef} className="overflow-y-auto max-h-64">
         {isLoading ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm flex items-center justify-center gap-2">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -139,30 +214,31 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
           </div>
         ) : filteredItems.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">
-            {searchQuery ? `No ${title.toLowerCase()} found` : emptyMessage}
+            {localQuery ? `No ${title.toLowerCase()} found` : emptyMessage}
           </div>
         ) : (
           filteredItems.map((item, index) => (
             <div
-              key={item.id}
+              key={`${item.id}-${index}`}
               className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
                 index === selectedIndex
                   ? 'bg-primary/10 text-primary border-l-2 border-primary'
                   : 'hover:bg-secondary'
               }`}
-              onClick={() => onToggleItem(item.id)}
+              onMouseDown={e => { e.preventDefault(); onToggleItem(item.id) }}
             >
               <div className="flex-1 min-w-0">
-                <div className="font-medium">{item.name}</div>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-medium">{item.name}</span>
+                  {item.id.startsWith('custom/') && (
+                    <span className="text-[10px] px-1 py-0.5 rounded bg-purple-100 dark:bg-purple-900/40 text-purple-600 dark:text-purple-400 font-medium leading-none">custom</span>
+                  )}
+                </div>
                 {item.description && (
-                  <div className="text-xs text-muted-foreground truncate">
-                    {item.description}
-                  </div>
+                  <div className="text-xs text-muted-foreground truncate">{item.description}</div>
                 )}
               </div>
-              {item.isSelected && (
-                <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
-              )}
+              {item.isSelected && <Check className="w-4 h-4 text-green-500 flex-shrink-0" />}
             </div>
           ))
         )}
@@ -171,8 +247,8 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
       {/* Footer */}
       <div className="px-3 py-2 border-t border-border bg-secondary text-xs text-muted-foreground">
         <div className="flex items-center justify-between">
-          <span>↑↓ to navigate</span>
-          <span>Enter/Space to toggle • Esc to close</span>
+          <span>↑↓ navigate</span>
+          <span>Enter to toggle • Esc to close</span>
         </div>
       </div>
     </div>

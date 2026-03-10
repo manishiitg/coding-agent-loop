@@ -1243,10 +1243,11 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Access Drive, Gmail, Calendar, Docs, Sheets, and Slides tools</div>
                         </div>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer ml-3">
+                      <label className={`relative inline-flex items-center ml-3 ${gwsAuthStatus?.token_valid === false ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
                         <input
                           type="checkbox"
                           checked={selectedServers.includes('gws')}
+                          disabled={gwsAuthStatus?.token_valid === false}
                           onChange={(e) => {
                             if (e.target.checked) {
                               setSelectedServers(prev => prev.includes('gws') ? prev : [...prev, 'gws']);
@@ -1303,6 +1304,13 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             <span className="text-xs text-green-600 dark:text-green-400">
                               Auth OK · {gwsAuthStatus.enabled_api_count ?? 0} APIs · {gwsAuthStatus.scope_count ?? 0} scopes
                               {gwsAuthStatus.auth_method ? ` (${gwsAuthStatus.auth_method})` : ''}
+                            </span>
+                          </div>
+                        ) : gwsAuthStatus.configured && gwsAuthStatus.token_valid === false ? (
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                            <span className="text-xs text-amber-600 dark:text-amber-400">
+                              Token invalid — run <code className="font-mono">gws auth login</code> to re-authenticate
                             </span>
                           </div>
                         ) : (

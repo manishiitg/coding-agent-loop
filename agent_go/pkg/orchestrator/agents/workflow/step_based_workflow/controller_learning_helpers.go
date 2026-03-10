@@ -57,24 +57,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) CalculateStepHash(step PlanStepInterf
 		sb.WriteString(strings.Join(sortedDeps, ","))
 	}
 
-	// Add SelectedServers and SelectedTools to hash - changing MCPs should reset learnings
-	// since the agent now has different tools available which affects what it can learn
+	// Add resolved servers and tools to hash - changing MCPs should reset learnings
+	// since the agent now has different tools available which affects what it can learn.
+	// Mirror the exact runtime resolution: step-level filtered by workflow cap, or workflow defaults.
 	agentConfigs := getAgentConfigs(step)
-	if agentConfigs != nil {
-		if len(agentConfigs.SelectedServers) > 0 {
-			sortedServers := make([]string, len(agentConfigs.SelectedServers))
-			copy(sortedServers, agentConfigs.SelectedServers)
-			sort.Strings(sortedServers)
-			sb.WriteString("|servers:")
-			sb.WriteString(strings.Join(sortedServers, ","))
-		}
-		if len(agentConfigs.SelectedTools) > 0 {
-			sortedTools := make([]string, len(agentConfigs.SelectedTools))
-			copy(sortedTools, agentConfigs.SelectedTools)
-			sort.Strings(sortedTools)
-			sb.WriteString("|tools:")
-			sb.WriteString(strings.Join(sortedTools, ","))
-		}
+	workflowServers := hcpo.GetSelectedServers()
+	var effectiveServers []string
+	var effectiveTools []string
+	if agentConfigs != nil && len(agentConfigs.SelectedServers) > 0 {
+		// Intersect step servers with workflow cap — matches what the agent actually gets at runtime
+		effectiveServers = filterServersByWorkflow(agentConfigs.SelectedServers, workflowServers)
+	} else {
+		effectiveServers = workflowServers
+	}
+	if agentConfigs != nil && len(agentConfigs.SelectedTools) > 0 {
+		effectiveTools = filterToolsByWorkflow(agentConfigs.SelectedTools, workflowServers)
+	} else {
+		effectiveTools = hcpo.GetSelectedTools()
+	}
+	if len(effectiveServers) > 0 {
+		sortedServers := make([]string, len(effectiveServers))
+		copy(sortedServers, effectiveServers)
+		sort.Strings(sortedServers)
+		sb.WriteString("|servers:")
+		sb.WriteString(strings.Join(sortedServers, ","))
+	}
+	if len(effectiveTools) > 0 {
+		sortedTools := make([]string, len(effectiveTools))
+		copy(sortedTools, effectiveTools)
+		sort.Strings(sortedTools)
+		sb.WriteString("|tools:")
+		sb.WriteString(strings.Join(sortedTools, ","))
 	}
 
 	// Calculate SHA256

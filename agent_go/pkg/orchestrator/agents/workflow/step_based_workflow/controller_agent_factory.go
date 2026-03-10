@@ -1082,25 +1082,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 	}
 
 	// ── 1. TEMP LEARNING LLM ─────────────────────────────────────────────────
-	// If learnings already exist, use tempLearningLLM (cheaper model) for incremental updates.
-	// For new learning (no existing learnings), skip so the best model is used for quality.
-	if stepID != "" {
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, 0, stepPath)
-		if err == nil && !learningsEmpty {
-			if hcpo.executionOptions != nil && hcpo.executionOptions.TempLearningLLM != nil &&
-				hcpo.executionOptions.TempLearningLLM.Provider != "" && hcpo.executionOptions.TempLearningLLM.ModelID != "" {
-				hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Learnings exist for step %s - using temp learning LLM: %s/%s",
-					stepID, hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID))
-				return &orchestrator.LLMConfig{
-					Primary: orchestrator.LLMModel{
-						Provider: hcpo.executionOptions.TempLearningLLM.Provider,
-						ModelID:  hcpo.executionOptions.TempLearningLLM.ModelID,
-					},
-					APIKeys: orchestratorLLMConfig.APIKeys,
-				}
-			}
-		} else if err == nil && learningsEmpty {
-			hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] No learnings exist for step %s - using default LLM for new learning", stepID))
+	// If tempLearningLLM is configured, always use it for all learning phases (first run or incremental).
+	if hcpo.executionOptions != nil && hcpo.executionOptions.TempLearningLLM != nil &&
+		hcpo.executionOptions.TempLearningLLM.Provider != "" && hcpo.executionOptions.TempLearningLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🧠 [TEMP_LEARNING_LLM] Using temp learning LLM for step %s: %s/%s",
+			stepID, hcpo.executionOptions.TempLearningLLM.Provider, hcpo.executionOptions.TempLearningLLM.ModelID))
+		return &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: hcpo.executionOptions.TempLearningLLM.Provider,
+				ModelID:  hcpo.executionOptions.TempLearningLLM.ModelID,
+			},
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
 	}
 

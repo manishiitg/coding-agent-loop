@@ -2497,6 +2497,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workflowOptions,
 			)
 			if err != nil {
+				// Check if this is a zombie execution: if our queryID is no longer registered
+				// for this session, the session was stopped/replaced by a newer execution.
+				// Avoid overwriting the newer execution's session status with our stale error.
+				api.sessionQueryIDMux.RLock()
+				isCurrentExecution := false
+				for _, qid := range api.sessionQueryIDs[sessionID] {
+					if qid == queryID {
+						isCurrentExecution = true
+						break
+					}
+				}
+				api.sessionQueryIDMux.RUnlock()
+
+				if !isCurrentExecution {
+					log.Printf("[WORKFLOW COMPLETION] Skipping error status update for zombie execution %s (session %s has a newer execution or was intentionally stopped)", queryID, sessionID)
+					return
+				}
+
 				log.Printf("[WORKFLOW ERROR] Workflow execution failed for query %s: %v", queryID, err)
 
 				// Extract root cause error from the error chain

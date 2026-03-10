@@ -1291,8 +1291,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestrationOrchestratorAgentForS
 		return nil, err
 	}
 
-	// Create agent name with step ID
-	agentName := fmt.Sprintf("orchestrator-%s", stepID)
+	// Create agent name using step title if available, otherwise fall back to step ID
+	agentName := step.GetTitle()
+	if agentName == "" {
+		agentName = fmt.Sprintf("orchestrator-%s", stepID)
+	}
 
 	// Create orchestration orchestrator agent using factory
 	// orchestrationStepConfig already set above

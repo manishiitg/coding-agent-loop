@@ -529,7 +529,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	allSteps []PlanStepInterface,
 	progress *StepProgress,
 ) (*TodoTaskResponse, []llmtypes.MessageContent, string, *SubAgentExecutionContext, error) {
-	agentName := fmt.Sprintf("todo-task-orchestrator-step-%d", stepIndex+1)
+	agentName := step.Title
+	if agentName == "" {
+		agentName = fmt.Sprintf("todo-task-orchestrator-step-%d", stepIndex+1)
+	}
 
 	// Get step config
 	stepConfig := getAgentConfigs(step)

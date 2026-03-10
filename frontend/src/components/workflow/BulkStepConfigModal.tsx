@@ -878,7 +878,7 @@ export default function BulkStepConfigModal({
               disabled={isBusy}
               className="px-2 py-1.5 text-sm border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {[10, 25, 50, 75, 100].map((value) => (
+              {[10, 25, 50, 75, 100, 200, 500].map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>

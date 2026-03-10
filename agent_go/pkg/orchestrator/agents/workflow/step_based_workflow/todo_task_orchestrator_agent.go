@@ -40,7 +40,7 @@ Sub-agents receive only the task instructions you provide - they don't have your
 4. **MANDATORY STATUS UPDATES**: You MUST keep tasks.md accurate at all times:
    - **Before delegating**: Mark the task(s) as In Progress ([~]) using sed or heredoc rewrite
    - **After sub-agent completes successfully**: Mark the task as Completed ([x]) and move it to the Completed section
-   - **After sub-agent fails**: Keep task as In Progress or move back to Pending with a note
+   - **After sub-agent fails**: Keep task as In Progress or move back to Pending with a note. Consider using get_sub_agent_conversation to inspect what it tried internally before retrying or replanning.
    - The tasks.md must always reflect the TRUE current state — never leave completed work marked as pending
 5. **MANDATORY REFLECTION**: After EVERY batch of sub-agent executions, you MUST:
    - Read ALL results carefully
@@ -151,6 +151,13 @@ Execute a generic agent for ad-hoc tasks that don't match predefined routes.
 - 'success_criteria': How to verify the task was completed successfully
 - 'share_browser' (optional): Set to false for parallel browsing (default: true — shared browser)
 
+**⚠️ CRITICAL — Include system behavior learnings in sub-agent instructions:**
+Before calling any sub-agent, check the LEARNING HISTORY for [SYSTEM_BEHAVIOR] entries relevant to the task.
+If any exist, include them explicitly in the 'instructions' field so the sub-agent knows about them upfront.
+Example: if learning says "export requires checkbox selection first", include in instructions:
+"IMPORTANT: Before clicking Export, check and select the required checkbox — it must be checked or Export stays disabled."
+Sub-agents have no memory of previous runs — they will hit the same blocker unless you tell them.
+
 {{if .EnableDynamicTierSelection}}
 ### ⚡ LLM Tier Selection (Tiered Mode Active)
 Both sub-agent tools accept an optional 'preferred_tier' parameter:
@@ -168,19 +175,41 @@ Both sub-agent tools accept an optional 'preferred_tier' parameter:
 ### save_learning
 Save an actionable insight for future runs of this step.
 **Parameters:**
-- 'category': One of routing, task_planning, error_recovery, delegation, optimization, general
+- 'category': Either system_behavior or error_recovery
 - 'insight': The actionable learning (be specific and include context)
 
-**When to use:**
-- You discovered an effective task breakdown or delegation strategy
-- You found an error pattern and its resolution
-- You identified an optimization (e.g., which tasks can run in parallel)
-- You learned something about the data or environment that future runs should know
+**Categories (only two):**
+- **system_behavior**: The blocker — what unexpected thing the target system did that wasn't anticipated.
+  Applies to any system type: UI/web, API, CLI tool, database, file system, external service, etc.
+- **error_recovery**: What worked — the exact approach that succeeded after the failure.
+
+**When to save (MANDATORY checks after every sub-agent result):**
+1. Did the sub-agent have to do something not mentioned in its instructions? → **save_learning system_behavior**
+2. Did it encounter a UI/API quirk, unexpected modal, required click, or timing issue? → **save_learning system_behavior**
+3. Did it get stuck then unblock itself in an unexpected way? → **save_learning system_behavior**
+4. Did it find a faster path or discover something can be skipped? → **save_learning optimization**
 
 **Best practices:**
-- Save learnings as you go, not just at the end
-- Be specific: include file names, patterns, or exact strategies
-- Focus on actionable insights that would change behavior in future runs
+- Save immediately when you notice it — do not wait until the end
+- Be concrete: describe the exact trigger and the exact action required
+- Include the page/API/context where the behavior occurs
+
+### get_sub_agent_conversation
+Retrieve the full internal conversation of a previous sub-agent call — all tool calls, tool results, and reasoning steps.
+**Parameters:**
+- 'todo_id': The task ID that was delegated (e.g. 'task-003') — must match a previously called sub-agent
+- 'from_last_x': Number of conversation entries to return from the end (required, must be > 0)
+- 'offset_last_x' (optional): Skip this many entries from the tail before applying from_last_x. Use to page backwards. Default 0.
+
+**When to use (MANDATORY in failure/stuck cases):**
+- Sub-agent failed, got stuck, returned a partial result, or needed a retry → MUST call this to inspect root cause, then save learnings
+- Result looks incomplete or inconsistent → verify what tool calls were actually made
+- Before re-delegating the same task → avoid repeating the same mistakes
+- Extracting specific data the sub-agent gathered but didn't surface in its summary
+
+**When NOT needed:** Sub-agent succeeded cleanly on first attempt — skip this, no learning required.
+
+**Paging:** Start with from_last_x=30. If you need earlier entries, use offset_last_x=30 to get the previous page.
 
 ### mark_step_complete
 Signal that the step's objective has been fully achieved.
@@ -299,7 +328,34 @@ Ask yourself these questions and act on the answers:
 - "Are there NEW tasks I should add based on these results?"
 - "Are there EXISTING tasks that are now unnecessary?"
 - "Should I REFINE any remaining task descriptions?"
-- "Did I discover anything worth saving as a learning?" → If yes, call 'save_learning' now (e.g. effective delegation strategy, error pattern, optimization, data insight)
+
+**🔍 MANDATORY: Learning extraction when a sub-agent did NOT complete cleanly:**
+
+For each sub-agent result, determine: did it **succeed on the first attempt without any issues**?
+- **YES (clean success)** → no learning needed, move on.
+- **NO (failed, got stuck, returned partial result, needed retry, or struggled)** → you MUST:
+  1. Call 'get_sub_agent_conversation' to inspect its internal steps (start with from_last_x=30).
+  2. Read through what it actually tried: tool calls, errors, unexpected responses, workarounds it had to do.
+  3. Save TWO learnings (both are required when there was a struggle):
+
+     **a) What was the blocker** (category=system_behavior) — the specific thing it hit that wasn't anticipated:
+     - "Terms modal appears on first portal session each day — must be dismissed before any action"
+     - "Export button stays disabled until the agreement checkbox is checked — check it first"
+     - "API /data endpoint returns empty array if queried within 2s of token issue — add a wait"
+     - "CLI tool exits silently with code 0 if config.yml is missing — check file exists first"
+     - "Database view refreshes on a 5-min schedule — stale reads possible right after writes"
+
+     **b) What ultimately worked** (category=error_recovery) — the exact approach that succeeded after the failure:
+     - "Dismissed the terms modal by clicking 'I Agree' button (id=accept-btn), then proceeded normally"
+     - "Checked the agreement checkbox at the bottom of the page, waited 1s, then clicked Export"
+     - "Added a 3-second sleep after token issue before calling /data — returned correct results"
+     - "Created a minimal config.yml with required 'output_path' field before running CLI tool"
+     - "Waited until :00 of the next minute before querying — view data was fresh and complete"
+
+  The pair of (blocker + what worked) is what future runs need. The blocker alone is not enough —
+  future sub-agents need to know both what to expect AND exactly how to handle it.
+
+This is how the system learns. If you skip this step, the next run will hit the same blocker again.
 
 **STEP C - UPDATE PLAN (MANDATORY - do this before moving on):**
 1. Rewrite tasks.md to move completed tasks to the **## Completed** section with [x]
@@ -521,6 +577,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],
 		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
 		"UseKnowledgebase":           templateVars["UseKnowledgebase"],
+		"IsCodeExecutionMode":        templateVars["IsCodeExecutionMode"] == "true",
 	}
 
 	var result strings.Builder

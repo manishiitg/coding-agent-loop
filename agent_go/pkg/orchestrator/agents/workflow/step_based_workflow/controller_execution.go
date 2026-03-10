@@ -719,60 +719,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createPrerequisiteDetectionTool(prere
 	}
 }
 
-// buildOtherAgentsCapabilitiesSummary builds a formatted summary of other sub-agents' capabilities
-// This helps sub-agents know what other agents are optimized for, so they can communicate with the orchestrator
-// if they encounter something better suited for another agent
-// currentSubAgentStep: The current sub-agent step (to exclude from the list)
-// orchestrationRoutes: All available orchestration routes (sub-agents)
-func (hcpo *StepBasedWorkflowOrchestrator) buildOtherAgentsCapabilitiesSummary(currentSubAgentStep PlanStepInterface, orchestrationRoutes []OrchestrationRoute) string {
-	if len(orchestrationRoutes) == 0 {
-		return "" // No other agents
-	}
-
-	var summary strings.Builder
-	summary.WriteString("## 🤝 Other Sub-Agents Capabilities\n\n")
-	summary.WriteString("You are part of an orchestration step with other specialized sub-agents. ")
-	summary.WriteString("If you encounter a task that another agent is better optimized for, ")
-	summary.WriteString("you can communicate this to the orchestrator in your output.\n\n")
-	summary.WriteString("**Available Sub-Agents:**\n\n")
-
-	agentCount := 0
-	for _, route := range orchestrationRoutes {
-		// Skip the current sub-agent (don't list itself)
-		if route.SubAgentStep.GetID() == currentSubAgentStep.GetID() {
-			continue
-		}
-
-		// Resolve variables in agent information
-		routeName := ResolveVariables(route.RouteName, hcpo.variableValues)
-		condition := ResolveVariables(route.Condition, hcpo.variableValues)
-
-		summary.WriteString(fmt.Sprintf("**%s** (Route ID: `%s`)\n", routeName, route.RouteID))
-		summary.WriteString(fmt.Sprintf("- **Specialization**: %s\n", condition))
-		if route.ContextToPass != "" {
-			summary.WriteString(fmt.Sprintf("- **Context Focus**: %s\n", ResolveVariables(route.ContextToPass, hcpo.variableValues)))
-		}
-		summary.WriteString("\n")
-
-		agentCount++
-	}
-
-	if agentCount == 0 {
-		return "" // No other agents (only current one)
-	}
-
-	summary.WriteString("**How to Communicate with Orchestrator:**\n\n")
-	summary.WriteString("If you encounter a task that matches another agent's specialization, ")
-	summary.WriteString("include a clear note in your output like:\n\n")
-	summary.WriteString("```\n")
-	summary.WriteString("🤝 ORCHESTRATOR SUGGESTION: I encountered [task description] which appears to be ")
-	summary.WriteString("better suited for the [Route Name] agent (route_id: [route_id]). ")
-	summary.WriteString("Reason: [why this agent is better suited].\n")
-	summary.WriteString("```\n\n")
-	summary.WriteString("The orchestrator will review your suggestion and may route the task to the appropriate agent.\n")
-
-	return summary.String()
-}
 
 // loadExecutionResultsFromLogs loads execution results from logs folder for previous steps
 // This is a shared/reusable function that can be called from anywhere in the controller
@@ -1173,17 +1119,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
 		templateVars["PreviousStepsSummary"] = previousStepsSummary
 		if previousStepsSummary != "" {
-		}
-
-		// Build other agents capabilities summary for sub-agents
-		if isSubAgent && len(orchestrationRoutes) > 0 {
-			otherAgentsCapabilities := hcpo.buildOtherAgentsCapabilitiesSummary(step, orchestrationRoutes)
-			templateVars["OtherAgentsCapabilities"] = otherAgentsCapabilities
-			if otherAgentsCapabilities != "" {
-				hcpo.GetLogger().Info(fmt.Sprintf("🤝 Added other agents capabilities summary to template variables for sub-agent %s", stepPath))
-			}
-		} else {
-			templateVars["OtherAgentsCapabilities"] = ""
 		}
 
 		// Add validation schema to template variables so execution agent knows expected file structure
@@ -1624,6 +1559,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 				// Execute execution-only agent with learning history (reused from learning reading above)
 				executionResult, executionConversationHistory, err = executionAgent.Execute(executionCtx, templateVars, []llmtypes.MessageContent{})
+
+				// Capture conversation history for callers that need it (e.g., get_sub_agent_conversation tool)
+				if execCtx != nil && execCtx.ConversationHistoryCapture != nil {
+					*execCtx.ConversationHistoryCapture = executionConversationHistory
+				}
 
 				// CAPTURE EXECUTION LLM: Get the model used for execution (to be stored in learning metadata)
 				if executionAgent != nil && executionAgent.GetConfig() != nil {

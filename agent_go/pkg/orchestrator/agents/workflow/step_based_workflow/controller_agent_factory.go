@@ -2,10 +2,12 @@ package step_based_workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -1942,6 +1944,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 	return agent, nil
 }
 
+// ConversationEntry is a single flattened message in the sub-agent's conversation
+type ConversationEntry struct {
+	Index    int    `json:"index"`
+	Role     string `json:"role"`              // "user", "assistant", "tool_call", "tool_result"
+	Content  string `json:"content,omitempty"` // text content
+	ToolName string `json:"tool_name,omitempty"`
+	ToolArgs string `json:"tool_args,omitempty"`
+}
+
+// SubAgentCallRecord stores the full record of a single call_sub_agent / call_generic_agent call
+type SubAgentCallRecord struct {
+	Index         int                 `json:"index"`   // 1-based call order
+	CalledAt      time.Time           `json:"called_at"`
+	TodoID        string              `json:"todo_id"`
+	RouteID       string              `json:"route_id,omitempty"` // empty for generic
+	AgentType     string              `json:"agent_type"`         // "predefined" | "generic"
+	Success       bool                `json:"success"`
+	Result        string              `json:"result"`
+	Error         string              `json:"error,omitempty"`
+	ExecutionTime string              `json:"execution_time"`
+	Conversation  []ConversationEntry `json:"conversation"`
+}
+
 // SubAgentExecutionContext holds the context needed for sub-agent execution from tools
 type SubAgentExecutionContext struct {
 	TodoTaskStep *TodoTaskPlanStep
@@ -1950,6 +1975,47 @@ type SubAgentExecutionContext struct {
 	AllSteps     []PlanStepInterface
 	Progress     *StepProgress
 	StepConfig   *AgentConfigs // Step-level configuration for LLM overrides
+
+	// CallHistory records every sub-agent call made during this todo task step.
+	// Protected by callHistoryMu for concurrent tool calls.
+	CallHistory   []SubAgentCallRecord
+	callHistoryMu sync.Mutex
+}
+
+// serializeConversationHistory converts raw llmtypes conversation history into a flat list of ConversationEntry
+func serializeConversationHistory(history []llmtypes.MessageContent) []ConversationEntry {
+	var entries []ConversationEntry
+	for i, msg := range history {
+		for _, part := range msg.Parts {
+			entry := ConversationEntry{Index: i + 1}
+			switch msg.Role {
+			case llmtypes.ChatMessageTypeHuman:
+				entry.Role = "user"
+				if tc, ok := part.(llmtypes.TextContent); ok {
+					entry.Content = tc.Text
+				}
+			case llmtypes.ChatMessageTypeAI:
+				if tc, ok := part.(llmtypes.TextContent); ok {
+					entry.Role = "assistant"
+					entry.Content = tc.Text
+				} else if tc, ok := part.(llmtypes.ToolCall); ok && tc.FunctionCall != nil {
+					entry.Role = "tool_call"
+					entry.ToolName = tc.FunctionCall.Name
+					entry.ToolArgs = tc.FunctionCall.Arguments
+				}
+			case llmtypes.ChatMessageTypeTool:
+				if tc, ok := part.(llmtypes.ToolCallResponse); ok {
+					entry.Role = "tool_result"
+					entry.ToolName = tc.Name
+					entry.Content = tc.Content
+				}
+			}
+			if entry.Role != "" {
+				entries = append(entries, entry)
+			}
+		}
+	}
+	return entries
 }
 
 // createTodoTaskOrchestratorAgent creates a todo task orchestrator agent using the standard factory pattern
@@ -2251,6 +2317,43 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 			ctx = context.WithValue(ctx, virtualtools.SubAgentLLMContextKey, execCtx.StepConfig.SubAgentLLM)
 		}
 
+		// Inject get_sub_agent_conversation function
+		getConvFunc := virtualtools.GetSubAgentConversationFunc(func(ctx context.Context, todoID string, fromLastX, offsetLastX int) (string, error) {
+			execCtx.callHistoryMu.Lock()
+			defer execCtx.callHistoryMu.Unlock()
+			for i := len(execCtx.CallHistory) - 1; i >= 0; i-- {
+				if execCtx.CallHistory[i].TodoID == todoID {
+					record := execCtx.CallHistory[i]
+					conv := record.Conversation
+					total := len(conv)
+					end := total - offsetLastX
+					if end < 0 {
+						end = 0
+					}
+					start := end - fromLastX
+					if start < 0 {
+						start = 0
+					}
+					trimmed := record // shallow copy
+					trimmed.Conversation = conv[start:end]
+					type resultWrapper struct {
+						TotalEntries int                `json:"total_entries"`
+						Showing      string             `json:"showing"`
+						Record       SubAgentCallRecord `json:"record"`
+					}
+					out := resultWrapper{
+						TotalEntries: total,
+						Showing:      fmt.Sprintf("entries %d-%d of %d", start+1, end, total),
+						Record:       trimmed,
+					}
+					data, _ := json.MarshalIndent(out, "", "  ")
+					return string(data), nil
+				}
+			}
+			return "", fmt.Errorf("no sub-agent call found for todo_id %q", todoID)
+		})
+		ctx = context.WithValue(ctx, virtualtools.GetSubAgentConversationKey, getConvFunc)
+
 		// Before sub-agent: emit current tasks.md state so UI shows pre-execution state
 		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
 		hcpo.flushTodoTaskStatusDebouncer()
@@ -2448,8 +2551,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card
 		hcpo.emitTodoTaskRouteSelectedEvent(ctx, execCtx.TodoTaskStep, execCtx.StepIndex, execCtx.StepPath, 0, response, nil, "")
 
+		startTime := time.Now()
+
 		// Execute using existing method
-		result, err := hcpo.executePredefinedSubAgent(
+		result, history, err := hcpo.executePredefinedSubAgent(
 			ctx,
 			execCtx.TodoTaskStep,
 			execCtx.StepIndex,
@@ -2458,6 +2563,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 			execCtx.AllSteps,
 			execCtx.Progress,
 		)
+
+		executionTime := time.Since(startTime)
+
+		// Store call record for get_sub_agent_conversation
+		record := SubAgentCallRecord{
+			CalledAt:      startTime,
+			TodoID:        todoID,
+			RouteID:       routeID,
+			AgentType:     "predefined",
+			Success:       err == nil,
+			Result:        result,
+			ExecutionTime: executionTime.String(),
+			Conversation:  serializeConversationHistory(history),
+		}
+		if err != nil {
+			record.Error = err.Error()
+		}
+		execCtx.callHistoryMu.Lock()
+		record.Index = len(execCtx.CallHistory) + 1
+		execCtx.CallHistory = append(execCtx.CallHistory, record)
+		execCtx.callHistoryMu.Unlock()
 
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [TOOL] Predefined sub-agent execution failed: %v", err))
@@ -2503,9 +2629,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 		// Emit route selected event BEFORE sub-agent execution so it appears before the agent card
 		hcpo.emitTodoTaskRouteSelectedEvent(ctx, execCtx.TodoTaskStep, execCtx.StepIndex, execCtx.StepPath, 0, response, nil, "")
 
+		startTime := time.Now()
+
 		// Execute using existing method
 		// All task info comes from tool parameters
-		result, err := hcpo.executeGenericAgent(
+		result, history, err := hcpo.executeGenericAgent(
 			ctx,
 			execCtx.TodoTaskStep,
 			execCtx.StepIndex,
@@ -2514,6 +2642,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 			execCtx.AllSteps,
 			execCtx.Progress,
 		)
+
+		executionTime := time.Since(startTime)
+
+		// Store call record for get_sub_agent_conversation
+		record := SubAgentCallRecord{
+			CalledAt:      startTime,
+			TodoID:        todoID,
+			AgentType:     "generic",
+			Success:       err == nil,
+			Result:        result,
+			ExecutionTime: executionTime.String(),
+			Conversation:  serializeConversationHistory(history),
+		}
+		if err != nil {
+			record.Error = err.Error()
+		}
+		execCtx.callHistoryMu.Lock()
+		record.Index = len(execCtx.CallHistory) + 1
+		execCtx.CallHistory = append(execCtx.CallHistory, record)
+		execCtx.callHistoryMu.Unlock()
 
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [TOOL] Generic agent execution failed: %v", err))

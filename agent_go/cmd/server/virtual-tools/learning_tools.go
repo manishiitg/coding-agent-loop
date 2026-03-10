@@ -39,7 +39,7 @@ func CreateLearningTools() []llmtypes.Tool {
 					"category": map[string]interface{}{
 						"type":        "string",
 						"description": "Category of the learning to help organize insights",
-						"enum":        []string{"routing", "task_planning", "error_recovery", "delegation", "optimization", "general"},
+						"enum":        []string{"system_behavior", "error_recovery"},
 					},
 					"insight": map[string]interface{}{
 						"type":        "string",
@@ -80,11 +80,10 @@ func handleSaveLearning(ctx context.Context, args map[string]interface{}) (strin
 
 	// Validate category
 	validCategories := map[string]bool{
-		"routing": true, "task_planning": true, "error_recovery": true,
-		"delegation": true, "optimization": true, "general": true,
+		"system_behavior": true, "error_recovery": true,
 	}
 	if !validCategories[category] {
-		return "", fmt.Errorf("invalid category '%s': must be one of routing, task_planning, error_recovery, delegation, optimization, general", category)
+		return "", fmt.Errorf("invalid category '%s': must be one of system_behavior, error_recovery", category)
 	}
 
 	// Get the save learning function from context

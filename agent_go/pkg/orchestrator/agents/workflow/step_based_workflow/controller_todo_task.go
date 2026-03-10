@@ -263,7 +263,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			if response.UseGenericAgent {
 				// Execute via generic agent
 				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating task %s to generic agent", response.TodoIDToExecute))
-				subAgentResult, err = hcpo.executeGenericAgent(
+				subAgentResult, _, err = hcpo.executeGenericAgent(
 					ctx,
 					todoTaskStep,
 					stepIndex,
@@ -276,7 +276,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			} else if response.SelectedRouteID != "" {
 				// Execute via predefined sub-agent
 				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating task %s to predefined agent: %s", response.TodoIDToExecute, response.SelectedRouteID))
-				subAgentResult, err = hcpo.executePredefinedSubAgent(
+				subAgentResult, _, err = hcpo.executePredefinedSubAgent(
 					ctx,
 					todoTaskStep,
 					stepIndex,
@@ -638,7 +638,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	response *TodoTaskResponse,
 	allSteps []PlanStepInterface,
 	progress *StepProgress,
-) (string, error) {
+) (string, []llmtypes.MessageContent, error) {
 	// Use todoID as the task title
 	// All actual task content comes from response.InstructionsToSubAgent
 	taskTitle := response.TodoIDToExecute
@@ -717,14 +717,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
 	// Build execution context
+	var capturedHistory []llmtypes.MessageContent
 	execCtx := &ExecutionContext{
-		SkipHumanInput:     true, // Generic agents don't request human feedback
-		FastExecuteMode:    false,
-		FastExecuteEndStep: -1,
-		RunSingleStepOnly:  false,
-		SingleStepTarget:   -1,
-		ResumeBranchStep:   nil,
-		IsEvaluationMode:   false,
+		SkipHumanInput:             true, // Generic agents don't request human feedback
+		FastExecuteMode:            false,
+		FastExecuteEndStep:         -1,
+		RunSingleStepOnly:          false,
+		SingleStepTarget:           -1,
+		ResumeBranchStep:           nil,
+		IsEvaluationMode:           false,
+		ConversationHistoryCapture: &capturedHistory,
 	}
 
 	// Push context before sub-agent execution (preserve orchestrator context)
@@ -759,11 +761,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	}
 
 	if err != nil {
-		return fmt.Sprintf("Generic agent failed: %v", err), err
+		return fmt.Sprintf("Generic agent failed: %v", err), capturedHistory, err
 	}
 
 	result := fmt.Sprintf("Generic agent completed: %s", executionResult)
-	return result, nil
+	return result, capturedHistory, nil
 }
 
 // boolPtr returns a pointer to a bool value
@@ -781,7 +783,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	response *TodoTaskResponse,
 	allSteps []PlanStepInterface,
 	progress *StepProgress,
-) (string, error) {
+) (string, []llmtypes.MessageContent, error) {
 	// Find the route
 	var route *PlanOrchestrationRoute
 	for i, r := range step.PredefinedRoutes {
@@ -791,11 +793,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		}
 	}
 	if route == nil {
-		return "", fmt.Errorf("route %s not found in predefined routes", response.SelectedRouteID)
+		return "", nil, fmt.Errorf("route %s not found in predefined routes", response.SelectedRouteID)
 	}
 
 	if route.SubAgentStep == nil {
-		return "", fmt.Errorf("route %s has no sub_agent_step defined", response.SelectedRouteID)
+		return "", nil, fmt.Errorf("route %s has no sub_agent_step defined", response.SelectedRouteID)
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("🤖 Executing predefined sub-agent: %s (%s)", route.RouteName, route.RouteID))
@@ -875,14 +877,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 
 	// Execute the sub-agent step using executeSingleStep
 	// This will include learning and prevalidation like regular orchestration sub-agents
+	var capturedHistory []llmtypes.MessageContent
 	execCtx := &ExecutionContext{
-		SkipHumanInput:     true, // Sub-agents don't request human feedback
-		FastExecuteMode:    false,
-		FastExecuteEndStep: -1,
-		RunSingleStepOnly:  false,
-		SingleStepTarget:   -1,
-		ResumeBranchStep:   nil,
-		IsEvaluationMode:   false,
+		SkipHumanInput:             true, // Sub-agents don't request human feedback
+		FastExecuteMode:            false,
+		FastExecuteEndStep:         -1,
+		RunSingleStepOnly:          false,
+		SingleStepTarget:           -1,
+		ResumeBranchStep:           nil,
+		IsEvaluationMode:           false,
+		ConversationHistoryCapture: &capturedHistory,
 	}
 
 	// Push context before sub-agent execution (preserve orchestrator context)
@@ -916,11 +920,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	}
 
 	if err != nil {
-		return fmt.Sprintf("Sub-agent %s failed: %v", route.RouteName, err), err
+		return fmt.Sprintf("Sub-agent %s failed: %v", route.RouteName, err), capturedHistory, err
 	}
 
 	result := fmt.Sprintf("Sub-agent %s completed: %s", route.RouteName, executionResult)
-	return result, nil
+	return result, capturedHistory, nil
 }
 
 // emitTodoTaskRouteSelectedEvent emits an event when the todo task orchestrator selects a route/sub-agent

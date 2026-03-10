@@ -23,7 +23,7 @@ var globalRegistry = &TemplateRegistry{
 // MustRegisterTemplate registers a template and panics if parsing fails.
 // This should be called from init() or package-level var declarations.
 func MustRegisterTemplate(name, templateStr string) *template.Template {
-	tmpl, err := template.New(name).Parse(templateStr)
+	tmpl, err := template.New(name).Option("missingkey=error").Parse(templateStr)
 	if err != nil {
 		panic(fmt.Sprintf("failed to parse template %q: %v", name, err))
 	}

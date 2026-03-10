@@ -34,7 +34,14 @@ const (
 	SubAgentShareBrowserKey subAgentContextKey = "share_browser"
 	// SubAgentIsolatedSessionIDKey is the context key for the isolated MCP session ID (set when share_browser=false)
 	SubAgentIsolatedSessionIDKey subAgentContextKey = "isolated_session_id"
+	// GetSubAgentConversationKey is the context key for the get_sub_agent_conversation function
+	GetSubAgentConversationKey subAgentContextKey = "get_sub_agent_conversation"
 )
+
+// GetSubAgentConversationFunc is the function signature for retrieving sub-agent conversation history.
+// todoID identifies the sub-agent call, fromLastX is how many entries to return,
+// offsetLastX skips that many entries from the tail before applying fromLastX (for paging).
+type GetSubAgentConversationFunc func(ctx context.Context, todoID string, fromLastX, offsetLastX int) (string, error)
 
 // ValidateTodoExistsFunc is the function signature for validating if a task exists in tasks.md
 // Returns (exists bool, totalTasks int, tasksFilePath string, error)
@@ -149,6 +156,34 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 	}
 	tools = append(tools, callGenericAgentTool)
 
+	// get_sub_agent_conversation tool - Query the internal conversation of a previous sub-agent call
+	getSubAgentConversationTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_sub_agent_conversation",
+			Description: "Get the internal conversation of a sub-agent call — all tool calls, tool results, and reasoning steps. Returns the last 'from_last_x' entries. Use 'offset_last_x' to page backwards through the conversation.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"todo_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Required. The task ID that was delegated (e.g. 'task-003').",
+					},
+					"from_last_x": map[string]interface{}{
+						"type":        "integer",
+						"description": "Required. Number of conversation entries to return from the end.",
+					},
+					"offset_last_x": map[string]interface{}{
+						"type":        "integer",
+						"description": "Optional. Skip this many entries from the tail before applying from_last_x. Use to page backwards. Default 0.",
+					},
+				},
+				"required": []string{"todo_id", "from_last_x"},
+			}),
+		},
+	}
+	tools = append(tools, getSubAgentConversationTool)
+
 	return tools
 }
 
@@ -159,6 +194,7 @@ func CreateSubAgentToolExecutors() map[string]func(ctx context.Context, args map
 
 	executors["call_sub_agent"] = handleCallSubAgent
 	executors["call_generic_agent"] = handleCallGenericAgent
+	executors["get_sub_agent_conversation"] = handleGetSubAgentConversation
 
 	return executors
 }
@@ -313,4 +349,40 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 
 	resultJSON, _ := json.MarshalIndent(subAgentResult, "", "  ")
 	return string(resultJSON), nil
+}
+
+// handleGetSubAgentConversation retrieves the internal conversation of a previous sub-agent call
+func handleGetSubAgentConversation(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract todo_id (required)
+	todoID, ok := args["todo_id"].(string)
+	if !ok || todoID == "" {
+		return "", fmt.Errorf("todo_id is required")
+	}
+
+	// Extract from_last_x (required, must be > 0)
+	fromLastXRaw, ok := args["from_last_x"].(float64)
+	if !ok {
+		return "", fmt.Errorf("from_last_x is required and must be an integer")
+	}
+	fromLastX := int(fromLastXRaw)
+	if fromLastX <= 0 {
+		return "", fmt.Errorf("from_last_x must be greater than 0")
+	}
+
+	// Extract offset_last_x (optional, default 0)
+	offsetLastX := 0
+	if offsetLastXRaw, ok := args["offset_last_x"].(float64); ok {
+		offsetLastX = int(offsetLastXRaw)
+		if offsetLastX < 0 {
+			offsetLastX = 0
+		}
+	}
+
+	// Get the conversation retrieval function from context
+	getConvFunc, ok := ctx.Value(GetSubAgentConversationKey).(GetSubAgentConversationFunc)
+	if !ok || getConvFunc == nil {
+		return "", fmt.Errorf("get_sub_agent_conversation function not available in context - this tool can only be used within a todo task orchestrator after a sub-agent has been called")
+	}
+
+	return getConvFunc(ctx, todoID, fromLastX, offsetLastX)
 }

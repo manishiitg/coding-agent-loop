@@ -7,6 +7,7 @@ import (
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // BranchStepProgress tracks branch execution progress for conditional steps
@@ -119,6 +120,12 @@ type ExecutionContext struct {
 	SingleStepTarget   int                     // Target step index to run (0-based)
 	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
 	IsEvaluationMode   bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
+
+	// ConversationHistoryCapture is an optional pointer; when non-nil the execution engine
+	// writes the agent's full conversation history into it after Execute() returns.
+	// This is used by sub-agent callers (e.g., get_sub_agent_conversation tool) to
+	// retrieve the internal conversation without modifying the execution path.
+	ConversationHistoryCapture *[]llmtypes.MessageContent
 }
 
 // DecisionContext represents context from a decision step that routed to this step

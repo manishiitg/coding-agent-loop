@@ -70,10 +70,6 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.PrerequisiteRulesInfo}}
 {{end}}
 
-{{if .OtherAgentsCapabilities}}
-## 🤖 Other Agents
-{{.OtherAgentsCapabilities}}
-{{end}}
 
 {{if eq .HasLearnings "true"}}
 ## 📚 Learning Application (Secondary Guidance)
@@ -221,7 +217,6 @@ type WorkflowExecutionOnlyTemplate struct {
 	DecisionReasoning          string // Context from decision step that routed to this step (empty if not routed from decision)
 	DecisionEvaluationQuestion string // Evaluation question for decision inner steps (used to format output for LLM evaluation)
 	PreviousStepsSummary       string // Summary of previous completed steps (titles, descriptions, outputs)
-	OtherAgentsCapabilities    string // Summary of other sub-agents' capabilities (only for sub-agents in orchestration steps)
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -273,7 +268,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	stepNumber := templateVars["StepNumber"]               // e.g., "step-8" or "step-3-if-true-0"
 	stepExecutionPath := templateVars["StepExecutionPath"] // e.g., "execution/step-8"
 	previousStepsSummary := templateVars["PreviousStepsSummary"]
-	otherAgentsCapabilities := templateVars["OtherAgentsCapabilities"]
 	knowledgebasePath := templateVars["KnowledgebasePath"] // Knowledgebase folder path (persistent files across runs)
 
 	// Get current date and time
@@ -330,7 +324,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"StepNumber":                 stepNumber,
 		"StepExecutionPath":          stepExecutionPath,
 		"PreviousStepsSummary":       previousStepsSummary,
-		"OtherAgentsCapabilities":    otherAgentsCapabilities,
 		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 		"ValidationSchema":           validationSchema,                        // Validation schema JSON string

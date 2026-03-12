@@ -102,6 +102,15 @@ export function getAllCustomTools(capabilities?: { semantic_search_enabled?: boo
   ];
 }
 
+// Normalize MCP tool names: strip "mcp__<server>__" prefix so routing reuses existing components
+export const normalizeMCPToolName = (toolName: string): string => {
+  if (toolName.startsWith('mcp__')) {
+    const parts = toolName.slice('mcp__'.length).split('__')
+    return parts.slice(1).join('__') || toolName
+  }
+  return toolName
+}
+
 // Helper to get the category for a specific tool name
 export function getCategoryForTool(toolName: string): string | null {
   if (WORKSPACE_BASIC_TOOLS.includes(toolName as WorkspaceBasicToolName)) {

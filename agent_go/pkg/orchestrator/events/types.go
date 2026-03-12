@@ -17,6 +17,15 @@ type isSubAgentContextKeyType struct{}
 
 var IsSubAgentContextKey = isSubAgentContextKeyType{}
 
+// ForceCorrelationIDKey overrides the correlation ID used by ContextAwareEventBridge.
+// Unlike AgentSessionIDKey, child agents do NOT overwrite this key when creating their
+// own context, so it propagates through the entire call chain unchanged.
+// Use this when you need all events from a subtree (including nested child agents)
+// to share a single correlation ID — e.g., workshop step execution grouping.
+type forceCorrelationIDKeyType struct{}
+
+var ForceCorrelationIDKey = forceCorrelationIDKeyType{}
+
 // Orchestrator Event Types
 // These events are specific to the orchestrator application and are not part of the core mcpagent library
 const (

@@ -242,7 +242,7 @@ Use this access to create and update custom sub-agent templates.
 }
 
 // buildWorkflowContextPrompt builds rich context about selected workflows for injection into chat system prompt.
-// Modeled after the plan improvement agent's comprehensive context (see plan_opt_improvement_agent.go).
+// Provides comprehensive context about the workflow.
 // Includes full plan.json, step config, variables, execution history with step-level detail,
 // file location guide with step naming conventions, and learnings.
 func buildWorkflowContextPrompt(paths []string, workspaceAPIURL string) string {

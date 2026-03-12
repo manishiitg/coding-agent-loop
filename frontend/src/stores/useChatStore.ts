@@ -127,6 +127,7 @@ export interface ChatTabConfig {
     workspacePath: string
   }>  // Workflow presets selected via # in chat input
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
+  isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
   autoRun?: boolean  // Automatically run the chat when tab is loaded
   planPhaseOverride?: 'planning' | 'execution' | null  // User-selected plan phase override for multi-agent mode
   defaultReasoningLevel?: 'high' | 'medium' | 'low' | null  // Preferred reasoning level for delegated tasks in multi-agent mode
@@ -1587,18 +1588,22 @@ export const useChatStore = create<ChatState>()(
         const tab = state.chatTabs[tabId]
         if (!tab) return
 
-        set((state) => ({
-          chatTabs: {
-            ...state.chatTabs,
-            [tabId]: {
-              ...tab,
-              config: {
-                ...tab.config,
-                ...configUpdate
+        set((state) => {
+          const freshTab = state.chatTabs[tabId]
+          if (!freshTab) return state
+          return {
+            chatTabs: {
+              ...state.chatTabs,
+              [tabId]: {
+                ...freshTab,
+                config: {
+                  ...freshTab.config,
+                  ...configUpdate
+                }
               }
             }
           }
-        }))
+        })
 
         // Sync last-used settings to AppStore so new tabs inherit them.
         // Only sync for chat/multi-agent tabs — workflow tabs have different settings.

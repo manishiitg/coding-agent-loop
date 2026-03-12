@@ -10,10 +10,11 @@ export { WorkflowCanvas, WorkflowToolbar, NodeDetailPanel } from './canvas'
 export { StepNode, ConditionalNode, LoopNode, StartNode, EndNode, nodeTypes } from './nodes'
 
 // Hooks
-export { 
-  usePlanData, 
-  usePlanToFlow, 
-  useWorkflowExecution 
+export {
+  usePlanData,
+  signalPlanModified,
+  usePlanToFlow,
+  useWorkflowExecution
 } from './hooks'
 
 export type {

@@ -111,6 +111,52 @@ const TierProviderDot = ({ provider }: { provider: string }) => {
   )
 }
 
+// Collapsible queued message item — shows preview for long messages with expand/collapse toggle
+const QueuedMessageItem: React.FC<{
+  index: number
+  msg: string
+  preview: string
+  isLong: boolean
+  onDelete: () => void
+}> = ({ index, msg, preview, isLong, onDelete }) => {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="flex items-start gap-2 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+      <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse mt-1.5 flex-shrink-0"></div>
+      <div className="flex-1 min-w-0">
+        {expanded ? (
+          <div className="max-h-48 overflow-y-auto break-words whitespace-pre-wrap pr-1">
+            <span className="font-medium">#{index + 1}:</span> {msg}
+          </div>
+        ) : (
+          <span className="break-words whitespace-pre-wrap">
+            <span className="font-medium">#{index + 1}:</span> {preview}
+          </span>
+        )}
+        {isLong && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="ml-1 text-blue-500 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-200 underline"
+          >
+            {expanded ? 'collapse' : 'expand'}
+          </button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="flex items-center justify-center w-5 h-5 rounded hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors flex-shrink-0 mt-0.5"
+        title="Delete from queue"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
@@ -124,7 +170,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
-  // Detect workflow phase chat (planning/plan-improvement tabs) — hide extras like browser, skills, etc.
+  // Detect workflow phase chat — hide extras like browser, skills, etc.
   const workflowPhaseId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
@@ -905,6 +951,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [fileDialogPosition, setFileDialogPosition] = useState({ top: 0, left: 0 })
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [atPosition, setAtPosition] = useState(-1) // Position of @ in text
+  // Extra files for @ dialog (Chats/, Plans/ — loaded on demand so workflow-scoped trees still show them)
+  const [extraAtFiles, setExtraAtFiles] = useState<PlannerFile[]>([])
 
   // Command selection dialog state
   const [showCommandDialog, setShowCommandDialog] = useState(false)
@@ -1041,6 +1089,35 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [enableWorkspaceAccess, setWorkspaceMinimized, showFileDialog])
 
+  // Fetch Chats/ and Plans/ on demand when @ dialog opens (these may not be in the
+  // workspace tree when it's scoped to a workflow folder).
+  // The API returns the CONTENTS of a folder, so we wrap them in synthetic folder entries.
+  useEffect(() => {
+    if (!showFileDialog) return
+    let cancelled = false
+    const fetchExtraFolders = async () => {
+      try {
+        const [chats, plans] = await Promise.all([
+          agentApi.getPlannerFiles('Chats', -1, 2).catch(() => null),
+          agentApi.getPlannerFiles('Plans', -1, 2).catch(() => null),
+        ])
+        if (cancelled) return
+        const extra: PlannerFile[] = []
+        if (chats?.success && chats.data?.length) {
+          extra.push({ filepath: 'Chats', content: '', last_modified: '', type: 'folder', children: chats.data })
+        }
+        if (plans?.success && plans.data?.length) {
+          extra.push({ filepath: 'Plans', content: '', last_modified: '', type: 'folder', children: plans.data })
+        }
+        setExtraAtFiles(extra)
+      } catch {
+        // Silently ignore
+      }
+    }
+    fetchExtraFolders()
+    return () => { cancelled = true }
+  }, [showFileDialog])
+
   // Lazy-load skills when ! popup opens (always re-fetch to pick up new skills)
   useEffect(() => {
     console.log(DBG + ' showSkillPopup changed:', showSkillPopup)
@@ -1097,6 +1174,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // (React re-renders Stop→Send mid-click, causing the browser to dispatch submit on the new button)
   const justStoppedStreamingRef = useRef(false)
 
+  // Guard: prevent double submission from rapid Enter presses, key repeat, or double-clicks
+  // queryToSubmit is a memoized value that doesn't update until re-render, so a second
+  // submit within the same render cycle would re-send the same message
+  const justSubmittedRef = useRef(false)
+
   // Memoized handlers to prevent re-creation
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
@@ -1122,8 +1204,40 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     // Auto-resize textarea
     adjustTextareaHeight()
 
-    // Skip all special character triggers (/, @, #, !, $, ^) for workflow phase chat
-    if (isWorkflowPhaseChat) return
+    // Skip most special character triggers for workflow phase chat — but allow @ for file references
+    if (isWorkflowPhaseChat) {
+      // Only process @ trigger in workflow phase chat
+      const cursorPos = e.target.selectionStart || 0
+      const textBefore = newValue.substring(0, cursorPos)
+      const atIdx = textBefore.lastIndexOf('@')
+      if (atIdx >= 0 && enableWorkspaceAccess) {
+        const textAfterAt = textBefore.substring(atIdx + 1)
+        const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
+        if (hasValidAt) {
+          setAtPosition(atIdx)
+          setFileSearchQuery(textAfterAt)
+          setShowFileDialog(true)
+
+          const textarea = e.target
+          const rect = textarea.getBoundingClientRect()
+          const dialogHeight = 320
+          const spaceAbove = rect.top
+          setFileDialogPosition({
+            top: spaceAbove > dialogHeight ? rect.top - dialogHeight - 8 : rect.bottom + 8,
+            left: rect.left + window.scrollX
+          })
+        } else {
+          setShowFileDialog(false)
+          setAtPosition(-1)
+          setFileSearchQuery('')
+        }
+      } else {
+        setShowFileDialog(false)
+        setAtPosition(-1)
+        setFileSearchQuery('')
+      }
+      return
+    }
 
     const cursorPosition = e.target.selectionStart || 0
     const textBeforeCursor = newValue.substring(0, cursorPosition)
@@ -1445,8 +1559,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If any selection dialog is open, let it handle keyboard events
     if (showCommandDialog || showFileDialog || showWorkflowDialog || showSkillPopup || showServerPopup || showSubAgentPopup) {
-      // Don't prevent default for arrow keys, enter, escape - let dialog handle them
-      if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape'].includes(e.key)) {
+      // Prevent default for arrow keys, enter, escape so textarea doesn't move cursor
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(e.key)) {
+        e.preventDefault()
         return
       }
     }
@@ -1679,15 +1794,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       if (canSubmitImmediately) {
+        // Guard: prevent double submission from rapid key repeat or double press
+        if (justSubmittedRef.current) return
+        justSubmittedRef.current = true
+        setTimeout(() => { justSubmittedRef.current = false }, 300)
+
         // Clear input text immediately (both local and store)
         setLocalInputText('')
-        
+
         // Clear any pending store sync to prevent overwriting the empty state
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)
           syncToStoreTimeoutRef.current = null
         }
-        
+
         if (activeTabId) {
           setTabConfig(activeTabId, { inputText: '' })
         }
@@ -1784,8 +1904,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     if (canSubmitImmediately) {
+      // Guard: prevent double submission from rapid clicks
+      if (justSubmittedRef.current) return
+      justSubmittedRef.current = true
+      setTimeout(() => { justSubmittedRef.current = false }, 300)
+
       setLocalInputText('')
-      
+
       // Clear any pending store sync to prevent overwriting the empty state
       if (syncToStoreTimeoutRef.current) {
         clearTimeout(syncToStoreTimeoutRef.current)
@@ -2168,10 +2293,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (isWorkflowPhaseChat) {
       const phaseNames: Record<string, string> = {
         'planning': 'planning agent',
-        'plan-improvement': 'plan debugger',
-        'execution-debugger': 'execution debugger',
+        'execution-qa': 'execution Q&A',
         'evaluation-debugger': 'evaluation debugger',
-        'code-exec-debugging': 'code debugger',
       }
       return `Chat with the ${phaseNames[workflowPhaseId!] ?? 'agent'}...`
     }
@@ -2277,29 +2400,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             {/* Queued messages indicator */}
             {queuedMessages.length > 0 && (
               <div className="space-y-1">
-                {queuedMessages.map((msg: string, index: number) => (
-                  <div key={index} className="flex items-start gap-2 px-2 py-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
-                    <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse mt-1.5 flex-shrink-0"></div>
-                    <span className="flex-1 break-words">
-                      <span className="font-medium">#{index + 1}:</span> "{msg}"
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
+                {queuedMessages.map((msg: string, index: number) => {
+                  const isLong = msg.length > 150
+                  const preview = isLong ? msg.substring(0, 150) + '...' : msg
+                  return (
+                    <QueuedMessageItem
+                      key={index}
+                      index={index}
+                      msg={msg}
+                      preview={preview}
+                      isLong={isLong}
+                      onDelete={() => {
                         if (activeTabId) {
                           const updated = queuedMessages.filter((_: string, i: number) => i !== index)
                           setTabConfig(activeTabId, { queuedMessages: updated })
                         }
                       }}
-                      className="flex items-center justify-center w-5 h-5 rounded hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors flex-shrink-0 mt-0.5"
-                      title="Delete from queue"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                ))}
+                    />
+                  )
+                })}
               </div>
             )}
             {/* Show text input */}
@@ -3354,6 +3473,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         onNavigateIntoFolder={handleNavigateIntoFolder}
         searchQuery={fileSearchQuery}
         position={fileDialogPosition}
+        extraFiles={extraAtFiles}
       />
 
       {/* Workflow Selection Dialog */}

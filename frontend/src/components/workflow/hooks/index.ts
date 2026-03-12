@@ -1,4 +1,4 @@
-export { usePlanData } from './usePlanData'
+export { usePlanData, signalPlanModified } from './usePlanData'
 export type { UsePlanDataReturn, ChangeType, PlanChanges } from './usePlanData'
 
 export { usePlanToFlow } from './usePlanToFlow'

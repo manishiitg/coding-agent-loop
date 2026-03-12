@@ -11,6 +11,8 @@ interface FileSelectionDialogProps {
   onNavigateIntoFolder?: (folderPath: string) => void
   searchQuery: string
   position: { top: number; left: number }
+  /** Extra top-level files/folders to show alongside workspace files (e.g., Chats/, Plans/) */
+  extraFiles?: PlannerFile[]
 }
 
 export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
@@ -19,9 +21,18 @@ export const FileSelectionDialog: React.FC<FileSelectionDialogProps> = ({
   onSelectFile,
   onNavigateIntoFolder,
   searchQuery,
-  position
+  position,
+  extraFiles
 }) => {
-  const { files } = useWorkspaceStore()
+  const { files: workspaceFiles } = useWorkspaceStore()
+
+  // Merge workspace files with extra files (deduplicated by filepath)
+  const files = useMemo(() => {
+    if (!extraFiles || extraFiles.length === 0) return workspaceFiles
+    const existingPaths = new Set(workspaceFiles.map(f => f.filepath))
+    const newFiles = extraFiles.filter(f => !existingPaths.has(f.filepath))
+    return [...workspaceFiles, ...newFiles]
+  }, [workspaceFiles, extraFiles])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [filteredFiles, setFilteredFiles] = useState<PlannerFile[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())

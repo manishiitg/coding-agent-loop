@@ -219,7 +219,7 @@ func NewWorkflowExecutionDebuggerAgent(config *agents.OrchestratorAgentConfig, l
 		config,
 		logger,
 		tracer,
-		agents.TodoPlannerExecutionDebuggerAgentType,
+		agents.TodoPlannerExecutionQAAgentType,
 		eventBridge,
 	)
 
@@ -400,9 +400,9 @@ func (edm *ExecutionDebuggerManager) createExecutionDebuggerAgent(ctx context.Co
 	agent, err := edm.CreateAndSetupStandardAgentWithConfig(
 		ctx,
 		config,
-		"execution-debugger",
+		"execution-qa",
 		0, 0,
-		"execution-debugger",
+		"execution-qa",
 		createAgentFunc,
 		phaseTools,
 		phaseExecutors,
@@ -448,7 +448,7 @@ func (agent *WorkflowExecutionDebuggerAgent) Execute(ctx context.Context, templa
 		if eventBridge != nil {
 			startedEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 				BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-				AgentType:     "execution-debugger",
+				AgentType:     "execution-qa",
 				AgentName:     "execution-debugger-agent",
 				Objective:     "Analyze execution results (read-only)",
 				InputData:     templateVars,
@@ -513,7 +513,7 @@ func (agent *WorkflowExecutionDebuggerAgent) Execute(ctx context.Context, templa
 		if eventBridge != nil {
 			completedEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 				BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-				AgentType:     "execution-debugger",
+				AgentType:     "execution-qa",
 				AgentName:     "execution-debugger-agent",
 				Objective:     "Analyze execution results (read-only)",
 				Result:        currentResult,

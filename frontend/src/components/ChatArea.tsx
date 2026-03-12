@@ -6,7 +6,7 @@ import type { PollingEvent, ExtendedLLMConfiguration, SSEEventMessage, SSEStatus
 import type { AgentMode } from '../stores/types'
 import { ChatInput } from './ChatInput'
 import { EventDisplay } from './EventDisplay'
-import { WorkflowModeHandler, type WorkflowModeHandlerRef } from './workflow'
+import { WorkflowModeHandler, type WorkflowModeHandlerRef, signalPlanModified } from './workflow'
 import { ToastContainer } from './ui/Toast'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
@@ -70,27 +70,9 @@ const PHASE_CHAT_INFO: Record<string, {
     ],
     showStepTypes: true,
   },
-  'plan-improvement': {
-    title: 'Plan Debugger',
-    description: 'Analyze execution results and improve the plan based on real outcomes.',
-    capabilities: [
-      'Review execution results, logs, and validation reports',
-      'Adjust steps based on what worked or failed',
-      'Add new steps to address gaps',
-      'Update success criteria to be more concrete',
-      'Read learnings and knowledgebase files',
-    ],
-    limitations: [
-      'Cannot execute the plan — only modifies plan.json',
-      'Cannot modify evaluation plans (use Evaluation Debugger)',
-      'Cannot modify step_config.json or tool selections',
-      'Canvas won\'t auto-refresh — re-open the tab to see plan changes',
-    ],
-    showStepTypes: true,
-  },
-  'execution-debugger': {
-    title: 'Execution Debugger',
-    description: 'Read-only analysis of execution results, logs, and plan state.',
+  'execution-qa': {
+    title: 'Execution Q&A',
+    description: 'Ask questions about execution results, logs, and plan state. Read-only.',
     capabilities: [
       'Answer questions about what happened during execution',
       'Read execution logs, validation reports, and outputs',
@@ -119,20 +101,38 @@ const PHASE_CHAT_INFO: Record<string, {
       'Cannot modify learnings or knowledgebase files',
     ],
   },
-  'code-exec-debugging': {
-    title: 'Code Debugger',
-    description: 'Specialized debugger for code execution steps — identifies common code errors and provides fixes.',
+  'workflow-builder': {
+    title: 'Workflow Builder',
+    description: 'Execute steps in the background, debug results, update the plan, generate learnings, and tweak configs — all in one free-flow session.',
     capabilities: [
-      'Analyze code execution logs and conversation history',
-      'Identify hardcoded paths, wrong API endpoints, missing env vars',
-      'Check OpenAPI spec usage and per-tool endpoint format',
-      'Suggest specific fixes to plan step instructions',
+      'Run any plan step in the background and poll for results',
+      'Cancel a running step mid-execution',
+      'Update plan steps (add, edit, reorder, delete)',
+      'Update step_config.json — servers, tools, disable learning',
+      'Generate/update learnings with optional human guidance',
+      'View the system prompt and conversation from a past run',
+      'Run shell commands for investigation',
     ],
     limitations: [
-      'Only debugs code execution steps — skips tool execution steps',
-      'Cannot execute or re-run code',
+      'Steps run one at a time per execute_step call',
+      'System prompts only available for runs after this feature was added',
       'Cannot modify evaluation plans',
-      'Read-only analysis — suggests changes but doesn\'t apply them',
+    ],
+  },
+  'human-assisted-execution': {
+    title: 'Human Assisted Execution',
+    description: 'Run workflow steps interactively — choose which steps to run, monitor progress, and review results.',
+    capabilities: [
+      'Run any plan step in the background and poll for results',
+      'Cancel a running step mid-execution',
+      'Choose which steps to run and in what order',
+      'View step results and debug failures',
+      'Run shell commands for investigation',
+    ],
+    limitations: [
+      'Cannot modify the plan or step configs',
+      'No optimization or learning management',
+      'Steps run one at a time per execute_step call',
     ],
   },
 }
@@ -204,8 +204,10 @@ interface ChatAreaProps {
   hideInput?: boolean
   // Compact mode for smaller font sizes (used in workflow layout)
   compact?: boolean
-  // Tab ID - if provided, use this tab's session ID (works for both chat and workflow modes)
-  tabId?: string
+  // Tab ID - if provided, use this tab's session ID (works for both chat and workflow modes).
+  // Pass null explicitly to disable all active behavior (SSE, polling, queue) — used when
+  // this ChatArea instance is hidden behind another instance for the same tab.
+  tabId?: string | null
 }
 
 // Ref interface for ChatArea component
@@ -226,7 +228,9 @@ let globalHasRestored = false
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
   const { onNewChat, hideHeader = false, hideInput = false, compact = false, tabId } = props
-  
+  // null means "inactive — don't subscribe to any tab or run any effects"
+  const isInactive = tabId === null
+
   // Store subscriptions
   const {
     agentMode,
@@ -274,7 +278,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Get active tab reactively (works for both chat and workflow modes)
   // Use selector to ensure reactivity when tab config changes
   const activeTabIdFromStore = useChatStore(state => state.activeTabId)
-  const targetTabId = tabId || activeTabIdFromStore
+  // null = explicitly inactive (no tab); undefined = use store's active tab
+  const targetTabId = isInactive ? null : (tabId || activeTabIdFromStore)
   const activeTab = useChatStore(state => 
     targetTabId ? state.chatTabs[targetTabId] : undefined
   )
@@ -724,30 +729,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Use displayEvents (tabEvents) instead of events to track the actual displayed events
   useEffect(() => {
     if (autoScroll && chatContentRef.current && displayEvents.length > 0) {
-      // Use requestAnimationFrame to ensure DOM has updated with new content
-      requestAnimationFrame(() => {
-        const element = chatContentRef.current;
-        if (!element) return;
-
-        // Always scroll to bottom when auto-scroll is enabled and new events arrive
-        // The scroll handler will disable auto-scroll if user manually scrolls away
-        scrollToBottom('smooth');
-      });
+      // During streaming, use instant scroll — smooth scroll called repeatedly every event
+      // causes each call to interrupt the previous animation, producing visible jank.
+      scrollToBottom(isStreaming ? 'instant' : 'smooth');
     }
-  }, [displayEvents.length, autoScroll, scrollToBottom])
+  }, [displayEvents.length, autoScroll, scrollToBottom, isStreaming])
 
   // Auto-scroll to bottom when final response is updated (only if autoScroll is enabled)
   useEffect(() => {
     if (autoScroll && chatContentRef.current && finalResponse) {
-      // Use requestAnimationFrame to ensure DOM has updated with new content
-      requestAnimationFrame(() => {
-        const element = chatContentRef.current;
-        if (!element) return;
-
-        // Always scroll to bottom when auto-scroll is enabled and final response updates
-        // The scroll handler will disable auto-scroll if user manually scrolls away
-        scrollToBottom('smooth');
-      });
+      scrollToBottom('smooth');
     }
   }, [finalResponse, autoScroll, scrollToBottom])
 
@@ -768,9 +759,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const prevHasStreamingTextRef = useRef(false)
   useEffect(() => {
     if (hasStreamingText && !prevHasStreamingTextRef.current && autoScroll && chatContentRef.current) {
-      requestAnimationFrame(() => {
-        scrollToBottom('smooth')
-      })
+      scrollToBottom('smooth')
     }
     prevHasStreamingTextRef.current = hasStreamingText
   }, [hasStreamingText, autoScroll, scrollToBottom])
@@ -953,6 +942,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     return new Set(activeSessionsCache.map(s => s.session_id))
   }, [activeSessionsCache])
 
+  // Track recently notified workshop agent names to prevent duplicate notifications
+  // (retries emit multiple orchestrator_agent_end events with the same agent name)
+  const notifiedWorkshopAgentsRef = useRef<Set<string>>(new Set())
+
   // Reusable event processing logic — shared by both SSE and polling paths.
   // Takes an events response (same shape from SSE or REST) and a tab, then processes
   // session status, streaming chunks, event filtering, and stores events.
@@ -970,12 +963,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
-        console.log('[QUEUE DEBUG] Session completed/error', {
-          tabId: tab.tabId, sessionStatus, hasBgAgents,
-          willSetCompleted: !hasBgAgents,
-          currentIsCompleted: tab.isCompleted,
-          queuedMessages: tab.config?.queuedMessages?.length ?? 0,
-        })
+        console.log(`[QUEUE_DEBUG] SESSION tabId=${tab.tabId} status=${sessionStatus} hasBgAgents=${hasBgAgents} isCompleted=${tab.isCompleted} isStreaming=${tab.isStreaming} queueLen=${tab.config?.queuedMessages?.length ?? 0}`)
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
           chatStore.setTabStreaming(tab.tabId, false)
@@ -1039,14 +1027,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const rawComponent = (event as unknown as Record<string, unknown>).component ?? innerData?.component ?? agentEvent?.component
       const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
       const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
-        || (typeof rawCorrelationId === 'string' && rawCorrelationId.startsWith('delegation-'))
+        || (typeof rawCorrelationId === 'string' && (rawCorrelationId.startsWith('delegation-') || rawCorrelationId.startsWith('workshop-')))
 
       if (event.type === 'streaming_start') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        // Workshop background agents (execute_step, optimize_step, generate_learnings) use
+        // workshop-* correlation IDs. Drop their streaming events — they render in EventDisplay cards.
+        const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         if (isDelegationStreaming) {
           chatStore.clearDelegationStreamingText(correlationId as string)
-        } else {
+        } else if (!isWorkshopStreaming) {
           chatStore.clearStreamingText(actualSessionId)
         }
         continue
@@ -1054,6 +1045,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (event.type === 'streaming_chunk') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
+        const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
         const rawContent = innerData?.content ?? agentEvent?.content
         const content = typeof rawContent === 'string' ? rawContent : ''
         const rawIndex = innerData?.chunk_index ?? agentEvent?.chunk_index
@@ -1063,7 +1055,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             if (chunkIndex === 0 || chunkIndex === 1) chatStore.clearDelegationStreamingText(correlationId as string)
             chatStore.appendDelegationStreamingChunk(correlationId as string, chunkIndex, content)
           }
-        } else if (content) {
+        } else if (!isWorkshopStreaming && content) {
           if (chunkIndex === 0 || chunkIndex === 1) {
             chatStore.clearStreamingText(actualSessionId)
           }
@@ -1074,7 +1066,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (event.type === 'streaming_end') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
         const isDelegationStreaming = typeof correlationId === 'string' && correlationId.startsWith('delegation-')
-        if (!isDelegationStreaming) {
+        const isWorkshopStreaming = typeof correlationId === 'string' && correlationId.startsWith('workshop-')
+        if (!isDelegationStreaming && !isWorkshopStreaming) {
           chatStore.clearStreamingStatus(actualSessionId)
           const sidForClear = actualSessionId
           const textSnapshot = useChatStore.getState().streamingText[sidForClear]
@@ -1098,6 +1091,92 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const correlationId = innerData?.correlation_id ?? innerData?.delegation_id ?? agentEvent?.correlation_id ?? agentEvent?.delegation_id
         if (correlationId && typeof correlationId === 'string') {
           chatStore.clearDelegationStreamingText(correlationId)
+        }
+      }
+
+      // Auto-refresh plan canvas when a plan modification tool completes
+      if (event.type === 'tool_call_end') {
+        const toolName = (innerData?.tool_name ?? agentEvent?.tool_name ?? '') as string
+        const isPlanModTool = toolName.startsWith('update_') && (
+          toolName.includes('step') || toolName.includes('validation') || toolName.includes('success_criteria')
+        )
+        const isAddTool = toolName.startsWith('add_') && toolName.includes('step')
+        const isDeleteTool = toolName === 'delete_plan_steps'
+        if (isPlanModTool || isAddTool || isDeleteTool) {
+          console.log('[PLAN REFRESH] Plan modification detected via tool:', toolName)
+          signalPlanModified()
+        }
+      }
+
+      // Also detect workspace_file_operation events targeting plan.json
+      if (event.type === 'workspace_file_operation') {
+        const filePath = (innerData?.filepath ?? agentEvent?.filepath ?? innerData?.file_path ?? agentEvent?.file_path ?? '') as string
+        if (filePath.includes('plan.json') || filePath.includes('step_config.json')) {
+          console.log('[PLAN REFRESH] Workspace file operation on plan file:', filePath)
+          signalPlanModified()
+        }
+      }
+
+      // Clear dedup tracker when a new workshop step execution or debug starts
+      if (event.type === 'orchestrator_agent_start') {
+        const startAgentType = innerData?.agent_type ?? agentEvent?.agent_type
+        if (startAgentType === 'workshop-step-execution' || startAgentType === 'workshop-step-debug' || startAgentType === 'workshop-step-learning') {
+          notifiedWorkshopAgentsRef.current.clear()
+        }
+      }
+
+      // Auto-notify chat agent when a workshop step completes (the wrapper event only).
+      // Sub-agent events (execution, learning) are ignored — only the final step-level event triggers a notification.
+      if (event.type === 'orchestrator_agent_end' && tab) {
+        const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
+        if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning') {
+          const agentName = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'unknown') as string
+          const success = (innerData?.success ?? agentEvent?.success) as boolean
+          const result = (innerData?.result ?? agentEvent?.result ?? '') as string
+
+          // Skip notification for cancelled steps — only real failures (validation, execution errors)
+          // should be reported to the agent for debugging
+          const isCancelled = result.startsWith('Cancelled:')
+          if (isCancelled) {
+            console.log('[WORKSHOP] Skipping notification for cancelled step', { agentName, result })
+          } else {
+            const truncated = result.length > 5000 ? result.substring(0, 5000) + '...' : result
+
+            // Prefix all notifications so the LLM knows these are automated, not user messages
+            const AUTO_PREFIX = '[AUTO-NOTIFICATION] '
+            let notification: string
+            if (agentType === 'workshop-step-learning') {
+              notification = success
+                ? `${AUTO_PREFIX}[LEARNING COMPLETE] ${agentName} — ${truncated}`
+                : `${AUTO_PREFIX}[LEARNING FAILED] ${agentName} failed.\nError: ${truncated}`
+            } else if (agentType === 'workshop-step-debug') {
+              notification = success
+                ? `${AUTO_PREFIX}[OPTIMIZATION COMPLETE] ${agentName} — ${truncated}`
+                : `${AUTO_PREFIX}[OPTIMIZATION FAILED] ${agentName} failed.\nError: ${truncated}`
+            } else {
+              // Check if step is marked as optimized in step config (passed via input_data)
+              const inputData = innerData?.input_data ?? agentEvent?.input_data
+              const isOptimized = inputData?.step_optimized === 'true'
+
+              if (success && isOptimized) {
+                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.`
+              } else if (success) {
+                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.`
+              } else {
+                notification = `${AUTO_PREFIX}[STEP FAILED] ${agentName} failed.\nError: ${truncated}`
+              }
+            }
+
+            const dedupeKey = `${agentName}::${agentType}`
+            if (notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
+              console.log('[WORKSHOP] Skipping duplicate notification for', dedupeKey)
+            } else {
+              notifiedWorkshopAgentsRef.current.add(dedupeKey)
+              const currentQueue = chatStore.getTabConfig(tab.tabId)?.queuedMessages || []
+              chatStore.setTabConfig(tab.tabId, { queuedMessages: [...currentQueue, notification] })
+              console.log('[WORKSHOP] Queued step completion notification', { agentName, agentType, success })
+            }
+          }
         }
       }
 
@@ -1635,19 +1714,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
       
-      // Workflow tabs: keep SSE alive during active execution.
-      // The workflow orchestrator manages the lifecycle — sessions may complete between phases
-      // and be reactivated when the next query is submitted. Relying on activeSessionIds
-      // (refreshed every 60s) causes SSE to disconnect in the gap between phases.
+      // Workflow tabs: keep SSE alive as long as the tab exists.
+      // Workshop steps run in background goroutines after the main agent turn completes.
+      // Their events (orchestrator_agent_end for sub-agents, learning, etc.) must still
+      // reach the frontend so it can auto-send notifications to the main chat agent.
       // SSE is cleaned up when the tab is closed.
-      // However, exclude truly completed workflow tabs (isCompleted && !isStreaming) to avoid
-      // keeping SSE connections for old finished workflows.
       if (tab.metadata?.mode === 'workflow') {
-        const freshTab = chatStore.getTab(tab.tabId)
-        // Keep SSE alive unless the tab is definitively completed and not streaming
-        if (freshTab?.isCompleted && !freshTab?.isStreaming) {
-          return false
-        }
         return true
       }
 
@@ -1792,6 +1864,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Store execution options for use in the request
   const executionOptionsRef = useRef<ExecutionOptions | undefined>(undefined)
 
+  // Guard: prevent double submission from any source (Enter key repeat, double-click, effect race, etc.)
+  const isSubmittingQueryRef = useRef(false)
+
   // Helper: reset streaming state (replaces 4 duplicated blocks)
   const resetStreamingState = useCallback((tabId?: string) => {
     const store = useChatStore.getState()
@@ -1802,6 +1877,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Wrapper function to submit query with the current local query
   const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
+    // Prevent double submission: if already submitting, ignore
+    if (isSubmittingQueryRef.current) {
+      console.warn('[ChatArea] Blocked duplicate submitQueryWithQuery call', { query: query.substring(0, 50) })
+      return
+    }
+    isSubmittingQueryRef.current = true
+    // Reset after a short delay — long enough to block rapid duplicates,
+    // short enough to allow the next legitimate send (e.g., queued messages after completion)
+    setTimeout(() => { isSubmittingQueryRef.current = false }, 500)
+
+    console.log('[ChatArea] submitQueryWithQuery called', { query: query.substring(0, 80), stack: new Error().stack?.split('\n').slice(1, 4).join(' <- ') })
+
     // Get fresh tab state from store to avoid stale closure issues
     const chatStore = useChatStore.getState()
     const freshActiveTab = activeTab?.tabId ? chatStore.chatTabs[activeTab.tabId] : activeTab
@@ -2017,7 +2104,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         hasActivePreset: !!activePreset,
         effectivePlanPhase,
         decryptedSecrets,
-        selectedGlobalSecrets: (activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : useSecretsStore.getState().selectedGlobalSecretNames) ?? undefined,
+        selectedGlobalSecrets: (activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : useSecretsStore.getState().selectedGlobalSecretNames) ?? [],
       })
 
       // Validate execution groups for workflow mode
@@ -2084,70 +2171,63 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   }, [correctAgentMode, selectedModeCategory, isRequiredFolderSelected, isStreaming, stopStreaming, finalResponse, startPolling, effectiveServers, enabledTools, selectedWorkflowPreset, activeWorkflowPreset, pollEvents, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus])
 
-  // Auto-send queued messages one by one when chat completes
-  const prevIsCompletedRef = useRef<boolean>(false)
-  const isProcessingQueueRef = useRef<boolean>(false)
-  
+  // Auto-send queued messages when agent is idle (not streaming)
+  const submitQueryWithQueryRef = useRef(submitQueryWithQuery)
+  useEffect(() => { submitQueryWithQueryRef.current = submitQueryWithQuery }, [submitQueryWithQuery])
+
   useEffect(() => {
-    const currentIsCompleted = activeTab?.isCompleted ?? false
-    const prevIsCompleted = prevIsCompletedRef.current
-    
-    // Log when execution completes or stops
-    if (prevIsCompleted !== currentIsCompleted) {
-      console.log('[QUEUE DEBUG] Completion state changed', {
-        prev: prevIsCompleted, current: currentIsCompleted,
-        tabId: activeTab?.tabId,
-        hasBgAgents: activeTab?.hasRunningBgAgents,
-        queuedMessages: activeTab?.config?.queuedMessages?.length ?? 0,
-        isProcessingQueue: isProcessingQueueRef.current,
-      })
+    const currentIsStreaming = activeTab?.isStreaming ?? false
+    const queuedMessages = activeTab?.config?.queuedMessages || []
+
+    // Read the shared lock from the store (fresh, not from closure) to prevent
+    // multiple ChatArea instances from double-processing the same queue.
+    const freshConfig = activeTab ? useChatStore.getState().getTabConfig(activeTab.tabId) : undefined
+    const isProcessing = freshConfig?.isQueueProcessing ?? false
+
+    console.log(`[QUEUE_DEBUG] tabId=${activeTab?.tabId} isStreaming=${currentIsStreaming} queueLength=${queuedMessages.length} isProcessing=${isProcessing}`)
+
+    // Process queued messages when agent is idle (not streaming).
+    // Uses !isStreaming instead of isCompleted because workshop step goroutines
+    // may still be running in the background after the main agent turn finishes.
+    if (currentIsStreaming || !activeTab || isProcessing || queuedMessages.length === 0) {
+      return
     }
-    
-    // Check if chat just completed (transitioned from false to true)
-    if (!prevIsCompleted && currentIsCompleted && activeTab && !isProcessingQueueRef.current) {
-      const queuedMessages = activeTab.config?.queuedMessages || []
 
-      if (queuedMessages.length > 0) {
-        logger.debug('ChatArea', 'Processing queued messages:', queuedMessages.length)
-        isProcessingQueueRef.current = true
+    const tabId = activeTab.tabId
+    const chatStore = useChatStore.getState()
 
-        // Get the first message from queue
-        const messageToSend = queuedMessages[0]
-        const remainingMessages = queuedMessages.slice(1)
+    // Claim the store-level lock atomically before any async work.
+    // All ChatArea instances share this lock via the store.
+    chatStore.setTabConfig(tabId, { isQueueProcessing: true })
 
-        // Update queue to remove the message we're about to send
-        const chatStore = useChatStore.getState()
-        chatStore.setTabConfig(activeTab.tabId, { queuedMessages: remainingMessages })
+    // Combine ALL queued messages into a single message so the agent
+    // receives everything at once instead of one-at-a-time round-trips.
+    const combinedMessage = queuedMessages.map(m => m.trim()).join('\n\n')
 
-        // Small delay to ensure completion state is fully processed
-        setTimeout(async () => {
-          logger.debug('ChatArea', 'Auto-sending queued message')
-          try {
-            await submitQueryWithQuery(messageToSend.trim())
-          } catch (error) {
-            logger.error('ChatArea', 'Failed to send queued message:', error)
-            // Re-add the failed message back to the front of the queue
-            const currentChatStore = useChatStore.getState()
-            const currentQueue = currentChatStore.getTabConfig(activeTab.tabId)?.queuedMessages || []
-            currentChatStore.setTabConfig(activeTab.tabId, {
-              queuedMessages: [messageToSend, ...currentQueue]
-            })
-            // Show error toast
-            addToast('Failed to send queued message. It has been re-queued.', 'error')
-          } finally {
-            // Reset processing flag after a delay to allow the new chat to start
-            setTimeout(() => {
-              isProcessingQueueRef.current = false
-            }, 500)
-          }
-        }, 100)
+    // Clear the entire queue
+    chatStore.setTabConfig(tabId, { queuedMessages: [] })
+
+    // Small delay to ensure state is fully processed before sending
+    setTimeout(async () => {
+      try {
+        await submitQueryWithQueryRef.current(combinedMessage)
+      } catch (error) {
+        logger.error('ChatArea', 'Failed to send queued messages:', error)
+        // Re-add all messages back to the queue
+        const currentChatStore = useChatStore.getState()
+        const currentQueue = currentChatStore.getTabConfig(tabId)?.queuedMessages || []
+        currentChatStore.setTabConfig(tabId, {
+          queuedMessages: [...queuedMessages, ...currentQueue]
+        })
+        addToast('Failed to send queued messages. They have been re-queued.', 'error')
+      } finally {
+        // Release the lock after a delay to allow the new session to start streaming
+        setTimeout(() => {
+          useChatStore.getState().setTabConfig(tabId, { isQueueProcessing: false })
+        }, 500)
       }
-    }
-    
-    // Update ref
-    prevIsCompletedRef.current = currentIsCompleted
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab?.isCompleted, activeTab?.config?.queuedMessages, activeTab?.tabId, submitQueryWithQuery])
+    }, 200)
+  }, [activeTab?.isStreaming, activeTab?.config?.queuedMessages, activeTab?.config?.isQueueProcessing, activeTab?.tabId])
 
   // Handle new chat - clear backend session and reset all chat state
   const handleNewChat = useCallback(async () => {
@@ -2309,8 +2389,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {displayEvents.length === 0 && !isStreaming && !isChatCompatiblePhase(activeTab?.metadata?.phaseId) && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
-            {/* Phase Chat Help - Show for chat-compatible phases when user has no messages yet */}
-            {!activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'user_message') && (
+            {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
+            {!activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
             )}
 

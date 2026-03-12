@@ -309,6 +309,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		hcpo.sessionID = groupSessionID
 		hcpo.BaseOrchestrator.SetMCPSessionID(groupSessionID)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔗 Generated unique MCP session ID for group %s: %s (run folder: %s)", group.GroupID, groupSessionID, hcpo.selectedRunFolder))
+		// Track group session under HTTP session so stop handler can close it immediately
+		if hcpo.httpSessionID != "" {
+			mcpagent.RegisterHTTPSession(hcpo.httpSessionID, groupSessionID)
+		}
 
 		// Close MCP session after this group completes to free resources (browser profiles, etc.)
 		// Use defer to ensure cleanup even if execution fails

@@ -26,8 +26,9 @@ type StepBasedWorkflowOrchestrator struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
 	// NEW: Store planning conversation for iterative refinement
-	sessionID  string // For human feedback tracking
-	workflowID string // For human feedback tracking
+	sessionID     string // For human feedback tracking
+	workflowID    string // For human feedback tracking
+	httpSessionID string // HTTP session ID for MCP cleanup scoping
 
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables
@@ -97,6 +98,9 @@ type StepBasedWorkflowOrchestrator struct {
 
 	// Debouncer for todo task status update events (coalesces parallel sub-agent completions)
 	todoStatusDebouncer *todoTaskStatusDebouncer
+
+	// Workshop: toolbar-selected group IDs (used for auto-resolving variable values and run folders)
+	enabledGroupIDs []string
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -210,6 +214,12 @@ func NewStepBasedWorkflowOrchestrator(
 	)
 
 	return hcpo, nil
+}
+
+// SetHTTPSessionID sets the HTTP session ID used for MCP session tracking.
+// This allows CloseHTTPSession to close all group sessions when the workflow stops.
+func (hcpo *StepBasedWorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
+	hcpo.httpSessionID = httpSessionID
 }
 
 // getConditionalAgentForStep returns the conditional agent to use for a specific step
@@ -1256,6 +1266,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Conte
 	}
 
 	return MatureLearnings
+}
+
+// SetSelectedRunFolder sets the run folder for the controller (exported for use in server.go chat mode).
+func (hcpo *StepBasedWorkflowOrchestrator) SetSelectedRunFolder(folder string) {
+	hcpo.selectedRunFolder = folder
+	hcpo.SetIterationFolder(folder)
 }
 
 // requiresCodeExecutionForProvider checks if the given LLM config uses a CLI-based provider

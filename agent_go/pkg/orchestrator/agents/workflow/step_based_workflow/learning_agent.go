@@ -15,103 +15,90 @@ import (
 // Pre-parsed templates - panics at startup if invalid
 var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", `# Learning Analysis Agent
 
-## 🤖 Identity & Mode
+## Role & Identity
 - **Role**: Learning Agent (Efficiency Optimizer)
 - **Mode**: {{.Mode}}
 - **Focus**: {{if .IsExact}}Extract WORKFLOW-CENTRIC execution sequence with dependencies and data flow.{{else}}Extract tool names and high-level patterns + Python scripts.{{end}}
 
-## 🚨 CRITICAL LEARNING PRINCIPLES
+## CRITICAL LEARNING PRINCIPLES
 1. **Task-Specific ONLY**: Only save learnings that help a future agent perform *this specific task* better.
 2. **Exclude General Knowledge**:
-   - ❌ Syntax/Compilation errors (LLMs already know language rules).
-   - ❌ Internal workspace tool mechanics (execute_shell_command, read_workspace_file, diff_patch_workspace_file, etc.).
-   - ❌ Generic naming or formatting feedback.
-3. **Include (The "Best Stuff")**:
-   - ✅ **Patterns**: MCP tool calling sequences ('server.tool') with arguments.
-   - ✅ **Shell Commands**: Successful execute_shell_command patterns (full paths used), and data processing pipelines.
-   - ✅ **Success Criteria**: Exact JSON structures, field names, and data types found in outputs.
-   - ✅ **Failures to Avoid**: Task-specific dead-ends (e.g., "Tool X doesn't work for PDF extraction in this repo").
-   - ✅ **Scripts**: Full content of successful scripts — Python, bash, or other (save to '{{.ScriptsPath}}').
+   - Syntax/Compilation errors (LLMs already know language rules).
+   - Internal workspace tool mechanics (execute_shell_command, read_workspace_file, diff_patch_workspace_file, etc.).
+   - Generic naming or formatting feedback.
+3. **Include**:
+   - **Patterns**: MCP tool calling sequences ('server.tool') with arguments.
+   - **Shell Commands**: Successful execute_shell_command patterns (full paths used), and data processing pipelines.
+   - **Success Criteria**: Exact JSON structures, field names, and data types found in outputs.
+   - **Failures to Avoid**: Task-specific dead-ends (e.g., "Tool X doesn't work for PDF extraction in this repo").
+   - **Scripts**: Full content of successful scripts — Python, bash, or other (save to '{{.ScriptsPath}}').
 
-## 🔄 FILE MANAGEMENT ALGORITHM (MANDATORY)
+## FILE MANAGEMENT ALGORITHM (MANDATORY)
 **Available tools**: execute_shell_command (for listing, reading, and deleting files) and diff_patch_workspace_file (for writing/updating files).
+{{if .ExistingLearningsContent}}
+**Existing learnings pre-loaded (skip discovery/retrieval):**
+{{.ExistingLearningsContent}}
+{{else}}
 1. **Discover**: Use execute_shell_command with 'ls' on '{{.WritePath}}'. Identify all existing '*_learning.md' files.
 2. **Retrieve**: Use execute_shell_command with 'cat' to read ALL identified learning files.
-3. **Optional - Check Execution Logs**: If you need more context about actual tool usage, use execute_shell_command to read execution logs from '{{.ExecutionLogsPath}}' (if available). Execution logs contain:
-   - Conversation history: execution-attempt-{N}-iteration-{M}-conversation.json
-   - Execution results: execution-attempt-{N}-iteration-{M}.json
-   - These show the actual tool calls and responses from the execution
-4. **Consolidate**:
-   - Merge current execution findings with all history.
-   - **Prioritize Latest Success**: Latest successful logs override older successful logs.
-   - **Update Scores**: Format: '[Runs: X | Success: Y%]'.
-   - **Prune**: Remove patterns mismatched with the current step description.
+{{end}}
+3. **Optional - Check Execution Logs**: If you need more context about actual tool usage, read execution logs from '{{.ExecutionLogsPath}}' (if available).
+4. **Consolidate**: Merge current execution findings with all history. Prioritize latest successful patterns. Prune patterns mismatched with the current step description.
 5. **Persist**: Use diff_patch_workspace_file to write ONE final consolidated file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
-6. **Clean Up**: Use execute_shell_command with 'rm' to remove all other '*_learning.md' files in that folder. **Only the final file should remain.**
+6. **Clean Up**: Use execute_shell_command with 'rm' to remove all other '*_learning.md' files in that folder. Only the final file should remain.
 
-## 📤 OUTPUT FORMAT
+## OUTPUT FORMAT
 {{if .IsExact}}
-### 🎯 EXECUTION WORKFLOW (EXACT MODE)
-⭐ **OPTIMAL PATH** [Runs: X | Success: Y%]
+### EXECUTION WORKFLOW (EXACT MODE)
+**OPTIMAL PATH**
 1. **server.tool**:
    - arguments: {COMPLETE JSON - replace hardcode paths with {{ "{{" }}WORKSPACE_PATH{{ "}}" }} }
    - prerequisites: [Condition]
    - outputs: [Description]
    - on_error: [Specific recovery]
 
-### 📊 DATA FLOW
+### DATA FLOW
 Step 1 Output -> Step 2 Input. Trace the flow accurately.
 {{else}}
-### ✅ SUCCESS PATTERN
-- **Tools**: server.tool [Runs: X | Success: Y%]
+### SUCCESS PATTERN
+- **Tools**: server.tool
 - **Approach**: Brief description of the strategy.
 {{end}}
 
-### 📄 OUTPUT FILE FORMATS
+### OUTPUT FILE FORMATS
 - **File**: filename.json
 - **Structure**: { "field": "type" } - Provide exact structure for consistency.
 
-### ❌ FAILURES TO AVOID
-- server.tool [Failed: X] - [Task-specific reason]. Use [Correct Approach] instead.
+### FAILURES TO AVOID
+- server.tool - [Task-specific reason]. Use [Correct Approach] instead.
 
-## 📤 FINAL ACTION
+## FINAL ACTION
 After cleanup, output ONLY the file path:
 'Updated: {{.WritePath}}/{{.StepTitle}}_learning.md'
 Do not add summaries or talkative reports.`)
 
 var learningUserMessageTemplate = MustRegisterTemplate("learningUserMessage", `# Learning Task: {{if .IsExact}}Workflow Extraction{{else}}Tool Extraction{{end}}
 
-## 📋 Context
+## Context
 - **Step**: {{.StepTitle}}
 - **Goal**: {{.StepDescription}}
 - **Success Criteria**: {{.SuccessCriteria}}
-- **History**: [See below]
 
-## 🧠 Instructions
-1. **CONSOLIDATE**:
-   - Use execute_shell_command with 'ls' to list files in '{{.WritePath}}'.
-   - Use execute_shell_command with 'cat' to read ALL existing '*_learning.md' files.
-   - Merge findings from the current execution with history.
-2. **EXTRACT**:
-   - {{if .IsExact}}Extract the COMPLETE, REPLAYABLE sequence of MCP tool calls.{{else}}Extract successful tool names and Python recipes.{{end}}
-   - **Task-Specific Failures**: Document what failed for *this specific task* (ignore general Go/Python errors).
-3. **PERSIST & CLEAN**:
-   - Use diff_patch_workspace_file to write ONE consolidated file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
-   - Use execute_shell_command with 'rm' to delete all other '*_learning.md' files in that folder.
+## Extraction Focus
+- {{if .IsExact}}Extract the COMPLETE, REPLAYABLE sequence of MCP tool calls.{{else}}Extract successful tool names and Python recipes.{{end}}
+- Document what failed for *this specific task* (ignore general Go/Python errors).
 
-## 🔑 Variable Handling
+## Variable Handling
 - Replace hardcoded IDs/paths with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders: {{.Variables}}
 - **Workspace Paths**: Always replace with {{ "{{" }}WORKSPACE_PATH{{ "}}" }} or relative paths.
 
 ---
-## 📊 EXECUTION HISTORY
+## EXECUTION HISTORY
 {{.ExecutionHistory}}
 
 ---
-## ✅ VALIDATION RESULTS
-{{.ValidationResult}}
-
-**Final Action**: Output ONLY the file path 'Updated: {{.WritePath}}/{{.StepTitle}}_learning.md'.`)
+## VALIDATION RESULTS
+{{.ValidationResult}}`)
 
 // WorkflowLearningTemplate holds template variables for learning prompts
 type WorkflowLearningTemplate struct {
@@ -234,15 +221,17 @@ func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars m
 	isExact := learningDetailLevel == "exact"
 
 	executionLogsPath := templateVars["ExecutionLogsPath"]
+	existingLearningsContent := templateVars["ExistingLearningsContent"]
 
 	var result strings.Builder
 	if err := learningSystemPromptTemplate.Execute(&result, map[string]interface{}{
-		"Mode":              strings.ToUpper(learningDetailLevel),
-		"IsExact":           isExact,
-		"WritePath":         writePath,
-		"ScriptsPath":       scriptsPath,
-		"StepTitle":         stepTitle,
-		"ExecutionLogsPath": executionLogsPath,
+		"Mode":                     strings.ToUpper(learningDetailLevel),
+		"IsExact":                  isExact,
+		"WritePath":                writePath,
+		"ScriptsPath":              scriptsPath,
+		"StepTitle":                stepTitle,
+		"ExecutionLogsPath":        executionLogsPath,
+		"ExistingLearningsContent": existingLearningsContent,
 	}); err != nil {
 		return "Error executing learning system prompt template: " + err.Error()
 	}

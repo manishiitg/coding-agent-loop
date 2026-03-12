@@ -8,6 +8,7 @@ import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularP
 import { TooltipProvider } from '../../ui/tooltip'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
+import { normalizeMCPToolName } from '../../../utils/customToolNames'
 
 type OutputFormat = 'markdown' | 'json' | 'csv' | null
 
@@ -37,7 +38,9 @@ interface ToolCallEndEventProps {
 export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event }) => {
   const { isExpanded, toggle } = useExpandable(false)
   const [isRawMode, setIsRawMode] = React.useState(false)
-  
+
+  const normalizedToolName = event.tool_name ? normalizeMCPToolName(event.tool_name) : event.tool_name
+
   // Check if this is a workspace tool
   const isWorkspaceTool = (toolName: string): boolean => {
     const workspaceToolNames = [
@@ -68,34 +71,25 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   }
 
   // If it's a workspace tool, use the specialized component
-  if (event.tool_name && isWorkspaceTool(event.tool_name)) {
+  if (normalizedToolName && isWorkspaceTool(normalizedToolName)) {
     const specializedDisplay = <WorkspaceToolCallEndDisplay event={event} />
-    // If the specialized renderer returns null, fall back to default
-    if (specializedDisplay) {
-      return specializedDisplay
-    }
+    if (specializedDisplay) return specializedDisplay
   }
 
   // If it's a code execution tool, use the specialized component
-  if (event.tool_name && isCodeExecutionTool(event.tool_name)) {
-    const specializedDisplay = <CodeExecutionToolCallEndDisplay event={event} />
-    // If the specialized renderer returns null, fall back to default
-    if (specializedDisplay) {
-      return specializedDisplay
-    }
+  if (normalizedToolName && isCodeExecutionTool(normalizedToolName)) {
+    const specializedDisplay = <CodeExecutionToolCallEndDisplay event={{ ...event, tool_name: normalizedToolName }} />
+    if (specializedDisplay) return specializedDisplay
   }
 
   // If it's a tool search tool, use the specialized component
-  if (event.tool_name && isToolSearchTool(event.tool_name)) {
+  if (normalizedToolName && isToolSearchTool(normalizedToolName)) {
     const specializedDisplay = <ToolSearchToolCallEndDisplay event={event} />
-    // If the specialized renderer returns null, fall back to default
-    if (specializedDisplay) {
-      return specializedDisplay
-    }
+    if (specializedDisplay) return specializedDisplay
   }
 
   // If it's the image generation tool, use the specialized component
-  if (event.tool_name && isImageGenTool(event.tool_name)) {
+  if (normalizedToolName && isImageGenTool(normalizedToolName)) {
     return <ImageGenToolCallEndDisplay event={event} />
   }
 

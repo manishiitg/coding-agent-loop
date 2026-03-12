@@ -210,13 +210,14 @@ func (c *ContextAwareEventBridge) ClearCurrentStepID() {
 
 // HandleEvent implements AgentEventListener interface
 func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
-	// Tag events with agent session ID from context (for parallel agent grouping).
+	// Tag events with correlation ID from context (for parallel agent grouping).
 	// This allows the frontend to parent tool calls under their orchestrator_agent_start.
-	if agentSessionID, ok := ctx.Value(AgentSessionIDKey).(string); ok && agentSessionID != "" {
-		// Only tag sub-agent events (not root agent) for grouping under agent cards.
-		// Root agent tool calls should remain at root level in the event list.
-		isSubAgent, _ := ctx.Value(orchevents.IsSubAgentContextKey).(bool)
-		if isSubAgent && !strings.HasPrefix(event.CorrelationID, "delegation-") {
+	// ForceCorrelationIDKey takes priority — it survives child agent context overwrites.
+	isSubAgent, _ := ctx.Value(orchevents.IsSubAgentContextKey).(bool)
+	if isSubAgent && !strings.HasPrefix(event.CorrelationID, "delegation-") {
+		if forcedID, ok := ctx.Value(orchevents.ForceCorrelationIDKey).(string); ok && forcedID != "" {
+			event.CorrelationID = forcedID
+		} else if agentSessionID, ok := ctx.Value(AgentSessionIDKey).(string); ok && agentSessionID != "" {
 			event.CorrelationID = agentSessionID
 		}
 	}

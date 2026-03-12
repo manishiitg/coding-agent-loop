@@ -328,7 +328,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 // Returns readPaths and writePaths for folder guard configuration
 // stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
 // hasLearnings: If true, includes learnings folder in read paths; if false, excludes it
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, hasLearnings bool) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, hasLearnings bool, useKnowledgebaseOverride ...bool) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -360,7 +360,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	writePaths = []string{stepFolderPath, downloadsPath}
 
 	// Add knowledgebase folder paths only if enabled
-	if hcpo.UseKnowledgebase() {
+	// Use per-step override if provided, otherwise fall back to orchestrator-level setting
+	kbEnabled := hcpo.UseKnowledgebase()
+	if len(useKnowledgebaseOverride) > 0 {
+		kbEnabled = useKnowledgebaseOverride[0]
+	}
+	if kbEnabled {
 		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 		readPaths = append(readPaths, knowledgebasePath)
 		writePaths = append(writePaths, knowledgebasePath)

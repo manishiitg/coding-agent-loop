@@ -17,16 +17,12 @@ import { logger } from './logger'
 // Workflow phases that support conversational chat mode instead of blocking human_feedback
 const CHAT_COMPATIBLE_PHASES = new Set([
   'planning',
-  'plan-improvement',
-  'execution-debugger',
+  'execution-qa',
   'evaluation-debugger',
-  'code-exec-debugging',
+  'workflow-builder',
+  'human-assisted-execution',
 ])
 
-// NOTE: Backend support (server.go workflow_phase handler) currently only handles
-// planning and plan-improvement phases. The debugger phases need their own
-// system prompt templates and tools to be added in server.go before they'll
-// work end-to-end. The frontend is ready for all phases listed above.
 
 export function isChatCompatiblePhase(phaseId: string | undefined): boolean {
   return !!phaseId && CHAT_COMPATIBLE_PHASES.has(phaseId)
@@ -183,7 +179,9 @@ export function buildQueryRequestPayload(params: {
     preset_query_id: workflowPresetId || chatPresetId || undefined,
     use_code_execution_mode: correctAgentMode === 'simple' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
     use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
-    execution_options: executionOptions as AgentQueryRequest['execution_options'],
+    execution_options: (executionOptions ?? (isWorkflowPhaseChat
+      ? useWorkflowStore.getState().buildExecutionOptions()
+      : undefined)) as AgentQueryRequest['execution_options'],
     enable_context_summarization: isChatLikeMode ? true : undefined,
     summarize_on_max_turns: isChatLikeMode ? true : undefined,
     summary_keep_last_messages: isChatLikeMode ? 4 : undefined,

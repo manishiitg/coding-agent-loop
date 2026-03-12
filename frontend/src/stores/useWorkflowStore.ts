@@ -562,12 +562,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
         return phases.length > 0 ? phases[0].id : 'planning'
       },
 
-      // Get phases that can work on individual steps
+      // Get phases that can work on individual steps (currently none — use Workflow Builder instead)
       getStepSpecificPhases: () => {
-        return get().phases.filter(p =>
-          p.id === 'plan-tool-optimization' ||
-          p.id === 'plan-improvement'
-        )
+        return []
       },
 
       // Load run folders for a workspace

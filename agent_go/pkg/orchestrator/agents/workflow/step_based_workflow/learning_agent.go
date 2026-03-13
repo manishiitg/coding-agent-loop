@@ -47,6 +47,8 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 5. **Persist**: Use diff_patch_workspace_file to write ONE final consolidated file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
 6. **Clean Up**: Use execute_shell_command with 'rm' to remove all other '*_learning.md' files in that folder. Only the final file should remain.
 
+**Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
+
 ## OUTPUT FORMAT
 {{if .IsExact}}
 ### EXECUTION WORKFLOW (EXACT MODE)

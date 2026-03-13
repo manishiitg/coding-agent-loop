@@ -50,6 +50,8 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
    - Save the best code to '{{.CodePath}}/' with an appropriate filename and extension (e.g., '.py' for Python, '.sh' for bash, '.go' for Go).
 6. **Clean Up**: Use execute_shell_command with 'rm' to delete all other learning/code files in these folders.
 
+**Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
+
 ## OUTPUT FORMAT
 ### BEST CODE PATTERNS
 1. **OPTIMAL**: [Pattern Name]

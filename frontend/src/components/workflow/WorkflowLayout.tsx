@@ -34,7 +34,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
     return tab?.metadata?.mode === 'workflow' ? tab?.metadata?.phaseId : undefined
   })
 
-  // Show chat input for chat-compatible phases (planning, plan-improvement)
+  // Show chat input for chat-compatible phases
   const effectiveHideInput = isChatCompatiblePhase(activePhaseId) ? false : hideInput
 
   return (
@@ -267,7 +267,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
-  const chatAreaExpanded = useWorkflowStore(state => state.chatAreaExpanded)
+  const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
   const stepProgress = useWorkflowStore(state => state.stepProgress)
   const showRunningDrawer = useShowRunningDrawer()
@@ -299,6 +299,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const { fetchFiles, setExpandedFolders } = useWorkspaceStore()
   // Subscribe to workspace minimized state so we can skip fetches when panel is hidden
   const workspaceMinimized = useAppStore(state => state.workspaceMinimized)
+  // Auto-expand chat when workspace is open (needs more space alongside workspace)
+  const chatAreaExpanded = chatAreaExpandedManual || !workspaceMinimized
 
   // Get active workflow preset
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -980,12 +982,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       setShowChatArea(true)
       handleStartPhase(evalPhaseId)
     } else {
-      // Look for the "planning" phase explicitly, fallback to second phase (index 1) if not found
-      const planningPhase = phases.find(p => p.id === 'planning') || (phases.length > 1 ? phases[1] : phases[0])
-      const planningPhaseId = planningPhase?.id || 'planning'
-      logger.debug('WorkflowLayout', 'Create plan requested, starting planning phase:', planningPhaseId)
+      // Use the workflow builder phase
+      const workshopPhase = phases.find(p => p.id === 'workflow-builder')
+      const phaseId = workshopPhase?.id || 'workflow-builder'
+      logger.debug('WorkflowLayout', 'Create plan requested, starting workflow builder phase:', phaseId)
       setShowChatArea(true)
-      handleStartPhase(planningPhaseId)
+      handleStartPhase(phaseId)
     }
   }, [handleStartPhase, setShowChatArea, activePresetId])
 

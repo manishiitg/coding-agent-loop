@@ -8,6 +8,12 @@ interface OrchestratorAgentEndEventDisplayProps {
 }
 
 export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEventDisplayProps> = ({ event }) => {
+  // Hide workshop wrapper end events — these are signal-only events for auto-notification,
+  // the actual agent completion is already shown by the inner agent's end event
+  const agentType = (event as unknown as { agent_type?: string })?.agent_type
+  if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning') {
+    return null
+  }
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';

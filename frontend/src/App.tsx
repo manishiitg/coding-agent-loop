@@ -49,16 +49,20 @@ const queryClient = new QueryClient();
 // Always renders ChatArea (even without observerId) so header with mode/preset selectors is visible
 // Uses Zustand hooks to reactively update when tabs change
 const ChatAreaWithObserverId = forwardRef<ChatAreaRef, { onNewChat: () => void }>(({ onNewChat }, ref) => {
-  // Use Zustand hooks to reactively subscribe to tab changes
-  const activeTabId = useChatStore(state => state.activeTabId)
-  
-  // Always render ChatArea - it will show header even without sessionId
-  // This allows users to select mode/preset even when no tab exists
+  // Pass null (not undefined) when the active tab is a workflow tab so this hidden
+  // instance doesn't steal SSE connections, polling, or queue processing from
+  // WorkflowLayout's ChatArea which is the primary instance for workflow tabs.
+  const activeTabId = useChatStore(state => {
+    const tabId = state.activeTabId
+    const tab = tabId ? state.chatTabs[tabId] : null
+    return tab?.metadata?.mode === 'workflow' ? null : (tabId || undefined)
+  })
+
   return (
     <ChatArea
       ref={ref}
       onNewChat={onNewChat}
-      tabId={activeTabId || undefined}
+      tabId={activeTabId}
     />
   )
 })

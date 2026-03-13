@@ -328,7 +328,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 // Returns readPaths and writePaths for folder guard configuration
 // stepID: Step ID for step-specific learnings folder access (e.g., "step-3" or branch step ID)
 // hasLearnings: If true, includes learnings folder in read paths; if false, excludes it
-func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, hasLearnings bool) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath string, stepID string, hasLearnings bool, useKnowledgebaseOverride ...bool) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	// Use run folder if available, otherwise use base workspace (backward compatibility)
 	var runWorkspacePath string
@@ -360,7 +360,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	writePaths = []string{stepFolderPath, downloadsPath}
 
 	// Add knowledgebase folder paths only if enabled
-	if hcpo.UseKnowledgebase() {
+	// Use per-step override if provided, otherwise fall back to orchestrator-level setting
+	kbEnabled := hcpo.UseKnowledgebase()
+	if len(useKnowledgebaseOverride) > 0 {
+		kbEnabled = useKnowledgebaseOverride[0]
+	}
+	if kbEnabled {
 		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 		readPaths = append(readPaths, knowledgebasePath)
 		writePaths = append(writePaths, knowledgebasePath)
@@ -717,8 +722,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		// Rule 2: Step explicitly set code execution mode
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
-		config.UseToolSearchMode = isToolSearchMode
+		// If code execution is enabled and tool search is NOT explicitly set on the step,
+		// default tool search to false — they are mutually exclusive, don't inherit preset default
+		if config.UseCodeExecutionMode && stepConfig.UseToolSearchMode == nil {
+			config.UseToolSearchMode = false
+		} else {
+			config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		}
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
 	} else {
@@ -1847,7 +1857,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for orchestration agent CLI provider '%s'", orchestrationProvider))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		if config.UseCodeExecutionMode && stepConfig.UseToolSearchMode == nil {
+			config.UseToolSearchMode = false
+		} else {
+			config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		}
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for orchestration agent: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
 	} else {

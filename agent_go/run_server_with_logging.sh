@@ -185,6 +185,9 @@ echo "✅ Server log file truncated: $LOG_PATH"
 > "logs/llm_debug.log"
 echo "✅ LLM log file truncated: logs/llm_debug.log"
 
+# Log rotation cap (used by background daemon)
+LOG_ROTATE_LINES=500000
+
 # Clean up tool_output_folder to start fresh
 echo "🧹 Cleaning tool_output_folder..."
 if [ -d "tool_output_folder" ]; then
@@ -231,13 +234,18 @@ echo "- Large Output Threshold: ${LARGE_OUTPUT_THRESHOLD} tokens" >> "$LOG_PATH"
 echo "=========================================" >> "$LOG_PATH"
 echo "" >> "$LOG_PATH"
 
-# Start background log rotation: keep only last 10000 lines every 30 seconds
-LOG_ROTATE_LINES=50000
+# Start background log rotation: keep only last 500000 lines every 30 seconds
 log_rotate_daemon() {
     while true; do
         sleep 30
-        if [ -f "$LOG_PATH" ] && [ "$(wc -l < "$LOG_PATH" 2>/dev/null)" -gt "$LOG_ROTATE_LINES" ]; then
-            tail -n "$LOG_ROTATE_LINES" "$LOG_PATH" > "${LOG_PATH}.tmp" && mv "${LOG_PATH}.tmp" "$LOG_PATH"
+        if [ -f "$LOG_PATH" ]; then
+            lines=$(wc -l < "$LOG_PATH" 2>/dev/null)
+            if [ "$lines" -gt "$LOG_ROTATE_LINES" ]; then
+                excess=$((lines - LOG_ROTATE_LINES))
+                # Remove oldest lines in-place (sed -i preserves the file inode so
+                # the Go server's open file descriptor keeps writing to the same file)
+                sed -i '' "1,${excess}d" "$LOG_PATH"
+            fi
         fi
     done
 }

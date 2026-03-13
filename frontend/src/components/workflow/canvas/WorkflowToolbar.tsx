@@ -1242,12 +1242,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     if (!isPhaseRunning) {
       // For phases that need run folder context, pass execution options
-      // This includes plan-improvement, plan-tool-optimization, plan-learnings-alignment,
-      // evaluation-execution, and code-exec-debugging
-      if (phaseId === 'plan-improvement' || phaseId === 'plan-tool-optimization' ||
-          phaseId === 'plan-learnings-alignment' || phaseId === 'evaluation-execution' ||
-          phaseId === 'code-exec-debugging' || phaseId === 'evaluation-debugger' ||
-          phaseId === 'execution-debugger') {
+      if (phaseId === 'evaluation-execution' ||
+          phaseId === 'evaluation-debugger' ||
+          phaseId === 'execution-qa') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)
@@ -1485,7 +1482,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted text-foreground rounded-md hover:bg-accent transition-colors font-medium text-xs"
             >
               <Plus className="w-3.5 h-3.5" />
-              {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Create Plan'}
+              {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Build Plan'}
             </button>
             {onRefresh && (
               <TooltipProvider delayDuration={150}>

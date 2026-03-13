@@ -23,6 +23,14 @@ const planCache: PlanCache = {
 // Cache expiry time (5 seconds) - allows refetch after mutations
 const CACHE_EXPIRY_MS = 5000
 
+/**
+ * Signal that plan.json was modified externally (e.g., by an LLM tool call).
+ * Dispatches a custom DOM event that usePlanData listens for to auto-refresh.
+ */
+export function signalPlanModified() {
+  window.dispatchEvent(new Event('plan-modified'))
+}
+
 // Types for plan change detection
 export type ChangeType = 'added' | 'updated' | 'deleted'
 
@@ -740,6 +748,18 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath]) // Only re-run when workspace changes, not when loadPlan is recreated
+
+  // Listen for external plan modification signals (e.g., from LLM tool calls via SSE)
+  useEffect(() => {
+    if (!workspacePath) return
+    const handler = () => {
+      console.log('[usePlanData] plan-modified event received, refreshing...')
+      invalidatePlanCache()
+      loadPlan()
+    }
+    window.addEventListener('plan-modified', handler)
+    return () => window.removeEventListener('plan-modified', handler)
+  }, [workspacePath, loadPlan, invalidatePlanCache])
 
   return {
     plan,

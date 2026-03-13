@@ -37,14 +37,39 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 ---
 
 ## 🏗️ STEP DESIGN
-- **Regular**: Standard task. 'context_output' is the result file.
+
+### Step Types
+- **Regular**: Standard task. 'context_output' is the result file. **Default choice** — use unless the task clearly needs branching, iteration, or sub-agents.
 - **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
-- **Conditional**: Inspection-only branch (no execution).
+- **Conditional**: Inspection-only branch (no execution). Reads prior context and picks a branch.
 - **Todo Task**: Manages a dynamic todo list with trackable tasks. Main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning) or generic agent (no learning). Use when: work can be broken into trackable tasks, multiple specialized agents needed, or detailed progress tracking required.
 - **Loop**: Repeat until criteria met (polled progress).
 - **Routing**: N-way LLM-based routing. Evaluates a routing_question and selects one of N routes (each with route_id + next_step_id). Two modes: (1) Execute-then-route: has description/success_criteria, executes first then routes; (2) Pure routing: no description, evaluates prior context to pick a route.
 - **Human Input**: Asks a question to the user and blocks until they respond. Supports response types: 'text' (free-form), 'yesno' (approve/reject), 'multiple_choice' (pick from options). Can store response in a variable via 'variable_name'. Routes based on response: 'if_yes_next_step_id'/'if_no_next_step_id' for yesno, 'option_routes' for multiple choice, 'next_step_id' as fallback.
 - **Human + Routing Pattern**: When the user needs to provide input that determines the workflow path, place a 'human_input' step BEFORE a 'routing' step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do NOT use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
+
+### Requirement Decomposition
+When designing a plan from a user's objective:
+1. **Identify concrete actions** — things the agent must DO (navigate, extract, write, validate). Each action that produces a distinct output is a candidate step.
+2. **One step = one logical task**. If you need "and then also..." — split it. But don't split trivially.
+3. **Design context flow forward-only**: each step reads from prior steps (context_dependencies) and writes for downstream steps (context_output). No circular dependencies.
+4. **Keep JSON output files < 100KB**. For large text content, write a separate .md file and reference it.
+
+### When to Use Todo Task with Sub-Agents
+Create **predefined sub-agents (routes)** for tasks that are:
+- **Known in advance** and will run each time (e.g., "login to portal", "extract table data")
+- **Predictable** — same pattern every run, even if inputs vary
+- **Self-contained** — clear inputs/outputs, can be validated independently
+- **Worth optimizing** — sub-agents accumulate their own learnings and run more reliably over time
+
+Use the **generic agent** for dynamic/unpredictable tasks. If you find yourself writing detailed instructions for a specific task inside the orchestrator description, that task should be a sub-agent route instead.
+
+### Design Anti-Patterns
+- **Monster steps**: One step doing 5 things — split it
+- **Trivial steps**: A step that just passes data through — merge with consumer
+- **Missing validation**: Every step MUST have validation_schema
+- **Vague descriptions**: Be specific about WHAT, HOW, and WHERE — not "process appropriately"
+- **Over-sequencing**: Independent steps can run in parallel via independent step groups
 
 {{if eq .UseKnowledgebase "true"}}### 📁 Persistent Storage (Knowledgebase)
 - **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
@@ -383,6 +408,7 @@ type AgentConfigs struct {
 	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration  bool               `json:"learning_after_loop_iteration,omitempty"`  // run learning after each loop iteration
 	LearningDetailLevel         string             `json:"learning_detail_level,omitempty"`          // "exact" or "none" (default: "exact")
+	LearningMode                string             `json:"learning_mode,omitempty"`                  // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
 	SelectedServers             []string           `json:"selected_servers,omitempty"`               // step-level MCP server selection (subset of preset servers)
 	SelectedTools               []string           `json:"selected_tools,omitempty"`                 // step-level tool selection (format: "server:tool" or "server:*" for all tools)
 	EnabledCustomToolCategories []string           `json:"enabled_custom_tool_categories,omitempty"` // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
@@ -395,6 +421,7 @@ type AgentConfigs struct {
 	EnablePrerequisiteDetection *bool              `json:"enable_prerequisite_detection,omitempty"`  // Enable prerequisite failure detection for this step (default: false)
 	PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"`             // Array of prerequisite rules, each with one step dependency and one description
 	KeepLearningFull            *bool              `json:"keep_learning_full,omitempty"`             // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
+	DisableKnowledgebase        *bool              `json:"disable_knowledgebase,omitempty"`          // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
 	DisableTempLLM              *bool              `json:"disable_temp_llm,omitempty"`               // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
 	TodoTaskOrchestratorTier    *int               `json:"todo_task_orchestrator_tier,omitempty"`    // Tier for todo task orchestrator agent (1/2/3) in tiered mode
 	EnableDynamicTierSelection  *bool              `json:"enable_dynamic_tier_selection,omitempty"`  // Allow todo task orchestrator to choose tier for sub-agents
@@ -402,6 +429,7 @@ type AgentConfigs struct {
 	SubAgentLLM                  *AgentLLMConfig    `json:"sub_agent_llm,omitempty"`                  // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
 	DisableParallelToolExecution *bool              `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	DisableTierOptimization      *bool              `json:"disable_tier_optimization,omitempty"`        // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
+	Optimized                    *bool              `json:"optimized,omitempty"`                        // If true, step is considered optimized — skip "debug and optimize" notification after completion
 }
 
 // ============================================================================
@@ -6175,7 +6203,7 @@ func extractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
 
 // registerPlanModificationTools registers all plan modification tools (plan update tools only)
 // Note: human_feedback is NOT registered here because it's already included in WorkspaceTools
-// This shared function is used by both planning agent and plan improvement agent
+// This shared function is used by planning agent, code exec debugging agent, etc.
 // unlockLearningsFunc is optional - if provided, it will be called after plan modifications to unlock learnings
 func registerPlanModificationTools(
 	mcpAgent *mcpagent.Agent,

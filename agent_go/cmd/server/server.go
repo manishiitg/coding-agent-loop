@@ -198,6 +198,10 @@ type StreamingAPI struct {
 	// Gemini CLI project directory IDs for per-invocation isolation (our sessionID -> dir ID)
 	geminiProjectDirIDs map[string]string
 
+	// Interactive workshop chat sessions — per-session controller + step registry
+	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
+	workshopChatSessions sync.Map
+
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
 	completionLoopStartedMu sync.Mutex
@@ -730,11 +734,40 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Per-tool endpoints for code execution mode (bearer token auth, bypasses JWT)
 	// LLM-generated code calls these directly, so they use API token auth instead of JWT.
+	//
+	// NOTE: The system prompt tool index lists custom tool categories (e.g. workspace_advanced)
+	// and virtual tool categories (e.g. workflow) alongside real MCP servers. Claude Code agents
+	// call them all via /tools/mcp/{server}/{tool}. The routeMCPRequest helper detects these
+	// categories and redirects to the correct handler (custom or virtual).
+	customToolCategories := map[string]bool{
+		"workspace": true, "workspace_basic": true, "workspace_browser": true,
+		"workspace_advanced": true, "workspace_git": true, "workspace_image_gen": true,
+		"workspace_image_edit": true, "human": true,
+	}
+	virtualToolCategories := map[string]bool{
+		"workflow": true, "memory": true,
+	}
+	routeMCPRequest := func(w http.ResponseWriter, r *http.Request, server, tool string) {
+		// Normalize: hyphens to underscores for category lookup
+		normalized := strings.ReplaceAll(server, "-", "_")
+		if customToolCategories[normalized] {
+			log.Printf("[ROUTE] Redirecting /tools/mcp/%s/%s → custom tool handler", server, tool)
+			executorHandlers.HandlePerToolCustomRequest(w, r, tool)
+			return
+		}
+		if virtualToolCategories[normalized] {
+			log.Printf("[ROUTE] Redirecting /tools/mcp/%s/%s → virtual tool handler", server, tool)
+			executorHandlers.HandlePerToolVirtualRequest(w, r, tool)
+			return
+		}
+		executorHandlers.HandlePerToolMCPRequest(w, r, server, tool)
+	}
+
 	toolsRouter := router.PathPrefix("/tools").Subrouter()
 	toolsRouter.Use(executor.AuthMiddleware(api.apiToken))
 	toolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		executorHandlers.HandlePerToolMCPRequest(w, r, vars["server"], vars["tool"])
+		routeMCPRequest(w, r, vars["server"], vars["tool"])
 	}).Methods("POST", "OPTIONS")
 	toolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -755,7 +788,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	sessionToolsRouter.HandleFunc("/mcp/{server}/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		r.Header.Set("X-Session-ID", vars["session_id"])
-		executorHandlers.HandlePerToolMCPRequest(w, r, vars["server"], vars["tool"])
+		routeMCPRequest(w, r, vars["server"], vars["tool"])
 	}).Methods("POST", "OPTIONS")
 	sessionToolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -2058,6 +2091,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[SKILLS] Loaded %d skills from preset: %v", len(skills), skills)
 					}
 				}
+				// Load global secret selection from preset — override nil req.SelectedGlobalSecrets
+				// which the frontend doesn't send for workflow mode.
+				// NULL (never configured) defaults to NO secrets — global secrets must be explicitly selected.
+				if preset.SelectedGlobalSecretNames != "" {
+					var names []string
+					if err := json.Unmarshal([]byte(preset.SelectedGlobalSecretNames), &names); err != nil {
+						log.Printf("[SECRETS] Failed to parse selected_global_secret_names from preset: %v", err)
+					} else {
+						req.SelectedGlobalSecrets = &names
+						log.Printf("[SECRETS] Loaded %d selected global secret names from preset", len(names))
+					}
+				} else if req.SelectedGlobalSecrets == nil {
+					// Preset never configured global secrets — default to none, not all.
+					emptyNames := []string{}
+					req.SelectedGlobalSecrets = &emptyNames
+					log.Printf("[SECRETS] No global secrets configured in preset — defaulting to none")
+				}
+
 				// Load browser access mode from preset
 				if preset.EnableBrowserAccess {
 					// Add browser tools to the available tools pool
@@ -2270,6 +2321,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Store workflow orchestrator for guidance injection
 		api.storeWorkflowOrchestrator(sessionID, workflowOrchestrator)
 
+		// Track HTTP session ID on the orchestrator so MCP sessions can be closed on stop
+		workflowOrchestrator.SetHTTPSessionID(sessionID)
+
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being canceled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
@@ -2367,6 +2421,27 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.workflowStepIDMux.RUnlock()
 			} else {
 				log.Printf("[WORKFLOW CHECK] No preset_query_id provided, using default workflowStatus: %s", workflowStatus)
+			}
+
+			// Chat-only phases should not go through the orchestrator path.
+			// If the database has these as workflow status, reject early with a clear message.
+			if workflowStatus == "workflow-builder" || workflowStatus == "human-assisted-execution" {
+				log.Printf("[WORKFLOW ERROR] Phase %q is chat-only — cannot execute via orchestrator. Use phase chat mode instead.", workflowStatus)
+				api.eventStore.AddEvent(sessionID, events.Event{
+					ID:        fmt.Sprintf("chat_only_error_%d", time.Now().UnixNano()),
+					Type:      "workflow_error",
+					Timestamp: time.Now(),
+					Data: &unifiedevents.AgentEvent{
+						Type:      "workflow_error",
+						Timestamp: time.Now(),
+						Data: &unifiedevents.GenericEventData{
+							Data: map[string]interface{}{
+								"error": fmt.Sprintf("%s is a chat-only phase. Please use the phase chat tab instead of the Execute button.", workflowStatus),
+							},
+						},
+					},
+				})
+				return
 			}
 
 			log.Printf("[WORKFLOW EXECUTION] Executing workflow with status: %s", workflowStatus)
@@ -2586,6 +2661,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Update active session status to error
 				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to error", sessionID)
 				api.updateSessionStatus(sessionID, "error")
+				// Clean up HTTP session → MCP session tracker on error completion
+				mcpagent.CloseHTTPSession(sessionID)
 			} else {
 				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
 				// Workflow completion events are now handled by the workflow orchestrator itself
@@ -2615,6 +2692,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Update active session status to completed
 				log.Printf("[WORKFLOW COMPLETION] Updating session %s status to completed", sessionID)
 				api.updateSessionStatus(sessionID, "completed")
+				// Clean up HTTP session → MCP session tracker on successful completion
+				mcpagent.CloseHTTPSession(sessionID)
 			}
 		}()
 		return
@@ -4108,10 +4187,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Build template vars by reading current plan and variables from workspace
+				phaseRunFolder := ""
+				var phaseEnabledGroupIDs []string
+				if req.ExecutionOptions != nil {
+					phaseRunFolder = req.ExecutionOptions.SelectedRunFolder
+					phaseEnabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
+				}
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
 					"WorkspacePath":       phaseWorkspacePath,
 					"IsCodeExecutionMode": "true",
+				}
+
+				// Build GroupInfo and extra template vars for the interactive-workshop system prompt
+				if workflowPhaseID == "workflow-builder" || workflowPhaseID == "human-assisted-execution" {
+					groupInfo := buildWorkshopGroupInfo(r.Context(), phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupIDs)
+					if groupInfo != "" {
+						phaseTemplateVars["GroupInfo"] = groupInfo
+					}
+					phaseTemplateVars["RunFolder"] = phaseRunFolder
+					phaseTemplateVars["UseKnowledgebase"] = "true" // default; overridden by preset below if needed
 				}
 
 				// Read existing plan from workspace (if any)
@@ -4138,7 +4233,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Register phase-appropriate tools
 				switch workflowPhaseID {
-				case "execution-debugger":
+				case "execution-qa":
 					// Read-only phase — no modification tools
 					log.Printf("[WORKFLOW_PHASE] Read-only phase, no modification tools registered")
 				case "evaluation-debugger":
@@ -4155,8 +4250,209 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					} else {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools")
 					}
+				case "human-assisted-execution":
+					// Workshop execution tools only (NO plan modification tools)
+					// Get or create per-session workshop controller + step registry
+					haeSessionKey := sessionID
+					var haeSession *todo_creation_human.WorkshopChatSession
+					if cached, ok := api.workshopChatSessions.Load(haeSessionKey); ok {
+						haeSession = cached.(*todo_creation_human.WorkshopChatSession)
+						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for human-assisted-execution %s", sessionID)
+						// Refresh enabled group IDs from current request (toolbar selection may have changed)
+						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
+							haeSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
+							log.Printf("[WORKFLOW_PHASE] Refreshed HAE enabled group IDs: %v", req.ExecutionOptions.EnabledGroupIDs)
+						}
+					} else {
+						haeCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), haeCfg)
+						if sessionErr != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create human-assisted-execution session: %v", sessionErr)
+						} else {
+							haeSession = newSession
+							api.workshopChatSessions.Store(haeSessionKey, haeSession)
+							log.Printf("[WORKFLOW_PHASE] Created new human-assisted-execution session for %s", sessionID)
+						}
+					}
+					if haeSession != nil {
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, haeSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered execution tools for human-assisted-execution (execute_step, query_step, stop_step, list_steps, etc.)")
+					}
+				case "workflow-builder":
+					// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
+					if err := todo_creation_human.RegisterPlanModificationTools(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+						phaseWriteFile,
+						phaseMoveFile,
+						"workflow-builder chat agent",
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register plan modification tools for workshop: %v", err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for interactive-workshop")
+					}
+
+					// Get or create per-session workshop controller + step registry
+					workshopSessionKey := sessionID
+					var workshopSession *todo_creation_human.WorkshopChatSession
+					if cached, ok := api.workshopChatSessions.Load(workshopSessionKey); ok {
+						workshopSession = cached.(*todo_creation_human.WorkshopChatSession)
+						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for %s", sessionID)
+
+						// Refresh enabled group IDs from current request (toolbar selection may have changed)
+						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
+							workshopSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
+							log.Printf("[WORKFLOW_PHASE] Refreshed enabled group IDs: %v", req.ExecutionOptions.EnabledGroupIDs)
+						}
+
+						// Refresh all preset settings from database in case user edited the workflow
+						if req.PresetQueryID != "" {
+							refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 5*time.Second)
+							refreshPreset, refreshErr := api.chatDB.GetPresetQuery(refreshCtx, req.PresetQueryID)
+							refreshCancel()
+							if refreshErr != nil {
+								log.Printf("[WORKFLOW_PHASE] Warning: Failed to reload preset config: %v", refreshErr)
+							} else if refreshPreset != nil {
+								// Refresh non-LLM settings from preset (only apply if parse succeeds)
+								var refreshedTools []string
+								toolsParsed := refreshPreset.SelectedTools == "" // empty = no tools, valid
+								if refreshPreset.SelectedTools != "" {
+									if err := json.Unmarshal([]byte(refreshPreset.SelectedTools), &refreshedTools); err != nil {
+										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed tools: %v — keeping existing", err)
+									} else {
+										toolsParsed = true
+									}
+								}
+								var refreshedPreDiscovered []string
+								preDiscoveredParsed := refreshPreset.PreDiscoveredTools == ""
+								if refreshPreset.PreDiscoveredTools != "" {
+									if err := json.Unmarshal([]byte(refreshPreset.PreDiscoveredTools), &refreshedPreDiscovered); err != nil {
+										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed pre-discovered tools: %v — keeping existing", err)
+									} else {
+										preDiscoveredParsed = true
+									}
+								}
+								var refreshedSkills []string
+								skillsParsed := refreshPreset.SelectedSkills == ""
+								if refreshPreset.SelectedSkills != "" {
+									if err := json.Unmarshal([]byte(refreshPreset.SelectedSkills), &refreshedSkills); err != nil {
+										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed skills: %v — keeping existing", err)
+									} else {
+										skillsParsed = true
+									}
+								}
+
+								// Refresh secrets
+								var refreshedSecretNames *[]string
+								if refreshPreset.SelectedGlobalSecretNames != "" {
+									var names []string
+									if err := json.Unmarshal([]byte(refreshPreset.SelectedGlobalSecretNames), &names); err == nil {
+										refreshedSecretNames = &names
+									}
+								} else {
+									emptyNames := []string{}
+									refreshedSecretNames = &emptyNames
+								}
+								effectiveSecretSelection := req.SelectedGlobalSecrets
+								if refreshedSecretNames != nil {
+									effectiveSecretSelection = refreshedSecretNames
+								}
+								allRefreshedSecrets := mergeGlobalSecrets(req.DecryptedSecrets, effectiveSecretSelection)
+								var secretEntries []orchestrator.SecretEntry
+								for _, s := range allRefreshedSecrets {
+									secretEntries = append(secretEntries, orchestrator.SecretEntry{Name: s.Name, Value: s.Value})
+								}
+
+								// Determine knowledgebase setting from LLM config block
+								refreshedKnowledgebase := true // default
+								if len(refreshPreset.LLMConfig) > 0 {
+									var presetLLMConfig database.PresetLLMConfig
+									if jsonErr := json.Unmarshal(refreshPreset.LLMConfig, &presetLLMConfig); jsonErr == nil {
+										// Refresh LLM configs
+										execLLM := workshopExtractLLM(presetLLMConfig.ExecutionLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+										validLLM := workshopExtractLLM(presetLLMConfig.ValidationLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+										learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+										phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+										workshopSession.UpdatePresetLLMConfigs(execLLM, validLLM, learnLLM, phaseLLM, nil)
+										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: exec=%v valid=%v learn=%v phase=%v",
+											execLLM != nil, validLLM != nil, learnLLM != nil, phaseLLM != nil)
+										if execLLM != nil {
+											log.Printf("[WORKFLOW_PHASE] Refreshed execution LLM: %s/%s", execLLM.Provider, execLLM.ModelID)
+										}
+
+										// Refresh tiered LLM allocation config
+										if presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
+											refreshedTiered := &todo_creation_human.TieredLLMConfig{
+												Tier1: &todo_creation_human.AgentLLMConfig{
+													Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
+													ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+												},
+												Tier2: &todo_creation_human.AgentLLMConfig{
+													Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
+													ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+												},
+												Tier3: &todo_creation_human.AgentLLMConfig{
+													Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
+													ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+												},
+											}
+											workshopSession.UpdateTieredConfig("tiered", refreshedTiered)
+											log.Printf("[WORKFLOW_PHASE] Refreshed tiered config: T1=%s/%s T2=%s/%s T3=%s/%s",
+												refreshedTiered.Tier1.Provider, refreshedTiered.Tier1.ModelID,
+												refreshedTiered.Tier2.Provider, refreshedTiered.Tier2.ModelID,
+												refreshedTiered.Tier3.Provider, refreshedTiered.Tier3.ModelID)
+										} else if presetLLMConfig.LLMAllocationMode != "tiered" {
+											// User switched from tiered to manual — disable tiered mode
+											workshopSession.UpdateTieredConfig("manual", nil)
+											log.Printf("[WORKFLOW_PHASE] Tiered mode disabled (switched to manual)")
+										}
+
+										if presetLLMConfig.UseKnowledgebase != nil {
+											refreshedKnowledgebase = *presetLLMConfig.UseKnowledgebase
+										}
+									} else {
+										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed LLM config: %v — keeping existing", jsonErr)
+									}
+								}
+
+								// Apply settings (only update fields that parsed successfully)
+								workshopSession.UpdatePresetSettings(
+									selectedServers,
+									refreshedTools, toolsParsed,
+									refreshPreset.UseCodeExecutionMode,
+									refreshPreset.UseToolSearchMode,
+									refreshedPreDiscovered, preDiscoveredParsed,
+									refreshedKnowledgebase,
+									refreshedSkills, skillsParsed,
+									secretEntries,
+								)
+								log.Printf("[WORKFLOW_PHASE] Refreshed preset settings: servers=%d tools=%d codeExec=%v toolSearch=%v kb=%v skills=%d secrets=%d",
+									len(selectedServers), len(refreshedTools), refreshPreset.UseCodeExecutionMode,
+									refreshPreset.UseToolSearchMode, refreshedKnowledgebase, len(refreshedSkills), len(secretEntries))
+							}
+						}
+					} else {
+						// Build full workshop config matching normal workflow setup
+						workshopCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+
+						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), workshopCfg)
+						if sessionErr != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create workshop session: %v — workshop execution tools unavailable", sessionErr)
+						} else {
+							workshopSession = newSession
+							api.workshopChatSessions.Store(workshopSessionKey, workshopSession)
+							log.Printf("[WORKFLOW_PHASE] Created new workshop session for %s", sessionID)
+						}
+					}
+
+					if workshopSession != nil {
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools (execute_step, query_step, stop_step, list_steps, etc.)")
+					}
 				default:
-					// planning, plan-improvement, code-exec-debugging: plan modification tools
+					// planning: plan modification tools
 					if err := todo_creation_human.RegisterPlanModificationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4599,6 +4895,12 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		log.Printf("[SESSION DEBUG] Cleared workflow objective for session %s", sessionID)
 	}
 	api.workflowObjectiveMux.Unlock()
+
+	// Close all MCP sessions (browsers, etc.) associated with this HTTP session immediately.
+	// This is safe to call even if the defers in the workflow goroutines haven't fired yet —
+	// CloseSession is idempotent, so those defers will be no-ops when they eventually run.
+	log.Printf("[SESSION DEBUG] Closing MCP sessions for stopped session %s", sessionID)
+	mcpagent.CloseHTTPSession(sessionID)
 
 	// Note: Conversation history and orchestrator state are preserved to allow resuming the conversation
 	// Use /api/session/clear if you want to clear conversation history
@@ -7942,4 +8244,333 @@ func (api *StreamingAPI) handleSubmitHumanFeedback(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// buildWorkshopGroupInfo builds a human-readable summary of available variable groups
+// for the interactive-workshop system prompt. Includes the user-selected group if any.
+func buildWorkshopGroupInfo(
+	ctx context.Context,
+	workspacePath string,
+	readFile func(context.Context, string) (string, error),
+	selectedRunFolder string,
+	enabledGroupIDs []string,
+) string {
+	// Read variables manifest
+	varPath := workspacePath + "/variables/variables.json"
+	content, err := readFile(ctx, varPath)
+	if err != nil {
+		return ""
+	}
+
+	var manifest todo_creation_human.VariablesManifest
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		return ""
+	}
+
+	if len(manifest.Groups) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("**%d variable groups** available:\n", len(manifest.Groups)))
+	for _, g := range manifest.Groups {
+		status := "enabled"
+		if !g.Enabled {
+			status = "disabled"
+		}
+		displayName := g.DisplayName
+		if displayName == "" {
+			displayName = g.GroupID
+		}
+		// Mark the user-selected group
+		selected := ""
+		for _, eid := range enabledGroupIDs {
+			if eid == g.GroupID {
+				selected = " **[SELECTED]**"
+				break
+			}
+		}
+		sb.WriteString(fmt.Sprintf("- **%s** (group_id: `%s`, %s)%s\n", displayName, g.GroupID, status, selected))
+	}
+
+	if selectedRunFolder != "" {
+		sb.WriteString(fmt.Sprintf("\nSelected run folder: `%s`\n", selectedRunFolder))
+	}
+
+	if len(enabledGroupIDs) > 0 {
+		sb.WriteString(fmt.Sprintf("\nUser has selected group(s): %v — use these as default for execute_step calls.\n", enabledGroupIDs))
+	}
+
+	return sb.String()
+}
+
+// buildWorkshopConfig loads the full preset and builds a WorkshopConfig that replicates
+// the exact same tool/LLM/browser/image-gen setup as a normal workflow execution.
+// This mirrors the logic in the /api/workflow handler (lines ~2003-2260) so the workshop
+// gets the same tools, executors, categories, and LLM configs.
+func (api *StreamingAPI) buildWorkshopConfig(
+	ctx context.Context,
+	req QueryRequest,
+	currentUserID string,
+	workspacePath string,
+	runFolder string,
+	selectedServers []string,
+	sessionID string,
+) *todo_creation_human.WorkshopConfig {
+	// Extract enabled group IDs from execution options (toolbar selection)
+	var enabledGroupIDs []string
+	if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
+		enabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
+	}
+
+	cfg := &todo_creation_human.WorkshopConfig{
+		WorkspacePath:     workspacePath,
+		RunFolder:         runFolder,
+		MCPConfigPath:     api.mcpConfigPath,
+		SelectedServers:   append([]string(nil), selectedServers...), // copy to avoid mutation
+		LLMConfig:         req.LLMConfig,
+		UseKnowledgebase:  true,
+		LLMAllocationMode: "manual",
+		Logger:            api.logger,
+		SessionID:         sessionID,
+		EnabledGroupIDs:   enabledGroupIDs,
+	}
+
+	// Build base tools: workspace_advanced + workspace_basic + human + todo
+	// Same as createCustomTools(true) in tool_setup.go
+	allTools, allExecutors, toolCategories := createCustomTools(true)
+
+	// Track preset's global secret selection (overrides req.SelectedGlobalSecrets which is nil for phase chat)
+	var presetGlobalSecretNames *[]string
+
+	// Load full preset config (same logic as normal workflow handler)
+	if req.PresetQueryID != "" {
+		wsCtx, wsCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		preset, wsErr := api.chatDB.GetPresetQuery(wsCtx, req.PresetQueryID)
+		wsCancel()
+		if wsErr != nil {
+			log.Printf("[WORKSHOP] Warning: Failed to load preset %s: %v", req.PresetQueryID, wsErr)
+		} else if preset != nil {
+			log.Printf("[WORKSHOP] Loaded preset %s for full config", req.PresetQueryID)
+
+			// Selected tools
+			if preset.SelectedTools != "" {
+				if err := json.Unmarshal([]byte(preset.SelectedTools), &cfg.SelectedTools); err != nil {
+					log.Printf("[WORKSHOP] Failed to parse selected tools: %v", err)
+				}
+			}
+
+			// Code execution mode
+			cfg.UseCodeExecutionMode = preset.UseCodeExecutionMode
+			cfg.UseToolSearchMode = preset.UseToolSearchMode
+
+			// Selected skills
+			if preset.SelectedSkills != "" {
+				var skills []string
+				if err := json.Unmarshal([]byte(preset.SelectedSkills), &skills); err != nil {
+					log.Printf("[WORKSHOP] Failed to parse selected skills: %v", err)
+				} else if len(skills) > 0 {
+					cfg.SelectedSkills = skills
+					log.Printf("[WORKSHOP] Loaded %d skills from preset: %v", len(skills), skills)
+				}
+			}
+
+			// Global secret selection from preset (overrides nil req.SelectedGlobalSecrets for phase chat)
+			// DB stores NULL (Go empty string), "[]" = none, "[...]" = specific
+			// NULL (never configured) defaults to NO secrets — global secrets must be explicitly selected.
+			if preset.SelectedGlobalSecretNames != "" {
+				var names []string
+				if err := json.Unmarshal([]byte(preset.SelectedGlobalSecretNames), &names); err != nil {
+					log.Printf("[WORKSHOP] Failed to parse selected_global_secret_names: %v", err)
+				} else {
+					presetGlobalSecretNames = &names
+					log.Printf("[WORKSHOP] Loaded %d selected global secret names from preset", len(names))
+				}
+			} else {
+				// Preset never configured global secrets — default to none, not all.
+				// Global secrets should only be injected when explicitly selected.
+				emptyNames := []string{}
+				presetGlobalSecretNames = &emptyNames
+				log.Printf("[WORKSHOP] No global secrets configured in preset — defaulting to none")
+			}
+
+			// Pre-discovered tools
+			if preset.PreDiscoveredTools != "" {
+				if err := json.Unmarshal([]byte(preset.PreDiscoveredTools), &cfg.PreDiscoveredTools); err != nil {
+					log.Printf("[WORKSHOP] Failed to parse pre-discovered tools: %v", err)
+				}
+			}
+
+			// Browser tools (same logic as normal workflow)
+			if preset.EnableBrowserAccess {
+				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+				browserTools := virtualtools.CreateWorkspaceBrowserTools()
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(req))
+
+				allTools = append(allTools, browserTools...)
+				for name, executor := range browserExecutors {
+					allExecutors[name] = executor
+				}
+				for _, tool := range browserTools {
+					if tool.Function != nil {
+						toolCategories[tool.Function.Name] = browserCategory
+					}
+				}
+				log.Printf("[WORKSHOP] Added browser tools (enable_browser_access: true)")
+
+				// Strip playwright/camofox MCP servers (headless mode uses agent_browser)
+				var filteredServers []string
+				for _, s := range cfg.SelectedServers {
+					if s != "playwright" && s != "camofox" {
+						filteredServers = append(filteredServers, s)
+					}
+				}
+				if len(filteredServers) != len(cfg.SelectedServers) {
+					log.Printf("[WORKSHOP] Stripped playwright/camofox from server list (was %d, now %d)", len(cfg.SelectedServers), len(filteredServers))
+					cfg.SelectedServers = filteredServers
+				}
+			}
+
+			// LLM config from preset
+			if len(preset.LLMConfig) > 0 {
+				var presetLLMConfig database.PresetLLMConfig
+				if jsonErr := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); jsonErr != nil {
+					log.Printf("[WORKSHOP] Failed to parse preset LLM config: %v", jsonErr)
+				} else {
+					// Extract all preset LLMs (same extraction as workflow_orchestrator.go)
+					cfg.PresetExecutionLLM = workshopExtractLLM(presetLLMConfig.ExecutionLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+					cfg.PresetValidationLLM = workshopExtractLLM(presetLLMConfig.ValidationLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+					cfg.PresetLearningLLM = workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+					cfg.PresetPhaseLLM = workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+					// Plan improvement uses phase LLM (not a separate config)
+
+					log.Printf("[WORKSHOP] LLM configs: exec=%v valid=%v learn=%v phase=%v",
+						cfg.PresetExecutionLLM != nil, cfg.PresetValidationLLM != nil,
+						cfg.PresetLearningLLM != nil, cfg.PresetPhaseLLM != nil)
+
+					// Knowledgebase toggle
+					if presetLLMConfig.UseKnowledgebase != nil {
+						cfg.UseKnowledgebase = *presetLLMConfig.UseKnowledgebase
+					}
+
+					// Tiered LLM allocation
+					if presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
+						cfg.LLMAllocationMode = "tiered"
+						cfg.TieredConfig = &todo_creation_human.TieredLLMConfig{
+							Tier1: &todo_creation_human.AgentLLMConfig{
+								Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
+								ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+							},
+							Tier2: &todo_creation_human.AgentLLMConfig{
+								Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
+								ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+							},
+							Tier3: &todo_creation_human.AgentLLMConfig{
+								Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
+								ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+							},
+						}
+						log.Printf("[WORKSHOP] Tiered mode: T1=%s/%s T2=%s/%s T3=%s/%s",
+							cfg.TieredConfig.Tier1.Provider, cfg.TieredConfig.Tier1.ModelID,
+							cfg.TieredConfig.Tier2.Provider, cfg.TieredConfig.Tier2.ModelID,
+							cfg.TieredConfig.Tier3.Provider, cfg.TieredConfig.Tier3.ModelID)
+					}
+
+					// Image generation tools
+					if presetLLMConfig.EnableImageGeneration != nil && *presetLLMConfig.EnableImageGeneration {
+						imgCfg := virtualtools.ImageGenExecutorConfig{
+							Provider:        "vertex",
+							ModelID:         "gemini-2.5-flash-image",
+							WorkspaceAPIURL: getWorkspaceAPIURL(),
+							UserID:          currentUserID,
+						}
+						if presetLLMConfig.ImageGenProvider != "" {
+							imgCfg.Provider = presetLLMConfig.ImageGenProvider
+						}
+						if presetLLMConfig.ImageGenModelID != "" {
+							imgCfg.ModelID = presetLLMConfig.ImageGenModelID
+						}
+						for _, def := range []struct {
+							tool     func() llmtypes.Tool
+							executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
+							category func() string
+						}{
+							{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
+							{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
+						} {
+							t := def.tool()
+							exec := def.executor(imgCfg)
+							allTools = append(allTools, t)
+							allExecutors[t.Function.Name] = exec
+							toolCategories[t.Function.Name] = def.category()
+							log.Printf("[WORKSHOP] Registered image tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Merge secrets — use preset's global secret selection if available (phase chat doesn't send req.SelectedGlobalSecrets)
+	effectiveGlobalSecretSelection := req.SelectedGlobalSecrets
+	if presetGlobalSecretNames != nil {
+		effectiveGlobalSecretSelection = presetGlobalSecretNames
+	}
+	allSecrets := mergeGlobalSecrets(req.DecryptedSecrets, effectiveGlobalSecretSelection)
+	if len(allSecrets) > 0 {
+		entries := make([]orchestrator.SecretEntry, len(allSecrets))
+		for i, s := range allSecrets {
+			entries[i] = orchestrator.SecretEntry{Name: s.Name, Value: s.Value}
+		}
+		cfg.Secrets = entries
+		log.Printf("[WORKSHOP] Applied %d secrets", len(entries))
+	}
+
+	// Replace workspace executors with session-aware versions (same as normal workflow handler).
+	// This sets MCP_SESSION_ID and secrets as shell env vars for code execution mode.
+	secretEnvVars := make(map[string]string, len(allSecrets))
+	for _, s := range allSecrets {
+		secretEnvVars[s.Name] = s.Value
+	}
+	sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
+	for name, executor := range sessionAwareExecutors {
+		allExecutors[name] = executor
+	}
+	cfg.WorkspaceEnvRef = workspaceEnv
+	log.Printf("[WORKSHOP] Replaced workspace executors with session-aware versions (sessionID=%q, secrets=%d)", sessionID, len(secretEnvVars))
+
+	cfg.CustomTools = allTools
+	cfg.CustomToolExecutors = allExecutors
+	cfg.ToolCategories = toolCategories
+
+	// Create workshop event bridge for SSE emission from background goroutines
+	cfg.EventBridge = &eventbridge.WorkflowEventBridge{
+		BaseEventBridge: &eventbridge.BaseEventBridge{
+			EventStore: api.eventStore,
+			SessionID:  sessionID,
+			Logger:     api.logger,
+			ChatDB:     nil,
+			BridgeName: "workshop",
+		},
+	}
+
+	return cfg
+}
+
+// workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.
+// Returns nil if neither specific nor legacy values are set.
+func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
+	if specific != nil && specific.Provider != "" && specific.ModelID != "" {
+		return &todo_creation_human.AgentLLMConfig{
+			Provider: specific.Provider,
+			ModelID:  specific.ModelID,
+		}
+	}
+	if legacyProvider != "" && legacyModelID != "" {
+		return &todo_creation_human.AgentLLMConfig{
+			Provider: legacyProvider,
+			ModelID:  legacyModelID,
+		}
+	}
+	return nil
 }

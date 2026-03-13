@@ -8,7 +8,7 @@ import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularP
 import { TooltipProvider } from '../../ui/tooltip'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
-import { getLogicalToolName } from '../../../utils/event-helpers'
+import { normalizeMCPToolName } from '../../../utils/customToolNames'
 
 type OutputFormat = 'markdown' | 'json' | 'csv' | null
 
@@ -38,8 +38,8 @@ interface ToolCallEndEventProps {
 export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event }) => {
   const { isExpanded, toggle } = useExpandable(false)
   const [isRawMode, setIsRawMode] = React.useState(false)
-  
-  const logicalToolName = event.tool_name ? getLogicalToolName(event.tool_name) : ''
+
+  const normalizedToolName = event.tool_name ? normalizeMCPToolName(event.tool_name) : event.tool_name
 
   // Check if this is a workspace tool
   const isWorkspaceTool = (name: string): boolean => {
@@ -69,31 +69,25 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   }
 
   // If it's a workspace tool, use the specialized component
-  if (isWorkspaceTool(logicalToolName)) {
+  if (normalizedToolName && isWorkspaceTool(normalizedToolName)) {
     const specializedDisplay = <WorkspaceToolCallEndDisplay event={event} />
-    if (specializedDisplay) {
-      return specializedDisplay
-    }
+    if (specializedDisplay) return specializedDisplay
   }
 
   // If it's a code execution tool, use the specialized component
-  if (isCodeExecutionTool(logicalToolName)) {
-    const specializedDisplay = <CodeExecutionToolCallEndDisplay event={event} />
-    if (specializedDisplay) {
-      return specializedDisplay
-    }
+  if (normalizedToolName && isCodeExecutionTool(normalizedToolName)) {
+    const specializedDisplay = <CodeExecutionToolCallEndDisplay event={{ ...event, tool_name: normalizedToolName }} />
+    if (specializedDisplay) return specializedDisplay
   }
 
   // If it's a tool search tool, use the specialized component
-  if (isToolSearchTool(logicalToolName)) {
+  if (normalizedToolName && isToolSearchTool(normalizedToolName)) {
     const specializedDisplay = <ToolSearchToolCallEndDisplay event={event} />
-    if (specializedDisplay) {
-      return specializedDisplay
-    }
+    if (specializedDisplay) return specializedDisplay
   }
 
   // If it's the image generation tool, use the specialized component
-  if (isImageGenTool(logicalToolName)) {
+  if (normalizedToolName && isImageGenTool(normalizedToolName)) {
     return <ImageGenToolCallEndDisplay event={event} />
   }
 
@@ -191,15 +185,15 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
 
   // Determine theme color based on tool name (retrieval vs action)
   const toolName = event.tool_name?.toLowerCase() || ''
-  const isRetrieval = toolName.includes('search') || 
-                      toolName.includes('list') || 
-                      toolName.includes('read') || 
+  const isRetrieval = toolName.includes('search') ||
+                      toolName.includes('list') ||
+                      toolName.includes('read') ||
                       toolName.includes('get') ||
                       toolName.includes('fetch') ||
                       toolName.includes('find')
 
   const theme = isRetrieval ? 'blue' : 'green'
-  
+
   const bgColor = theme === 'blue' ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-green-50 dark:bg-green-900/20'
   const borderColor = theme === 'blue' ? 'border-blue-200 dark:border-blue-800' : 'border-green-200 dark:border-green-800'
   const textColor = theme === 'blue' ? 'text-blue-700 dark:text-blue-300' : 'text-green-700 dark:text-green-300'

@@ -62,7 +62,8 @@ After each task, you should be LEARNING and ADAPTING:
 
 ## 🛠️ PLAN & TASK MANAGEMENT (via shell)
 **Step Folder**: '{{.ShellWorkingDirectory}}'
-Use full paths in execute_shell_command (e.g., `+"`"+`echo '...' > {{.ShellWorkingDirectory}}/tasks.md`+"`"+`) or `+"`"+`cd {{.ShellWorkingDirectory}} && <command>`+"`"+`.
+Use full paths in execute_shell_command (e.g., `+"`"+`echo '...' > '{{.ShellWorkingDirectory}}/tasks.md'`+"`"+`) or `+"`"+`cd '{{.ShellWorkingDirectory}}' && <command>`+"`"+`.
+**Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
 
 Create a plan with tasks in 'tasks.md' using 'execute_shell_command'.
 

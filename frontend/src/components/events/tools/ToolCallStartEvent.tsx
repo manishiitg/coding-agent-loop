@@ -1,9 +1,9 @@
 import React from 'react'
 import type { ToolCallStartEvent } from '../../../generated/event-types'
-import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay, SubAgentToolCallDisplay } from './ToolCallSpecialRender'
+import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay, SubAgentToolCallDisplay, MCPToolCallDisplay } from './ToolCallSpecialRender'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
-import { getLogicalToolName } from '../../../utils/event-helpers'
+import { normalizeMCPToolName } from '../../../utils/customToolNames'
 
 interface ToolCallStartEventProps {
   event: ToolCallStartEvent
@@ -11,8 +11,8 @@ interface ToolCallStartEventProps {
 
 export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ event }) => {
   const { isExpanded, toggle } = useExpandable(false)
-  
-  const logicalToolName = event.tool_name ? getLogicalToolName(event.tool_name) : ''
+
+  const normalizedToolName = event.tool_name ? normalizeMCPToolName(event.tool_name) : event.tool_name
 
   // Check if this is a workspace tool
   const isWorkspaceTool = (name: string): boolean => {
@@ -47,35 +47,40 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
   }
 
   // If it's a workspace tool, use the specialized component
-  if (isWorkspaceTool(logicalToolName)) {
+  if (normalizedToolName && isWorkspaceTool(normalizedToolName)) {
     return <WorkspaceToolCallDisplay event={event} />
   }
 
   // Human tools: don't render here — blocking_human_feedback / blocking_human_questions
   // events (emitted inside the tool handlers) render the interactive UI via their
   // dedicated display components, so rendering here would show the question twice.
-  if (isHumanTool(logicalToolName)) {
+  if (normalizedToolName && isHumanTool(normalizedToolName)) {
     return null
   }
 
   // If it's a code execution tool, use the specialized component
-  if (isCodeExecutionTool(logicalToolName)) {
-    return <CodeExecutionToolCallDisplay event={event} />
+  if (normalizedToolName && isCodeExecutionTool(normalizedToolName)) {
+    return <CodeExecutionToolCallDisplay event={{ ...event, tool_name: normalizedToolName }} />
   }
 
   // If it's a tool search tool, use the specialized component
-  if (isToolSearchTool(logicalToolName)) {
+  if (normalizedToolName && isToolSearchTool(normalizedToolName)) {
     return <ToolSearchToolCallDisplay event={event} />
   }
 
   // If it's a delegation tool, use the specialized component
-  if (isDelegationTool(logicalToolName)) {
+  if (normalizedToolName && isDelegationTool(normalizedToolName)) {
     return <DelegationToolCallDisplay event={event} />
   }
 
   // If it's a sub-agent tool, use the specialized component
-  if (logicalToolName === 'call_sub_agent' || logicalToolName === 'call_generic_agent') {
+  if (normalizedToolName === 'call_sub_agent' || normalizedToolName === 'call_generic_agent') {
     return <SubAgentToolCallDisplay event={event} />
+  }
+
+  // Unknown MCP tool — generic MCP fallback
+  if (event.tool_name && event.tool_name.startsWith('mcp__')) {
+    return <MCPToolCallDisplay event={event} />
   }
 
   // Simple JSON formatting function for regular tools
@@ -120,7 +125,7 @@ export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ e
               {new Date(event.timestamp).toLocaleTimeString()}
             </div>
           )}
-          
+
           {hasArguments && (
             <button
               onClick={toggle}

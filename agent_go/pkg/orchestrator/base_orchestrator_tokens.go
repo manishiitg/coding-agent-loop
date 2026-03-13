@@ -783,10 +783,6 @@ var phaseTokenFileMutex sync.Mutex
 func IsPhaseOnlyAgent(phase string) bool {
 	phaseOnlyPhases := []string{
 		"planning",
-		"plan-tool-optimization",
-		"learning-consolidation",
-		"anonymization",
-		"plan-improvement",
 	}
 	for _, p := range phaseOnlyPhases {
 		if phase == p {
@@ -799,7 +795,7 @@ func IsPhaseOnlyAgent(phase string) bool {
 // PersistPhaseTokenUsage saves token usage directly to token_usage.json in the main workspace folder
 // It reads existing token data from the file, merges the new token data, and writes back.
 // The file is the single source of truth - no in-memory accumulation.
-// This is used for phase-only agents (planning, plan-tool-optimization, etc.) that don't have iteration folders.
+// This is used for phase-only agents (planning, plan-improvement, etc.) that don't have iteration folders.
 func (bo *BaseOrchestrator) PersistPhaseTokenUsage(ctx context.Context,
 	phaseTokenData *PhaseTokenData, modelTokenData *ModelTokenData) error {
 	if phaseTokenData == nil || phaseTokenData.Phase == "" {

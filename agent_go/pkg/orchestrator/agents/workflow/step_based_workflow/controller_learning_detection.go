@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"time"
-
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
 // DetectionHistoryEntry represents a single learning detection result
@@ -538,81 +536,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createUnlockLearningsFunction() func(
 
 		// Call the full unlock function
 		return hcpo.unlockStepLearningsAndResetMetadata(ctx, stepID, stepIndex, stepPath, learningPathIdentifier)
-	}
-}
-
-// createUnlockLearningsFunctionFromBase creates an unlock function using base orchestrator
-// This is used when only BaseOrchestrator is available (e.g., in PlanImprovementManager)
-func createUnlockLearningsFunctionFromBase(bo *orchestrator.BaseOrchestrator, workspacePath string) func(context.Context, string, int) error {
-	return func(ctx context.Context, stepID string, stepIndex int) error {
-		// Use step ID for learning path identifier (new format)
-		learningPathIdentifier := stepID
-
-		// Unlock in step config
-		configs, err := ReadStepConfigs(ctx, bo, workspacePath, workspacePath, "planning")
-		if err != nil {
-			bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step configs for unlock: %v", err))
-			// Continue to reset metadata even if config read fails
-		} else {
-			// Find step config by ID
-			var stepConfig *StepConfig
-			configIndex := -1
-			for i := range configs {
-				if configs[i].ID == stepID {
-					stepConfig = &configs[i]
-					configIndex = i
-					break
-				}
-			}
-
-			// If step config exists, unlock it
-			if stepConfig != nil {
-				// Ensure AgentConfigs exists
-				if stepConfig.AgentConfigs == nil {
-					stepConfig.AgentConfigs = &AgentConfigs{}
-				}
-
-				// Set LockLearnings = false (explicitly unlock)
-				lockValue := false
-				stepConfig.AgentConfigs.LockLearnings = &lockValue
-
-				// Update the config in the slice
-				if configIndex >= 0 {
-					configs[configIndex] = *stepConfig
-				}
-
-				// Write updated configs (using standalone WriteStepConfigs logic)
-				// Use relative path - WriteWorkspaceFile auto-prepends workspacePath
-				configPath := filepath.Join("planning", "step_config.json")
-				configFile := StepConfigFile{Steps: configs}
-				jsonData, err := json.MarshalIndent(configFile, "", "  ")
-				if err == nil {
-					if err := bo.WriteWorkspaceFile(ctx, configPath, string(jsonData)); err == nil {
-						bo.GetLogger().Info(fmt.Sprintf("✅ Unlocked learnings for step %s (LockLearnings = false)", stepID))
-					}
-				}
-			}
-		}
-
-		// Reset metadata counter - use relative path (ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath)
-		// Note: This function is used for plan improvement which is NOT in evaluation mode, so always use "learnings/"
-		metadataPath := filepath.Join("learnings", learningPathIdentifier, ".learning_metadata.json")
-		content, err := bo.ReadWorkspaceFile(ctx, metadataPath)
-		if err == nil {
-			// Metadata exists - reset counter
-			var metadata LearningMetadata
-			if err := json.Unmarshal([]byte(content), &metadata); err == nil {
-				metadata.ConsecutiveNoNewLearning = 0
-				metadataJSON, marshalErr := json.MarshalIndent(metadata, "", "  ")
-				if marshalErr == nil {
-					if writeErr := bo.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); writeErr == nil {
-						bo.GetLogger().Info(fmt.Sprintf("✅ Reset learning metadata counter for %s", learningPathIdentifier))
-					}
-				}
-			}
-		}
-
-		return nil
 	}
 }
 

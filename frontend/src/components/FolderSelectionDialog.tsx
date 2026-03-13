@@ -4,6 +4,7 @@ import type { PlannerFile } from '../services/api-types'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import { agentApi } from '../services/api'
+import { processHierarchicalFiles } from '../utils/fileUtils'
 
 interface FolderSelectionDialogProps {
   isOpen: boolean
@@ -23,6 +24,9 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   agentMode
 }) => {
   const { files, fetchFiles } = useWorkspaceStore()
+  // For workflow mode, fetch top-level Workflow/ folders independently of the store's
+  // activeFolder scoping (which may be scoped to a specific workflow subfolder).
+  const [workflowFolders, setWorkflowFolders] = useState<PlannerFile[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [filteredFolders, setFilteredFolders] = useState<PlannerFile[]>([])
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
@@ -49,6 +53,25 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       setSearchQuery('')
     }
   }, [isOpen])
+
+  // Fetch workflow folders directly from API when dialog opens in workflow mode,
+  // bypassing the store's activeFolder scoping which may be a specific workflow subfolder.
+  const fetchWorkflowFolders = useCallback(async () => {
+    try {
+      const response = await agentApi.getPlannerFiles('Workflow', -1, 1)
+      if (response.success && response.data) {
+        setWorkflowFolders(processHierarchicalFiles(response.data))
+      }
+    } catch (err) {
+      console.error('FolderSelectionDialog: failed to fetch workflow folders', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isOpen && agentMode === 'workflow') {
+      fetchWorkflowFolders()
+    }
+  }, [isOpen, agentMode, fetchWorkflowFolders])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -112,7 +135,10 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
       
       // Refresh the file list to show the new folder
       await fetchFiles()
-      
+      if (agentMode === 'workflow') {
+        await fetchWorkflowFolders()
+      }
+
       // Close the create folder dialog
       setShowCreateFolderDialog(false)
       
@@ -124,7 +150,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     } finally {
       setIsCreatingFolder(false)
     }
-  }, [fetchFiles])
+  }, [fetchFiles, agentMode, fetchWorkflowFolders])
 
   // Handle create folder dialog close
   const handleCreateFolderDialogClose = useCallback(() => {
@@ -247,8 +273,11 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
   // Filter folders based on search query with VS Code-style fuzzy matching
   useEffect(() => {
+    // For workflow mode, use the independently-fetched workflowFolders (not the store's
+    // activeFolder-scoped files). For other modes, use the store's files.
+    const sourceFiles = agentMode === 'workflow' ? workflowFolders : files
     // First filter by agent mode
-    const agentModeFilteredFiles = filterFoldersByAgentMode(files)
+    const agentModeFilteredFiles = filterFoldersByAgentMode(sourceFiles)
     
     // Auto-expand root folders for better hierarchy visibility
     const autoExpandRootFolders = (fileList: PlannerFile[]): Set<string> => {
@@ -375,7 +404,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
     setFilteredFolders(sorted)
     setSelectedIndex(0) // Reset selection when filtering
-  }, [files, searchQuery, expandedFolders, agentMode, filterFoldersByAgentMode])
+  }, [files, workflowFolders, searchQuery, expandedFolders, agentMode, filterFoldersByAgentMode])
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {

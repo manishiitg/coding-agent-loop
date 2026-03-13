@@ -820,11 +820,14 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
   // Only auto-scroll when new top-level items are added (not when sub-agent events update internals).
   // Sub-agent events change displayEvents but don't add items to flattenedItems.
-  const handleFollowOutput = useCallback((isAtBottom: boolean): false | 'smooth' => {
+  // Return `true` (instant) instead of `'smooth'` — the parent ChatArea container already
+  // manages smooth auto-scroll. Two concurrent smooth-scroll callers on the same element
+  // interrupt each other, producing visible jank.
+  const handleFollowOutput = useCallback((isAtBottom: boolean): false | true => {
     const current = flattenedItems.length;
     const prev = prevFlattenedCountRef.current;
     prevFlattenedCountRef.current = current;
-    if (current > prev && isAtBottom && !userScrolledUpRef.current) return 'smooth';
+    if (current > prev && isAtBottom && !userScrolledUpRef.current) return true;
     return false;
   }, [flattenedItems.length]);
 

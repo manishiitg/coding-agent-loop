@@ -53,6 +53,12 @@ func GetWorkflowConstants() WorkflowConstants {
 	return WorkflowConstants{
 		Phases: []WorkflowPhase{
 			{
+				ID:          "workflow-builder",
+				Title:       "Workflow Builder",
+				Description: "Execute steps in background, update the plan, tweak step configs, generate learnings, and debug — all in one free-flow conversation. Steps run asynchronously and can be cancelled mid-run.",
+				Options:     []WorkflowPhaseOption{},
+			},
+			{
 				ID:          "planning",
 				Title:       "Planning",
 				Description: "Create and iterate on a comprehensive plan using the planning agent. You can refine and improve the plan through conversation until you're satisfied. Variable extraction is handled by the planning agent tools during this phase.",
@@ -83,45 +89,15 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          "plan-improvement",
-				Title:       "Plan Debugger",
-				Description: "Analyze execution results, plan.json, learnings folder, and validation reports to provide feedback and suggestions for improving the plan based on real execution outcomes.",
-				Options:     []WorkflowPhaseOption{}, // No options for plan debugger phase
-			},
-			// Deprecated: plan-tool-optimization, learning-anonymization, plan-learnings-alignment,
-			// and learning-consolidation phases are hidden from the UI until they are updated
-			// to properly support CLI providers. The underlying agents still exist and can be
-			// re-enabled by uncommenting these entries.
-			// {
-			// 	ID:          "plan-tool-optimization",
-			// 	Title:       "Plan Tool Optimization",
-			// 	Description: "Analyze plan.json and learnings folder to optimize tool selections in step_config.json.",
-			// },
-			// {
-			// 	ID:          "learning-anonymization",
-			// 	Title:       "Learning Anonymization",
-			// 	Description: "Scan learnings folder and replace actual values with variable placeholders.",
-			// },
-			// {
-			// 	ID:          "plan-learnings-alignment",
-			// 	Title:       "Plan-Learnings Alignment",
-			// 	Description: "Analyze alignment between plan.json and learnings folders.",
-			// },
-			// {
-			// 	ID:          "learning-consolidation",
-			// 	Title:       "Learning Consolidation",
-			// 	Description: "Analyze and consolidate learning files.",
-			// },
-			{
-				ID:          "code-exec-debugging",
-				Title:       "Code Debugger",
-				Description: "Analyze execution logs and conversation history for code execution steps. Identifies common errors like hardcoded paths, incorrect CLI arguments, and workspace tool misuse, providing specific fixes to the plan.",
-				Options:     []WorkflowPhaseOption{}, // No options for code debugger phase
+				ID:          "human-assisted-execution",
+				Title:       "Human Assisted Execution",
+				Description: "Run workflow steps interactively via chat. Choose which steps to run, monitor progress, and review results — without plan modifications or optimization.",
+				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          "execution-debugger",
-				Title:       "Execution Debugger",
-				Description: "Analyze execution results, logs, and validation reports to answer questions about what happened during workflow execution. Read-only analysis without plan modifications.",
+				ID:          "execution-qa",
+				Title:       "Execution Q&A",
+				Description: "Ask questions about execution results, logs, and validation reports. Read-only — does not modify the plan or workspace.",
 				Options:     []WorkflowPhaseOption{},
 			},
 		},
@@ -192,6 +168,9 @@ type WorkflowOrchestrator struct {
 	// Session ID for MCP connection management
 	// Generated once when workflow starts, used by all agents to share MCP connections
 	sessionID string
+
+	// HTTP session ID (from the frontend/API layer) for scoped MCP cleanup
+	httpSessionID string
 }
 
 // SetVirtualPlan sets a synthetic plan for the workflow (used by Task Agent mode)
@@ -472,68 +451,20 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runEvaluationDebugger(ctx, objective, selectedOptions)
 	}
 
-	if workflowStatus == "plan-improvement" {
-		return wo.runPlanImprovement(ctx, objective, selectedOptions)
-	}
 
-	if workflowStatus == "plan-tool-optimization" {
-		return wo.runPlanToolOptimization(ctx, objective, selectedOptions, stepID)
-	}
-
-	if workflowStatus == "learning-anonymization" {
-		return wo.runLearningAnonymization(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "plan-learnings-alignment" {
-		return wo.runPlanLearningsAlignment(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "learning-consolidation" {
-		return wo.runLearningConsolidation(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "code-exec-debugging" {
-		return wo.runCodeExecDebugging(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "execution-debugger" {
+	if workflowStatus == "execution-qa" {
 		return wo.runExecutionDebugger(ctx, objective, selectedOptions)
+	}
+
+	// workflow-builder and human-assisted-execution are chat-only phases —
+	// they should never reach the orchestrator path. If they do, return an error.
+	if workflowStatus == "workflow-builder" || workflowStatus == "human-assisted-execution" {
+		return "", fmt.Errorf("%s is a chat-only phase — use phase chat mode instead of orchestrator execution", workflowStatus)
 	}
 
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	return wo.runPlanning(ctx, objective, selectedOptions)
-}
-
-// runCodeExecDebugging runs only the code execution debugging phase
-func (wo *WorkflowOrchestrator) runCodeExecDebugging(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Code Execution Debugging Phase"))
-
-	// Create code exec debugging manager directly (independent from controller)
-	debuggingManager := step_based_workflow.NewCodeExecDebuggingManager(
-		wo.BaseOrchestrator,
-		wo.presetPhaseLLM, // Use phase LLM for debugging as requested
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-	)
-
-	// Extract selected_run_folder from execution options if available
-	var runPath string
-	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
-		runPath = wo.executionOptions.SelectedRunFolder
-		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
-	} else {
-		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
-	}
-
-	// Run only code exec debugging
-	result, err := debuggingManager.CodeExecDebuggingOnly(ctx, wo.GetWorkspacePath(), runPath)
-	if err != nil {
-		return "", fmt.Errorf("code execution debugging failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Code execution debugging completed successfully"))
-	return result, nil
 }
 
 // runExecutionDebugger runs only the execution debugger phase (read-only)
@@ -619,6 +550,10 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+	// Propagate HTTP session ID for MCP cleanup scoping
+	if wo.httpSessionID != "" {
+		todoPlannerAgent.SetHTTPSessionID(wo.httpSessionID)
+	}
 
 	// Propagate selected skills to child orchestrator
 	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
@@ -637,6 +572,95 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 	}
 
 	wo.GetLogger().Info(fmt.Sprintf("✅ Planning completed successfully"))
+	return result, nil
+}
+
+// runInteractiveWorkshop runs the interactive workshop phase
+func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info("🔧 Starting Interactive Workshop Phase")
+
+	llmConfig := wo.GetLLMConfig()
+	controller, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
+		ctx,
+		"", // provider (not used — LLM comes from temp override/step config/preset)
+		"", // model (not used — LLM comes from temp override/step config/preset)
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(),
+		wo.GetUseCodeExecutionMode(),
+		wo.GetUseToolSearchMode(),
+		wo.GetPreDiscoveredTools(),
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+		wo.ToolCategories,
+		wo.presetExecutionLLM,
+		wo.presetValidationLLM,
+		wo.presetLearningLLM,
+		wo.presetPhaseLLM,
+		nil, // presetAnonymizationLLM (deprecated)
+		wo.presetPlanImprovementLLM,
+		wo.useKnowledgebase,
+		wo.llmAllocationMode,
+		wo.tieredConfig,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create controller for interactive workshop: %w", err)
+	}
+
+	// Propagate workspace env ref
+	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
+		controller.SetWorkspaceEnvRef(envRef)
+	}
+
+	// Propagate MCP session ID
+	controller.SetMCPSessionID(wo.getSessionID())
+	if wo.httpSessionID != "" {
+		controller.SetHTTPSessionID(wo.httpSessionID)
+	}
+
+	// Propagate selected skills
+	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
+		controller.SetSelectedSkills(skills)
+	}
+
+	// Propagate secrets
+	if secrets := wo.GetSecrets(); len(secrets) > 0 {
+		controller.SetSecrets(secrets)
+	}
+
+	// Propagate execution options
+	if wo.executionOptions != nil {
+		controller.SetExecutionOptions(wo.executionOptions)
+	}
+
+	// Build workshop manager using presetPhaseLLM (same as other phase agents)
+	workshopManager := step_based_workflow.NewInteractiveWorkshopManager(
+		controller,
+		wo.presetPhaseLLM,
+		wo.getSessionID(),
+		wo.getWorkflowID(),
+	)
+
+	// Resolve run folder from execution options if provided
+	var runFolder string
+	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
+		runFolder = wo.executionOptions.SelectedRunFolder
+		wo.GetLogger().Info(fmt.Sprintf("📁 Using selected_run_folder from execution options: %s", runFolder))
+	}
+
+	result, err := workshopManager.InteractiveWorkshopOnly(ctx, wo.GetWorkspacePath(), runFolder)
+	if err != nil {
+		return "", fmt.Errorf("interactive workshop failed: %w", err)
+	}
+
+	wo.GetLogger().Info("✅ Interactive Workshop completed successfully")
 	return result, nil
 }
 
@@ -763,6 +787,10 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+	// Propagate HTTP session ID for MCP cleanup scoping
+	if wo.httpSessionID != "" {
+		todoPlannerAgent.SetHTTPSessionID(wo.httpSessionID)
+	}
 
 	// Propagate selected skills to child orchestrator
 	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
@@ -805,131 +833,6 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	}
 
 	wo.GetLogger().Info("✅ Evaluation execution completed successfully")
-	return result, nil
-}
-
-// runPlanImprovement runs only the plan improvement phase
-func (wo *WorkflowOrchestrator) runPlanImprovement(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("📊 Starting Plan Improvement Phase"))
-
-	// Create plan improvement manager directly (independent from controller)
-	planImprovementManager := step_based_workflow.NewPlanImprovementManager(
-		wo.BaseOrchestrator,
-		wo.presetPlanImprovementLLM,
-		wo.presetPhaseLLM, // Pass phase LLM for fallback
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.useKnowledgebase,
-	)
-
-	// Extract selected_run_folder from execution options if available
-	var runPath string
-	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
-		runPath = wo.executionOptions.SelectedRunFolder
-		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
-	} else {
-		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
-	}
-
-	// Run only plan improvement
-	result, err := planImprovementManager.PlanImprovementOnly(ctx, wo.GetWorkspacePath(), runPath)
-	if err != nil {
-		return "", fmt.Errorf("plan improvement failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Plan improvement completed successfully"))
-	return result, nil
-}
-
-// runPlanToolOptimization runs only the plan tool optimization phase
-func (wo *WorkflowOrchestrator) runPlanToolOptimization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions, stepID string) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔧 Starting Plan Tool Optimization Phase"))
-	if stepID != "" {
-		wo.GetLogger().Info(fmt.Sprintf("🔧 Step-specific execution for step: %s", stepID))
-	}
-
-	// Create plan tool optimization manager directly (independent from controller)
-	toolOptimizationManager := step_based_workflow.NewPlanToolOptimizationManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for plan tool optimization)
-		wo.useKnowledgebase,
-	)
-
-	// Run only tool optimization (with optional step ID for step-specific execution)
-	result, err := toolOptimizationManager.PlanToolOptimizationOnly(ctx, wo.GetWorkspacePath(), stepID)
-	if err != nil {
-		return "", fmt.Errorf("plan tool optimization failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Plan tool optimization completed successfully"))
-	return result, nil
-}
-
-// runLearningAnonymization runs only the learning anonymization phase
-func (wo *WorkflowOrchestrator) runLearningAnonymization(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔒 Starting Learning Anonymization Phase"))
-
-	// Create anonymization manager directly (independent from controller)
-	anonymizationManager := step_based_workflow.NewAnonymizationManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for anonymization)
-	)
-
-	// Run only anonymization
-	result, err := anonymizationManager.AnonymizeLearningsOnly(ctx, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("learning anonymization failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Learning anonymization completed successfully"))
-	return result, nil
-}
-
-// runPlanLearningsAlignment runs only the plan-learnings alignment phase
-func (wo *WorkflowOrchestrator) runPlanLearningsAlignment(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Plan-Learnings Alignment Phase"))
-
-	// Create plan learnings alignment manager directly (independent from controller)
-	alignmentManager := step_based_workflow.NewPlanLearningsAlignmentManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for alignment)
-	)
-
-	// Run only alignment check
-	result, err := alignmentManager.CheckAlignmentOnly(ctx, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("plan-learnings alignment failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Plan-learnings alignment completed successfully"))
-	return result, nil
-}
-
-// runLearningConsolidation runs only the learning consolidation phase
-func (wo *WorkflowOrchestrator) runLearningConsolidation(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Learning Consolidation Phase"))
-
-	// Create learning consolidation manager directly (independent from controller)
-	consolidationManager := step_based_workflow.NewLearningConsolidationManager(
-		wo.BaseOrchestrator,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-		wo.presetPhaseLLM, // Pass phase LLM (primary LLM for consolidation)
-	)
-
-	// Run only consolidation
-	result, err := consolidationManager.ConsolidateLearningsOnly(ctx, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("learning consolidation failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Learning consolidation completed successfully"))
 	return result, nil
 }
 
@@ -994,6 +897,10 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 	// Propagate MCP session ID to child orchestrator for connection sharing
 	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
+	// Propagate HTTP session ID for MCP cleanup scoping
+	if wo.httpSessionID != "" {
+		todoPlannerAgent.SetHTTPSessionID(wo.httpSessionID)
+	}
 
 	// Propagate selected skills to child orchestrator
 	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
@@ -1036,6 +943,10 @@ func (wo *WorkflowOrchestrator) getSessionID() string {
 		wo.GetLogger().Info(fmt.Sprintf("🔗 Generated MCP session ID: %s", wo.sessionID))
 		// Propagate to BaseOrchestrator so all agents inherit the session ID via config
 		wo.SetMCPSessionID(wo.sessionID)
+		// Register with HTTP session tracker so CloseHTTPSession cleans it up on stop
+		if wo.httpSessionID != "" {
+			mcpagent.RegisterHTTPSession(wo.httpSessionID, wo.sessionID)
+		}
 	}
 	return wo.sessionID
 }
@@ -1043,6 +954,12 @@ func (wo *WorkflowOrchestrator) getSessionID() string {
 // GetMCPSessionID returns the MCP session ID for external use (e.g., agent config)
 func (wo *WorkflowOrchestrator) GetMCPSessionID() string {
 	return wo.getSessionID()
+}
+
+// SetHTTPSessionID sets the HTTP session ID so that MCP sessions can be tracked
+// and closed via mcpagent.CloseHTTPSession when the workflow stops.
+func (wo *WorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
+	wo.httpSessionID = httpSessionID
 }
 
 // getWorkflowID returns the workflow ID for this workflow
@@ -1075,13 +992,9 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
 					"evaluation-debugger",                  // Evaluation debugger phase
-					"plan-improvement",                     // Plan improvement phase
-					"plan-tool-optimization",               // Plan tool optimization phase
-					"learning-anonymization",               // Learning anonymization phase
-					"plan-learnings-alignment",             // Plan-learnings alignment phase
-					"learning-consolidation",               // Learning consolidation phase
-					"code-exec-debugging",                  // Code execution debugging phase
-					"execution-debugger",                   // Execution debugger phase (read-only)
+					"execution-qa",                   // Execution debugger phase (read-only)
+					"workflow-builder",                 // Interactive workshop phase
+					"human-assisted-execution",             // Human assisted execution phase
 				}
 				valid := false
 				for _, status := range validStatuses {

@@ -120,6 +120,7 @@ type ExecutionContext struct {
 	SingleStepTarget   int                     // Target step index to run (0-based)
 	ResumeBranchStep   *BranchStepResumeTarget // For resuming from a specific branch step (nil if not resuming from branch)
 	IsEvaluationMode   bool                    // Whether we're running evaluation steps (learnings go to evaluation/learnings/)
+	StepPathOverride   string                  // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
 
 	// ConversationHistoryCapture is an optional pointer; when non-nil the execution engine
 	// writes the agent's full conversation history into it after Execute() returns.

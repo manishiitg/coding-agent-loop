@@ -3,6 +3,7 @@ import type { ToolCallStartEvent } from '../../../generated/event-types'
 import { WorkspaceToolCallDisplay, CodeExecutionToolCallDisplay, ToolSearchToolCallDisplay, DelegationToolCallDisplay, SubAgentToolCallDisplay } from './ToolCallSpecialRender'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
+import { getLogicalToolName } from '../../../utils/event-helpers'
 
 interface ToolCallStartEventProps {
   event: ToolCallStartEvent
@@ -11,75 +12,69 @@ interface ToolCallStartEventProps {
 export const ToolCallStartEventDisplay: React.FC<ToolCallStartEventProps> = ({ event }) => {
   const { isExpanded, toggle } = useExpandable(false)
   
+  const logicalToolName = event.tool_name ? getLogicalToolName(event.tool_name) : ''
+
   // Check if this is a workspace tool
-  const isWorkspaceTool = (toolName: string): boolean => {
+  const isWorkspaceTool = (name: string): boolean => {
     const workspaceToolNames = [
       'update_workspace_file',
       'read_workspace_file',
       'list_workspace_files',
       'diff_patch_workspace_file',
       'delete_workspace_file',
-      // TODO: Add more tools as we implement their UI
-      // 'get_workspace_file_nested',
-      // 'regex_search_workspace_files',
-      // 'semantic_search_workspace_files',
-      // 'sync_workspace_to_github',
-      // 'get_workspace_github_status',
-      // 'move_workspace_file'
     ]
-    const isWorkspace = workspaceToolNames.includes(toolName)
-    return isWorkspace
+    return workspaceToolNames.includes(name)
   }
 
   // Check if this is a human tool (feedback or questions)
-  const isHumanTool = (toolName: string): boolean => {
-    return toolName === 'human_feedback' || toolName === 'human_questions'
+  const isHumanTool = (name: string): boolean => {
+    return name === 'human_feedback' || name === 'human_questions'
   }
 
   // Check if this is a code execution tool
-  const isCodeExecutionTool = (toolName: string): boolean => {
-    return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code' || toolName === 'get_api_spec' || toolName === 'execute_shell_command'
+  const isCodeExecutionTool = (name: string): boolean => {
+    return name === 'discover_code_structure' || name === 'discover_code_files' || name === 'write_code' || name === 'get_api_spec' || name === 'execute_shell_command'
   }
 
   // Check if this is a tool search tool
-  const isToolSearchTool = (toolName: string): boolean => {
-    return toolName === 'search_tools' || toolName === 'add_tool'
+  const isToolSearchTool = (name: string): boolean => {
+    return name === 'search_tools' || name === 'add_tool'
   }
 
   // Check if this is a delegation tool
-  const isDelegationTool = (toolName: string): boolean => {
-    return toolName === 'create_delegation_plan' || toolName === 'confirm_plan_execution'
+  const isDelegationTool = (name: string): boolean => {
+    return name === 'create_delegation_plan' || name === 'confirm_plan_execution'
   }
 
   // If it's a workspace tool, use the specialized component
-  if (event.tool_name && isWorkspaceTool(event.tool_name)) {
+  if (isWorkspaceTool(logicalToolName)) {
     return <WorkspaceToolCallDisplay event={event} />
   }
 
   // Human tools: don't render here — blocking_human_feedback / blocking_human_questions
   // events (emitted inside the tool handlers) render the interactive UI via their
   // dedicated display components, so rendering here would show the question twice.
-  if (event.tool_name && isHumanTool(event.tool_name)) {
+  if (isHumanTool(logicalToolName)) {
     return null
   }
 
   // If it's a code execution tool, use the specialized component
-  if (event.tool_name && isCodeExecutionTool(event.tool_name)) {
+  if (isCodeExecutionTool(logicalToolName)) {
     return <CodeExecutionToolCallDisplay event={event} />
   }
 
   // If it's a tool search tool, use the specialized component
-  if (event.tool_name && isToolSearchTool(event.tool_name)) {
+  if (isToolSearchTool(logicalToolName)) {
     return <ToolSearchToolCallDisplay event={event} />
   }
 
   // If it's a delegation tool, use the specialized component
-  if (event.tool_name && isDelegationTool(event.tool_name)) {
+  if (isDelegationTool(logicalToolName)) {
     return <DelegationToolCallDisplay event={event} />
   }
 
   // If it's a sub-agent tool, use the specialized component
-  if (event.tool_name === 'call_sub_agent' || event.tool_name === 'call_generic_agent') {
+  if (logicalToolName === 'call_sub_agent' || logicalToolName === 'call_generic_agent') {
     return <SubAgentToolCallDisplay event={event} />
   }
 

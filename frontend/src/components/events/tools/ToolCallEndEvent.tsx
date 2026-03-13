@@ -8,6 +8,7 @@ import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularP
 import { TooltipProvider } from '../../ui/tooltip'
 import { useExpandable } from '../useExpandable'
 import { Plus, Minus } from 'lucide-react'
+import { getLogicalToolName } from '../../../utils/event-helpers'
 
 type OutputFormat = 'markdown' | 'json' | 'csv' | null
 
@@ -38,64 +39,61 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
   const { isExpanded, toggle } = useExpandable(false)
   const [isRawMode, setIsRawMode] = React.useState(false)
   
+  const logicalToolName = event.tool_name ? getLogicalToolName(event.tool_name) : ''
+
   // Check if this is a workspace tool
-  const isWorkspaceTool = (toolName: string): boolean => {
+  const isWorkspaceTool = (name: string): boolean => {
     const workspaceToolNames = [
       'read_workspace_file',
       'update_workspace_file',
       'diff_patch_workspace_file',
       'list_workspace_files',
       'delete_workspace_file',
-      // Add more as we implement their UI
     ]
-    const isWorkspace = workspaceToolNames.includes(toolName)
-    return isWorkspace
+    return workspaceToolNames.includes(name)
   }
 
   // Check if this is a code execution tool
-  const isCodeExecutionTool = (toolName: string): boolean => {
-    return toolName === 'discover_code_structure' || toolName === 'discover_code_files' || toolName === 'write_code' || toolName === 'get_api_spec' || toolName === 'execute_shell_command'
+  const isCodeExecutionTool = (name: string): boolean => {
+    return name === 'discover_code_structure' || name === 'discover_code_files' || name === 'write_code' || name === 'get_api_spec' || name === 'execute_shell_command'
   }
 
   // Check if this is a tool search tool
-  const isToolSearchTool = (toolName: string): boolean => {
-    return toolName === 'search_tools' || toolName === 'add_tool'
+  const isToolSearchTool = (name: string): boolean => {
+    return name === 'search_tools' || name === 'add_tool'
   }
 
   // Check if this is an image generation/editing tool
-  const isImageGenTool = (toolName: string): boolean => {
-    return toolName === 'workspace_image_gen' || toolName === 'workspace_image_edit'
+  const isImageGenTool = (name: string): boolean => {
+    return name === 'workspace_image_gen' || name === 'workspace_image_edit'
   }
 
   // If it's a workspace tool, use the specialized component
-  if (event.tool_name && isWorkspaceTool(event.tool_name)) {
+  if (isWorkspaceTool(logicalToolName)) {
     const specializedDisplay = <WorkspaceToolCallEndDisplay event={event} />
-    // If the specialized renderer returns null, fall back to default
     if (specializedDisplay) {
       return specializedDisplay
     }
   }
 
   // If it's a code execution tool, use the specialized component
-  if (event.tool_name && isCodeExecutionTool(event.tool_name)) {
+  if (isCodeExecutionTool(logicalToolName)) {
     const specializedDisplay = <CodeExecutionToolCallEndDisplay event={event} />
-    // If the specialized renderer returns null, fall back to default
     if (specializedDisplay) {
       return specializedDisplay
     }
   }
 
   // If it's a tool search tool, use the specialized component
-  if (event.tool_name && isToolSearchTool(event.tool_name)) {
+  if (isToolSearchTool(logicalToolName)) {
     const specializedDisplay = <ToolSearchToolCallEndDisplay event={event} />
-    // If the specialized renderer returns null, fall back to default
     if (specializedDisplay) {
       return specializedDisplay
     }
   }
 
   // If it's the image generation tool, use the specialized component
-  if (event.tool_name && isImageGenTool(event.tool_name)) {
+  if (isImageGenTool(logicalToolName)) {
     return <ImageGenToolCallEndDisplay event={event} />
   }
 

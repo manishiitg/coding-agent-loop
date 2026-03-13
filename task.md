@@ -35,3 +35,7 @@
 52. the openapi sepc, has too many extra tokens
 
 53. right now when using mcpbriget, we keep aing mcp_api_url and token.. some smart way to auto inject that to skip that maybe?
+
+54. minmax coding plan mcp integration
+
+55. look at playwrite headless also

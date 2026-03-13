@@ -198,12 +198,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 
 	// AUTO-UNLOCK LEARNINGS: If decision result is false, automatically unlock learnings for the step
 	// This ensures that when a decision step returns false, the step can learn from the failure
+	// Skip for human-assisted learning mode — learnings are manually curated and treated as final
 	if !decisionResponse.Result {
 		decisionStepID := step.GetID()
 		// Get agent configs for the step to check if learnings are locked
 		stepConfigsForUnlock := getAgentConfigs(step)
+		isHumanAssistedStep := stepConfigsForUnlock != nil && stepConfigsForUnlock.LearningMode == "human_assisted"
 		isLearningsLocked := stepConfigsForUnlock != nil && stepConfigsForUnlock.LockLearnings != nil && *stepConfigsForUnlock.LockLearnings
-		if isLearningsLocked {
+		if isLearningsLocked && !isHumanAssistedStep {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Decision step returned FALSE - auto-unlocking learnings for step %s so it can learn from the failure", decisionStepID))
 			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, decisionStepID); unlockErr != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", decisionStepID, unlockErr))

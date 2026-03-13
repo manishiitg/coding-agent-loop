@@ -97,6 +97,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) CalculateStepHash(step PlanStepInterf
 
 // CheckAndResetStepHash checks if the step definition has changed and resets learnings if it has.
 // This is the "Step Hash Guard" described in learnings_architecture.md.
+// Steps with learning_mode "human_assisted" skip this check — human-curated learnings
+// are intentional and should not be invalidated by plan changes.
 func (hcpo *StepBasedWorkflowOrchestrator) CheckAndResetStepHash(
 	ctx context.Context,
 	step PlanStepInterface,
@@ -106,6 +108,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) CheckAndResetStepHash(
 ) error {
 	if stepID == "" {
 		return nil
+	}
+
+	// Skip hash guard for human-assisted learning steps — their learnings are
+	// manually curated and should not be reset on plan changes.
+	if configs, err := hcpo.ReadStepConfigs(ctx); err == nil {
+		for _, sc := range configs {
+			if sc.ID == stepID && sc.AgentConfigs != nil && sc.AgentConfigs.LearningMode == "human_assisted" {
+				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Skipping step hash guard for %s — learning_mode is human_assisted (learnings are manually curated)", stepID))
+				return nil
+			}
+		}
 	}
 
 	// Try to find the original step in the approved plan to use for hashing.

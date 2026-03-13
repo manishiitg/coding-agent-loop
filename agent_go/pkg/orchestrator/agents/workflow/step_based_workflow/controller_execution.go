@@ -1380,29 +1380,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			var keepLearningFull bool
 			var keepLearningFullSource string
 
-			// Default to Exploration Mode (false - paths only) to encourage trying different ways
-			keepLearningFull = false
+			// Human-assisted learning mode: learnings are manually curated and treated as locked/final.
+			// Always use full learning text, skip exploration thresholds and content hash checks.
+			isHumanAssistedLearning := agentConfigs != nil && agentConfigs.LearningMode == "human_assisted"
 
-			// Read metadata to check successful runs
+			// Read metadata (needed for hash checks and threshold decisions)
 			learningPathIdentifier := step.GetID()
-			metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
-			if err == nil && metadata != nil {
-				// Check thresholds: Simple >= 2, Medium >= 3, Complex >= 5
-				if metadata.SuccessfulRunsSimple >= 2 {
-					keepLearningFull = true
-					keepLearningFullSource = "dynamic (simple threshold met)"
-				} else if metadata.SuccessfulRunsMedium >= 3 {
-					keepLearningFull = true
-					keepLearningFullSource = "dynamic (medium threshold met)"
-				} else if metadata.SuccessfulRunsComplex >= 5 {
-					keepLearningFull = true
-					keepLearningFullSource = "dynamic (complex threshold met)"
-				} else {
-					keepLearningFullSource = "dynamic (exploration phase)"
-				}
+			metadata, _ := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+
+			if isHumanAssistedLearning {
+				keepLearningFull = true
+				keepLearningFullSource = "human_assisted (learnings are final)"
+				hcpo.GetLogger().Info(fmt.Sprintf("🧑‍🏫 Human-assisted learning mode for step %d — treating learnings as locked/final", stepIndex+1))
 			} else {
-				// No metadata (first run) or error reading -> Stay in Exploration Mode
-				keepLearningFullSource = "dynamic (initial exploration)"
+				// Default to Exploration Mode (false - paths only) to encourage trying different ways
+				keepLearningFull = false
+
+				if metadata != nil {
+					// Check thresholds: Simple >= 2, Medium >= 3, Complex >= 5
+					if metadata.SuccessfulRunsSimple >= 2 {
+						keepLearningFull = true
+						keepLearningFullSource = "dynamic (simple threshold met)"
+					} else if metadata.SuccessfulRunsMedium >= 3 {
+						keepLearningFull = true
+						keepLearningFullSource = "dynamic (medium threshold met)"
+					} else if metadata.SuccessfulRunsComplex >= 5 {
+						keepLearningFull = true
+						keepLearningFullSource = "dynamic (complex threshold met)"
+					} else {
+						keepLearningFullSource = "dynamic (exploration phase)"
+					}
+				} else {
+					// No metadata (first run) or error reading -> Stay in Exploration Mode
+					keepLearningFullSource = "dynamic (initial exploration)"
+				}
 			}
 
 			hcpo.GetLogger().Info(fmt.Sprintf("🧠 KeepLearningFull decision: %v (Source: %s)", keepLearningFull, keepLearningFullSource))
@@ -1435,7 +1446,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				}
 
 				// Hash-based exploration reset: if learning content changed since last run, force exploration mode
-				if formattedLearningHistory != "" && metadata != nil {
+				// Skip for human-assisted mode — learnings are final, never force exploration
+				if !isHumanAssistedLearning && formattedLearningHistory != "" && metadata != nil {
 					h := sha256.Sum256([]byte(formattedLearningHistory))
 					currentHash := hex.EncodeToString(h[:])
 					if metadata.LearningContentHash != "" && metadata.LearningContentHash != currentHash {

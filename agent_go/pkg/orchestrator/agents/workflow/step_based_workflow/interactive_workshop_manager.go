@@ -367,17 +367,12 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	// Set workspace path
 	iwm.controller.SetWorkspacePath(workspacePath)
 
-	// Resolve run folder
+	// Use the run folder passed from the frontend toolbar selection (if any).
+	// If empty, leave selectedRunFolder unset — the LLM will call list_runs and
+	// pick the appropriate iteration via execute_step's run_folder parameter.
 	if runFolder != "" {
 		iwm.controller.selectedRunFolder = runFolder
 		iwm.controller.GetLogger().Info(fmt.Sprintf("📁 Using provided run folder: %s", runFolder))
-	} else {
-		resolved, err := iwm.controller.resolveRunFolderWithOptions(ctx, workspacePath, "use_same_run", "")
-		if err != nil {
-			return "", fmt.Errorf("failed to resolve run folder: %w", err)
-		}
-		iwm.controller.selectedRunFolder = resolved
-		iwm.controller.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder: %s", resolved))
 	}
 
 	// Load plan — fail early if no plan exists
@@ -650,18 +645,19 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 ## ⚙️ WORKSHOP TOOLS
 
 ### Discovery
-- **list_steps** — Lists all steps including inner steps from conditional branches, orchestration routes, and todo_task sub-agents.
+- **list_steps** — Lists all steps with IDs, titles, types, and config tags (optimized, learning mode). Use this first, then get_step_details for full info on specific steps.
+- **get_step_details(step_id)** — Full details of a single step: description, success_criteria, context_dependencies, validation_schema, and agent_configs (servers, tools, mode, LLMs).
 - **list_runs** — Lists existing iteration folders and their group subfolders. Use this to discover previous runs before executing.
 - **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
 
 ### Background Step Execution
-- **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration (e.g., 'iteration-2/group-name'); if omitted, auto-resolves to the latest iteration. **instructions** provides orchestrator context for inner steps.
+- **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration (e.g., 'iteration-2/group-name'); if omitted, auto-resolves to the latest iteration. **instructions** provides orchestrator context for inner steps. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
 - **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
 - **debug_step(step_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **stop_step(execution_id)** — Cancel a running step
 
 ### Step Config & Analysis
-- **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, disable_learning, lock_learnings, learning_detail_level, learning_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
+- **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
 - **analyze_step(step_id)** — Analyze a step's config and execution history; returns optimization suggestions
 - **generate_learnings(step_id, guidance?)** — Start the learning agent in the background. You will be automatically notified when it completes. Optionally provide human guidance to focus on specific patterns (e.g., "focus on the API pagination pattern"). Requires a completed execution.
 - **optimize_step(step_id, focus?)** — Start a background optimization agent. Analyzes logs, output, learnings, and config for a step. You will be automatically notified when it completes. Optionally provide focus guidance (e.g., "learnings quality", "tool usage", "output correctness").
@@ -685,6 +681,16 @@ Use the 26 plan modification tools (update_regular_step, add_plan_step, delete_p
 **Important distinction**: "human_tools:human_feedback" (enabled_custom_tools) and "learning_mode: human_assisted" are completely unrelated features:
 - **human_feedback tool** = lets the execution agent ask the user questions mid-run (e.g., "what's the OTP?"). Configured via enabled_custom_tools in step_config.
 - **learning_mode: human_assisted** = controls whether the learning phase runs automatically after execution or waits for the user to trigger it manually via generate_learnings(step_id, guidance). This is about post-execution learning, NOT about runtime interaction.
+
+### Human-Assisted Learning Best Practice
+
+When a step has learning_mode "human_assisted", the recommended workflow is:
+
+1. **Explore first** — Before running the step via the workflow, use execute_shell_command to manually explore the task yourself: check the environment, APIs, file paths, tool outputs. Understand what works and what doesn't.
+2. **Discuss with the user** — Share your findings and ask the user to confirm the correct approach, expected output, or any edge cases they care about.
+3. **Write the learnings** — Based on your exploration and the user's input, write specific actionable learnings directly to 'learnings/{step-id}/'. Use diff_patch_workspace_file to create or update learning files.
+4. **Lock the learnings** — Call update_step_config(step_id, lock_learnings=true) so the learning agent doesn't overwrite your hand-crafted learnings on the next run.
+5. **Run via workflow** — Now execute_step with the enriched learnings in place. The step agent will use them during execution.
 
 ## 🎯 OPTIMIZATION GUIDELINES
 
@@ -779,6 +785,27 @@ After running a step, review it for optimization — but follow this priority or
 
 When the user runs a step, briefly note the highest-priority improvement needed. Don't dump all dimensions at once — focus on what matters most right now.
 
+### 7. Code Execution Mode vs Tool Search Mode
+
+Steps have three execution modes — set via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
+
+- **Simple mode** (both false): Agent calls MCP tools directly. Best for straightforward steps with 1-3 tool calls.
+- **Code Execution mode** (use_code_execution_mode=true): Agent writes Python code that calls MCP tools programmatically via mcpbridge. **Use this when**:
+  - The step needs to combine multiple tool calls with logic (loops, conditionals, data transformation)
+  - The step processes data that benefits from Python libraries (parsing, calculations, formatting)
+  - The step needs to orchestrate several tools together in a single script
+  - Deterministic data processing: iterating rows, matching columns, extracting/transforming data — a Python loop handles it reliably in one shot without the agent needing to "think" through each row
+  - The user explicitly asks for code execution mode
+- **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime before using them. Best when the exact tools aren't known upfront or the step needs to adapt to available tools.
+
+When the user asks to enable code execution for a step, use: update_step_config(step_id, use_code_execution_mode=true)
+
+**Workshop agent behavior for code-exec steps**: When you (the workshop agent) are asked to explore, investigate, or do manual work related to a step marked with code execution mode, you should also adopt the code-exec approach — use **execute_shell_command** to write and run Python/shell scripts that combine multiple MCP tool calls together, rather than making individual tool calls one by one. This mirrors how the step's execution agent works and helps you build reusable scripts and patterns that can inform the step's learnings.
+
+**Code-exec optimization goal**: The goal of code execution mode is to minimize tool calls. Ideally, the agent should run the entire step in a **single execute_shell_command call** — one Python script that handles everything (API calls, data processing, output writing). After a code-exec step runs, review the learnings and check: did the agent use multiple tool calls where a single script would suffice? If so, update the learnings to consolidate into fewer calls. Well-optimized code-exec learnings produce steps that complete in 1-2 tool calls instead of 10+.
+
+**Variable handling in code-exec learnings**: When writing or reviewing learnings for code execution steps, **never hardcode variable values** (account IDs, URLs, credentials, etc.) in the code. Variables are available in the step description as resolved values — the generated code should use sys.argv or argparse to accept them as CLI arguments. The learning agent automatically replaces hardcoded values with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders, which the system resolves at runtime and passes to the script. If you notice hardcoded values in code learnings, fix them immediately.
+
 ### 8. Optimization Lifecycle — Avoid Repeated Optimization
 **Optimize each step only once per iteration.** After running optimize_step and applying any fixes:
 - If no changes were needed (or only minor tweaks), **immediately mark the step as optimized**: update_step_config(step_id, optimized=true). This prevents re-running optimization on every subsequent execution.
@@ -786,7 +813,7 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 - **Already-optimized steps** (optimized=true in step_config) skip the optimization prompt on completion — the notification just says "proceed to next step".
 - **Reset optimization** (optimized=false) only if you make major changes to the step description, tools, or validation schema — then re-run and re-optimize once.
 
-### 7. Todo Task Sub-Agent Design
+### 9. Todo Task Sub-Agent Design
 When creating a **todo_task** step, prefer breaking known, predictable tasks into **predefined sub-agents** (routes) rather than leaving them as inline orchestrator instructions. Sub-agents accumulate their own learnings and run more predictably over time.
 
 **When to use sub-agents:**
@@ -846,30 +873,28 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 
 ## 📖 STEP EXECUTION WORKFLOW
 
-### Iteration Management
-Before executing any steps, determine which **iteration** (run folder) to use:
+### Before Running Any Step — Always Determine Iteration and Group First
 
-1. Call **list_runs** to see existing iterations and their status
-2. **Ask the user** whether to:
-   - **Continue an existing iteration** — pick up where a previous run left off (e.g., re-run failed steps, run remaining steps)
-   - **Start a new iteration** — fresh run with a new iteration number (list_runs tells you the next available number)
-3. Set the **run_folder** accordingly:
-   - Existing iteration: use the path shown by list_runs (e.g., ` + "`runs/iteration-2/group-name/`" + `)
-   - New iteration: use ` + "`runs/iteration-{next}/group-name/`" + ` where {next} is the next iteration number from list_runs
-4. Pass the chosen **run_folder** to every **execute_step** call in this run
+**Every time the user asks to run a step**, do this before calling execute_step:
 
-**Skip the prompt** if: this is the very first run (list_runs shows no iterations) — just start iteration-1 automatically.
+1. Call **list_runs** to see existing iterations and their group subfolders (with group_ids)
+2. Call **list_groups** to see available groups and their group_ids
+3. **Confirm with the user** which iteration and which group to use — do NOT assume or guess
+   - Default suggestion: latest iteration + the group matching the user's request
+   - Only use a different iteration if the user explicitly asks
+4. Once confirmed, pass both **run_folder** and **group_id** explicitly to every execute_step call
 
-**Variable group**: The active variable group is automatically set from the workspace toolbar. You do not need to select or manage groups — variables are substituted automatically during execution.
+**Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
 
 ### Running Steps
-1. User says "run step-X" → call **execute_step("step-id", run_folder)** → get execution_id
-2. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop. Move on to other work or wait.
-3. When the auto-notification arrives with the result — **always review the output**:
+1. User says "run step-X" → determine iteration + group first (see above) → call **execute_step("step-id", run_folder, group_id)** → get execution_id
+2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. Pass skip_learning=false to generate learnings.
+3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop. Move on to other work or wait.
+4. When the auto-notification arrives with the result — **always review the output**:
    - ✅ If success: briefly tell user the result, then call **optimize_step(step_id)** to analyze the output in the background. Continue to run the next step while optimization runs.
    - ❌ If failed or incorrect output: call **optimize_step(step_id)** to analyze the failure in the background. When its auto-notification arrives, apply the suggested fixes and re-run.
-4. **ALWAYS follow up** after execution. Never fire-and-forget — the value of the workshop is in the iterative review loop.
-5. **Delegate analysis to background agents**: Use **optimize_step** for debugging and analysis, **generate_learnings** for learning generation. Do NOT read execution logs, conversation history, or prompts yourself — the background agents do this more thoroughly and without blocking you.
+5. **ALWAYS follow up** after execution. Never fire-and-forget — the value of the workshop is in the iterative review loop.
+6. **Delegate analysis to background agents**: Use **optimize_step** for debugging and analysis, **generate_learnings** for learning generation. Do NOT read execution logs, conversation history, or prompts yourself — the background agents do this more thoroughly and without blocking you.
 
 ### Auto-Notification System
 All background agents (execute_step, optimize_step, generate_learnings) **automatically notify you** when they complete. These arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated messages, NOT from the user**. Do not treat them as user requests. Do NOT ask the user to tell you when something finishes — the system handles this automatically. Use query_step only if you need to check progress mid-execution (e.g., user asks "how's step X doing?").
@@ -934,6 +959,7 @@ When debugging a failing workflow, use **list_steps** to see ALL steps including
 5. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report")
 6. **Boolean config fields**: Only pass lock_learnings/disable_learning when explicitly changing them. Do NOT include them with false when updating other fields — this resets previously set values.
 7. **Delegate analysis**: Use optimize_step for debugging/analysis and generate_learnings for learning generation. Do NOT read execution logs, conversation histories, or system prompts yourself — background agents handle this more thoroughly without blocking you.
+8. **Never hardcode variables or secrets**: Do NOT put actual variable values, account numbers, user IDs, passwords, tokens, or any sensitive/environment-specific data into step descriptions, instructions, or learning files. These belong in the variables system (variables.json / variable groups). Use variable placeholders (e.g., {USER_ID}, {ACCOUNT_NO}) in descriptions and learnings instead.
 `)
 
 var interactiveWorkshopUserTemplate = MustRegisterTemplate("interactiveWorkshopUser", `{{if .UserRequest}}{{.UserRequest}}{{else}}What would you like to do in the workshop?{{end}}`)
@@ -954,12 +980,13 @@ You are a workflow execution assistant. You help users run workflow steps intera
 ## ⚙️ TOOLS
 
 ### Discovery
-- **list_steps** — Lists all steps including inner steps from conditional branches, orchestration routes, and todo_task sub-agents.
+- **list_steps** — Lists all steps with IDs, titles, types, and config tags (optimized, learning mode). Use this first, then get_step_details for full info on specific steps.
+- **get_step_details(step_id)** — Full details of a single step: description, success_criteria, context_dependencies, validation_schema, and agent_configs (servers, tools, mode, LLMs).
 - **list_runs** — Lists existing iteration folders and their group subfolders. Use this to discover previous runs before executing.
 - **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
 
 ### Background Step Execution
-- **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration; if omitted, auto-resolves. **instructions** provides orchestrator context for inner steps.
+- **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration; if omitted, auto-resolves. **instructions** provides orchestrator context for inner steps. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
 - **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
 - **debug_step(step_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **stop_step(execution_id)** — Cancel a running step
@@ -968,6 +995,20 @@ You are a workflow execution assistant. You help users run workflow steps intera
 ### Shell & Human
 - **execute_shell_command** — Run shell commands for investigation
 - **human_feedback** — Ask the user a question or request confirmation
+
+## 🎓 Human-Assisted Learning Best Practice
+
+When a step has learning_mode "human_assisted", the recommended workflow is:
+
+1. **Explore first** — Before running the step via the workflow, use execute_shell_command to manually explore the task yourself: check the environment, APIs, file paths, tool outputs. Understand what works and what doesn't.
+2. **Discuss with the user** — Share your findings and ask the user to confirm the correct approach, expected output, or any edge cases they care about.
+3. **Write the learnings** — Based on your exploration and the user's input, write specific actionable learnings directly to 'learnings/{step-id}/'. Use diff_patch_workspace_file to create or update learning files.
+4. **Lock the learnings** — Call update_step_config(step_id, lock_learnings=true) so the learning agent doesn't overwrite your hand-crafted learnings on the next run.
+5. **Run via workflow** — Now execute_step with the enriched learnings in place. The step agent will use them during execution.
+
+**Important distinction**: "human_tools:human_feedback" and "learning_mode: human_assisted" are completely unrelated features:
+- **human_feedback tool** = lets the execution agent ask the user questions mid-run (e.g., "what's the OTP?"). Configured via enabled_custom_tools in step_config.
+- **learning_mode: human_assisted** = controls whether the learning phase runs automatically after execution or waits for manual trigger via generate_learnings. This is about post-execution learning, NOT runtime interaction.
 
 ## 📂 WORKSPACE FILE LAYOUT
 
@@ -1006,29 +1047,27 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 
 ## 📖 STEP EXECUTION WORKFLOW
 
-### Iteration Management
-Before executing any steps, determine which **iteration** (run folder) to use:
+### Before Running Any Step — Always Determine Iteration and Group First
 
-1. Call **list_runs** to see existing iterations and their status
-2. **Ask the user** whether to:
-   - **Continue an existing iteration** — pick up where a previous run left off (e.g., re-run failed steps, run remaining steps)
-   - **Start a new iteration** — fresh run with a new iteration number (list_runs tells you the next available number)
-3. Set the **run_folder** accordingly:
-   - Existing iteration: use the path shown by list_runs (e.g., ` + "`runs/iteration-2/group-name/`" + `)
-   - New iteration: use ` + "`runs/iteration-{next}/group-name/`" + ` where {next} is the next iteration number from list_runs
-4. Pass the chosen **run_folder** to every **execute_step** call in this run
+**Every time the user asks to run a step**, do this before calling execute_step:
 
-**Skip the prompt** if: this is the very first run (list_runs shows no iterations) — just start iteration-1 automatically.
+1. Call **list_runs** to see existing iterations and their group subfolders (with group_ids)
+2. Call **list_groups** to see available groups and their group_ids
+3. **Confirm with the user** which iteration and which group to use — do NOT assume or guess
+   - Default suggestion: latest iteration + the group matching the user's request
+   - Only use a different iteration if the user explicitly asks
+4. Once confirmed, pass both **run_folder** and **group_id** explicitly to every execute_step call
 
-**Variable group**: The active variable group is automatically set from the workspace toolbar. You do not need to select or manage groups — variables are substituted automatically during execution.
+**Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
 
 ### Running Steps
-1. User says "run step-X" (or "run all") → call **execute_step("step-id", run_folder)** → get execution_id
-2. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop.
-3. When the auto-notification arrives with the result — report it to the user clearly
+1. User says "run step-X" (or "run all") → determine iteration + group first (see above) → call **execute_step("step-id", run_folder, group_id)** → get execution_id
+2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. If the user wants learnings generated, pass skip_learning=false explicitly.
+3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop.
+4. When the auto-notification arrives with the result — report it to the user clearly
    - ✅ If success: show the key output/result and ask what to do next
-   - ❌ If failed: show the error and explain to the user what went wrong. Use **optimize_step** for deeper analysis if needed.
-4. Let the user decide the next step — they may want to re-run, skip to another step, or stop
+   - ❌ If failed: show the error and explain to the user what went wrong. Use **debug_step** for deeper analysis if needed.
+5. Let the user decide the next step — they may want to re-run, skip to another step, or stop
 
 ### Running All Steps
 When the user asks to "run all" or "run the workflow":
@@ -1063,6 +1102,7 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 4. **User decides**: Let the user choose what to run and when — don't force a sequence
 5. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report")
 6. **Be helpful**: Explain what each step does when listing them, so the user can make informed choices
+7. **Never hardcode variables or secrets**: Do NOT put actual variable values, account numbers, user IDs, passwords, tokens, or any sensitive/environment-specific data into step instructions or learning files. Use variable placeholders (e.g., {USER_ID}, {ACCOUNT_NO}) instead.
 `)
 
 // Execute implements OrchestratorAgent interface for the interactive workshop agent
@@ -1262,6 +1302,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if plan == nil || len(plan.Steps) == 0 {
 				return "No steps found in plan.", nil
 			}
+
+			// Load step configs to show optimized + learning_mode
+			stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
+			stepConfigMap := make(map[string]*AgentConfigs, len(stepConfigs))
+			for i := range stepConfigs {
+				if stepConfigs[i].AgentConfigs != nil {
+					stepConfigMap[stepConfigs[i].ID] = stepConfigs[i].AgentConfigs
+				}
+			}
+
 			var sb strings.Builder
 			allSteps := collectAllSteps(plan.Steps)
 			topCount := len(plan.Steps)
@@ -1273,21 +1323,32 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			sb.WriteString(")\n\n")
 			for _, info := range allSteps {
 				step := info.Step
+				stepID := step.GetID()
+
+				// Build tags (optimized, learning mode)
+				var tags []string
+				if cfg, ok := stepConfigMap[stepID]; ok {
+					if cfg.Optimized != nil && *cfg.Optimized {
+						tags = append(tags, "✓ optimized")
+					}
+					if cfg.LearningMode != "" {
+						tags = append(tags, "learning:"+cfg.LearningMode)
+					}
+					if cfg.DisableLearning != nil && *cfg.DisableLearning {
+						tags = append(tags, "learning:disabled")
+					}
+				}
+				tagStr := ""
+				if len(tags) > 0 {
+					tagStr = "  [" + strings.Join(tags, ", ") + "]"
+				}
+
 				if info.TopIndex > 0 {
 					// Top-level step
-					sb.WriteString(fmt.Sprintf("%d. **%s** [%s]\n   ID: `%s`\n", info.TopIndex, step.GetTitle(), step.StepType(), step.GetID()))
+					sb.WriteString(fmt.Sprintf("%d. **%s** [%s]%s\n   ID: `%s`\n\n", info.TopIndex, step.GetTitle(), step.StepType(), tagStr, stepID))
 				} else {
 					// Inner step — indented
-					sb.WriteString(fmt.Sprintf("   ↳ **%s** [%s] (parent: `%s`, branch: %s)\n      ID: `%s`\n", step.GetTitle(), step.StepType(), info.ParentID, info.BranchName, step.GetID()))
-				}
-				desc := step.GetDescription()
-				if len(desc) > 200 {
-					desc = desc[:200] + "..."
-				}
-				if info.TopIndex > 0 {
-					sb.WriteString(fmt.Sprintf("   %s\n\n", desc))
-				} else {
-					sb.WriteString(fmt.Sprintf("      %s\n\n", desc))
+					sb.WriteString(fmt.Sprintf("   ↳ **%s** [%s] (parent: `%s`, branch: %s)%s\n      ID: `%s`\n\n", step.GetTitle(), step.StepType(), info.ParentID, info.BranchName, tagStr, stepID))
 				}
 			}
 			return sb.String(), nil
@@ -1295,6 +1356,125 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_steps tool: %v", err))
+	}
+
+	// Tool: get_step_details — get full details of a single step
+	if err := mcpAgent.RegisterCustomTool(
+		"get_step_details",
+		"Get full details of a single step: description, success_criteria, context_dependencies, context_output, validation_schema, and agent_configs (servers, tools, mode, learning settings, LLMs). Use after list_steps to drill into a specific step.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"step_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
+				},
+			},
+			"required": []string{"step_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			stepIDRaw, ok := args["step_id"]
+			if !ok || stepIDRaw == nil {
+				return "step_id is required", nil
+			}
+			stepID, ok := stepIDRaw.(string)
+			if !ok || stepID == "" {
+				return "step_id must be a non-empty string", nil
+			}
+
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+				return fmt.Sprintf("Failed to load plan: %v", err), nil
+			}
+			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
+			if resolveErr != nil {
+				return resolveErr.Error(), nil
+			}
+
+			stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedID)
+			if stepInfo == nil {
+				return fmt.Sprintf("step %q not found in plan", stepID), nil
+			}
+
+			step := stepInfo.Step
+			var sb strings.Builder
+
+			// Header
+			sb.WriteString(fmt.Sprintf("## %s [%s]\n", step.GetTitle(), step.StepType()))
+			sb.WriteString(fmt.Sprintf("ID: `%s`\n\n", step.GetID()))
+
+			// Description
+			if desc := step.GetDescription(); desc != "" {
+				sb.WriteString("### Description\n")
+				sb.WriteString(desc)
+				sb.WriteString("\n\n")
+			}
+
+			// Success criteria
+			if sc := step.GetSuccessCriteria(); sc != "" {
+				sb.WriteString("### Success Criteria\n")
+				sb.WriteString(sc)
+				sb.WriteString("\n\n")
+			}
+
+			// Context dependencies
+			if deps := step.GetContextDependencies(); len(deps) > 0 {
+				sb.WriteString("### Context Dependencies\n")
+				for _, d := range deps {
+					sb.WriteString(fmt.Sprintf("- %s\n", d))
+				}
+				sb.WriteString("\n")
+			}
+
+			// Context output
+			if co := step.GetContextOutput().String(); co != "" {
+				sb.WriteString("### Context Output\n")
+				sb.WriteString(co)
+				sb.WriteString("\n\n")
+			}
+
+			// Validation schema
+			if vs := step.GetValidationSchema(); vs != nil {
+				vsJSON, err := json.MarshalIndent(vs, "", "  ")
+				if err == nil {
+					sb.WriteString("### Validation Schema\n```json\n")
+					sb.WriteString(string(vsJSON))
+					sb.WriteString("\n```\n\n")
+				}
+			}
+
+			// Step-type-specific fields (serialize the full step minus common fields)
+			stepJSON, err := json.MarshalIndent(step, "", "  ")
+			if err == nil {
+				sb.WriteString("### Step Definition (full)\n```json\n")
+				sb.WriteString(string(stepJSON))
+				sb.WriteString("\n```\n\n")
+			}
+
+			// Agent configs from step_config.json
+			stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
+			var agentCfg *AgentConfigs
+			for i := range stepConfigs {
+				if stepConfigs[i].ID == resolvedID && stepConfigs[i].AgentConfigs != nil {
+					agentCfg = stepConfigs[i].AgentConfigs
+					break
+				}
+			}
+			if agentCfg != nil {
+				cfgJSON, err := json.MarshalIndent(agentCfg, "", "  ")
+				if err == nil {
+					sb.WriteString("### Agent Configs (from step_config.json)\n```json\n")
+					sb.WriteString(string(cfgJSON))
+					sb.WriteString("\n```\n")
+				}
+			} else {
+				sb.WriteString("### Agent Configs\nNo step-level config overrides — using preset defaults.\n")
+			}
+
+			return sb.String(), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_step_details tool: %v", err))
 	}
 
 	// Tool: list_runs — discover existing iterations and run folders
@@ -1312,6 +1492,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "No runs found. This workflow has not been executed yet. A new iteration-1 will be created on first execute_step.", nil
 			}
 
+			// Build folder-name → group_id lookup from manifest
+			folderToGroupID := map[string]string{}
+			if iwm.controller.variablesManifest != nil {
+				for _, g := range iwm.controller.variablesManifest.Groups {
+					folderName := g.GroupID
+					if g.DisplayName != "" {
+						if s := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName); s != "" {
+							folderName = s
+						}
+					}
+					folderToGroupID[folderName] = g.GroupID
+				}
+			}
+
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("## Existing Runs (%d iterations)\n\n", len(iterations)))
 
@@ -1321,7 +1515,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if err != nil || len(subFolders) == 0 {
 					sb.WriteString(fmt.Sprintf("- **%s** (no group subfolders)\n", iterFolder))
 				} else {
-					sb.WriteString(fmt.Sprintf("- **%s** (%d groups: %s)\n", iterFolder, len(subFolders), strings.Join(subFolders, ", ")))
+					var groupDescs []string
+					for _, sf := range subFolders {
+						if gid, ok := folderToGroupID[sf]; ok {
+							groupDescs = append(groupDescs, fmt.Sprintf("%s (group_id: %s)", sf, gid))
+						} else {
+							groupDescs = append(groupDescs, sf)
+						}
+					}
+					sb.WriteString(fmt.Sprintf("- **%s** (%d groups: %s)\n", iterFolder, len(subFolders), strings.Join(groupDescs, ", ")))
 				}
 			}
 
@@ -1874,6 +2076,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "If true, disable knowledgebase access for this step (removes knowledgebase read/write paths from folder guard). Useful for steps that don't need persistent storage.",
 				},
+				"use_code_execution_mode": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, enable code execution mode — the agent writes and executes Python/shell code via mcpbridge to interact with MCP tools, rather than calling them directly. Useful for complex data processing or programmatic control over MCP tools. If false, explicitly disables code execution. Omit to inherit the preset default.",
+				},
+				"use_tool_search_mode": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, enable tool search mode — the agent dynamically discovers available tools at runtime using search_tools before calling them. Useful when the exact tools needed are not known upfront. If false, tools are provided directly without search. Omit to inherit the preset default.",
+				},
 				"optimized": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, mark this step as optimized — completion notifications will be simpler (no 'debug and optimize' prompt). Set this when a step is producing consistent, good results.",
@@ -2039,6 +2249,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["optimized"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
 					targetConfig.AgentConfigs.Optimized = &b
+				}
+			}
+			if val, ok := args["use_code_execution_mode"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					targetConfig.AgentConfigs.UseCodeExecutionMode = &b
+				}
+			}
+			if val, ok := args["use_tool_search_mode"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					targetConfig.AgentConfigs.UseToolSearchMode = &b
 				}
 			}
 
@@ -2506,7 +2726,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if !isCodeExec && (stepCfg == nil || stepCfg.UseCodeExecutionMode == nil) {
 				isCodeExec = iwm.controller.GetUseCodeExecutionMode()
 			}
-			if !isToolSearch && (stepCfg == nil || stepCfg.UseToolSearchMode == nil) {
+			// Only inherit preset tool search if code exec is NOT enabled
+			// (they are mutually exclusive — don't show both)
+			if !isToolSearch && (stepCfg == nil || stepCfg.UseToolSearchMode == nil) && !isCodeExec {
 				isToolSearch = iwm.controller.GetUseToolSearchMode()
 			}
 

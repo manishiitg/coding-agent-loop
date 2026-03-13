@@ -289,14 +289,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 			}
 		}
 
-		// Resolve variable values for this group
+		// Resolve variable values for this group.
+		// Try direct group ID match first, then fall back to matching by sanitized display name
+		// (agents often pass the folder name which is derived from the display name).
 		if hcpo.variablesManifest != nil {
 			groupValues := hcpo.variablesManifest.GetVariableValues(opts.GroupID)
+			resolvedGroupID := opts.GroupID
+			if groupValues == nil {
+				// Try matching by sanitized display name
+				for _, g := range hcpo.variablesManifest.Groups {
+					if g.DisplayName != "" {
+						sanitized := hcpo.sanitizeDisplayNameForFolder(g.DisplayName)
+						if sanitized == opts.GroupID {
+							groupValues = g.Values
+							resolvedGroupID = g.GroupID
+							hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Resolved group %q by display name to group ID %q", opts.GroupID, resolvedGroupID))
+							break
+						}
+					}
+				}
+			}
 			if groupValues != nil {
 				hcpo.variableValues = groupValues
-				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Loaded %d variable values for group %s: %v", len(groupValues), opts.GroupID, groupValues))
+				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Loaded %d variable values for group %s (resolved=%s): %v", len(groupValues), opts.GroupID, resolvedGroupID, groupValues))
 			} else {
-				hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in variables manifest (available groups: %v)", opts.GroupID, hcpo.getGroupIDs()))
+				// Group not found — return a clear error so the agent asks the user for the correct group_id.
+				var groupDescs []string
+				for _, g := range hcpo.variablesManifest.Groups {
+					if g.DisplayName != "" {
+						groupDescs = append(groupDescs, fmt.Sprintf("%s (%s)", g.GroupID, g.DisplayName))
+					} else {
+						groupDescs = append(groupDescs, g.GroupID)
+					}
+				}
+				return fmt.Errorf("group_id %q not found. Available groups: %s — ask the user which group to use", opts.GroupID, strings.Join(groupDescs, ", "))
 			}
 		} else {
 			hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Cannot resolve group %q — variables manifest is nil even after reload attempt", opts.GroupID))

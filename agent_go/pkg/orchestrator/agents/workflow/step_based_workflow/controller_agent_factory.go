@@ -722,8 +722,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		// Rule 2: Step explicitly set code execution mode
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		isToolSearchMode := hcpo.getToolSearchMode(stepConfig)
-		config.UseToolSearchMode = isToolSearchMode
+		// If code execution is enabled and tool search is NOT explicitly set on the step,
+		// default tool search to false — they are mutually exclusive, don't inherit preset default
+		if config.UseCodeExecutionMode && stepConfig.UseToolSearchMode == nil {
+			config.UseToolSearchMode = false
+		} else {
+			config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		}
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
 	} else {
@@ -1852,7 +1857,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for orchestration agent CLI provider '%s'", orchestrationProvider))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		if config.UseCodeExecutionMode && stepConfig.UseToolSearchMode == nil {
+			config.UseToolSearchMode = false
+		} else {
+			config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
+		}
 		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for orchestration agent: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
 	} else {

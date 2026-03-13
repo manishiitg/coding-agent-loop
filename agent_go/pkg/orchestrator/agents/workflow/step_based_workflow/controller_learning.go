@@ -30,8 +30,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
 	// This ensures that when validation fails, learnings are unlocked even if they were previously locked
+	// Skip for human-assisted learning mode — learnings are manually curated and treated as final
 	validationFailed := validationResponse != nil && !validationResponse.IsSuccessCriteriaMet
-	if validationFailed {
+	isHumanAssistedLearningMode := agentConfigs != nil && agentConfigs.LearningMode == "human_assisted"
+	if validationFailed && !isHumanAssistedLearningMode {
 		isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
 		if isLearningsLocked {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Validation failed - auto-unlocking learnings for step %s so it can learn from the failure", step.GetID()))
@@ -391,8 +393,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 
 	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
 	// This ensures that when validation fails, learnings are unlocked even if they were previously locked
+	// Skip for human-assisted learning mode — learnings are manually curated and treated as final
 	validationFailed := validationResponse != nil && !validationResponse.IsSuccessCriteriaMet
-	if validationFailed {
+	isHumanAssistedLearningMode := agentConfigs != nil && agentConfigs.LearningMode == "human_assisted"
+	if validationFailed && !isHumanAssistedLearningMode {
 		isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
 		if isLearningsLocked {
 			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Validation failed - auto-unlocking learnings for step %s so it can learn from the failure", step.GetID()))
@@ -724,7 +728,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 }
 
 // readStepLearningFiles reads all learning files from a step-specific folder
-// Reads .md files from the step folder, .go files from code/ subfolder (Code Execution Mode),
+// Reads .md files from the step folder, all files from code/ subfolder (Code Execution Mode),
 // and .py/.sh files from scripts/ subfolder (Simple Mode)
 // Deletes _learning_new.md if it exists (leftover temp file from previous runs)
 // Excludes metadata files (.learning_metadata.json)
@@ -772,24 +776,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepLearningFiles(ctx context.Con
 	}
 
 	// Check if code/ subfolder exists (for code execution mode)
-	// This subfolder contains Python code examples/patterns
+	// This subfolder contains code examples/patterns (Python, shell scripts, etc.)
 	codeSubfolderPath := filepath.Join(stepLearningsPath, "code")
 	codeFiles, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, codeSubfolderPath)
 	if err == nil && len(codeFiles) > 0 {
-		// Read all .py and .go files from code/ subfolder (Python preferred, Go for legacy)
+		// Read ALL files from code/ subfolder (any language/format the learning agent saved)
+		// Skip metadata and hidden files only
 		codeFileCount := 0
 		for _, file := range codeFiles {
-			if strings.HasSuffix(file, ".py") || strings.HasSuffix(file, ".go") {
-				filePath := filepath.Join(codeSubfolderPath, file)
-				content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
-				if err != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read code learning file %s: %v", filePath, err))
-					continue
-				}
-				// Prefix with "code/" to indicate it's from the code subfolder
-				learningFiles[filepath.Join("code", file)] = content
-				codeFileCount++
+			if strings.HasPrefix(file, ".") {
+				continue // Skip hidden/metadata files
 			}
+			filePath := filepath.Join(codeSubfolderPath, file)
+			content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, filePath)
+			if err != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read code learning file %s: %v", filePath, err))
+				continue
+			}
+			// Prefix with "code/" to indicate it's from the code subfolder
+			learningFiles[filepath.Join("code", file)] = content
+			codeFileCount++
 		}
 		if codeFileCount > 0 {
 			hcpo.GetLogger().Info(fmt.Sprintf("📁 Read %d code file(s) from code/ subfolder", codeFileCount))

@@ -483,6 +483,52 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     })
   }, [tabEvents])
 
+  // Derive the most recently started active agent from start/end event pairs.
+  // Shows only the innermost (latest) running agent — parent orchestrator agents
+  // are implicitly running but not interesting to display.
+  const hasRunningBgAgents = activeTab?.hasRunningBgAgents ?? false
+  const activeAgents = useMemo(() => {
+    if ((!isStreaming && !hasRunningBgAgents) || tabEvents.length === 0) return []
+
+    // Track running agents by correlation ID, plus agent_type for dedup
+    const running = new Map<string, { name: string, agentType: string, type: 'agent' | 'delegation' }>()
+
+    for (const event of tabEvents) {
+      const agentEvent = event.data as Record<string, unknown> | undefined
+      const innerData = agentEvent?.data as Record<string, unknown> | undefined
+
+      if (event.type === 'orchestrator_agent_start') {
+        const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        const name = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'Agent') as string
+        const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
+        if (corrId) running.set(corrId, { name, agentType, type: 'agent' })
+      } else if (event.type === 'orchestrator_agent_end') {
+        const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        if (corrId) running.delete(corrId)
+      } else if (event.type === 'delegation_start') {
+        const delegationId = (innerData?.delegation_id ?? agentEvent?.delegation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        const rawName = (innerData?.agent_name ?? agentEvent?.agent_name ?? innerData?.instruction ?? agentEvent?.instruction ?? 'Sub-agent') as string
+        const name = typeof rawName === 'string' && rawName.length > 50 ? rawName.substring(0, 50) + '...' : rawName
+        if (delegationId) running.set(delegationId, { name: typeof name === 'string' ? name : 'Sub-agent', agentType: '', type: 'delegation' })
+      } else if (event.type === 'delegation_end') {
+        const delegationId = (innerData?.delegation_id ?? agentEvent?.delegation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        if (delegationId) running.delete(delegationId)
+      }
+    }
+
+    if (running.size === 0) return []
+
+    // Deduplicate by agent_type — if parent wrapper and child step share the same
+    // agent_type (e.g. "hdfc-master-task"), keep only the latest (child) which has
+    // the human-friendly agent_name. Fall back to name dedup for delegation events.
+    const deduped = new Map<string, { name: string, type: 'agent' | 'delegation' }>()
+    for (const agent of running.values()) {
+      const key = agent.agentType || agent.name
+      deduped.set(key, { name: agent.name, type: agent.type })
+    }
+    return Array.from(deduped.values())
+  }, [isStreaming, hasRunningBgAgents, tabEvents])
+
   // --- Render tracking (filter by [Render] in console) ---
   useRenderLogger('ChatArea', {
     displayEvents: displayEvents.length,
@@ -2419,6 +2465,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         <ChatInput
           onSubmit={submitQueryWithQuery}
           onStopStreaming={stopStreaming}
+          activeAgents={activeAgents}
         />
       )}
       

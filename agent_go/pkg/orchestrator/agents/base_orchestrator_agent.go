@@ -165,13 +165,11 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
-	// Inject agent session ID into context for per-agent event grouping.
-	// If parent context already has an AgentSessionIDKey, this is a sub-agent —
-	// mark it so ContextAwareEventBridge only tags sub-agent events for grouping.
+	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
+	// with this agent's correlation ID (BaseOrchestratorAgent is only used
+	// for orchestrator step agents, never the main chat agent).
 	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
-	if _, hasParent := ctx.Value(events.AgentSessionIDKey).(string); hasParent {
-		agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
-	}
+	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
 
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
@@ -261,12 +259,11 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
-	// Inject agent session ID into context for per-agent event grouping.
-	// If parent context already has an AgentSessionIDKey, this is a sub-agent.
+	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
+	// with this agent's correlation ID (BaseOrchestratorAgent is only used
+	// for orchestrator step agents, never the main chat agent).
 	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
-	if _, hasParent := ctx.Value(events.AgentSessionIDKey).(string); hasParent {
-		agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
-	}
+	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
 
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
@@ -392,13 +389,11 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	// Auto-emit agent start event
 	boa.emitAgentStartEvent(ctx, templateVars)
 
-	// Inject agent session ID into context so the ContextAwareEventBridge can tag
-	// tool call events with this correlation ID (enables per-agent grouping in UI).
-	// If parent context already has an AgentSessionIDKey, this is a sub-agent.
+	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
+	// with this agent's correlation ID (BaseOrchestratorAgent is only used
+	// for orchestrator step agents, never the main chat agent).
 	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
-	if _, hasParent := ctx.Value(events.AgentSessionIDKey).(string); hasParent {
-		agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
-	}
+	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
 
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string

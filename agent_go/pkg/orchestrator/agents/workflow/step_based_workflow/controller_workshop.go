@@ -57,7 +57,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Conte
 // for that group, making each execute_step call self-contained.
 type WorkshopExecuteOptions struct {
 	GroupID      string // e.g., "group-1" — overrides session-level group
-	RunFolder    string // e.g., "iteration-3/xtech" — overrides session-level run folder
+	Iteration    string // e.g., "iteration-3" — combined with group folder name to form RunFolder
+	RunFolder    string // e.g., "iteration-3/xtech" — auto-calculated from Iteration + group, or set directly
 	SkipLearning bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
 	Instructions string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
 	HumanInput   string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary

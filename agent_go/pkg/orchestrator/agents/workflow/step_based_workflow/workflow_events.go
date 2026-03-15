@@ -217,6 +217,8 @@ type TodoTaskRouteSelectedEvent struct {
 	AllTasksComplete        bool   `json:"all_tasks_complete"`                  // Whether all tasks are complete
 	ProgressSummary         string `json:"progress_summary,omitempty"`          // Summary of progress
 	Model                   string `json:"model,omitempty"`                     // LLM model used for this decision
+	PreferredTier           int    `json:"preferred_tier,omitempty"`             // LLM tier chosen (1=High, 2=Medium, 3=Low)
+	PreferredTierLabel      string `json:"preferred_tier_label,omitempty"`       // Human-readable tier label
 }
 
 func (e *TodoTaskRouteSelectedEvent) GetEventType() baseevents.EventType {

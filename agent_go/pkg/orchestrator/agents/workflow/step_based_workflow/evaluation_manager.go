@@ -239,7 +239,7 @@ func (em *EvaluationManager) runEvaluationPlanningPhase(ctx context.Context, ite
 	} else if existingPlan != nil {
 		userMessage = "An existing evaluation plan has been loaded. Please use human_feedback tool to ask the user what improvements they would like to make to the existing plan."
 	} else {
-		userMessage = "Analyze the execution plan (plan.json), infer the overall goal, and propose a holistic evaluation plan. Focus on quality and correctness. Always use human_feedback tool first to confirm the strategy with me."
+		userMessage = "Analyze the execution plan provided in your system prompt context, infer the overall goal, and propose a holistic evaluation plan. Focus on quality and correctness. Always use human_feedback tool first to confirm the strategy with me. Do NOT use shell commands to read plan.json — the execution plan is already provided to you."
 	}
 
 	// Create evaluation agent
@@ -279,11 +279,15 @@ func (em *EvaluationManager) createEvaluationAgent(ctx context.Context, phase st
 	baseWorkspacePath := em.GetWorkspacePath()
 	planningPath := fmt.Sprintf("%s/planning", baseWorkspacePath)
 	evaluationPath := fmt.Sprintf("%s/evaluation", baseWorkspacePath)
+	runsPath := fmt.Sprintf("%s/runs", baseWorkspacePath)
+	knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 
-	// Evaluation designer agent: read access to planning/ folder, write access to evaluation/ folder
-	// Can read planning/plan.json and write evaluation/evaluation_plan.json
-	// NO access to runs/ folder - evaluation designer only analyzes the plan
-	em.SetWorkspacePathForFolderGuard([]string{planningPath}, []string{evaluationPath})
+	// Evaluation designer agent:
+	// READ: planning/ (plan.json), runs/ (execution outputs), knowledgebase/ (persistent files)
+	// WRITE: evaluation/ (evaluation_plan.json)
+	// Read access to runs/ and knowledgebase/ lets the agent see what the workflow produced
+	// to design better, more targeted evaluation steps.
+	em.SetWorkspacePathForFolderGuard([]string{planningPath, runsPath, knowledgebasePath}, []string{evaluationPath})
 
 	var llmConfigToUse *orchestrator.LLMConfig
 	if em.presetPhaseLLM != nil && em.presetPhaseLLM.Provider != "" && em.presetPhaseLLM.ModelID != "" {

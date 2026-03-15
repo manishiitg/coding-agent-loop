@@ -1870,13 +1870,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					execCtx = context.WithValue(execCtx, WorkshopTierOverrideKey, execOpts.Tier)
 				}
 
+				// Resolve step title for the wrapper event (use plan step title if available)
+				stepDisplayName := stepID
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+						stepDisplayName = stepInfo.Step.GetTitle()
+					}
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepID),
+						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -1905,7 +1913,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepID),
+						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
 						Success:       err == nil,
 					}
 					if isOptimized {
@@ -3670,13 +3678,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				// Resolve step title for display
+				learningDisplayName := resolvedID
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedID); stepInfo != nil {
+						learningDisplayName = stepInfo.Step.GetTitle()
+					}
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Learning: %s", resolvedID),
+						AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -3703,7 +3719,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-step-learning",
-							AgentName:     fmt.Sprintf("Learning: %s", resolvedID),
+							AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
 							Success:       false,
 							Result:        fmt.Sprintf("Failed to create learning agent: %v", createErr),
 						}
@@ -3752,7 +3768,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Learning: %s", resolvedID),
+						AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
 						Success:       execErr == nil,
 					}
 					if execErr != nil {
@@ -3867,13 +3883,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				// Resolve step title for display
+				debugDisplayName := stepID
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+						debugDisplayName = stepInfo.Step.GetTitle()
+					}
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-debug",
-						AgentName:     fmt.Sprintf("Optimize: %s", stepID),
+						AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -3891,7 +3915,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-debug",
-						AgentName:     fmt.Sprintf("Optimize: %s", stepID),
+						AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
 						Success:       err == nil,
 					}
 					if err != nil {

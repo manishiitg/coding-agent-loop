@@ -118,6 +118,15 @@ export const TodoTaskRouteSelectedEventDisplay: React.FC<TodoTaskEventProps<Todo
             <span className="font-semibold text-blue-600 dark:text-blue-400">
               {event.use_generic_agent ? 'Generic Agent' : (event.selected_route_name || event.selected_route_id)}
             </span>
+            {event.preferred_tier_label && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                event.preferred_tier === 1 ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300' :
+                event.preferred_tier === 2 ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300' :
+                'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
+              }`}>
+                {event.preferred_tier_label}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-gray-500">Task:</span>

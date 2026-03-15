@@ -456,6 +456,8 @@ export interface TodoTaskRouteSelectedEvent {
   completion_reason?: string;
   progress_summary?: string;
   model?: string;
+  preferred_tier?: number; // 1=High, 2=Medium, 3=Low
+  preferred_tier_label?: string; // "High", "Medium", "Low"
 }
 
 export interface TodoTaskItemCreatedEvent {

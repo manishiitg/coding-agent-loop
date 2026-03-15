@@ -21,7 +21,7 @@ var planningChatSystemTemplate = MustRegisterTemplate("planningChatSystem", `## 
 
 ## ⚠️ PROTOCOL
 1. **Conversational**: Discuss proposed changes with the user. Apply changes when they agree.
-2. **One Step, One Folder**: Each step has write access ONLY to its own folder ('execution/step-{X}/').
+2. **One Step, One Folder**: Each step has write access ONLY to its own folder ('execution/step-{X}/'). Browser downloads (via Playwright) are automatically saved to 'execution/Downloads/' — agents can reference downloaded files from there.
 3. **Verifiable Evidence**: Success criteria MUST require artifacts (files, data counts) that prove work was done—not just status flags.
 4. **Stable IDs**: Keep existing 'id' values stable. Only generate new IDs for truly new steps.
 5. **Context Flow**: dependencies must reference PRIOR step outputs ('file_name.json', never paths).
@@ -472,11 +472,27 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		controller.isEvaluationMode = true
 	}
 
-	// Propagate session IDs for MCP connection sharing and session cleanup
+	// Propagate HTTP session ID for chat history, but NOT the MCP session ID.
+	//
+	// WHY: Each controller creates its own unique MCP session ID (e.g. "session-group-default-group-...")
+	// during initialization. This MCP session ID determines which Playwright/browser connection
+	// is reused. When a step agent executes, it applies runtime overrides like --output-dir
+	// (to redirect downloads to execution/Downloads/) on the MCP connection keyed by this ID.
+	//
+	// BUG FIX: Previously we called controller.SetMCPSessionID(cfg.SessionID) here, which
+	// overwrote the controller's MCP session ID with the chat's session ID. This caused all
+	// step agents to share the chat session's Playwright connection — which was created WITHOUT
+	// the --output-dir override. Result: downloads went to the browser's default location
+	// instead of execution/Downloads/.
+	//
+	// FIX: Only propagate HTTP session ID (used for chat history / REST endpoints).
+	// The controller keeps its own MCP session ID for isolated Playwright connections.
 	if cfg.SessionID != "" {
-		controller.SetMCPSessionID(cfg.SessionID)
 		controller.SetHTTPSessionID(cfg.SessionID)
-		logger.Debug(fmt.Sprintf("[WORKSHOP] Set MCP/HTTP session ID: %s", cfg.SessionID))
+		logger.Debug(fmt.Sprintf("[WORKSHOP] Session ID propagation: HTTP=%s, MCP=%s (kept separate for Playwright isolation)",
+			cfg.SessionID, controller.GetMCPSessionID()))
+		logger.Debug(fmt.Sprintf("[WORKSHOP] MCP session %s will get its own Playwright connection with --output-dir override",
+			controller.GetMCPSessionID()))
 	}
 
 	// Propagate secrets for step execution
@@ -764,10 +780,16 @@ func RegisterRunFullEvaluationTool(
 					return
 				}
 
-				// Propagate session settings
+				// Propagate HTTP session ID only — do NOT overwrite MCP session ID.
+				// Same reasoning as main controller above: eval controller needs its own
+				// MCP session ID so its step agents get isolated Playwright connections
+				// with correct --output-dir overrides for download path resolution.
 				if cfg.SessionID != "" {
-					evalController.SetMCPSessionID(cfg.SessionID)
 					evalController.SetHTTPSessionID(cfg.SessionID)
+					logger.Debug(fmt.Sprintf("[WORKSHOP-EVAL] Session ID propagation: HTTP=%s, MCP=%s (kept separate for Playwright isolation)",
+						cfg.SessionID, evalController.GetMCPSessionID()))
+					logger.Debug(fmt.Sprintf("[WORKSHOP-EVAL] MCP session %s will get its own Playwright connection with --output-dir override",
+						evalController.GetMCPSessionID()))
 				}
 				if len(cfg.Secrets) > 0 {
 					evalController.SetSecrets(cfg.Secrets)

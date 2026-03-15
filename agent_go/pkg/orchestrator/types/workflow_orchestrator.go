@@ -59,12 +59,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          "planning",
-				Title:       "Planning",
-				Description: "Create and iterate on a comprehensive plan using the planning agent. You can refine and improve the plan through conversation until you're satisfied. Variable extraction is handled by the planning agent tools during this phase.",
-				Options:     []WorkflowPhaseOption{}, // No options for planning phase
-			},
-			{
 				ID:          "human-assisted-execution",
 				Title:       "Human In The Loop",
 				Description: "Run workflow steps interactively via chat. Choose which steps to run, monitor progress, and review results — without plan modifications or optimization.",
@@ -434,10 +428,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
 	// Note: Variable extraction is now handled by planning agent tools, no separate phase needed
 
-	if workflowStatus == "planning" {
-		return wo.runPlanningOnly(ctx, objective, selectedOptions)
-	}
-
 	if workflowStatus == "evaluation-execution" {
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
@@ -485,82 +475,6 @@ func (wo *WorkflowOrchestrator) runExecutionDebugger(ctx context.Context, object
 	}
 
 	wo.GetLogger().Info("✅ Execution debugger completed successfully")
-	return result, nil
-}
-
-// runPlanningOnly runs only the planning phase
-func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("📋 Starting Planning Phase"))
-
-	// Create human controlled planner orchestrator (needed for planning)
-	llmConfig := wo.GetLLMConfig()
-	if wo.presetExecutionLLM != nil {
-		wo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [runPlanningOnly] presetExecutionLLM: %s/%s", wo.presetExecutionLLM.Provider, wo.presetExecutionLLM.ModelID))
-	} else {
-		wo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [runPlanningOnly] presetExecutionLLM is nil")
-	}
-	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
-		ctx,
-		"", // provider (not used - LLM comes from temp override/step config/preset)
-		"", // model (not used - LLM comes from temp override/step config/preset)
-		wo.GetTemperature(),
-		wo.GetAgentMode(),
-		wo.GetSelectedServers(),
-		wo.GetSelectedTools(),
-		wo.GetUseCodeExecutionMode(), // NEW: Pass code execution mode
-		wo.GetUseToolSearchMode(),    // NEW: Pass tool search mode
-		wo.GetPreDiscoveredTools(),   // NEW: Pass pre-discovered tools
-		wo.GetMCPConfigPath(),
-		llmConfig,
-		wo.GetMaxTurns(),
-		wo.GetLogger(),
-		wo.GetTracer(),
-		wo.GetContextAwareBridge(),
-		wo.WorkspaceTools,
-		wo.WorkspaceToolExecutors,
-		wo.ToolCategories,     // NEW: Pass category map
-		wo.presetExecutionLLM, // Pass preset defaults
-		nil, // presetValidationLLM (LLM validation removed)
-		wo.presetLearningLLM,
-		wo.presetPhaseLLM,
-		nil, // presetAnonymizationLLM (deprecated, no longer used)
-		wo.presetPlanImprovementLLM,
-		wo.useKnowledgebase, // Feature toggle for knowledgebase
-		wo.tieredConfig,     // Tiered LLM config
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
-	}
-
-	// Propagate workspace env ref BEFORE session ID so SetMCPSessionID can update it
-	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
-		todoPlannerAgent.SetWorkspaceEnvRef(envRef)
-	}
-
-	// Propagate MCP session ID to child orchestrator for connection sharing
-	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
-	// Propagate HTTP session ID for MCP cleanup scoping
-	if wo.httpSessionID != "" {
-		todoPlannerAgent.SetHTTPSessionID(wo.httpSessionID)
-	}
-
-	// Propagate selected skills to child orchestrator
-	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
-		todoPlannerAgent.SetSelectedSkills(skills)
-	}
-
-	// Propagate secrets to child orchestrator
-	if secrets := wo.GetSecrets(); len(secrets) > 0 {
-		todoPlannerAgent.SetSecrets(secrets)
-	}
-
-	// Run only planning
-	result, err := todoPlannerAgent.CreatePlanOnly(ctx, objective, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("planning failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Planning completed successfully"))
 	return result, nil
 }
 
@@ -978,7 +892,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 			} else {
 				// Validate it's a known workflow status
 				validStatuses := []string{
-					"planning",                             // Planning phase
 					database.WorkflowStatusPreVerification, // Execution phase
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase

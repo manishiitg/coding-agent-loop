@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, GitBranch, Layers, FileSearch, Play, X, History, Download, Bot, Server, ImagePlus } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, Layers, FileSearch, Play, X, History, Download, Bot, Server, ImagePlus } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -49,10 +49,16 @@ import type { SubAgent } from '../types/subagents'
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
 const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 
+export interface ActiveAgentInfo {
+  name: string
+  type: 'agent' | 'delegation'
+}
+
 interface ChatInputProps {
   // Handlers (callbacks only)
   onSubmit: (query: string) => void
   onStopStreaming: () => void
+  activeAgents?: ActiveAgentInfo[]
 }
 
 // Shorten model ID to max 5 char label
@@ -160,7 +166,8 @@ const QueuedMessageItem: React.FC<{
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit,
-  onStopStreaming
+  onStopStreaming,
+  activeAgents = []
 }) => {
   // Store subscriptions
   const {
@@ -357,7 +364,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     return { contextUsagePercent: null, latestTokenUsage: null }
   }, [tabEvents, isSubAgentEvent])
-  
+
   // Always use tab-specific config (ChatInput is only in chat mode)
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
@@ -381,6 +388,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [showImageGenConfig, setShowImageGenConfig] = useState(false)
   const [showGWSPopup, setShowGWSPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
+  const [showActiveAgentsPanel, setShowActiveAgentsPanel] = useState(false)
+  // Auto-close panel when no agents are running
+  useEffect(() => {
+    if (activeAgents.length === 0) setShowActiveAgentsPanel(false)
+  }, [activeAgents.length])
   const [gwsChatAuthStatus, setGwsChatAuthStatus] = useState<{
     configured?: boolean; auth_method?: string; token_valid?: boolean; token_error?: string;
     enabled_api_count?: number; scope_count?: number; error?: string;
@@ -3316,10 +3328,52 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons */}
               {(
                 <div className="flex items-center gap-2">
+                  {/* Active agents indicator — left of context circle */}
+                  {activeAgents.length > 0 && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowActiveAgentsPanel(prev => !prev)}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                      >
+                        <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
+                        <span className="text-[11px] text-blue-600 dark:text-blue-400 font-medium">
+                          {activeAgents.length}
+                        </span>
+                      </button>
+                      {showActiveAgentsPanel && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setShowActiveAgentsPanel(false)} />
+                          <div className="absolute bottom-full right-0 mb-2 z-50 w-72 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                            <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                              <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                                {activeAgents.length === 1 ? '1 agent running' : `${activeAgents.length} agents running`}
+                              </span>
+                              <button type="button" onClick={() => setShowActiveAgentsPanel(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto">
+                              {activeAgents.map((a, i) => (
+                                <div key={i} className="flex items-center gap-2 px-3 py-2 border-b last:border-b-0 border-gray-100 dark:border-gray-700/50">
+                                  <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
+                                  <span className="text-xs text-gray-700 dark:text-gray-300 truncate">{a.name}</span>
+                                  <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto">
+                                    {a.type === 'delegation' ? 'sub-agent' : 'step'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
                   {/* Context completion indicator */}
                   {contextUsagePercent !== null && (
-                    <CircularProgress 
-                      percentage={contextUsagePercent} 
+                    <CircularProgress
+                      percentage={contextUsagePercent}
                       size={24}
                       strokeWidth={2.5}
                       tokenUsage={latestTokenUsage}
@@ -3332,20 +3386,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div className="flex items-center gap-1">
-                      {/* Delegation mode indicator - show for spawn in chat mode only (multi-agent mode is self-evident) */}
-                      {!isMultiAgentMode && delegationMode !== 'off' && (
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <div className="p-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-default text-purple-500 dark:text-purple-400">
-                              <GitBranch className="w-3.5 h-3.5" />
-                            </div>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Simple delegation enabled (/nospawn to disable)</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      )}
-
                       {/* Multi-agent phase toggle: Plan / Exec */}
                       {isMultiAgentMode && (
                         <div className="flex items-center rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden text-xs font-medium">

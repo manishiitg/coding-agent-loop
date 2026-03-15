@@ -10,10 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"os"
+
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
+	"mcp-agent-builder-go/agent_go/pkg/skills"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -426,7 +429,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 
 	// Use the run folder passed from the frontend toolbar selection (if any).
 	// If empty, leave selectedRunFolder unset — the LLM will call list_runs and
-	// pick the appropriate iteration via execute_step's run_folder parameter.
+	// pick the appropriate iteration via execute_step's iteration parameter.
 	if runFolder != "" {
 		iwm.controller.selectedRunFolder = runFolder
 		iwm.controller.GetLogger().Info(fmt.Sprintf("📁 Using provided run folder: %s", runFolder))
@@ -510,10 +513,11 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 		"Chats",  // Allow reading chat history for context
 		"Plans",  // Allow reading plans for reference
 	}
-	// Write only to learnings — plan tools write to planning/ via workspace API (bypass guard)
+	// Write only to learnings and knowledgebase — plan tools write to planning/ via workspace API (bypass guard)
 	// Execution sub-agent handles runs/ writes via its own folder guard
 	writePaths := []string{
 		learningsPath,
+		knowledgebasePath,
 	}
 
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -536,7 +540,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 	// Agent config
 	config := iwm.controller.CreateStandardAgentConfigWithLLM("workflow-builder-agent", 100, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.UseToolSearchMode = false
+	config.UseToolSearchMode = true
 
 	// MCP Servers — use preset if available, else NoServers
 	selectedServers := iwm.controller.GetSelectedServers()
@@ -728,14 +732,14 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 ### Read-Only Info
 - **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types (execution, todo_task, conditional, decision, routing).
-- **get_workflow_config** — **Use this to see which MCP servers are available and which are selected.** Shows all discoverable MCP servers from the system config plus which ones are currently active in this workflow. Always use this tool when asked about MCP servers — do NOT explore the filesystem.
-- **get_llm_config** — Show current LLM configuration: workflow defaults (execution, learning), tiered config, and per-step overrides
+- **get_workflow_config** — **Use this to see the full workflow configuration.** Shows: MCP servers (selected + all available with descriptions), skills, secrets (names only), and LLM config (tiered allocation with fallbacks, preset defaults). Always use this tool when asked about MCP servers, skills, secrets, or LLM config — do NOT explore the filesystem.
+- **get_llm_config** — Show per-step LLM overrides from step_config.json (for workflow-level LLM config, use get_workflow_config instead)
 - **get_variables** — Read current variable definitions and group configurations
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
 - **extract_variables(text)** — Analyze text to identify hard-coded values that should become variables
 
 ### Workflow Config
-- **update_workflow_config(add_servers?, remove_servers?)** — Add or remove MCP servers from the workflow. Use get_workflow_config first to see available server names. Changes take effect immediately for subsequent step executions.
+- **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow config: add/remove MCP servers, skills, or secrets. Use get_workflow_config first to see available options. Changes take effect immediately for subsequent step executions.
 
 ### Plan Modification
 ### Plan Modification
@@ -963,12 +967,12 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 3. **Confirm with the user** which iteration and which group to use — do NOT assume or guess
    - Default suggestion: latest iteration + the group matching the user's request
    - Only use a different iteration if the user explicitly asks
-4. Once confirmed, pass both **run_folder** and **group_id** explicitly to every execute_step call
+4. Once confirmed, pass both **iteration** and **group_id** explicitly to every execute_step call
 
 **Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
 
 ### Running Steps
-1. User says "run step-X" → determine iteration + group first (see above) → call **execute_step("step-id", run_folder, group_id)** → get execution_id
+1. User says "run step-X" → determine iteration + group first (see above) → call **execute_step("step-id", iteration, group_id)** → get execution_id
 2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. Pass skip_learning=false to generate learnings. When learning is enabled, **success learnings run in background** (the next step starts immediately without waiting), while **failure learnings run sequentially** (needed before retry attempts).
 3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop. Move on to other work or wait.
 4. When the auto-notification arrives with the result — **always review the output**:
@@ -1081,8 +1085,8 @@ You are a workflow execution assistant. You help users run workflow steps intera
 
 ### Read-Only Info
 - **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types.
-- **get_workflow_config** — See available/selected MCP servers
-- **get_llm_config** — Show LLM configuration: defaults, tiered config, per-step overrides
+- **get_workflow_config** — See full workflow config: MCP servers (selected + available with descriptions), skills, secrets (names only), LLM config (tiered + defaults with fallbacks)
+- **get_llm_config** — Show per-step LLM overrides from step_config.json
 - **get_variables** — Read variable definitions and group configurations
 
 ### Shell & Human
@@ -1149,12 +1153,12 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 3. **Confirm with the user** which iteration and which group to use — do NOT assume or guess
    - Default suggestion: latest iteration + the group matching the user's request
    - Only use a different iteration if the user explicitly asks
-4. Once confirmed, pass both **run_folder** and **group_id** explicitly to every execute_step call
+4. Once confirmed, pass both **iteration** and **group_id** explicitly to every execute_step call
 
 **Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
 
 ### Running Steps
-1. User says "run step-X" (or "run all") → determine iteration + group first (see above) → call **execute_step("step-id", run_folder, group_id)** → get execution_id
+1. User says "run step-X" (or "run all") → determine iteration + group first (see above) → call **execute_step("step-id", iteration, group_id)** → get execution_id
 2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. If the user wants learnings generated, pass skip_learning=false explicitly. When learning is enabled, **success learnings run in background** (the next step starts immediately without waiting), while **failure learnings run sequentially** (needed before retry attempts).
 3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop.
 4. When the auto-notification arrives with the result — report it to the user clearly
@@ -1637,9 +1641,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			maxIter := iwm.controller.findMaxIterationNumber(iterations)
 			sb.WriteString(fmt.Sprintf("\n**Latest iteration**: iteration-%d\n", maxIter))
 			sb.WriteString(fmt.Sprintf("**Next new iteration**: iteration-%d\n", maxIter+1))
-			sb.WriteString("\nTo run on an existing iteration, pass `run_folder` to `execute_step` (e.g., `iteration-2/group-name`).\n")
-			sb.WriteString("To start a new iteration, pass the next iteration number (e.g., `iteration-3/group-name`).\n")
-			sb.WriteString("If omitted, `execute_step` auto-resolves to the latest iteration for the given group.")
+			sb.WriteString("\nTo run on an existing iteration, pass `iteration` to `execute_step` (e.g., `iteration-2`).\n")
+			sb.WriteString("To start a new iteration, pass the next iteration number (e.g., `iteration-3`).\n")
+			sb.WriteString("The run folder is auto-calculated from iteration + group.")
 
 			return sb.String(), nil
 		},
@@ -1731,9 +1735,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Optional variable group ID override (e.g., 'group-1'). If omitted, uses the group selected in the workspace toolbar. Use list_groups to see available groups.",
 				},
-				"run_folder": map[string]interface{}{
+				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional run folder override (e.g., 'iteration-3/xtech'). If omitted, auto-resolves to the latest iteration for the active group.",
+					"description": "Iteration folder name (e.g., 'iteration-3'). Use list_runs to see available iterations. The full run folder is auto-calculated from iteration + group.",
 				},
 				"skip_learning": map[string]interface{}{
 					"type":        "boolean",
@@ -1753,7 +1757,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Optional LLM tier override for this execution. 'high' = Tier 1 (most capable), 'medium' = Tier 2, 'low' = Tier 3 (fastest/cheapest). Overrides the default maturity-based tier selection. Only works in tiered mode.",
 				},
 			},
-			"required": []string{"step_id"},
+			"required": []string{"step_id", "iteration"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -1765,16 +1769,39 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "step_id must be a non-empty string", nil
 			}
 
-			// Extract optional group_id, run_folder, and skip_learning
+			// Extract group_id, iteration, and other options
 			groupIDRaw, _ := args["group_id"]
-			runFolderRaw, _ := args["run_folder"]
+			iterationRaw, _ := args["iteration"]
 			groupID, _ := groupIDRaw.(string)
-			runFolder, _ := runFolderRaw.(string)
+			iteration, _ := iterationRaw.(string)
 
 			// Fallback to session-level group from toolbar selection
 			if groupID == "" && len(iwm.controller.enabledGroupIDs) > 0 {
 				groupID = iwm.controller.enabledGroupIDs[0]
 			}
+
+			// Validate iteration is provided
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-3'). Use list_runs to see available iterations.", nil
+			}
+
+			// Build run_folder from iteration + group folder name
+			// Resolve group folder name from group_id (uses sanitized display name or group_id)
+			groupFolderName := groupID
+			if iwm.controller.variablesManifest != nil && groupID != "" {
+				for _, g := range iwm.controller.variablesManifest.Groups {
+					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
+						if g.DisplayName != "" {
+							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+							if sanitized != "" {
+								groupFolderName = sanitized
+							}
+						}
+						break
+					}
+				}
+			}
+			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
 
 			// skip_learning defaults to true for faster workshop iteration
 			skipLearning := true
@@ -1850,13 +1877,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					execCtx = context.WithValue(execCtx, WorkshopTierOverrideKey, execOpts.Tier)
 				}
 
+				// Resolve step title for the wrapper event (use plan step title if available)
+				stepDisplayName := stepID
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+						stepDisplayName = stepInfo.Step.GetTitle()
+					}
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepID),
+						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -1885,7 +1920,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepID),
+						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
 						Success:       err == nil,
 					}
 					if isOptimized {
@@ -3650,13 +3685,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				// Resolve step title for display
+				learningDisplayName := resolvedID
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedID); stepInfo != nil {
+						learningDisplayName = stepInfo.Step.GetTitle()
+					}
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Learning: %s", resolvedID),
+						AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -3683,7 +3726,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-step-learning",
-							AgentName:     fmt.Sprintf("Learning: %s", resolvedID),
+							AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
 							Success:       false,
 							Result:        fmt.Sprintf("Failed to create learning agent: %v", createErr),
 						}
@@ -3732,7 +3775,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Learning: %s", resolvedID),
+						AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
 						Success:       execErr == nil,
 					}
 					if execErr != nil {
@@ -3847,13 +3890,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				// Resolve step title for display
+				debugDisplayName := stepID
+				if iwm.controller.approvedPlan != nil {
+					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
+						debugDisplayName = stepInfo.Step.GetTitle()
+					}
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-debug",
-						AgentName:     fmt.Sprintf("Optimize: %s", stepID),
+						AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -3871,7 +3922,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-debug",
-						AgentName:     fmt.Sprintf("Optimize: %s", stepID),
+						AgentName:     fmt.Sprintf("Optimize: %s", debugDisplayName),
 						Success:       err == nil,
 					}
 					if err != nil {
@@ -4328,19 +4379,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_variables tool: %v", err))
 	}
 
-	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers + discoverable)
+	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_workflow_config",
-		"Show current workflow-level settings: selected MCP servers and all available/discoverable servers.",
+		"Show current workflow configuration: MCP servers (selected + all available with descriptions), skills, secrets (names only, no values), and LLM config (tiered allocation with fallbacks, preset defaults).",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			selected := iwm.controller.GetSelectedServers()
+			ctrl := iwm.controller
+			selected := ctrl.GetSelectedServers()
 			var sb strings.Builder
 			sb.WriteString("## Workflow Configuration\n\n")
 
+			// --- MCP Servers ---
 			sb.WriteString("### Selected MCP Servers\n")
 			if len(selected) == 0 {
 				sb.WriteString("No MCP servers selected for this workflow.\n")
@@ -4350,8 +4403,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
-			// Load all discoverable servers from MCP config
-			configPath := iwm.controller.GetMCPConfigPath()
+			// Load all discoverable servers from MCP config (with descriptions)
+			configPath := ctrl.GetMCPConfigPath()
 			if configPath != "" {
 				mergedCfg, err := mcpclient.LoadMergedConfig(configPath, nil)
 				if err == nil && mergedCfg != nil {
@@ -4363,16 +4416,121 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 						sb.WriteString("\n### All Available MCP Servers\n")
 						for _, s := range allServers {
+							desc := ""
+							if cfg, ok := mergedCfg.MCPServers[s]; ok && cfg.Description != "" {
+								desc = " — " + cfg.Description
+							}
 							if selectedSet[s] {
-								sb.WriteString(fmt.Sprintf("- %s ✓ (selected)\n", s))
+								sb.WriteString(fmt.Sprintf("- %s ✓ (selected)%s\n", s, desc))
 							} else {
-								sb.WriteString(fmt.Sprintf("- %s\n", s))
+								sb.WriteString(fmt.Sprintf("- %s%s\n", s, desc))
 							}
 						}
 					}
 				} else if err != nil {
 					sb.WriteString(fmt.Sprintf("\n_Could not load available servers: %v_\n", err))
 				}
+			}
+
+			// --- Skills ---
+			selectedSkills := ctrl.GetSelectedSkills()
+			selectedSkillSet := make(map[string]bool, len(selectedSkills))
+			for _, sk := range selectedSkills {
+				selectedSkillSet[sk] = true
+			}
+
+			sb.WriteString("\n### Selected Skills\n")
+			if len(selectedSkills) == 0 {
+				sb.WriteString("No skills selected for this workflow.\n")
+			} else {
+				for _, sk := range selectedSkills {
+					sb.WriteString(fmt.Sprintf("- **%s** — instructions at `skills/%s/SKILL.md`\n", sk, sk))
+				}
+			}
+
+			// Discover all available skills from workspace
+			workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
+			if workspaceAPIURL == "" {
+				workspaceAPIURL = "http://localhost:8081"
+			}
+			allSkills, discoverErr := skills.DiscoverSkills(workspaceAPIURL)
+			if discoverErr == nil && len(allSkills) > 0 {
+				sb.WriteString("\n### All Available Skills\n")
+				for _, sk := range allSkills {
+					desc := sk.Frontmatter.Description
+					if desc == "" {
+						desc = sk.Frontmatter.Name
+					}
+					if selectedSkillSet[sk.FolderName] {
+						sb.WriteString(fmt.Sprintf("- %s ✓ (selected) — %s\n", sk.FolderName, desc))
+					} else {
+						sb.WriteString(fmt.Sprintf("- %s — %s\n", sk.FolderName, desc))
+					}
+				}
+			} else if discoverErr != nil {
+				sb.WriteString(fmt.Sprintf("\n_Could not discover available skills: %v_\n", discoverErr))
+			}
+
+			// --- Secrets (names only) ---
+			secrets := ctrl.GetSecrets()
+			sb.WriteString("\n### Secrets\n")
+			if len(secrets) == 0 {
+				sb.WriteString("No secrets configured for this workflow.\n")
+			} else {
+				sb.WriteString("The following named credentials are configured (values hidden):\n")
+				for _, s := range secrets {
+					sb.WriteString(fmt.Sprintf("- **%s**\n", s.Name))
+				}
+			}
+
+			// --- LLM Configuration ---
+			sb.WriteString("\n### LLM Configuration\n")
+
+			// Tiered config
+			if ctrl.tierResolver != nil && ctrl.tierResolver.config != nil {
+				tc := ctrl.tierResolver.config
+				sb.WriteString("\n**Tiered Allocation (active)**:\n")
+				writeTierEntry := func(label string, cfg *AgentLLMConfig) {
+					if cfg == nil {
+						return
+					}
+					sb.WriteString(fmt.Sprintf("- **%s**: %s/%s", label, cfg.Provider, cfg.ModelID))
+					if len(cfg.Fallbacks) > 0 {
+						fallbackStrs := make([]string, len(cfg.Fallbacks))
+						for i, fb := range cfg.Fallbacks {
+							fallbackStrs[i] = fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID)
+						}
+						sb.WriteString(fmt.Sprintf(" → fallbacks: %s", strings.Join(fallbackStrs, ", ")))
+					}
+					sb.WriteString("\n")
+				}
+				writeTierEntry("Tier 1 (high)", tc.Tier1)
+				writeTierEntry("Tier 2 (medium)", tc.Tier2)
+				writeTierEntry("Tier 3 (low)", tc.Tier3)
+			}
+
+			// Preset-level defaults
+			sb.WriteString("\n**Preset Defaults**:\n")
+			writeLLMDefault := func(label string, llm *AgentLLMConfig) {
+				if llm != nil {
+					sb.WriteString(fmt.Sprintf("- **%s**: %s/%s", label, llm.Provider, llm.ModelID))
+					if len(llm.Fallbacks) > 0 {
+						fallbackStrs := make([]string, len(llm.Fallbacks))
+						for i, fb := range llm.Fallbacks {
+							fallbackStrs[i] = fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID)
+						}
+						sb.WriteString(fmt.Sprintf(" → fallbacks: %s", strings.Join(fallbackStrs, ", ")))
+					}
+					sb.WriteString("\n")
+				} else {
+					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
+				}
+			}
+			writeLLMDefault("Execution LLM", ctrl.presetExecutionLLM)
+			writeLLMDefault("Learning LLM", ctrl.presetLearningLLM)
+			writeLLMDefault("Phase LLM", ctrl.presetPhaseLLM)
+			if ctrl.presetPlanImprovementLLM != nil {
+				writeLLMDefault("Plan Improvement LLM", ctrl.presetPlanImprovementLLM)
 			}
 
 			return sb.String(), nil
@@ -4382,10 +4540,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_workflow_config tool: %v", err))
 	}
 
-	// Tool: update_workflow_config — add/remove MCP servers from the workflow
+	// Tool: update_workflow_config — add/remove MCP servers, skills, and secrets
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
-		"Add or remove MCP servers from the workflow. Changes take effect immediately for subsequent step executions.",
+		"Update workflow configuration: add/remove MCP servers, add/remove skills, enable/disable secrets. Use get_workflow_config first to see available options. Changes take effect immediately for subsequent step executions.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -4399,39 +4557,78 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "MCP server names to remove from the workflow",
 				},
+				"add_skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Skill folder names to add to the workflow (use get_workflow_config to see available skills)",
+				},
+				"remove_skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Skill folder names to remove from the workflow",
+				},
+				"add_secrets": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Secret names to add/enable for the workflow",
+				},
+				"remove_secrets": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Secret names to remove/disable from the workflow",
+				},
 			},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			current := iwm.controller.GetSelectedServers()
-			result := make([]string, len(current))
-			copy(result, current)
-			changed := false
+			var sb strings.Builder
+			anyChanged := false
 
-			// Add servers (skip duplicates)
-			if val, ok := args["add_servers"]; ok && val != nil {
-				if arr, ok := val.([]interface{}); ok {
+			// Helper to extract string array from args
+			extractStringArray := func(key string) []string {
+				val, ok := args[key]
+				if !ok || val == nil {
+					return nil
+				}
+				arr, ok := val.([]interface{})
+				if !ok {
+					return nil
+				}
+				result := make([]string, 0, len(arr))
+				for _, v := range arr {
+					if s, ok := v.(string); ok && s != "" {
+						result = append(result, s)
+					}
+				}
+				return result
+			}
+
+			// --- MCP Servers ---
+			addServers := extractStringArray("add_servers")
+			removeServers := extractStringArray("remove_servers")
+			if len(addServers) > 0 || len(removeServers) > 0 {
+				servers := iwm.controller.GetSelectedServers()
+				result := make([]string, len(servers))
+				copy(result, servers)
+				changed := false
+
+				if len(addServers) > 0 {
 					existSet := make(map[string]bool, len(result))
 					for _, s := range result {
 						existSet[s] = true
 					}
-					for _, v := range arr {
-						if s, ok := v.(string); ok && s != "" && !existSet[s] {
+					for _, s := range addServers {
+						if !existSet[s] {
 							result = append(result, s)
 							existSet[s] = true
 							changed = true
 						}
 					}
 				}
-			}
 
-			// Remove servers
-			if val, ok := args["remove_servers"]; ok && val != nil {
-				if arr, ok := val.([]interface{}); ok {
-					removeSet := make(map[string]bool, len(arr))
-					for _, v := range arr {
-						if s, ok := v.(string); ok {
-							removeSet[s] = true
-						}
+				if len(removeServers) > 0 {
+					removeSet := make(map[string]bool, len(removeServers))
+					for _, s := range removeServers {
+						removeSet[s] = true
 					}
 					filtered := result[:0]
 					for _, s := range result {
@@ -4443,24 +4640,132 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					result = filtered
 				}
-			}
 
-			if !changed {
-				return "No changes applied. Provide add_servers or remove_servers.", nil
-			}
-
-			iwm.controller.SetSelectedServers(result)
-
-			var sb strings.Builder
-			sb.WriteString("Workflow MCP servers updated.\n\n### Current Servers\n")
-			if len(result) == 0 {
-				sb.WriteString("No MCP servers configured.\n")
-			} else {
-				for _, s := range result {
-					sb.WriteString(fmt.Sprintf("- %s\n", s))
+				if changed {
+					iwm.controller.SetSelectedServers(result)
+					anyChanged = true
+					sb.WriteString("### MCP Servers (updated)\n")
+					if len(result) == 0 {
+						sb.WriteString("No MCP servers configured.\n")
+					} else {
+						for _, s := range result {
+							sb.WriteString(fmt.Sprintf("- %s\n", s))
+						}
+					}
+					logger.Info(fmt.Sprintf("Updated workflow MCP servers: %v", result))
 				}
 			}
-			logger.Info(fmt.Sprintf("Updated workflow MCP servers: %v", result))
+
+			// --- Skills ---
+			addSkills := extractStringArray("add_skills")
+			removeSkills := extractStringArray("remove_skills")
+			if len(addSkills) > 0 || len(removeSkills) > 0 {
+				currentSkills := iwm.controller.GetSelectedSkills()
+				result := make([]string, len(currentSkills))
+				copy(result, currentSkills)
+				changed := false
+
+				if len(addSkills) > 0 {
+					existSet := make(map[string]bool, len(result))
+					for _, s := range result {
+						existSet[s] = true
+					}
+					for _, s := range addSkills {
+						if !existSet[s] {
+							result = append(result, s)
+							existSet[s] = true
+							changed = true
+						}
+					}
+				}
+
+				if len(removeSkills) > 0 {
+					removeSet := make(map[string]bool, len(removeSkills))
+					for _, s := range removeSkills {
+						removeSet[s] = true
+					}
+					filtered := result[:0]
+					for _, s := range result {
+						if !removeSet[s] {
+							filtered = append(filtered, s)
+						} else {
+							changed = true
+						}
+					}
+					result = filtered
+				}
+
+				if changed {
+					iwm.controller.SetSelectedSkills(result)
+					anyChanged = true
+					sb.WriteString("\n### Skills (updated)\n")
+					if len(result) == 0 {
+						sb.WriteString("No skills configured.\n")
+					} else {
+						for _, s := range result {
+							sb.WriteString(fmt.Sprintf("- %s\n", s))
+						}
+					}
+					logger.Info(fmt.Sprintf("Updated workflow skills: %v", result))
+				}
+			}
+
+			// --- Secrets ---
+			addSecrets := extractStringArray("add_secrets")
+			removeSecrets := extractStringArray("remove_secrets")
+			if len(addSecrets) > 0 || len(removeSecrets) > 0 {
+				currentSecrets := iwm.controller.GetSecrets()
+				changed := false
+
+				if len(addSecrets) > 0 {
+					existSet := make(map[string]bool, len(currentSecrets))
+					for _, s := range currentSecrets {
+						existSet[s.Name] = true
+					}
+					for _, name := range addSecrets {
+						if !existSet[name] {
+							currentSecrets = append(currentSecrets, orchestrator.SecretEntry{Name: name, Value: ""})
+							existSet[name] = true
+							changed = true
+						}
+					}
+				}
+
+				if len(removeSecrets) > 0 {
+					removeSet := make(map[string]bool, len(removeSecrets))
+					for _, s := range removeSecrets {
+						removeSet[s] = true
+					}
+					filtered := currentSecrets[:0]
+					for _, s := range currentSecrets {
+						if !removeSet[s.Name] {
+							filtered = append(filtered, s)
+						} else {
+							changed = true
+						}
+					}
+					currentSecrets = filtered
+				}
+
+				if changed {
+					iwm.controller.SetSecrets(currentSecrets)
+					anyChanged = true
+					sb.WriteString("\n### Secrets (updated)\n")
+					if len(currentSecrets) == 0 {
+						sb.WriteString("No secrets configured.\n")
+					} else {
+						for _, s := range currentSecrets {
+							sb.WriteString(fmt.Sprintf("- %s\n", s.Name))
+						}
+					}
+					logger.Info(fmt.Sprintf("Updated workflow secrets: %d entries", len(currentSecrets)))
+				}
+			}
+
+			if !anyChanged {
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets.", nil
+			}
+
 			return sb.String(), nil
 		},
 		"workflow",

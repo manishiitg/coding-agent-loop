@@ -983,6 +983,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskRouteSelectedEvent(
 		}
 	}
 
+	// Extract preferred tier from context (set by call_sub_agent/call_generic_agent tools)
+	var preferredTier int
+	var preferredTierLabel string
+	if tier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && tier >= 1 && tier <= 3 {
+		preferredTier = tier
+		preferredTierLabel = TierLevelLabel(TierLevel(tier))
+	}
+
 	event := &TodoTaskRouteSelectedEvent{
 		BaseEventData: baseevents.BaseEventData{
 			Timestamp: time.Now(),
@@ -1004,6 +1012,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) emitTodoTaskRouteSelectedEvent(
 		AllTasksComplete:       response.AllTasksComplete,
 		ProgressSummary:        response.ProgressSummary,
 		Model:                  executionLLM,
+		PreferredTier:          preferredTier,
+		PreferredTierLabel:     preferredTierLabel,
 	}
 
 	agentEvent := &baseevents.AgentEvent{

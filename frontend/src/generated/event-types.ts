@@ -85,7 +85,6 @@ import type {
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
   RoutingEvaluatedEvent,
-  PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
@@ -238,7 +237,6 @@ export type EventTypeString =
   | 'step_progress_updated'
   | 'decision_evaluated'
   | 'routing_evaluated'
-  | 'prerequisite_navigation'
   | 'pre_validation_completed'
   | 'todo_steps_extracted'
   | 'variables_extracted'
@@ -365,7 +363,6 @@ export interface EventTypeToDataMap {
   'step_progress_updated': StepProgressUpdatedEvent;
   'decision_evaluated': DecisionEvaluatedEvent;
   'routing_evaluated': RoutingEvaluatedEvent;
-  'prerequisite_navigation': PrerequisiteNavigationEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
   'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
@@ -884,7 +881,6 @@ export type {
   StepProgressUpdatedEvent,
   DecisionEvaluatedEvent,
   RoutingEvaluatedEvent,
-  PrerequisiteNavigationEvent,
   TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,

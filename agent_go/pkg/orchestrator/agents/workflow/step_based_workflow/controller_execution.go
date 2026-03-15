@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	baseevents "github.com/manishiitg/mcpagent/events"
@@ -34,19 +32,6 @@ const KnowledgebaseFolderName = "knowledgebase"
 // Knowledgebase is at workspace root level (same as runs/, planning/, learnings/) to be shared across all runs
 func getKnowledgebasePath(workspaceRoot string) string {
 	return fmt.Sprintf("%s/%s", workspaceRoot, KnowledgebaseFolderName)
-}
-
-// PrerequisiteFailureError is a special error type that signals a prerequisite failure detected during execution
-// When this error is returned from a tool call, it triggers navigation to the prerequisite step
-type PrerequisiteFailureError struct {
-	DependsOnStepID string // Step ID to navigate back to
-	StepIndex       int    // 0-based step index (computed from step ID)
-	Reason          string // Reason for prerequisite failure
-	CleanupDone     bool   // Whether cleanup+archival was already performed (prevents duplicate cleanup)
-}
-
-func (e *PrerequisiteFailureError) Error() string {
-	return fmt.Sprintf("prerequisite failure detected: %s (navigate to step %s, index %d)", e.Reason, e.DependsOnStepID, e.StepIndex)
 }
 
 // isValidationFailure checks if validation failed (triggers human feedback)
@@ -476,250 +461,6 @@ func getLearningPathIdentifier(stepID string, stepPath string) string {
 
 // executeDecisionStep is now in controller_decision.go
 
-// PrerequisiteInfo represents information about prerequisite steps for validation
-type PrerequisiteInfo struct {
-	CurrentStepID               string                 `json:"current_step_id"`
-	CurrentStepIndex            int                    `json:"current_step_index"`
-	EnablePrerequisiteDetection bool                   `json:"enable_prerequisite_detection"`
-	PrerequisiteRules           []PrerequisiteRuleInfo `json:"prerequisite_rules"` // Array of prerequisite rules
-}
-
-// PrerequisiteRuleInfo represents information about a single prerequisite rule
-type PrerequisiteRuleInfo struct {
-	DependsOnStep      string             `json:"depends_on_step"`      // Step ID
-	Description        string             `json:"description"`          // User description for this rule
-	DependencyStepInfo DependencyStepInfo `json:"dependency_step_info"` // Info about the dependency step
-}
-
-// DependencyStepInfo represents information about a single dependency step
-type DependencyStepInfo struct {
-	StepID              string `json:"step_id"`               // Step ID
-	StepIndex           int    `json:"step_index"`            // 0-based index
-	StepTitle           string `json:"step_title"`            // Step title
-	IsCompleted         bool   `json:"is_completed"`          // Whether step is completed
-	ContextOutput       string `json:"context_output"`        // Context output file path
-	ContextOutputExists bool   `json:"context_output_exists"` // Whether context output file exists
-}
-
-// gatherPrerequisiteInfo gathers information about prerequisite steps for the current step
-func (hcpo *StepBasedWorkflowOrchestrator) gatherPrerequisiteInfo(
-	step PlanStepInterface,
-	stepIndex int,
-	allSteps []PlanStepInterface,
-	progress *StepProgress,
-	workspacePath string,
-) *PrerequisiteInfo {
-	// Check if prerequisite detection is enabled
-	agentConfigs := getAgentConfigs(step)
-	if agentConfigs == nil || agentConfigs.EnablePrerequisiteDetection == nil || !*agentConfigs.EnablePrerequisiteDetection {
-		return nil // Not enabled, return nil
-	}
-
-	// If allSteps is nil (e.g., in branch/conditional context), we can't gather prerequisite info
-	if allSteps == nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Prerequisite detection enabled for step %d but allSteps not available (branch/conditional context)", stepIndex+1))
-		return nil
-	}
-
-	// Get prerequisite rules
-	prerequisiteRules := agentConfigs.PrerequisiteRules
-	if len(prerequisiteRules) == 0 {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Prerequisite detection enabled for step %d but no prerequisite_rules configured", stepIndex+1))
-		return nil
-	}
-
-	// Create map of step ID to step index for quick lookup
-	stepIDToIndex := make(map[string]int)
-	for i, s := range allSteps {
-		stepID := s.GetID()
-		if stepID != "" {
-			stepIDToIndex[stepID] = i
-		}
-	}
-
-	// Create set of completed step indices for quick lookup
-	completedSet := make(map[int]bool)
-	for _, idx := range progress.CompletedStepIndices {
-		completedSet[idx] = true
-	}
-
-	// Gather info about each prerequisite rule
-	ruleInfos := make([]PrerequisiteRuleInfo, 0, len(prerequisiteRules))
-	for _, rule := range prerequisiteRules {
-		if rule.DependsOnStep == "" {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Prerequisite rule for step %d has empty depends_on_step, skipping", stepIndex+1))
-			continue
-		}
-
-		depStepID := rule.DependsOnStep
-		depStepIndex, exists := stepIDToIndex[depStepID]
-		if !exists {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Dependency step ID %s not found in plan steps", depStepID))
-			continue
-		}
-
-		// Validate: dependency step must be before current step
-		if depStepIndex >= stepIndex {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Dependency step %s (index %d) is not before current step %d, skipping", depStepID, depStepIndex, stepIndex))
-			continue
-		}
-
-		depStep := allSteps[depStepIndex]
-		isCompleted := completedSet[depStepIndex]
-
-		// Check if context output file exists
-		contextOutputExists := false
-		contextOutput := depStep.GetContextOutput().String()
-		if contextOutput != "" {
-			// Resolve context output path
-			contextOutputPath := filepath.Join(workspacePath, "execution", contextOutput)
-			if _, err := os.Stat(contextOutputPath); err == nil {
-				contextOutputExists = true
-			}
-		}
-
-		ruleInfos = append(ruleInfos, PrerequisiteRuleInfo{
-			DependsOnStep: depStepID,
-			Description:   rule.Description,
-			DependencyStepInfo: DependencyStepInfo{
-				StepID:              depStepID,
-				StepIndex:           depStepIndex,
-				StepTitle:           depStep.GetTitle(),
-				IsCompleted:         isCompleted,
-				ContextOutput:       contextOutput,
-				ContextOutputExists: contextOutputExists,
-			},
-		})
-	}
-
-	if len(ruleInfos) == 0 {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid prerequisite rules found for step %d", stepIndex+1))
-		return nil
-	}
-
-	return &PrerequisiteInfo{
-		CurrentStepID:               step.GetID(),
-		CurrentStepIndex:            stepIndex,
-		EnablePrerequisiteDetection: true,
-		PrerequisiteRules:           ruleInfos,
-	}
-}
-
-// formatPrerequisiteRulesForExecutionAgent formats prerequisite rules for the execution agent system prompt
-// This provides the LLM with information about available prerequisite rules and when to call the tool
-func (hcpo *StepBasedWorkflowOrchestrator) formatPrerequisiteRulesForExecutionAgent(prerequisiteInfo *PrerequisiteInfo) string {
-	if prerequisiteInfo == nil || len(prerequisiteInfo.PrerequisiteRules) == 0 {
-		return ""
-	}
-
-	var result strings.Builder
-	result.WriteString("## 🔄 Prerequisite Detection\n\n")
-	result.WriteString("**Prerequisite detection is enabled for this step.** If you detect that a prerequisite condition described below is met during execution, you can call the `detect_prerequisite_failure` tool to navigate back to the prerequisite step.\n\n")
-	result.WriteString("### Available Prerequisite Rules:\n\n")
-
-	for i, rule := range prerequisiteInfo.PrerequisiteRules {
-		result.WriteString(fmt.Sprintf("**Rule %d:**\n", i+1))
-		result.WriteString(fmt.Sprintf("- **Step ID**: `%s` (Step %d: %s)\n", rule.DependsOnStep, rule.DependencyStepInfo.StepIndex+1, rule.DependencyStepInfo.StepTitle))
-		result.WriteString(fmt.Sprintf("- **Condition**: %s\n", rule.Description))
-		result.WriteString("\n")
-	}
-
-	result.WriteString("### How to Use:\n")
-	result.WriteString("If you detect that one of the prerequisite conditions above is met during execution:\n")
-	result.WriteString("1. Call `detect_prerequisite_failure` with:\n")
-	result.WriteString("   - `depends_on_step_id`: The step ID from the matching rule (e.g., `\"step-0\"`)\n")
-	result.WriteString("   - `reason`: A brief explanation of why the prerequisite failure was detected\n")
-	result.WriteString("2. Execution will stop and automatically navigate back to the prerequisite step\n")
-	result.WriteString("3. The prerequisite step will be re-executed to restore the missing prerequisite\n\n")
-	result.WriteString("**Important**: Only call this tool if you are certain a prerequisite condition is met. If the failure is due to execution issues (not missing prerequisites), continue with normal execution.\n")
-
-	return result.String()
-}
-
-// createPrerequisiteDetectionTool creates a tool execution function for prerequisite detection
-// The returned function validates the step ID, cancels the execution context, and sends the error via channel
-func (hcpo *StepBasedWorkflowOrchestrator) createPrerequisiteDetectionTool(prerequisiteInfo *PrerequisiteInfo, allSteps []PlanStepInterface, currentStepIndex int, cancelFunc context.CancelFunc, prereqErrChan chan<- *PrerequisiteFailureError) func(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Create map of step ID to step index for validation
-	stepIDToIndex := make(map[string]int)
-	for i, s := range allSteps {
-		if s.GetID() != "" {
-			stepIDToIndex[s.GetID()] = i
-		}
-	}
-
-	// Create map of valid prerequisite step IDs (from rules)
-	validPrerequisiteStepIDs := make(map[string]PrerequisiteRuleInfo)
-	for _, rule := range prerequisiteInfo.PrerequisiteRules {
-		validPrerequisiteStepIDs[rule.DependsOnStep] = rule
-	}
-
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Extract parameters
-		dependsOnStepID, ok := args["depends_on_step_id"].(string)
-		if !ok || dependsOnStepID == "" {
-			return "", fmt.Errorf("depends_on_step_id parameter is required and must be a non-empty string")
-		}
-
-		reason, ok := args["reason"].(string)
-		if !ok || reason == "" {
-			return "", fmt.Errorf("reason parameter is required and must be a non-empty string")
-		}
-
-		// Validate step ID is in prerequisite rules
-		_, isValid := validPrerequisiteStepIDs[dependsOnStepID]
-		if !isValid {
-			validIDs := make([]string, 0, len(validPrerequisiteStepIDs))
-			for id := range validPrerequisiteStepIDs {
-				validIDs = append(validIDs, id)
-			}
-			return "", fmt.Errorf("invalid depends_on_step_id: %s. Valid prerequisite step IDs are: %v", dependsOnStepID, validIDs)
-		}
-
-		// Get step index
-		stepIndex, exists := stepIDToIndex[dependsOnStepID]
-		if !exists {
-			return "", fmt.Errorf("step ID %s not found in plan steps", dependsOnStepID)
-		}
-
-		// Validate: dependency step must be before current step
-		if stepIndex >= currentStepIndex {
-			return "", fmt.Errorf("prerequisite step %s (index %d) must be before current step %d", dependsOnStepID, stepIndex, currentStepIndex)
-		}
-
-		// Check max navigation distance (safety limit: 10 steps)
-		navigationDistance := currentStepIndex - stepIndex
-		if navigationDistance > 10 {
-			return "", fmt.Errorf("navigation distance %d exceeds maximum (10 steps)", navigationDistance)
-		}
-
-		// Create prerequisite failure error
-		prereqErr := &PrerequisiteFailureError{
-			DependsOnStepID: dependsOnStepID,
-			StepIndex:       stepIndex,
-			Reason:          reason,
-		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call: %s (navigate to step %s, index %d) - stopping execution immediately", reason, dependsOnStepID, stepIndex))
-
-		// Send error to channel (non-blocking)
-		select {
-		case prereqErrChan <- prereqErr:
-		default:
-			// Channel full or closed - log warning but continue
-			hcpo.GetLogger().Warn("⚠️ Prerequisite error channel full or closed, but continuing with cancellation")
-		}
-
-		// Cancel the execution context to stop agent immediately
-		if cancelFunc != nil {
-			cancelFunc()
-		}
-
-		// Return minimal response - execution will be stopped by context cancellation
-		return "", nil
-	}
-}
-
-
 // saveExecutionConversationLogs saves execution result, conversation history, and prompts to log files.
 // Called on both success and failure/cancellation paths so partial conversations from interrupted
 // executions can be inspected via debug_step or direct log file access.
@@ -775,7 +516,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 		}
 	}
 
-	// Save system prompt
+	// Save system prompt (overwrites the pre-execution save with the final rendered prompt)
 	var capturedSystemPrompt string
 	if executionAgent != nil {
 		if ba := executionAgent.GetBaseAgent(); ba != nil && ba.Agent() != nil {
@@ -787,6 +528,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 		"step_index":    stepIndex + 1,
 		"step_path":     stepPath,
 		"system_prompt": capturedSystemPrompt,
+		"saved_at":      "post_execution",
 		"timestamp":     time.Now().Format(time.RFC3339),
 	}
 	if promptsJSON, err := json.MarshalIndent(promptsData, "", "  "); err == nil {
@@ -1015,7 +757,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	progress *StepProgress,
 	isBranchStep bool, // true if this is a branch step (affects progress tracking)
 	execCtx *ExecutionContext, // Execution context with flags (skipHumanInput, fastExecuteMode, etc.)
-	allSteps []PlanStepInterface, // All steps in the plan (for prerequisite detection)
+	allSteps []PlanStepInterface, // All steps in the plan
 	isDecisionInnerStep bool, // true if this is the inner step of a decision step (skips final human feedback on success)
 	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step (nil if not routed from decision)
 	decisionEvaluationQuestion string, // Optional: evaluation question for decision inner steps (used to format output for LLM evaluation)
@@ -1039,11 +781,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	}
 
 	// Initialize variables for step execution.
-	// In single-step mode (workshop), allow 2 automatic retry attempts on validation
-	// failure before surfacing the error to the user.
-	maxRetryAttempts := 5
+	// Regular steps get 3 retries on pre-validation failure.
+	// Sub-agents and workshop single-step mode get 2 — if it can't fix in 2 tries,
+	// better to return to the orchestrator/user with feedback than burn more tokens.
+	maxRetryAttempts := 3
+	if isSubAgent {
+		maxRetryAttempts = 3
+	}
 	if hcpo.runSingleStepOnly {
-		maxRetryAttempts = 2
+		maxRetryAttempts = 3
 	}
 	var executionConversationHistory []llmtypes.MessageContent // Only used for learning agents after execution
 	stepCompleted := false
@@ -1075,7 +821,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using workflow/preset code execution mode: %v", isCodeExecutionMode))
 		}
 		// Determine tool search mode: Priority: step config > preset default
+		// Code execution mode and tool search mode are mutually exclusive
 		isToolSearchMode := hcpo.getToolSearchMode(agentConfigs)
+		if isCodeExecutionMode {
+			isToolSearchMode = false
+		}
 
 		// Always use learnings folder (unified folder for all learning types)
 		learningsPath := fmt.Sprintf("%s/learnings", hcpo.GetWorkspacePath())
@@ -1134,6 +884,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"FolderGuardReadPaths":  strings.Join(folderGuardReadPaths, ", "),  // Folder guard read paths for agent guidance
 			"FolderGuardWritePaths": strings.Join(folderGuardWritePaths, ", "), // Folder guard write paths for agent guidance
 			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),   // Skip cleanup mode flag for state verification prompt
+			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),  // Evaluation mode flag for eval-specific prompt guidance
 		}
 
 		// Add context dependencies with full execution paths (so agent knows exact file locations)
@@ -1205,9 +956,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 		// Build previous steps summary from completed steps (include execution outputs)
 		previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
-		templateVars["PreviousStepsSummary"] = previousStepsSummary
-		if previousStepsSummary != "" {
+
+		// Append workshop human input as critical feedback (passed via execute_step's human_input parameter)
+		if hcpo.interactiveWorkflowHumanInput != "" {
+			if previousStepsSummary == "" {
+				previousStepsSummary = "## 📋 Previous Steps Context\n\n"
+			}
+			previousStepsSummary += fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n")
+			previousStepsSummary += "The human provided the following instructions via the interactive workshop.\n"
+			previousStepsSummary += "**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n"
+			previousStepsSummary += fmt.Sprintf("```\n%s\n```\n", hcpo.interactiveWorkflowHumanInput)
 		}
+
+		templateVars["PreviousStepsSummary"] = previousStepsSummary
 
 		// Add validation schema to template variables so execution agent knows expected file structure
 		validationSchema := getValidationSchema(step)
@@ -1588,52 +1349,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				if isRetryAfterValidationFailure && hcpo.fallbackToOriginalLLMOnFailure {
 					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Validation failed on previous attempt - will use original LLM instead of temp override (fallback enabled)"))
 				}
-				// Gather prerequisite info if enabled (needed for tool registration and prompt)
-				var prerequisiteInfoForExecution *PrerequisiteInfo
-
-				// Prefer AgentConfigs flag if present; otherwise fall back to implicit enablement
-				// when prerequisite rules exist at the AgentConfigs level. PlanStepInterface now carries
-				// the top-level planning fields (EnablePrerequisiteDetection / PrerequisiteRules),
-				// but at execution time we rely on AgentConfigs only.
 				agentConfigs := getAgentConfigs(step)
-				enablePrereq := false
-				if agentConfigs != nil && agentConfigs.EnablePrerequisiteDetection != nil {
-					enablePrereq = *agentConfigs.EnablePrerequisiteDetection
-				} else if agentConfigs != nil && len(agentConfigs.PrerequisiteRules) > 0 {
-					enablePrereq = true
-				}
-
-				if enablePrereq {
-					var validationWorkspacePath string
-					if hcpo.selectedRunFolder != "" {
-						validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-					} else {
-						validationWorkspacePath = hcpo.GetWorkspacePath()
-					}
-
-					prerequisiteInfoForExecution = hcpo.gatherPrerequisiteInfo(step, stepIndex, allSteps, progress, validationWorkspacePath)
-
-					// Add prerequisite rules info to template variables for execution agent prompt
-					if prerequisiteInfoForExecution != nil {
-						templateVars["PrerequisiteRulesInfo"] = hcpo.formatPrerequisiteRulesForExecutionAgent(prerequisiteInfoForExecution)
-					} else {
-						templateVars["PrerequisiteRulesInfo"] = ""
-					}
-				} else {
-					templateVars["PrerequisiteRulesInfo"] = ""
-				}
-
-				// Create cancellable context for execution agent (to allow immediate stop on prerequisite failure)
-				executionCtx, cancelExecution := context.WithCancel(ctx)
-				defer cancelExecution()
-
-				// Channel to receive prerequisite failure errors from tool
-				prereqErrChan := make(chan *PrerequisiteFailureError, 1)
 
 				// Pass stepPath to createExecutionOnlyAgent - it will determine the correct execution folder (supports branch and sub-agent steps)
 				// For learnings / tempLLM selection, use the concrete step ID so sub-agents align with their own learnings folder.
 				// allSteps is already []PlanStepInterface - no conversion needed
-				executionAgent, err = hcpo.createExecutionOnlyAgent(executionCtx, "execution_only", stepPath, executionAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, prerequisiteInfoForExecution, allSteps, stepIndex, cancelExecution, prereqErrChan, step.GetID())
+				executionAgent, err = hcpo.createExecutionOnlyAgent(ctx, "execution_only", stepPath, executionAgentName, agentConfigs, isRetryAfterValidationFailure, retryAttempt, step.GetID())
 				if err != nil {
 					return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 				}
@@ -1646,19 +1367,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				default:
 				}
 
-				// Override prompt template var for CLI providers: use normal prompt (not code execution prompt)
-				// Code execution mode stays enabled technically (for HTTP bridge/tool routing), but the prompt
-				// should use normal instructions since CLI providers have their own tool-calling capabilities.
-				if executionAgent != nil && executionAgent.GetConfig() != nil {
-					provider := executionAgent.GetConfig().LLMConfig.Primary.Provider
-					if isCliProviderForPrompt(provider) {
-						templateVars["IsCodeExecutionMode"] = "false"
-						hcpo.GetLogger().Info(fmt.Sprintf("🔧 CLI provider '%s' - using normal prompt (code exec mode still enabled for tool routing)", provider))
+				// CLI providers (claude-code, gemini-cli) keep IsCodeExecutionMode=true because they ARE
+				// code execution environments. UseToolSearchMode is already false from agent factory.
+
+				// Pre-save prompts.json so get_step_prompts works during execution (not just after)
+				if eoa, ok := executionAgent.(*WorkflowExecutionOnlyAgent); ok {
+					preSystemPrompt := eoa.executionOnlySystemPromptProcessor(templateVars)
+					preUserMessage := eoa.executionOnlyUserMessageProcessor(templateVars)
+					var preExecLLM string
+					if executionAgent.GetConfig() != nil && executionAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
+						preExecLLM = fmt.Sprintf("%s/%s", executionAgent.GetConfig().LLMConfig.Primary.Provider, executionAgent.GetConfig().LLMConfig.Primary.ModelID)
 					}
+					fb := fmt.Sprintf("execution-attempt-%d-iteration-%d", retryAttempt, loopIterationCount)
+					hcpo.preSavePromptsJSON(stepIndex, stepPath, "execution_only", preSystemPrompt, preUserMessage, preExecLLM, fb+"-prompts.json")
 				}
 
 				// Execute execution-only agent with learning history (reused from learning reading above)
-				executionResult, executionConversationHistory, err = executionAgent.Execute(executionCtx, templateVars, []llmtypes.MessageContent{})
+				executionResult, executionConversationHistory, err = executionAgent.Execute(ctx, templateVars, []llmtypes.MessageContent{})
 
 				// Capture conversation history for callers that need it (e.g., get_sub_agent_conversation tool)
 				if execCtx != nil && execCtx.ConversationHistoryCapture != nil {
@@ -1677,114 +1402,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// Each turn consists of a user message and an assistant response (including tool calls)
 				turnCount := len(executionConversationHistory)
 
-				// Check for prerequisite failure (from tool call via channel)
-				var prereqErr *PrerequisiteFailureError
-				select {
-				case prereqErr = <-prereqErrChan:
-					// Prerequisite failure detected - tool called and context was canceled
-					hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite failure detected via tool call for step %d: %s (target step: %d)", stepIndex+1, prereqErr.Reason, prereqErr.StepIndex+1))
-				default:
-					// No prerequisite failure - check for other errors
-					if err != nil {
-						// Check if this is a prerequisite failure error (legacy check - should not happen with new implementation)
-						var legacyPrereqErr *PrerequisiteFailureError
-						if errors.As(err, &legacyPrereqErr) {
-							prereqErr = legacyPrereqErr
-						}
-					}
-				}
-
-				if prereqErr != nil {
-					// Prerequisite failure detected via tool call - trigger navigation
-					// Use step ID to find target step (more reliable than using computed index)
-					retryReason := prereqErr.Reason
-					targetStepID := prereqErr.DependsOnStepID
-					currentStepID := step.GetID()
-
-					// Find target step by ID in allSteps array
-					targetStepIndex := -1
-					if targetStepID != "" && allSteps != nil {
-						for idx, s := range allSteps {
-							if s.GetID() == targetStepID {
-								targetStepIndex = idx
-								break
-							}
-						}
-					}
-
-					// Validate target step was found
-					if targetStepIndex < 0 {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not find step with ID %s in allSteps, ignoring navigation", targetStepID))
-					} else if targetStepIndex >= stepIndex {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step index %d (ID: %s) is not before current step %d (ID: %s), ignoring navigation", targetStepIndex+1, targetStepID, stepIndex+1, currentStepID))
-					} else if allSteps != nil && targetStepIndex >= len(allSteps) {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid target step index %d (exceeds total steps %d), ignoring navigation", targetStepIndex, len(allSteps)))
-					} else {
-						// Check max navigation distance (safety limit: 10 steps)
-						navigationDistance := stepIndex - targetStepIndex
-						if navigationDistance > 10 {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Navigation distance %d exceeds maximum (10 steps), ignoring navigation", navigationDistance))
-						} else {
-							// Clean up progress from target step onward
-							if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-								hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to cleanup progress from step %d: %v", targetStepIndex+1, err), nil)
-								return "", updatedContextFiles, fmt.Errorf("failed to cleanup progress for prerequisite navigation: %w", err)
-							}
-
-							// Archive execution folders for target step and all subsequent steps
-							// This preserves execution artifacts for debugging while allowing clean re-execution
-							runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-							archivedCount := 0
-							for archiveIdx := targetStepIndex; archiveIdx <= stepIndex; archiveIdx++ {
-								stepNum := archiveIdx + 1 // archiveStepExecutionFolder uses 1-based step numbers
-								if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d during prerequisite navigation: %v (continuing)", stepNum, err))
-								} else {
-									archivedCount++
-								}
-							}
-							if archivedCount > 0 {
-								hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folders for %d steps (step-%d to step-%d) to run-%d during prerequisite navigation", archivedCount, targetStepIndex+1, stepIndex+1, runNumber))
-							}
-							// Save updated archival counts
-							if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
-							}
-
-							// Emit prerequisite navigation event
-							eventBridge := hcpo.GetContextAwareBridge()
-							if eventBridge != nil {
-								navigationEvent := &baseevents.PrerequisiteNavigationEvent{
-									BaseEventData: baseevents.BaseEventData{
-										Timestamp: time.Now(),
-										Component: "orchestrator",
-									},
-									FromStepIndex: stepIndex,
-									ToStepIndex:   targetStepIndex,
-									FromStepID:    currentStepID,
-									ToStepID:      targetStepID,
-									Reason:        retryReason,
-									FailureType:   "prerequisite",
-								}
-								eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
-									Type:      baseevents.PrerequisiteNavigation,
-									Timestamp: time.Now(),
-									Data:      navigationEvent,
-								})
-								hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted prerequisite_navigation event: step %d (ID: %s) → step %d (ID: %s) (%s)", stepIndex+1, currentStepID, targetStepIndex+1, targetStepID, retryReason))
-							}
-
-							// Mark cleanup as done so the main loop doesn't duplicate it
-							prereqErr.CleanupDone = true
-
-							// Return navigation error to restart from target step
-							// Wrap the PrerequisiteFailureError to preserve type information
-							return "", updatedContextFiles, fmt.Errorf("prerequisite failure detected: %s (navigate to step %d, ID: %s): %w", retryReason, targetStepIndex+1, targetStepID, prereqErr)
-						}
-					}
-					// If navigation validation failed, fall through to normal error handling
-				} else if err != nil {
-					// Other execution errors (not prerequisite failure)
+				if err != nil {
+					// Execution errors
 					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d execution failed (attempt %d): %v", stepIndex+1, retryAttempt, err))
 
 					// Save partial conversation history on failure/cancellation so users can inspect
@@ -1872,98 +1491,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 				} else {
-					// DEAD CODE: LLM validation is always disabled (enableLLMValidation is hardcoded false).
-					// Pre-validation (RunPreValidation) is active and runs above, before this block.
-					// Always validate step execution
+					// Run pre-validation (code-based structural checks)
 					hcpo.GetLogger().Info(fmt.Sprintf("🔍 Validating step %d execution (attempt %d)", stepIndex+1, retryAttempt))
 
-					// Reuse sanitized title from execution agent (already computed above)
-					validationAgentName := fmt.Sprintf("%s-validation-%s", stepPath, sanitizedTitle)
-					// Add loop iteration to validation agent name if in loop mode
-					if hasLoop(step) && loopIterationCount > 0 {
-						validationAgentName = fmt.Sprintf("%s-loop-%d", validationAgentName, loopIterationCount)
-					}
-					// Get step ID for validation agent
-					validationStepID := step.GetID()
-					validationAgent, err := hcpo.createValidationAgent(ctx, "validation", stepIndex+1, validationStepID, validationAgentName, agentConfigs)
-					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create validation agent for step %d: %v", stepIndex+1, err))
-						if retryAttempt >= maxRetryAttempts {
-							break // Exit retry loop - will proceed to human feedback
-						}
-						continue // Retry on next attempt
-					}
-
-					// Prepare validation template variables with individual fields
-					// Use run folder path if available
-					var validationWorkspacePath string
-					if hcpo.selectedRunFolder != "" {
-						validationWorkspacePath = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
-					} else {
-						validationWorkspacePath = hcpo.GetWorkspacePath()
-					}
-					validationTemplateVars := map[string]string{
-						"StepTitle":           step.GetTitle(),
-						"StepDescription":     step.GetDescription(),
-						"StepSuccessCriteria": step.GetSuccessCriteria(),
-						"StepContextOutput":   step.GetContextOutput().String(),
-						"WorkspacePath":       validationWorkspacePath,
-						"ExecutionHistory":    shared.FormatConversationHistory(executionConversationHistory),
-					}
-
-					// Add context dependencies as a comma-separated string
-					contextDeps := step.GetContextDependencies()
-					if len(contextDeps) > 0 {
-						validationTemplateVars["StepContextDependencies"] = strings.Join(contextDeps, ", ")
-					} else {
-						validationTemplateVars["StepContextDependencies"] = ""
-					}
-
-					// If in loop mode, pass loop condition to validation agent
-					if hasLoop(step) {
-						_, loopCondition, _, _ := getLoopFields(step)
-						validationTemplateVars["LoopCondition"] = loopCondition
-						hcpo.GetLogger().Info(fmt.Sprintf("🔍 Checking loop condition for step %d (iteration %d): %s", stepIndex+1, loopIterationCount, loopCondition))
-					} else {
-						validationTemplateVars["LoopCondition"] = ""
-					}
-
-					// Add decision context if this step was routed from a decision step
-					if decisionContext != nil {
-						decisionReasoning := fmt.Sprintf(
-							"## 🎯 Decision Context\n\n"+
-								"This step was routed from decision step **%d: %s**.\n\n"+
-								"**Decision Result**: %v\n"+
-								"**Decision Reasoning**: %s\n\n"+
-								"## 📋 Decision Step Execution Output\n\n"+
-								"The following is the execution output from the decision step's inner step that was evaluated:\n\n"+
-								"```\n%s\n```\n\n"+
-								"Use this context to understand why this step is being executed and what conditions led to routing here.",
-							decisionContext.DecisionStepIndex+1, // Convert to 1-based for display
-							decisionContext.DecisionStepTitle,
-							decisionContext.DecisionResult,
-							decisionContext.DecisionReasoning,
-							decisionContext.DecisionExecutionResult,
-						)
-						validationTemplateVars["DecisionReasoning"] = decisionReasoning
-					} else {
-						validationTemplateVars["DecisionReasoning"] = ""
-					}
-
-					// Prerequisite detection is handled by execution agent tool (detect_prerequisite_failure)
-					// No need to pass prerequisite info to validation agent
-
-					// Run pre-validation (code-based structural checks)
-					// Pass validation schema directly from step (no need to read plan.json)
-					// Use stepExecutionPath (step's execution folder) instead of validationWorkspacePath (run folder)
-					// Files to validate are in the step's execution folder, not the run folder root
+					// Use stepExecutionPath (step's execution folder) for file validation
 					validationSchema := getValidationSchema(step)
 					workspaceResults, err := RunPreValidation(ctx, validationSchema, stepExecutionPath, hcpo.BaseOrchestrator)
 					if err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for step %d: %v - blocking LLM validation", stepIndex+1, err))
-						// Pre-validation error means we can't verify structure - block LLM validation
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation error for step %d: %v", stepIndex+1, err))
 						workspaceResults = &WorkspaceVerificationResult{
-							OverallPass:  false, // Block on pre-validation errors
+							OverallPass:  false,
 							FilesChecked: []FileCheckResult{},
 							Summary: ValidationSummary{
 								TotalChecks:  0,
@@ -1988,16 +1525,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Pre-validation skipped for step %d (no validation schema provided)", stepIndex+1))
 					}
 
-					// Format pre-validation results and add to template variables
-					validationTemplateVars["WorkspaceVerificationResults"] = formatWorkspaceResults(workspaceResults)
-
 					// Emit pre-validation completed event
 					hcpo.emitPreValidationCompletedEvent(ctx, step, stepIndex, stepPath, isBranchStep, workspaceResults)
 
-					// If pre-validation failed, reject immediately without calling LLM validation
+					// Build validation response based on pre-validation results
 					if !workspaceResults.OverallPass {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for step %d - rejecting immediately without LLM validation", stepIndex+1))
-						// Create a failed validation response immediately
+						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for step %d", stepIndex+1))
 						validationResponse = &ValidationResponse{
 							IsSuccessCriteriaMet: false,
 							ExecutionStatus:      "FAILED",
@@ -2015,81 +1548,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							validationResponse.LoopReasoning = "Loop condition cannot be evaluated due to pre-validation failure"
 						}
 					} else {
-						// Pre-validation passed - check if we should skip LLM validation
-						agentConfigs := getAgentConfigs(step)
-
-						// Determine validation mode (default: "skip")
-						validationMode := "skip"
-						if agentConfigs != nil {
-							if agentConfigs.LLMValidationMode != "" {
-								validationMode = agentConfigs.LLMValidationMode
-							}
+						// Pre-validation passed
+						hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d pre-validation passed", stepIndex+1))
+						validationResponse = &ValidationResponse{
+							IsSuccessCriteriaMet: true,
+							ExecutionStatus:      "COMPLETED",
+							Reasoning:            formatWorkspaceResults(workspaceResults) + "\n\nPre-validation passed.",
+							Feedback:             []ValidationFeedback{},
 						}
-
-						shouldSkipLLMValidation := false
-						skipReason := ""
-
-						if validationMode == "skip" {
-							shouldSkipLLMValidation = true
-							skipReason = "configured to skip when pre-validation passes"
-						} else if validationMode == "auto" {
-							// Check if we have enough successful runs to trust pre-validation only
-							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
-							metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
-							if err == nil && metadata != nil {
-								totalSuccess := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
-								if totalSuccess >= 3 {
-									shouldSkipLLMValidation = true
-									skipReason = fmt.Sprintf("auto-skipped after %d successful runs (threshold: 3)", totalSuccess)
-								} else {
-									hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: %d/3 successful runs - running LLM validation", stepIndex+1, totalSuccess))
-								}
-							} else {
-								// If metadata fails or doesn't exist, default to running validation (safest)
-								hcpo.GetLogger().Info(fmt.Sprintf("🔍 Step %d auto-validation: No metadata found - running LLM validation", stepIndex+1))
-							}
-						}
-						// "always" mode falls through (shouldSkipLLMValidation = false)
-
-						if shouldSkipLLMValidation {
-							// Skip LLM validation and assume validation success
-							hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d pre-validation passed - skipping LLM validation (%s)", stepIndex+1, skipReason))
-							validationResponse = &ValidationResponse{
-								IsSuccessCriteriaMet: true,
-								ExecutionStatus:      "COMPLETED",
-								Reasoning:            formatWorkspaceResults(workspaceResults) + fmt.Sprintf("\n\nPre-validation passed - LLM validation skipped (%s).", skipReason),
-								Feedback:             []ValidationFeedback{},
-							}
-							if hasLoop(step) {
-								validationResponse.LoopConditionMet = true
-								validationResponse.LoopReasoning = fmt.Sprintf("Loop condition met (pre-validation passed, LLM validation skipped: %s)", skipReason)
-							}
-						} else {
-							// Pre-validation passed - proceed to LLM validation
-							// Check for context cancellation before validation
-							select {
-							case <-ctx.Done():
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step execution canceled before validation for step %d", stepIndex+1))
-								return "", updatedContextFiles, fmt.Errorf("step execution canceled: %w", ctx.Err())
-							default:
-							}
-
-							// Validate this step's execution using structured output
-							validationResponse, _, err = validationAgent.(*WorkflowValidationAgent).ExecuteStructured(ctx, validationTemplateVars, []llmtypes.MessageContent{})
-							if err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Step %d validation failed (attempt %d): %v", stepIndex+1, retryAttempt, err))
-								if retryAttempt >= maxRetryAttempts {
-									break // Exit retry loop - will proceed to human feedback with nil validationResponse
-								}
-								continue // Retry on next attempt
-							}
+						if hasLoop(step) {
+							validationResponse.LoopConditionMet = true
+							validationResponse.LoopReasoning = "Loop condition met (pre-validation passed)"
 						}
 					}
 
 					hcpo.GetLogger().Info(fmt.Sprintf("✅ Step %d validation completed successfully (attempt %d)", stepIndex+1, retryAttempt))
 
 					// Store validation response to workspace (if enabled)
-					if validationResponse != nil && hcpo.saveValidationResponses {
+					if validationResponse != nil {
 						// Increment validation counter for numbered files
 						validationCounter++
 						// Determine validation workspace path (same logic as validation agent)
@@ -2123,9 +1599,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						}
 					}
 				}
-
-				// Prerequisite detection is now handled by execution agent tool (detect_prerequisite_failure)
-				// No separate prerequisite detection agent needed - tool call stops execution immediately
 
 				// If in loop mode, check loop condition instead of full validation
 				if hasLoop(step) {
@@ -2185,12 +1658,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 							}
 							triggerReason := "Loop condition met (step completed successfully)"
-							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
-							if err != nil {
-								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
-							} else {
-								hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d", stepIndex+1))
-							}
+							// Run success learning in background so next step can start immediately
+							go func() {
+								bgCtx := context.Background()
+								err := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+								if err != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
+								} else {
+									hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d", stepIndex+1))
+								}
+							}()
 						} else {
 							skipReason := ""
 							if isFastExecuteStep {
@@ -2704,12 +2181,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							if hasLoop(step) {
 								triggerReason = "Loop condition met (step completed successfully)"
 							}
-							err = hcpo.runSuccessLearningPhase(ctx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
-						}
-						if err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
-						} else {
-							hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
+							// Run success learning in background so next step can start immediately
+							go func() {
+								bgCtx := context.Background()
+								bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+								if bgErr != nil {
+									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, bgErr))
+								} else {
+									hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
+								}
+							}()
 						}
 					} else {
 						// Failure Learning Agent - analyze what went wrong and provide refined task description
@@ -3737,107 +3218,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			continue
 		}
 
-		// Check if this is an orchestration step
-		if isOrchestrationStep(step) {
-			// Execute orchestration step - executes main step, evaluates output, routes to sub-agents, loops until success
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting orchestration step execution: %s", step.GetTitle()))
-			// Generate step path for regular orchestration step
-			orchestrationStepPath := fmt.Sprintf("step-%d", i+1)
-			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, execCtx, breakdownSteps, orchestrationStepPath)
-			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Orchestration step %d execution failed: %v", i+1, err), nil)
-				// Emit error event using centralized method
-				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "orchestration-step-execution", fmt.Sprintf("Execute orchestration step: %s", step.GetTitle()), err.Error(), i, iteration)
-				return fmt.Errorf("orchestration step %d execution failed: %w", i+1, err)
-			}
-
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step %d completed successfully: %s (SuccessCriteriaMet: %t)", i+1, step.GetTitle(), successCriteriaMet))
-
-			// Mark orchestration step as completed
-			hcpo.addCompletedStepIndex(progress, i)
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save progress after orchestration step: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: orchestration step %d marked as completed", i+1))
-			}
-
-			// Check if we're in single step mode and should stop
-			if hcpo.runSingleStepOnly && i == hcpo.singleStepTarget {
-				hcpo.GetLogger().Info(fmt.Sprintf("🎯 Single step mode: completed target step %d, stopping execution", i+1))
-				hcpo.SetRunSingleStepMode(false, -1) // Reset mode
-				break
-			}
-
-			// Handle next step navigation
-			if nextStepID == "end" {
-				// End workflow
-				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Orchestration step %d specified 'end' - terminating workflow", i+1))
-				break
-			} else if nextStepID != "" {
-				// Find target step by ID and jump to it
-				targetStepIndex := -1
-				for idx, s := range breakdownSteps {
-					if s.GetID() == nextStepID {
-						targetStepIndex = idx
-						break
-					}
-				}
-				if targetStepIndex >= 0 {
-					hcpo.GetLogger().Info(fmt.Sprintf("🔗 Jumping to step %d (ID: %s) as specified by next_step_id", targetStepIndex+1, nextStepID))
-
-					// When orchestration step routes to a step, we need to:
-					// 1. Remove target step AND all subsequent steps from completed list (they all depend on target step's output)
-					// 2. Delete execution folders for target step AND all subsequent steps
-					// This ensures a clean state for re-execution
-
-					// Use cleanupProgressFromStep to remove all steps from targetStepIndex onward from progress
-					// This also handles branch step cleanup and saves progress to steps_done.json
-					if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
-					} else {
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
-					}
-
-					// Archive execution folders for target step and all subsequent steps
-					// This preserves execution artifacts for debugging while allowing clean re-execution
-					runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-					archivedCount := 0
-					for stepNum := targetStepIndex + 1; stepNum <= len(breakdownSteps); stepNum++ {
-						if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d: %v (continuing)", stepNum, err))
-						} else {
-							archivedCount++
-							hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folder for step %d to run-%d", stepNum, runNumber))
-						}
-					}
-					if archivedCount > 0 {
-						hcpo.GetLogger().Info(fmt.Sprintf("✅ Archived execution folders for %d steps (step-%d to step-%d) to run-%d", archivedCount, targetStepIndex+1, len(breakdownSteps), runNumber))
-					}
-					// Save updated archival counts
-					if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
-					}
-
-					// Update startFromStep to allow execution from target step
-					// This prevents the skip check (i < startFromStep) from blocking execution
-					if targetStepIndex < startFromStep {
-						startFromStep = targetStepIndex
-						hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from routed step", startFromStep+1))
-					}
-
-					// Set loop index to jump to target step (subtract 1 because loop will increment)
-					i = targetStepIndex - 1
-					continue
-				} else {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step ID '%s' not found in plan - defaulting to next sequential step", nextStepID))
-					// Fall through to default behavior (continue to next step)
-				}
-			}
-
-			// Default: continue to next sequential step
-			continue
-		}
-
 		// Check if this is a todo task step
 		if isTodoTaskStep(step) {
 			// Execute todo task step - manages todo list and delegates to sub-agents
@@ -4100,7 +3480,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			progress,
 			false, // isBranchStep = false
 			execCtx,
-			breakdownSteps,           // allSteps - pass all steps for prerequisite detection
+			breakdownSteps,           // allSteps
 			false,                    // isDecisionInnerStep = false (regular step)
 			decisionCtx,              // decisionContext - nil if not routed from decision step
 			"",                       // decisionEvaluationQuestion - empty for regular steps
@@ -4109,93 +3489,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			nil,                      // orchestrationRoutes - nil for regular steps (not sub-agents)
 		)
 		if err != nil {
-			// Check if this is a prerequisite navigation error using errors.As to extract the struct
-			var prereqErr *PrerequisiteFailureError
-			if errors.As(err, &prereqErr) {
-				// Validate DependsOnStepID is not empty
-				if prereqErr.DependsOnStepID == "" {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Prerequisite error has empty DependsOnStepID, ignoring navigation"))
-				} else {
-					// Find target step by ID in breakdownSteps array
-					targetStepIndex := -1
-					for idx, s := range breakdownSteps {
-						if s.GetID() == prereqErr.DependsOnStepID {
-							targetStepIndex = idx
-							break
-						}
-					}
-
-					// Validate step was found and perform safety checks
-					if targetStepIndex < 0 {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not find step with ID %s in breakdownSteps, ignoring navigation", prereqErr.DependsOnStepID))
-					} else if targetStepIndex >= len(breakdownSteps) {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Invalid target step index %d (exceeds array length %d), ignoring navigation", targetStepIndex, len(breakdownSteps)))
-					} else if targetStepIndex >= i {
-						hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Target step index %d is not before current step %d, ignoring navigation", targetStepIndex+1, i+1))
-					} else {
-						// Safety check: navigation distance (max 10 steps)
-						navigationDistance := i - targetStepIndex
-						if navigationDistance > 10 {
-							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Navigation distance %d exceeds maximum (10 steps), ignoring navigation", navigationDistance))
-						} else {
-							hcpo.GetLogger().Info(fmt.Sprintf("🔄 Prerequisite navigation: restarting execution from step %d (ID: %s, reason: %s)", targetStepIndex+1, prereqErr.DependsOnStepID, prereqErr.Reason))
-
-							// Only perform cleanup+archival if not already done by the inner execution function
-							if prereqErr.CleanupDone {
-								hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleanup+archival already done by inner execution function, skipping duplicate"))
-							} else {
-								// Clean up progress from target step onward to ensure it gets re-executed
-								// This removes the target step and all subsequent steps from the completed list
-								if err := hcpo.cleanupProgressFromStep(ctx, targetStepIndex, progress); err != nil {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to cleanup progress from step %d: %v (continuing anyway)", targetStepIndex+1, err))
-								} else {
-									hcpo.GetLogger().Info(fmt.Sprintf("🔄 Cleaned up progress: removed step %d and all subsequent steps from completed list", targetStepIndex+1))
-								}
-
-								// Archive execution folders for target step and all subsequent steps
-								// This preserves execution artifacts for debugging while allowing clean re-execution
-								runNumber := hcpo.getNextArchivalRunNumber(ctx, progress, targetStepIndex+1)
-								archivedCount := 0
-								for archiveIdx := targetStepIndex; archiveIdx <= i; archiveIdx++ {
-									stepNum := archiveIdx + 1 // archiveStepExecutionFolder uses 1-based step numbers
-									if err := hcpo.archiveStepExecutionFolder(ctx, stepNum, runNumber); err != nil {
-										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive execution folder for step %d during prerequisite navigation: %v (continuing)", stepNum, err))
-									} else {
-										archivedCount++
-									}
-								}
-								if archivedCount > 0 {
-									hcpo.GetLogger().Info(fmt.Sprintf("📦 Archived execution folders for %d steps (step-%d to step-%d) to run-%d during prerequisite navigation", archivedCount, targetStepIndex+1, i+1, runNumber))
-								}
-								// Save updated archival counts
-								if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save archival counts: %v", err))
-								}
-							}
-
-							// Reset execution results to only include steps up to target step
-							// This ensures the target step doesn't see stale results from later steps
-							if targetStepIndex < len(previousExecutionResults) {
-								previousExecutionResults = previousExecutionResults[:targetStepIndex]
-								hcpo.GetLogger().Info(fmt.Sprintf("🔄 Reset previousExecutionResults to %d entries (removed results from step %d onward)", len(previousExecutionResults), targetStepIndex+1))
-							}
-
-							// Update startFromStep to ensure target step isn't skipped by the startFromStep check
-							// This prevents the step from being skipped if targetStepIndex < startFromStep
-							if targetStepIndex < startFromStep {
-								startFromStep = targetStepIndex
-								hcpo.GetLogger().Info(fmt.Sprintf("🔄 Updated startFromStep to %d to allow execution from prerequisite target step", startFromStep+1))
-							}
-
-							// Update loop index to restart from target step (subtract 1 because loop will increment)
-							i = targetStepIndex - 1
-							// Continue to restart the loop from target step
-							continue
-						}
-					}
-				}
-			}
-
 			hcpo.GetLogger().Error(fmt.Sprintf("❌ Step %d execution failed: %v", i+1, err), nil)
 			// Emit step_progress_updated (failed) event
 			stepTitle := step.GetTitle()

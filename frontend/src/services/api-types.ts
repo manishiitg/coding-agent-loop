@@ -747,9 +747,15 @@ export interface UpdateChatSessionRequest {
 }
 
 // Preset LLM Configuration types
+export interface AgentLLMFallback {
+  provider: string
+  model_id: string
+}
+
 export interface AgentLLMConfig {
   provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli'
   model_id: string
+  fallbacks?: AgentLLMFallback[]
 }
 
 export interface PresetLLMConfig {
@@ -759,7 +765,6 @@ export interface PresetLLMConfig {
 
   // New: Agent-specific default models (takes priority over legacy fields)
   execution_llm?: AgentLLMConfig        // Default for execution agents
-  validation_llm?: AgentLLMConfig       // Default for validation agents
   learning_llm?: AgentLLMConfig         // Default for learning agents
   phase_llm?: AgentLLMConfig            // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 

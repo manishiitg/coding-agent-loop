@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, AlertTriangle, Zap, Lock, ArrowDownToLine, ArrowUpFromLine, SkipForward, Search } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Play, Settings, Code, Terminal, Zap, Lock, ArrowDownToLine, ArrowUpFromLine, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -77,7 +77,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
-  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
+  const { id, title, decision_evaluation_question, decision_step, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, isOrphan } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { capabilities } = useCapabilitiesStore()
   const setWorkspaceMinimized = useAppStore(state => state.setWorkspaceMinimized)
@@ -109,8 +109,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   type AgentConfigsType = {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
-    enable_prerequisite_detection?: boolean
-    prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
     conditional_llm?: { provider?: string; model_id?: string }
     execution_llm?: { provider?: string; model_id?: string }
     learning_llm?: { provider?: string; model_id?: string }
@@ -122,7 +120,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    llm_validation_mode?: string
   }
   const innerStep = decision_step as { agent_configs?: AgentConfigsType } | undefined
   const outerStep = step as { agent_configs?: AgentConfigsType }
@@ -432,11 +429,11 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
   }, [workspacePath, selectedRunFolder, highlightFile, setShowFileContent, fetchFiles, setWorkspaceMinimized, setSelectedFile, setFileContent, setLoadingFileContent, setError])
 
   return (
-    <div className={`relative w-[260px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+    <div className={`relative w-[260px] ${changeType ? changeHighlightStyles[changeType] : ''} ${isOrphan ? 'border-dashed border-2 border-amber-400 dark:border-amber-500 rounded-xl' : ''}`}>
       {/* Header with buttons - above the diamond */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
-        {onRunFromStep ? (
+        {onRunFromStep && !isOrphan ? (
           <button
             onClick={handleRunClick}
             disabled={isRunDisabled}
@@ -448,8 +445,8 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
               }
             `}
             title={
-              isExecuting 
-                ? 'Execution in progress...' 
+              isExecuting
+                ? 'Execution in progress...'
                 : `Run step ${stepIndex + 1} only`
             }
           >
@@ -484,20 +481,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             <Code className="w-3.5 h-3.5" />
           </div>
         )}
-        {/* Prerequisite Detection Badge */}
-        {stepConfig?.agent_configs?.enable_prerequisite_detection && (
-          <div 
-            className="flex items-center gap-1 px-2 py-1 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
-            title={
-              stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0
-                ? `Prerequisite detection enabled. ${stepConfig.agent_configs.prerequisite_rules.length} rule(s) configured`
-                : 'Prerequisite detection enabled'
-            }
-          >
-            <AlertTriangle className="w-3 h-3" />
-            <span>Prereq</span>
-          </div>
-        )}
         {/* Lock Learnings Badge */}
         {lockLearnings && (
           <div 
@@ -505,15 +488,6 @@ export const DecisionNode = memo(({ data, selected }: DecisionNodeProps) => {
             title="Learnings are locked - learning agent will not run but existing learnings will be used"
           >
             <Lock className="w-3.5 h-3.5" />
-          </div>
-        )}
-        {/* Validation Skipped Badge */}
-        {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
-          <div 
-            className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800"
-            title="LLM validation will be skipped if pre-validation passes"
-          >
-            <SkipForward className="w-3.5 h-3.5" />
           </div>
         )}
       </div>

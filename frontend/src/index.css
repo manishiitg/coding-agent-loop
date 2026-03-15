@@ -1266,42 +1266,65 @@
 }
 
 /* ===== CUSTOM SCROLLBAR STYLING ===== */
-/* Thin, light scrollbars for better aesthetics */
-* {
+/* Thin, light scrollbars for better aesthetics - only on scrollable elements */
+*[class*="overflow-y-auto"],
+*[class*="overflow-x-auto"],
+*[class*="overflow-auto"] {
   scrollbar-width: thin;
   scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
 }
 
 /* Webkit scrollbar styling (Chrome, Safari, Edge) */
-*::-webkit-scrollbar {
+.custom-scrollbar::-webkit-scrollbar,
+[class*="overflow-y-auto"]::-webkit-scrollbar,
+[class*="overflow-x-auto"]::-webkit-scrollbar,
+[class*="overflow-auto"]::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
 
-*::-webkit-scrollbar-track {
+.custom-scrollbar::-webkit-scrollbar-track,
+[class*="overflow-y-auto"]::-webkit-scrollbar-track,
+[class*="overflow-x-auto"]::-webkit-scrollbar-track,
+[class*="overflow-auto"]::-webkit-scrollbar-track {
   background: transparent;
 }
 
-*::-webkit-scrollbar-thumb {
+.custom-scrollbar::-webkit-scrollbar-thumb,
+[class*="overflow-y-auto"]::-webkit-scrollbar-thumb,
+[class*="overflow-x-auto"]::-webkit-scrollbar-thumb,
+[class*="overflow-auto"]::-webkit-scrollbar-thumb {
   background-color: rgba(156, 163, 175, 0.5);
   border-radius: 2px;
   border: none;
 }
 
-*::-webkit-scrollbar-thumb:hover {
+.custom-scrollbar::-webkit-scrollbar-thumb:hover,
+[class*="overflow-y-auto"]::-webkit-scrollbar-thumb:hover,
+[class*="overflow-x-auto"]::-webkit-scrollbar-thumb:hover,
+[class*="overflow-auto"]::-webkit-scrollbar-thumb:hover {
   background-color: rgba(156, 163, 175, 0.7);
 }
 
 /* Dark mode scrollbar */
-.dark * {
+.dark [class*="overflow-y-auto"],
+.dark [class*="overflow-x-auto"],
+.dark [class*="overflow-auto"],
+.dark .custom-scrollbar {
   scrollbar-color: rgba(107, 114, 128, 0.5) transparent;
 }
 
-.dark *::-webkit-scrollbar-thumb {
+.dark .custom-scrollbar::-webkit-scrollbar-thumb,
+.dark [class*="overflow-y-auto"]::-webkit-scrollbar-thumb,
+.dark [class*="overflow-x-auto"]::-webkit-scrollbar-thumb,
+.dark [class*="overflow-auto"]::-webkit-scrollbar-thumb {
   background-color: rgba(107, 114, 128, 0.5);
 }
 
-.dark *::-webkit-scrollbar-thumb:hover {
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover,
+.dark [class*="overflow-y-auto"]::-webkit-scrollbar-thumb:hover,
+.dark [class*="overflow-x-auto"]::-webkit-scrollbar-thumb:hover,
+.dark [class*="overflow-auto"]::-webkit-scrollbar-thumb:hover {
   background-color: rgba(107, 114, 128, 0.7);
 }
 

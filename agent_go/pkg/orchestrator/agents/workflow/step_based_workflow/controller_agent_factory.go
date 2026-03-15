@@ -432,39 +432,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) getExecutionMaxTurns(stepConfig *Agen
 	return maxTurns
 }
 
-// resolveStepID resolves the step ID from stepPath, stepIDOverride, or allSteps
-// Priority: stepIDOverride > allSteps lookup > stepPath fallback
-func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverride string, allSteps []PlanStepInterface, currentStepIndex int) string {
-	stepID := stepIDOverride
-	pathInfo := parseStepPath(stepPath)
-	stepIndexForCheck := pathInfo.ParentStepNumber - 1 // Convert to 0-based
-
-	if stepID == "" {
-		// Try to get step ID from allSteps
-		if allSteps != nil && stepIndexForCheck >= 0 && stepIndexForCheck < len(allSteps) {
-			// Default: use the step's own ID
-			stepID = allSteps[stepIndexForCheck].GetID()
-
-			// Special case: decision step execution (step-{N}-decision)
-			// DecisionPlanStep is now flattened - learnings are stored under the step's own ID
-			if strings.HasSuffix(stepPath, "-decision") {
-				decisionContainerStep := allSteps[currentStepIndex]
-				// DecisionPlanStep is flattened - use the step's ID directly
-				if decisionStep, ok := decisionContainerStep.(*DecisionPlanStep); ok {
-					stepID = decisionStep.GetID()
-				}
-				// stepID already set above from allSteps[stepIndexForCheck].GetID()
-			}
-		}
+// resolveStepID resolves the step ID from stepIDOverride or falls back to stepPath
+// Priority: stepIDOverride > stepPath fallback
+func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverride string) string {
+	if stepIDOverride != "" {
+		return stepIDOverride
 	}
 
-	// If we still couldn't get step ID, use stepPath as fallback (will use old format)
-	if stepID == "" {
-		stepID = stepPath // Fallback: use stepPath as identifier
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not determine step ID for %s, using stepPath as fallback", stepPath))
-	}
-
-	return stepID
+	hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not determine step ID for %s, using stepPath as fallback", stepPath))
+	return stepPath
 }
 
 // selectExecutionLLM selects the LLM config with cascading fallback logic
@@ -619,13 +595,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				Provider: stepConfig.ExecutionLLM.Provider,
 				ModelID:  stepConfig.ExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
+			Fallbacks: convertAgentFallbacks(stepConfig.ExecutionLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 	}
 
 	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
 	// Maturity-based tier resolution when no explicit step override is set.
-	if hcpo.useTieredMode && hcpo.tierResolver != nil {
+	if hcpo.tierResolver != nil {
+		// Workshop execute_step tier override (e.g., execute_step(step_id, tier="medium"))
+		if workshopTier, ok := ctx.Value(WorkshopTierOverrideKey).(int); ok && workshopTier >= 1 && workshopTier <= 3 {
+			tier := TierLevel(workshopTier)
+			llmConfig := hcpo.tierResolver.ResolveTier(tier)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Workshop tier override: Tier %d (%s) for step %s: %s/%s",
+					workshopTier, TierLevelLabel(tier), stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			}
+			return llmConfig
+		}
 		if preferredTier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && preferredTier >= 1 && preferredTier <= 3 {
 			tier := TierLevel(preferredTier)
 			llmConfig := hcpo.tierResolver.ResolveTier(tier)
@@ -644,7 +631,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			}
 			return llmConfig
 		}
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+		// Evaluation mode defaults to medium tier — eval steps are verification checks
+		// that don't need the most powerful model. Step config can still override via ExecutionLLM (step 3).
+		if hcpo.isEvaluationMode {
+			llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
+			if llmConfig != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Evaluation step %s defaulting to Tier 2 (Medium): %s/%s",
+					stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			}
+			return llmConfig
+		}
+		learningMode := ""
+		if stepConfig != nil {
+			learningMode = stepConfig.LearningMode
+		}
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
 		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
 		if llmConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
@@ -662,7 +663,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 				Provider: hcpo.presetExecutionLLM.Provider,
 				ModelID:  hcpo.presetExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
+			Fallbacks: convertAgentFallbacks(hcpo.presetExecutionLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 	}
 
@@ -718,6 +720,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 		// Rule 1: CLI providers always use code execution mode
 		config.UseCodeExecutionMode = true
 		config.UseToolSearchMode = false
+		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for CLI provider '%s' - MCP tools accessed via HTTP bridge", actualProvider))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
 		// Rule 2: Step explicitly set code execution mode
@@ -852,136 +855,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareWorkspaceToolsOnly() ([]llmtyp
 	)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Prepared %d learning agent tools (execute_shell_command + diff_patch, no human tools)", len(tools)))
 	return tools, executors
-}
-
-// addPrerequisiteDetectionTool adds prerequisite detection tool if prerequisite detection is enabled
-// This must be called AFTER the agent is created, as it directly registers the tool on the mcpAgent
-func (hcpo *StepBasedWorkflowOrchestrator) addPrerequisiteDetectionTool(
-	prerequisiteInfo *PrerequisiteInfo,
-	allSteps []PlanStepInterface,
-	currentStepIndex int,
-	cancelFunc context.CancelFunc,
-	prereqErrChan chan<- *PrerequisiteFailureError,
-	agentName string,
-	mcpAgent *mcpagent.Agent,
-) error {
-	if prerequisiteInfo == nil || len(prerequisiteInfo.PrerequisiteRules) == 0 {
-		return nil // No prerequisite detection needed
-	}
-
-	toolExecutor := hcpo.createPrerequisiteDetectionTool(prerequisiteInfo, allSteps, currentStepIndex, cancelFunc, prereqErrChan)
-	toolParams := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"depends_on_step_id": map[string]interface{}{
-				"type":        "string",
-				"description": "Step ID from one of the prerequisite rules to navigate back to (e.g., \"step-0\")",
-			},
-			"reason": map[string]interface{}{
-				"type":        "string",
-				"description": "Brief explanation of why the prerequisite failure was detected, matching the condition described in the prerequisite rule",
-			},
-		},
-		"required": []string{"depends_on_step_id", "reason"},
-	}
-
-	toolDescription := "Detect a prerequisite failure and navigate back to a prerequisite step. Call this tool when you detect that a prerequisite condition (as described in the prerequisite rules) is met during execution. Execution will stop and automatically navigate back to the specified prerequisite step."
-
-	// Use "structured_output" category so it's always available even in code execution mode
-	if err := mcpAgent.RegisterCustomTool(
-		"detect_prerequisite_failure",
-		toolDescription,
-		toolParams,
-		toolExecutor,
-		"structured_output",
-	); err != nil {
-		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to register prerequisite detection tool: %v", err), nil)
-		return err
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Registered prerequisite detection tool for %s agent", agentName))
-	return nil
-}
-
-// selectValidationLLM selects the LLM config for validation agents
-// Priority: step config > preset default
-func (hcpo *StepBasedWorkflowOrchestrator) selectValidationLLM(stepConfig *AgentConfigs) *orchestrator.LLMConfig {
-	// STEP-SPECIFIC OVERRIDE: If step has explicit ValidationLLM, it takes highest precedence
-	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Step has explicit ValidationLLM - overriding tiered mode: %s/%s",
-			stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.ValidationLLM.Provider,
-				ModelID:  stepConfig.ValidationLLM.ModelID,
-			},
-			APIKeys: hcpo.GetAPIKeys(),
-		}
-	}
-
-	// TIERED MODE: Bypass all manual selection logic
-	if hcpo.useTieredMode && hcpo.tierResolver != nil {
-		llmConfig, tier := hcpo.tierResolver.ResolveForValidation()
-		if llmConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Validation agent using Tier %d (%s): %s/%s",
-				int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-		}
-		return llmConfig
-	}
-
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if stepConfig != nil && stepConfig.ValidationLLM != nil && stepConfig.ValidationLLM.Provider != "" && stepConfig.ValidationLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific validation LLM: %s/%s", stepConfig.ValidationLLM.Provider, stepConfig.ValidationLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.ValidationLLM.Provider,
-				ModelID:  stepConfig.ValidationLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-	} else if hcpo.presetValidationLLM != nil && hcpo.presetValidationLLM.Provider != "" && hcpo.presetValidationLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default validation LLM: %s/%s", hcpo.presetValidationLLM.Provider, hcpo.presetValidationLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetValidationLLM.Provider,
-				ModelID:  hcpo.presetValidationLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-	} else {
-		err := fmt.Errorf("no valid LLM configuration found for validation agent: step config and preset validation LLM are both empty or invalid")
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for validation agent: step config and preset validation LLM are both empty or invalid", err)
-		return nil
-	}
-}
-
-// getValidationMaxTurns determines max turns for validation agents
-// Fixed to 25 (not configurable)
-func (hcpo *StepBasedWorkflowOrchestrator) getValidationMaxTurns(stepConfig *AgentConfigs) int {
-	return 25
-}
-
-// setupValidationFolderGuard sets up folder guard paths for validation agents (read-only)
-func (hcpo *StepBasedWorkflowOrchestrator) setupValidationFolderGuard() (readPaths, writePaths []string) {
-	baseWorkspacePath := hcpo.GetWorkspacePath()
-	// Use run folder if available, otherwise use base workspace (backward compatibility)
-	var runWorkspacePath string
-	if hcpo.selectedRunFolder != "" {
-		runWorkspacePath = fmt.Sprintf("%s/runs/%s", baseWorkspacePath, hcpo.selectedRunFolder)
-	} else {
-		runWorkspacePath = baseWorkspacePath
-	}
-	executionPath := fmt.Sprintf("%s/execution", runWorkspacePath)
-
-	// Validation agent only reads - no write permissions needed
-	// Read access to execution folder (for step outputs) and knowledgebase folder (for reference data) if enabled
-	readPaths = []string{executionPath}
-	if hcpo.UseKnowledgebase() {
-		knowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
-		readPaths = append(readPaths, knowledgebasePath)
-	}
-	writePaths = []string{} // No write permissions - validation agent only reads and returns structured JSON
-	return readPaths, writePaths
 }
 
 // setupConditionalFolderGuard sets up folder guard paths for conditional agents
@@ -1161,8 +1034,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 	}
 
 	// ── 4. TIERED MODE ───────────────────────────────────────────────────────
-	if hcpo.useTieredMode && hcpo.tierResolver != nil {
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+	if hcpo.tierResolver != nil {
+		learningMode := ""
+		if stepConfig != nil {
+			learningMode = stepConfig.LearningMode
+		}
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
 		llmConfig, tier := hcpo.tierResolver.ResolveForLearning(maturity)
 		if llmConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Learning agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
@@ -1236,20 +1113,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // isRetryAfterValidationFailure: if true and fallbackToOriginalLLMOnFailure is enabled, will skip tempOverrideLLM and use original LLM
 // stepPath: Step path identifier (e.g., "step-1" for regular steps, "step-3-if-true-0" for branch steps, "step-2-sub-agent-1" for sub-agents)
 // retryAttempt: current retry attempt number (1 = first attempt, 2 = second attempt, etc.) - used for cascading LLM fallback
-// prerequisiteInfo: Prerequisite information for this step (nil if prerequisite detection is disabled)
-// allSteps: All steps in the plan (required if prerequisiteInfo is not nil)
-// currentStepIndex: 0-based index of current step (required if prerequisiteInfo is not nil)
 // stepIDOverride: Optional explicit step ID to use for learnings / tempLLM selection (e.g., sub-agent step ID).
 //
-//	When empty, the step ID will be derived from allSteps based on stepPath as before.
-func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, prerequisiteInfo *PrerequisiteInfo, allSteps []PlanStepInterface, currentStepIndex int, cancelFunc context.CancelFunc, prereqErrChan chan<- *PrerequisiteFailureError, stepIDOverride string) (agents.OrchestratorAgent, error) {
+//	When empty, the step ID will be derived from stepPath.
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, isRetryAfterValidationFailure bool, retryAttempt int, stepIDOverride string) (agents.OrchestratorAgent, error) {
 	// 1. Resolve stepID first (needed for folder guard setup)
-	stepID := hcpo.resolveStepID(stepPath, stepIDOverride, allSteps, currentStepIndex)
+	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
 
 	// 2. Check if learnings exist for this step (needed for folder guard setup)
 	hasLearnings := false
 	if ctx != nil {
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, currentStepIndex, stepPath)
+		pathInfo := parseStepPath(stepPath)
+		stepIndexForLearnings := pathInfo.ParentStepNumber - 1
+		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, stepID, stepIndexForLearnings, stepPath)
 		if err == nil {
 			hasLearnings = !learningsEmpty
 		}
@@ -1340,7 +1216,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		return nil, fmt.Errorf("failed to create and setup execution-only agent: %w", err)
 	}
 
-	// 7. Post-setup: prerequisite tool and folder guard (after base factory setup)
+	// 7. Post-setup: folder guard (after base factory setup)
 	// Note: Base factory already updates code execution registry, but we need to set folder guard paths
 	// on mcpAgent first, then update registry again with correct paths
 	baseAgent := agent.GetBaseAgent()
@@ -1350,19 +1226,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
 		return nil, fmt.Errorf("mcp agent is nil after creation for %s - this should never happen", agentName)
-	}
-
-	// Add prerequisite detection tool if needed (must be called after agent creation)
-	// CRITICAL: If prerequisite detection is enabled, tool registration failure is fatal
-	// The agent needs this tool to detect and handle prerequisite failures correctly
-	if err := hcpo.addPrerequisiteDetectionTool(prerequisiteInfo, allSteps, currentStepIndex, cancelFunc, prereqErrChan, agentName, mcpAgent); err != nil {
-		// Check if prerequisite detection is actually enabled (not just nil prerequisiteInfo)
-		if prerequisiteInfo != nil && len(prerequisiteInfo.PrerequisiteRules) > 0 {
-			// Prerequisite detection is enabled but tool registration failed - this is critical
-			return nil, fmt.Errorf("failed to register prerequisite detection tool for %s (prerequisite detection is enabled): %w", agentName, err)
-		}
-		// Prerequisite detection not enabled, just log warning
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to add prerequisite detection tool: %v", err))
 	}
 
 	// Add skill prompt if skills are selected (uses effectiveSkills from folder guard setup above)
@@ -1426,81 +1289,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
-		// Log warning but don't fail agent creation
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
-	}
-
-	return agent, nil
-}
-
-// createValidationAgent creates a validation agent for the current iteration
-// Deprecated: LLM validation is disabled (enableLLMValidation is hardcoded to false in controller_execution.go).
-// Only pre-validation (code-based structural checks via RunPreValidation) is active.
-// This function is dead code — kept for backward compatibility only.
-func (hcpo *StepBasedWorkflowOrchestrator) createValidationAgent(ctx context.Context, phase string, step int, stepID string, agentName string, stepConfig *AgentConfigs) (agents.OrchestratorAgent, error) {
-	// 1. Setup folder guard (read-only for validation agents)
-	readPaths, writePaths := hcpo.setupValidationFolderGuard()
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for validation agent - Read paths: %v, Write paths: %v (read-only, no file writes)", readPaths, writePaths))
-
-	// 2. Determine settings (extracted methods)
-	maxTurns := hcpo.getValidationMaxTurns(stepConfig)
-	llmConfig := hcpo.selectValidationLLM(stepConfig)
-	if llmConfig == nil {
-		return nil, fmt.Errorf("no valid LLM configuration found for validation agent: step config and preset validation LLM are both empty or invalid")
-	}
-
-	// 3. Create config
-	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-
-	// Validation agents always use NoServers (pure LLM validation agent)
-	config.ServerNames = []string{mcpclient.NoServers} // No MCP servers needed - pure LLM validation agent
-
-	// Code execution mode and tool search mode only apply to execution agents, not validation agents
-	// Use the agent's ACTUAL provider (from its LLM config), not the phase LLM provider.
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
-		Provider: config.LLMConfig.Primary.Provider,
-		ModelID:  config.LLMConfig.Primary.ModelID,
-	})
-	config.UseToolSearchMode = false
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Validation agent code execution mode: %v (provider: %s)", config.UseCodeExecutionMode, config.LLMConfig.Primary.Provider))
-
-	// Set EnableContextOffloading if specified
-	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
-		config.EnableContextOffloading = stepConfig.EnableContextOffloading
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
-	}
-
-	// Setup Downloads folder for browser tools (Playwright or agent-browser)
-	// Use shared function to ensure all agent types set the override correctly if they use Playwright
-	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
-
-	// 4. Prepare custom tools (filtered by step config)
-	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
-
-	// 5. Use base factory! (This handles all setup automatically)
-	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
-		ctx,
-		config,
-		phase,
-		step,
-		0,      // iteration
-		stepID, // Step ID
-		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowValidationAgent(cfg, logger, tracer, eventBridge)
-		},
-		toolsToRegister,
-		executorsToUse,
-		false, // overwriteSystemPrompt
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create and setup validation agent: %w", err)
-	}
-
-	// 6. Post-setup: folder guard paths
-	// Note: Validation agents typically don't use code execution mode (unless provider requires it),
-	// so base factory usually won't update registry
-	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
 		// Log warning but don't fail agent creation
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for %s: %v", agentName, err))
 	}
@@ -1783,180 +1571,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	return agent, nil
 }
 
-// createOrchestrationOrchestratorAgent creates an orchestration orchestrator agent using the standard factory pattern
-// This agent executes the main orchestration step (orchestration and delegation, not direct execution)
-// Note: Folder guard paths should be set by the caller before calling this function (see controller_orchestration.go)
-func (hcpo *StepBasedWorkflowOrchestrator) createOrchestrationOrchestratorAgent(ctx context.Context, phase string, step, iteration int, stepID string, agentName string, stepConfig *AgentConfigs, orchestrationLLMConfig *orchestrator.LLMConfig) (agents.OrchestratorAgent, error) {
-	// Orchestration orchestrator agent needs folder guard (can write files)
-	// Note: Folder guard is set by caller in controller_orchestration.go before agent creation
-	// We apply it to the agent here via post-setup
-
-	// Determine max turns: use orchestrator default
-	maxTurns := hcpo.GetMaxTurns()
-
-	// Determine LLM config: Priority: step config > preset default
-	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-	if orchestrationLLMConfig != nil && orchestrationLLMConfig.Primary.Provider != "" && orchestrationLLMConfig.Primary.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: orchestrationLLMConfig.Primary.Provider,
-				ModelID:  orchestrationLLMConfig.Primary.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator LLM: %s/%s", orchestrationLLMConfig.Primary.Provider, orchestrationLLMConfig.Primary.ModelID))
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		llmConfig = &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
-			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for orchestration orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for orchestration orchestrator agent: step config and preset execution LLM are both empty or invalid")
-	}
-
-	// Create agent config with custom LLM if needed
-	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatText, llmConfig)
-
-	workflowServersOrchestration := hcpo.GetSelectedServers()
-	// Use step-specific servers filtered against workflow-level servers (workflow is the hard cap)
-	if stepConfig != nil && stepConfig.SelectedServers != nil && len(stepConfig.SelectedServers) > 0 {
-		filtered := filterServersByWorkflow(stepConfig.SelectedServers, workflowServersOrchestration)
-		config.ServerNames = filtered
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator servers (workflow-filtered): %v → %v", stepConfig.SelectedServers, filtered))
-	} else {
-		// Use orchestrator defaults when stepConfig is nil or SelectedServers is empty
-		config.ServerNames = normalizeServerNames(workflowServersOrchestration)
-		if stepConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but SelectedServers is empty - using orchestrator defaults: %v", config.ServerNames))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config not found - using orchestrator defaults: %v", config.ServerNames))
-		}
-	}
-	if stepConfig != nil && len(stepConfig.SelectedTools) > 0 {
-		filtered := filterToolsByWorkflow(stepConfig.SelectedTools, workflowServersOrchestration)
-		config.SelectedTools = filtered
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific orchestration orchestrator tools (workflow-filtered): %v → %v", stepConfig.SelectedTools, filtered))
-	} else {
-		config.SelectedTools = hcpo.GetSelectedTools()
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator default orchestration orchestrator tools: %v", config.SelectedTools))
-	}
-
-	// Determine execution mode using 3-rule priority:
-	// Rule 1: claude-code/gemini-cli providers ALWAYS use code execution mode
-	// Rule 2: Step-specific config (if explicitly set)
-	// Rule 3: Workflow/preset default (code execution only for CLI providers)
-	orchestrationProvider := config.LLMConfig.Primary.Provider
-	if orchestrationProvider == "claude-code" || orchestrationProvider == "gemini-cli" {
-		config.UseCodeExecutionMode = true
-		config.UseToolSearchMode = false
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for orchestration agent CLI provider '%s'", orchestrationProvider))
-	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
-		config.UseCodeExecutionMode = *stepConfig.UseCodeExecutionMode
-		if config.UseCodeExecutionMode && stepConfig.UseToolSearchMode == nil {
-			config.UseToolSearchMode = false
-		} else {
-			config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
-		}
-		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific code execution mode for orchestration agent: %v, tool search mode: %v", config.UseCodeExecutionMode, config.UseToolSearchMode))
-	} else {
-		config.UseCodeExecutionMode = false
-		config.UseToolSearchMode = hcpo.getToolSearchMode(stepConfig)
-		config.PreDiscoveredTools = hcpo.getPreDiscoveredTools(stepConfig)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Orchestration agent provider '%s': code execution mode disabled, tool search mode: %v", orchestrationProvider, config.UseToolSearchMode))
-	}
-
-	// Set EnableContextOffloading if specified
-	if stepConfig != nil && stepConfig.EnableContextOffloading != nil {
-		config.EnableContextOffloading = stepConfig.EnableContextOffloading
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific context offloading setting: %v", *stepConfig.EnableContextOffloading))
-	}
-
-	// Setup Downloads folder for browser tools (Playwright or agent-browser)
-	// CRITICAL FIX (Jan 2026): Orchestrator agents can also use Playwright (e.g., step 3 has SelectedServers: [playwright]).
-	// If the orchestrator agent creates the Playwright connection first, it must set the correct Downloads path override
-	// before creating the connection, otherwise all subsequent agents will reuse the wrong connection.
-	// Use shared function to ensure both execution and orchestrator agents set the override correctly.
-	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
-
-	// Prepare custom tools and executors
-	var toolsToRegister []llmtypes.Tool
-	var executorsToUse map[string]interface{}
-
-	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
-		// Filter tools based on unified format (category:tool or category:*)
-		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
-			hcpo.WorkspaceTools,
-			hcpo.WorkspaceToolExecutors,
-			stepConfig.EnabledCustomTools,
-		)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools for orchestration orchestrator agent: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
-	} else {
-		toolsToRegister = hcpo.WorkspaceTools
-		executorsToUse = hcpo.WorkspaceToolExecutors
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for orchestration orchestrator agent: %d tools", len(toolsToRegister)))
-	}
-
-	// Filter out human tools if "no human" execution mode is active
-	execOpts := hcpo.GetExecutionOptions()
-	if execOpts != nil && (execOpts.ExecutionStrategy == ExecutionStrategyStartFromBeginningNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman || execOpts.ExecutionStrategy == ExecutionStrategyFastExecuteAll) {
-		var filteredTools []llmtypes.Tool
-		filteredExecutors := make(map[string]interface{})
-
-		for _, tool := range toolsToRegister {
-			// Check if this tool is a human tool by looking at its category
-			if hcpo.ToolCategories != nil {
-				if category, exists := hcpo.ToolCategories[tool.Function.Name]; exists && category == "human" {
-					// Skip human tools in "no human" mode
-					hcpo.GetLogger().Info(fmt.Sprintf("🔧 Excluding human tool '%s' from orchestration orchestrator agent (no human mode)", tool.Function.Name))
-					continue
-				}
-			}
-			filteredTools = append(filteredTools, tool)
-			// Also filter executors
-			if executor, exists := executorsToUse[tool.Function.Name]; exists {
-				filteredExecutors[tool.Function.Name] = executor
-			}
-		}
-
-		toolsToRegister = filteredTools
-		executorsToUse = filteredExecutors
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered out human tools for orchestration orchestrator agent (no human mode): %d tools remaining", len(toolsToRegister)))
-	}
-
-	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
-	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
-		ctx,
-		config,
-		phase,
-		step,
-		iteration,
-		stepID, // Step ID
-		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowOrchestrationOrchestratorAgent(cfg, logger, tracer, eventBridge)
-		},
-		toolsToRegister, // Pass workspace tools (filtered by step config if specified)
-		executorsToUse,  // Pass workspace tool executors
-		false,           // Don't overwrite system prompt - orchestration orchestrator agent manages its own prompt
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create orchestration orchestrator agent: %w", err)
-	}
-
-	// Post-setup: folder guard paths (orchestration orchestrator agent may use code execution mode, so registry update may be needed)
-	// Note: Folder guard paths are already set on orchestrator by caller, but we need to apply them to the agent
-	if err := hcpo.applyPostSetupToAgent(agent, agentName, config.UseCodeExecutionMode); err != nil {
-		return nil, fmt.Errorf("failed to apply post-setup to orchestration orchestrator agent: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created orchestration orchestrator agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
-	return agent, nil
-}
 
 // ConversationEntry is a single flattened message in the sub-agent's conversation
 type ConversationEntry struct {
@@ -2175,7 +1789,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
 	if subAgentExecCtx != nil {
 		// Determine if dynamic tier selection is enabled for sub-agent tools
-		enableTierSelection := hcpo.useTieredMode && subAgentExecCtx.TodoTaskStep != nil
+		enableTierSelection := hcpo.tierResolver != nil && subAgentExecCtx.TodoTaskStep != nil
 		if enableTierSelection {
 			stepConfig := getAgentConfigs(subAgentExecCtx.TodoTaskStep)
 			enableTierSelection = stepConfig != nil &&
@@ -2688,8 +2302,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 }
 
 // selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents
-// Priority: presetExecutionLLM only
+// Priority: tiered medium > presetExecutionLLM > orchestrator fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
+	// Prefer tiered medium — scoring is analysis, not generation
+	if hcpo.tierResolver != nil {
+		llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
+		if llmConfig != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ Using Tier 2 (Medium) for evaluation scoring: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+			return llmConfig, nil
+		}
+	}
+
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 
 	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
@@ -2699,30 +2322,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orches
 				Provider: hcpo.presetExecutionLLM.Provider,
 				ModelID:  hcpo.presetExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys: orchestratorLLMConfig.APIKeys,
 		}, nil
-	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for evaluation scoring agent: presetExecutionLLM is empty or invalid")
 	}
+
+	if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator LLM for evaluation scoring: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
+		return orchestratorLLMConfig, nil
+	}
+
+	return nil, fmt.Errorf("no valid LLM configuration found for evaluation scoring agent")
 }
 
-// createEvaluationScoringAgent creates an evaluation scoring agent using the standard factory pattern
-// This agent analyzes evaluation step outputs and calculates scores based on success criteria
-func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, step *EvaluationStep, executionOutput string) (agents.OrchestratorAgent, *EvaluationStepScore, error) {
+// createEvaluationScoringAgent creates a single scoring agent that scores ALL evaluation steps
+// at once. It registers submit_score (called per step) and submit_summary (called once at the end).
+func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx context.Context, phase string, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput) (*EvaluationReport, error) {
 	agentName := "evaluation-scoring-agent"
 
-	// Select LLM config using presetExecutionLLM priority
+	// Select LLM config
 	llmConfig, err := hcpo.selectEvaluationScoringLLM()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// Create agent config
-	maxTurns := 5 // Fixed max turns for scoring agent
+	maxTurns := 100
 	config := hcpo.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
 
-	// Scoring agents always use NoServers (pure LLM analysis agent)
-	// Use the agent's ACTUAL provider, not the phase LLM provider.
 	config.ServerNames = []string{mcpclient.NoServers}
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(&AgentLLMConfig{
 		Provider: config.LLMConfig.Primary.Provider,
@@ -2730,70 +2355,53 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 	})
 	config.UseToolSearchMode = false
 
-	// Setup Downloads folder for browser tools (Playwright or agent-browser)
-	// Use shared function to ensure all agent types set the override correctly if they use Playwright
-	// Note: Evaluation scoring agents use NoServers, but we call this for consistency and safety
 	hcpo.setupBrowserDownloadsPathOverride(ctx, config, nil)
 
-	// Variable to capture the score from the tool
-	var capturedScore *EvaluationStepScore
+	// Build step lookup for title/criteria resolution
+	stepLookup := make(map[string]*EvaluationStep)
+	for _, step := range evaluationPlan.Steps {
+		stepLookup[step.ID] = step
+	}
 
-	// Create a cancellable context to break conversation as soon as submit_score tool is called
-	// This prevents the zero candidates error by stopping the conversation loop immediately after the tool call
-	toolCalledCtx, cancelToolCalled := context.WithCancel(ctx)
-	defer cancelToolCalled()
+	// Captured scores and summary
+	var capturedScores []*EvaluationStepScore
+	var capturedSummary string
+	expectedScores := len(stepInputs)
 
-	// Use base factory to create agent with proper event bridging
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
 		config,
 		phase,
-		0,     // step (not used for scoring agents)
-		0,     // iteration (not used for scoring agents)
-		phase, // stepID (use phase name for phase-only agents)
+		0, 0, phase,
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowEvaluationScoringAgent(cfg, logger, tracer, eventBridge)
 		},
-		nil,  // no additional tools to register
-		nil,  // no additional executors
-		true, // overwrite system prompt
+		nil, nil, true,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create and setup evaluation scoring agent: %w", err)
+		return nil, fmt.Errorf("failed to create evaluation scoring agent: %w", err)
 	}
 
-	// Register the submit_score tool on the created agent
 	baseAgent := agent.GetBaseAgent()
 	if baseAgent == nil {
-		return nil, nil, fmt.Errorf("base agent is nil after creation for %s", agentName)
+		return nil, fmt.Errorf("base agent is nil after creation")
 	}
 	mcpAgent := baseAgent.Agent()
 	if mcpAgent == nil {
-		return nil, nil, fmt.Errorf("mcp agent is nil after creation for %s", agentName)
+		return nil, fmt.Errorf("mcp agent is nil after creation")
 	}
 
+	// submit_score — called once per step
 	mcpAgent.RegisterCustomTool(
 		"submit_score",
-		"Submit the evaluation score for this step. You MUST call this tool with your analysis.",
+		"Submit the evaluation score for one step. Call this once per evaluation step.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"step_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The ID of the evaluation step",
-				},
-				"score": map[string]interface{}{
-					"type":        "integer",
-					"description": "The score (0, 5, or 10 based on success criteria)",
-				},
-				"reasoning": map[string]interface{}{
-					"type":        "string",
-					"description": "Brief explanation of why this score was assigned",
-				},
-				"evidence": map[string]interface{}{
-					"type":        "string",
-					"description": "Key evidence from the execution output supporting this score",
-				},
+				"step_id":   map[string]interface{}{"type": "string", "description": "The ID of the evaluation step"},
+				"score":     map[string]interface{}{"type": "integer", "description": "Score (0-10 based on success criteria)"},
+				"reasoning": map[string]interface{}{"type": "string", "description": "Why this score was assigned"},
+				"evidence":  map[string]interface{}{"type": "string", "description": "Key evidence from the output"},
 			},
 			"required": []string{"step_id", "score", "reasoning", "evidence"},
 		},
@@ -2804,61 +2412,86 @@ func (hcpo *StepBasedWorkflowOrchestrator) createEvaluationScoringAgent(ctx cont
 			reasoning, _ := args["reasoning"].(string)
 			evidence, _ := args["evidence"].(string)
 
-			capturedScore = &EvaluationStepScore{
+			stepTitle := stepID
+			stepCriteria := ""
+			if s, ok := stepLookup[stepID]; ok {
+				stepTitle = s.Title
+				stepCriteria = s.SuccessCriteria
+			}
+
+			capturedScores = append(capturedScores, &EvaluationStepScore{
 				StepID:          stepID,
-				StepTitle:       step.Title,
+				StepTitle:       stepTitle,
 				Score:           score,
 				MaxScore:        10,
 				Reasoning:       reasoning,
 				Evidence:        evidence,
-				SuccessCriteria: step.SuccessCriteria,
+				SuccessCriteria: stepCriteria,
+			})
+
+			remaining := expectedScores - len(capturedScores)
+			hcpo.GetLogger().Info(fmt.Sprintf("📊 Score captured: %s = %d/10 (%d remaining)", stepID, score, remaining))
+
+			if remaining > 0 {
+				return fmt.Sprintf("Score submitted: %d/10 for %s. %d steps remaining — continue scoring.", score, stepID, remaining), nil
 			}
-
-			// Cancel the context to break the conversation immediately after capturing the score
-			// This prevents the zero candidates error by stopping the conversation loop
-			cancelToolCalled()
-
-			return fmt.Sprintf("Score submitted: %d/10 for step %s", score, stepID), nil
+			return fmt.Sprintf("Score submitted: %d/10 for %s. All steps scored! Now call submit_summary.", score, stepID), nil
 		},
 		"structured_output",
 	)
 
-	// Cast to concrete type and set up user message processor
+	// submit_summary — called once after all scores
+	mcpAgent.RegisterCustomTool(
+		"submit_summary",
+		"Submit the overall evaluation summary after scoring all steps. Call this ONCE after all submit_score calls.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"summary": map[string]interface{}{
+					"type":        "string",
+					"description": "Holistic evaluation summary: overall assessment, cross-step patterns, strengths, weaknesses, and recommendations.",
+				},
+			},
+			"required": []string{"summary"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			summary, _ := args["summary"].(string)
+			capturedSummary = summary
+			hcpo.GetLogger().Info("📝 Evaluation summary captured")
+			return "Summary submitted. Evaluation scoring complete.", nil
+		},
+		"structured_output",
+	)
+
+	// Set up user prompt with all steps
 	scoringAgent, ok := agent.(*WorkflowEvaluationScoringAgent)
 	if !ok {
-		return nil, nil, fmt.Errorf("failed to cast agent to WorkflowEvaluationScoringAgent")
+		return nil, fmt.Errorf("failed to cast agent to WorkflowEvaluationScoringAgent")
 	}
 
-	// Build prompts and set user message
-	userPrompt := scoringAgent.GetUserPrompt(step.ID, step.Title, step.Description, step.SuccessCriteria, executionOutput)
+	userPrompt := scoringAgent.GetUserPromptForAllSteps(stepInputs)
 	scoringAgent.SetUserMessageProcessor(func(map[string]string) string {
 		return userPrompt
 	})
 
-	// Execute the scoring agent with the cancellable context
-	// The context will be canceled when submit_score is called, breaking the conversation loop
-	_, _, err = scoringAgent.Execute(toolCalledCtx, nil, nil)
-
-	// Check if score was captured - if so, context cancellation is expected and not an error
-	if capturedScore != nil {
-		// Score was captured successfully - context cancellation is expected behavior
-		// Ignore cancellation errors since we got what we needed
-		if err != nil && (toolCalledCtx.Err() == context.Canceled || strings.Contains(err.Error(), "context canceled") || strings.Contains(err.Error(), "context canceled")) {
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Score captured successfully (context cancellation expected): %d/10 for step %s", capturedScore.Score, capturedScore.StepID))
-			err = nil // Clear the cancellation error since we got the score
-		}
-	}
-
+	// Execute
+	_, _, err = scoringAgent.Execute(ctx, nil, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("scoring agent execution failed: %w", err)
+		// If we got some scores before the error, use them
+		if len(capturedScores) == 0 {
+			return nil, fmt.Errorf("scoring agent failed with no scores captured: %w", err)
+		}
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent ended with error but captured %d/%d scores: %v", len(capturedScores), expectedScores, err))
 	}
 
-	if capturedScore == nil {
-		return nil, nil, fmt.Errorf("scoring agent did not submit a score")
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring complete: %d/%d steps scored", len(capturedScores), expectedScores))
+
+	report := &EvaluationReport{
+		StepScores: capturedScores,
+		Summary:    capturedSummary,
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Evaluation scoring agent completed: %s scored %d/10", step.Title, capturedScore.Score))
-	return agent, capturedScore, nil
+	return report, nil
 }
 
 // createOrchestrationLearningAgent creates an orchestration learning agent for analyzing orchestrator decisions

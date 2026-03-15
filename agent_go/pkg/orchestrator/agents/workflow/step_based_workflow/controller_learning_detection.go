@@ -39,9 +39,9 @@ type LearningMetadata struct {
 	LearningContentHash      string                      `json:"learning_content_hash,omitempty"`    // SHA256 of learning file contents — if changed, force exploration mode
 	TotalIterations          int                         `json:"total_iterations"`
 	ConsecutiveNoNewLearning int                         `json:"consecutive_no_new_learning"` // Legacy - keeping for backward compatibility
-	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Successful runs for TurnCount < 100 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)
-	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Successful runs for TurnCount 100-200 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)
-	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Successful runs for TurnCount > 200 (TODO: Turn-based classification is unreliable - varies by model, doesn't reflect actual complexity)
+	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Count of successful runs (used for auto-lock threshold)
+	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Legacy - kept for backward compatibility
+	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Legacy - kept for backward compatibility
 	LastTurnCount            int                         `json:"last_turn_count"`             // Last recorded TurnCount
 	LastExecutionLLM         string                      `json:"last_execution_llm,omitempty"` // The LLM used for the last execution (associated with last_turn_count)
 	LastLearningLLM          string                      `json:"last_learning_llm,omitempty"` // The LLM used for the last learning cycle
@@ -172,25 +172,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	metadata.LastDetectionReasoning = reasoning
 	metadata.LastDetectionConfidence = confidence
 
-	// Increment complexity-based counters (ONLY on successful validation/new learning)
-	// Note: In Mode A (Unlocked), we increment counters if validation passed.
-	// Since this is called after success learning extraction, we increment here.
-	//
-	// TODO: Turn-based classification is not reliable - turn count varies significantly based on
-	// the LLM model used (e.g., Claude vs GPT vs cheaper models) and doesn't reflect actual
-	// step complexity. We need to develop a better complexity metric that considers:
-	// - Actual step requirements (dependencies, validation criteria, data transformations)
-	// - Historical success rates and consistency
-	// - Resource usage patterns
-	// - Step interdependencies and workflow context
+	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
-		if turnCount < 100 {
-			metadata.SuccessfulRunsSimple++
-		} else if turnCount <= 200 {
-			metadata.SuccessfulRunsMedium++
-		} else {
-			metadata.SuccessfulRunsComplex++
-		}
+		metadata.SuccessfulRunsSimple++
 	}
 
 	// Add detection result to history
@@ -208,59 +192,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 		metadata.DetectionHistory = metadata.DetectionHistory[len(metadata.DetectionHistory)-50:]
 	}
 
-	// Check if auto-lock should be triggered based on TurnCount complexity
-	// Use cumulative runs across all complexity levels, but check against threshold for current complexity
-	// This allows steps that improve over time (complex → medium → simple) to lock faster
-	// Simple (< 100 turns): Lock after 3 successful runs.
-	// Medium (100-200 turns): Lock after 5 successful runs.
-	// Complex (> 200 turns): Lock after 10 successful runs.
-	//
-	// TODO: Turn-based classification is not reliable - turn count varies significantly based on
-	// the LLM model used and doesn't reflect actual step complexity. We need a better complexity metric.
+	// Check if auto-lock should be triggered
+	// Lock after 3 successful runs
 	shouldAutoLock := false
 	var autoLockReason string
 
-	// Calculate cumulative successful runs across all complexity levels
-	totalSuccessfulRuns := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
+	totalSuccessfulRuns := metadata.SuccessfulRunsSimple
+	threshold := 3
 
-	// Determine current complexity from last_turn_count
-	var currentComplexity string
-	var threshold int
-	if turnCount > 0 {
-		if turnCount < 100 {
-			currentComplexity = "simple"
-			threshold = 3
-		} else if turnCount <= 200 {
-			currentComplexity = "medium"
-			threshold = 5
-		} else {
-			currentComplexity = "complex"
-			threshold = 10
-		}
-	} else {
-		// Fallback: use last_turn_count from metadata if turnCount is 0
-		if metadata.LastTurnCount > 0 {
-			if metadata.LastTurnCount < 100 {
-				currentComplexity = "simple"
-				threshold = 3
-			} else if metadata.LastTurnCount <= 200 {
-				currentComplexity = "medium"
-				threshold = 5
-			} else {
-				currentComplexity = "complex"
-				threshold = 10
-			}
-		} else {
-			// No turn count available - use simple threshold as default
-			currentComplexity = "simple"
-			threshold = 3
-		}
-	}
-
-	// Check if cumulative runs meet the threshold for current complexity
 	if totalSuccessfulRuns >= threshold {
 		shouldAutoLock = true
-		autoLockReason = fmt.Sprintf("threshold_reached_%s (cumulative: %d runs, threshold: %d)", currentComplexity, totalSuccessfulRuns, threshold)
+		autoLockReason = fmt.Sprintf("threshold_reached (%d successful runs)", totalSuccessfulRuns)
 	}
 
 	// Fallback to max iterations (safety)

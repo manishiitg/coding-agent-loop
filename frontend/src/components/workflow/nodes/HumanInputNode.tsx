@@ -34,7 +34,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => {
-  const { id, title, question, response_type, options, status, stepIndex, changeType, onRunFromStep, onOpenSidebar, isExecuting } = data
+  const { id, title, question, response_type, options, status, stepIndex, changeType, onRunFromStep, onOpenSidebar, isExecuting, isOrphan } = data
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
   const statusIcon = statusIcons[status] || null
@@ -55,9 +55,10 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
   return (
     <div
       className={`
-        relative bg-white dark:bg-gray-800 rounded-lg border-2 ${borderColor} 
+        relative bg-white dark:bg-gray-800 rounded-lg border-2 ${borderColor}
         shadow-md hover:shadow-lg transition-all duration-200
         min-w-[320px] max-w-[320px]
+        ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
         ${changeStyle}
         ${selected ? 'ring-2 ring-purple-500/60' : ''}
       `}
@@ -101,7 +102,7 @@ export const HumanInputNode = memo(({ data, selected }: HumanInputNodeProps) => 
           Step {stepIndex + 1}
         </div>
         <div className="flex items-center gap-1">
-          {onRunFromStep && !isExecuting && (
+          {onRunFromStep && !isExecuting && !isOrphan && (
             <button
               onClick={(e) => {
                 e.stopPropagation()

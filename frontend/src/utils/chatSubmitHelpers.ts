@@ -18,7 +18,7 @@ import { logger } from './logger'
 const CHAT_COMPATIBLE_PHASES = new Set([
   'planning',
   'execution-qa',
-  'evaluation-debugger',
+  'evaluation-builder',
   'workflow-builder',
   'human-assisted-execution',
 ])

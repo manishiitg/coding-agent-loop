@@ -47,6 +47,7 @@ var planningUpdateSystemTemplate = MustRegisterTemplate("planningUpdateSystem", 
 - **Routing**: N-way LLM-based routing. Evaluates a routing_question and selects one of N routes (each with route_id + next_step_id). Two modes: (1) Execute-then-route: has description/success_criteria, executes first then routes; (2) Pure routing: no description, evaluates prior context to pick a route.
 - **Human Input**: Asks a question to the user and blocks until they respond. Supports response types: 'text' (free-form), 'yesno' (approve/reject), 'multiple_choice' (pick from options). Can store response in a variable via 'variable_name'. Routes based on response: 'if_yes_next_step_id'/'if_no_next_step_id' for yesno, 'option_routes' for multiple choice, 'next_step_id' as fallback.
 - **Human + Routing Pattern**: When the user needs to provide input that determines the workflow path, place a 'human_input' step BEFORE a 'routing' step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do NOT use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
+- **Orphan**: A step that exists in the plan but is NOT part of the main execution flow. Orphan steps sit outside the main chain and can only be triggered manually from the workshop chat (human-assisted-execution phase). Use cases: utility steps, debugging aids, one-off operations, or steps kept available but not automatically run. Add with 'is_orphan: true' parameter on any add_*_step tool.
 
 ### Requirement Decomposition
 When designing a plan from a user's objective:
@@ -155,6 +156,7 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 - 'add_human_input_step' — Add a step that asks the user a question and blocks for input
 - 'add_routing_step' — Add an N-way LLM routing step
 - 'add_todo_task_step' — Add a todo-task orchestration step with sub-agents
+  - All add_*_step tools accept an optional 'is_orphan: true' parameter to add the step as an orphan (workshop-only, not part of main execution flow). When is_orphan is true, insert_after_step_id is not required.
 
 #### Update Steps
 - 'update_regular_step(existing_step_id, ...)' — Update fields of a regular step
@@ -326,14 +328,15 @@ func (f FlexibleContextOutput) String() string {
 
 // AgentLLMConfig represents LLM configuration for an agent
 type AgentLLMConfig struct {
-	Provider string `json:"provider,omitempty"` // e.g., "openai", "bedrock", "openrouter", "vertex"
-	ModelID  string `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+	Provider  string             `json:"provider,omitempty"`  // e.g., "openai", "bedrock", "openrouter", "vertex"
+	ModelID   string             `json:"model_id,omitempty"`  // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
+	Fallbacks []AgentLLMFallback `json:"fallbacks,omitempty"` // Optional fallback models for retry on failure
 }
 
-// PrerequisiteRule represents a single prerequisite rule with one step dependency and one description
-type PrerequisiteRule struct {
-	DependsOnStep string `json:"depends_on_step"` // Step ID this rule depends on
-	Description   string `json:"description"`     // User description of when to detect prerequisite failures for this specific step (e.g., "if login session is missing or expired, go back to step 0")
+// AgentLLMFallback represents a fallback LLM model
+type AgentLLMFallback struct {
+	Provider string `json:"provider"`
+	ModelID  string `json:"model_id"`
 }
 
 // ValidationSchema represents structured validation rules for step outputs
@@ -395,15 +398,11 @@ type ConsistencyRule struct {
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
 	ExecutionLLM                *AgentLLMConfig    `json:"execution_llm,omitempty"`
-	ValidationLLM               *AgentLLMConfig    `json:"validation_llm,omitempty"`
 	LearningLLM                 *AgentLLMConfig    `json:"learning_llm,omitempty"`
 	ConditionalLLM              *AgentLLMConfig    `json:"conditional_llm,omitempty"`                // Step-specific conditional LLM for conditional step evaluation
 	ExecutionMaxTurns           *int               `json:"execution_max_turns,omitempty"`            // default: 100
-	ValidationMaxTurns          *int               `json:"validation_max_turns,omitempty"`           // default: 100
 	LearningMaxTurns            *int               `json:"learning_max_turns,omitempty"`             // default: 100
 	OrchestrationMaxIterations  *int               `json:"orchestration_max_iterations,omitempty"`   // default: orchestrator max turns (typically 100)
-	DisableValidation           *bool              `json:"disable_validation,omitempty"`             // LLM validation: nil = disabled by default, false = explicitly enabled, true = disabled (pre-validation always runs if schema exists)
-	LLMValidationMode           string             `json:"llm_validation_mode,omitempty"`            // "skip" (default), "auto", or "always". Controls LLM validation behavior when pre-validation passes.
 	DisableLearning             *bool              `json:"disable_learning,omitempty"`               // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
 	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
 	LearningAfterLoopIteration  bool               `json:"learning_after_loop_iteration,omitempty"`  // run learning after each loop iteration
@@ -418,8 +417,6 @@ type AgentConfigs struct {
 	UseToolSearchMode           *bool              `json:"use_tool_search_mode,omitempty"`           // Step-level tool search mode override (nil = use preset default, true/false = override)
 	PreDiscoveredTools          []string           `json:"pre_discovered_tools,omitempty"`           // Tools always available without searching (overrides preset if specified)
 	EnabledSkills               []string           `json:"enabled_skills,omitempty"`                 // Step-level skill selection (skill folder names, overrides preset if specified)
-	EnablePrerequisiteDetection *bool              `json:"enable_prerequisite_detection,omitempty"`  // Enable prerequisite failure detection for this step (default: false)
-	PrerequisiteRules           []PrerequisiteRule `json:"prerequisite_rules,omitempty"`             // Array of prerequisite rules, each with one step dependency and one description
 	KeepLearningFull            *bool              `json:"keep_learning_full,omitempty"`             // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
 	DisableKnowledgebase        *bool              `json:"disable_knowledgebase,omitempty"`          // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
 	DisableTempLLM              *bool              `json:"disable_temp_llm,omitempty"`               // If true, skip tempLLM override and use step config base LLM (step config > preset > orchestrator default)
@@ -456,10 +453,8 @@ type CommonStepFields struct {
 	Description                 string                `json:"description"`
 	SuccessCriteria             string                `json:"success_criteria"`
 	ContextDependencies         []string              `json:"context_dependencies"`
-	ContextOutput               FlexibleContextOutput `json:"context_output"`                          // Use flexible type to handle string or array
-	EnablePrerequisiteDetection *bool                 `json:"enable_prerequisite_detection,omitempty"` // Enable prerequisite failure detection for this step (default: false)
-	PrerequisiteRules           []PrerequisiteRule    `json:"prerequisite_rules,omitempty"`            // Array of prerequisite rules, each with one step dependency and one description
-	ValidationSchema            *ValidationSchema     `json:"validation_schema,omitempty"`             // Optional structured validation schema for step outputs
+	ContextOutput    FlexibleContextOutput `json:"context_output"`                 // Use flexible type to handle string or array
+	ValidationSchema *ValidationSchema     `json:"validation_schema,omitempty"` // Optional structured validation schema for step outputs
 }
 
 // PlanStepInterface is the interface that all step types must implement
@@ -471,8 +466,6 @@ type PlanStepInterface interface {
 	GetSuccessCriteria() string
 	GetContextDependencies() []string
 	GetContextOutput() FlexibleContextOutput
-	GetEnablePrerequisiteDetection() *bool
-	GetPrerequisiteRules() []PrerequisiteRule
 	GetValidationSchema() *ValidationSchema
 	StepType() StepType
 	// GetCommonFields returns a copy of common fields for convenience
@@ -497,10 +490,6 @@ func (r *RegularPlanStep) GetDescription() string                  { return r.De
 func (r *RegularPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
 func (r *RegularPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
 func (r *RegularPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
-func (r *RegularPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return r.EnablePrerequisiteDetection
-}
-func (r *RegularPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return r.PrerequisiteRules }
 func (r *RegularPlanStep) GetValidationSchema() *ValidationSchema   { return r.ValidationSchema }
 func (r *RegularPlanStep) StepType() StepType                       { return StepTypeRegular }
 func (r *RegularPlanStep) GetCommonFields() CommonStepFields        { return r.CommonStepFields }
@@ -517,7 +506,6 @@ func (r *RegularPlanStep) MarshalJSON() ([]byte, error) {
 // ConditionalPlanStep represents a conditional step with branches
 // NOTE: Conditional steps are wrappers that branch based on conditions.
 // Loops are NOT supported on conditional wrappers - if looping is needed, it should be on the branch steps (IfTrueSteps, IfFalseSteps).
-// Prerequisite rules are NOT supported on conditional wrappers - if needed, they should be on the branch steps.
 type ConditionalPlanStep struct {
 	Type StepType `json:"type"` // Always "conditional" - required for JSON marshaling/unmarshaling
 	CommonStepFields
@@ -539,24 +527,17 @@ func (c *ConditionalPlanStep) GetDescription() string                  { return 
 func (c *ConditionalPlanStep) GetSuccessCriteria() string              { return c.SuccessCriteria }
 func (c *ConditionalPlanStep) GetContextDependencies() []string        { return c.ContextDependencies }
 func (c *ConditionalPlanStep) GetContextOutput() FlexibleContextOutput { return c.ContextOutput }
-func (c *ConditionalPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return nil // Not supported on conditional wrappers
-}
-func (c *ConditionalPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on conditional wrappers
 func (c *ConditionalPlanStep) GetValidationSchema() *ValidationSchema   { return c.ValidationSchema }
 func (c *ConditionalPlanStep) StepType() StepType                       { return StepTypeConditional }
 func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
-	// Return common fields but override prerequisite fields (not supported on conditional wrappers)
 	return CommonStepFields{
-		ID:                          c.ID,
-		Title:                       c.Title,
-		Description:                 c.Description,
-		SuccessCriteria:             c.SuccessCriteria,
-		ContextDependencies:         c.ContextDependencies,
-		ContextOutput:               c.ContextOutput,
-		EnablePrerequisiteDetection: nil, // Not supported on conditional wrappers
-		PrerequisiteRules:           nil, // Not supported on conditional wrappers
-		ValidationSchema:            c.ValidationSchema,
+		ID:              c.ID,
+		Title:           c.Title,
+		Description:     c.Description,
+		SuccessCriteria: c.SuccessCriteria,
+		ContextDependencies: c.ContextDependencies,
+		ContextOutput:       c.ContextOutput,
+		ValidationSchema:    c.ValidationSchema,
 	}
 }
 
@@ -669,7 +650,6 @@ func (c *ConditionalPlanStep) UnmarshalJSON(data []byte) error {
 // Decision steps execute their own description/success_criteria (execution phase),
 // then evaluate the output against DecisionEvaluationQuestion (evaluation phase),
 // and route to IfTrueNextStepID or IfFalseNextStepID based on the evaluation result.
-// Prerequisite rules are NOT supported on decision steps.
 type DecisionPlanStep struct {
 	Type StepType `json:"type"` // Always "decision" - required for JSON marshaling/unmarshaling
 	CommonStepFields
@@ -689,24 +669,17 @@ func (d *DecisionPlanStep) GetDescription() string                  { return d.D
 func (d *DecisionPlanStep) GetSuccessCriteria() string              { return d.SuccessCriteria }
 func (d *DecisionPlanStep) GetContextDependencies() []string        { return d.ContextDependencies }
 func (d *DecisionPlanStep) GetContextOutput() FlexibleContextOutput { return d.ContextOutput }
-func (d *DecisionPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return nil // Not supported on decision steps
-}
-func (d *DecisionPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on decision steps
 func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema   { return d.ValidationSchema }
 func (d *DecisionPlanStep) StepType() StepType                       { return StepTypeDecision }
 func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
-	// Return common fields but override prerequisite fields (not supported on decision steps)
 	return CommonStepFields{
-		ID:                          d.ID,
-		Title:                       d.Title,
-		Description:                 d.Description,
-		SuccessCriteria:             d.SuccessCriteria,
-		ContextDependencies:         d.ContextDependencies,
-		ContextOutput:               d.ContextOutput,
-		EnablePrerequisiteDetection: nil, // Not supported on decision steps
-		PrerequisiteRules:           nil, // Not supported on decision steps
-		ValidationSchema:            d.ValidationSchema,
+		ID:              d.ID,
+		Title:           d.Title,
+		Description:     d.Description,
+		SuccessCriteria: d.SuccessCriteria,
+		ContextDependencies: d.ContextDependencies,
+		ContextOutput:       d.ContextOutput,
+		ValidationSchema:    d.ValidationSchema,
 	}
 }
 
@@ -860,23 +833,17 @@ func (r *RoutingPlanStep) GetDescription() string                  { return r.De
 func (r *RoutingPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
 func (r *RoutingPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
 func (r *RoutingPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
-func (r *RoutingPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return nil // Not supported on routing steps
-}
-func (r *RoutingPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on routing steps
 func (r *RoutingPlanStep) GetValidationSchema() *ValidationSchema   { return r.ValidationSchema }
 func (r *RoutingPlanStep) StepType() StepType                       { return StepTypeRouting }
 func (r *RoutingPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:                          r.ID,
-		Title:                       r.Title,
-		Description:                 r.Description,
-		SuccessCriteria:             r.SuccessCriteria,
-		ContextDependencies:         r.ContextDependencies,
-		ContextOutput:               r.ContextOutput,
-		EnablePrerequisiteDetection: nil,
-		PrerequisiteRules:           nil,
-		ValidationSchema:            r.ValidationSchema,
+		ID:              r.ID,
+		Title:           r.Title,
+		Description:     r.Description,
+		SuccessCriteria: r.SuccessCriteria,
+		ContextDependencies: r.ContextDependencies,
+		ContextOutput:       r.ContextOutput,
+		ValidationSchema:    r.ValidationSchema,
 	}
 }
 
@@ -912,7 +879,6 @@ type OrchestrationPlanStep struct {
 	NextStepID            string                   `json:"next_step_id,omitempty"`         // ID of step after orchestration completes (or "end")
 	OrchestrationResponse *OrchestrationResponse   `json:"-"`                              // runtime: stores selected route and success evaluation - not stored in plan.json
 	AgentConfigs          *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration (LLM, max turns, toggles) - not stored in plan.json
-	// Prerequisite rules are NOT supported on orchestration wrappers - if needed, they should be on the inner OrchestrationStep.
 }
 
 // Implement PlanStepInterface for OrchestrationPlanStep
@@ -922,10 +888,6 @@ func (o *OrchestrationPlanStep) GetDescription() string                  { retur
 func (o *OrchestrationPlanStep) GetSuccessCriteria() string              { return "" }  // Not used - inner OrchestrationStep has success criteria
 func (o *OrchestrationPlanStep) GetContextDependencies() []string        { return nil } // Not used - inner OrchestrationStep has context dependencies
 func (o *OrchestrationPlanStep) GetContextOutput() FlexibleContextOutput { return "" }  // Not used - inner OrchestrationStep produces context output
-func (o *OrchestrationPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return nil // Not supported on orchestration wrappers
-}
-func (o *OrchestrationPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return nil } // Not supported on orchestration wrappers
 func (o *OrchestrationPlanStep) GetValidationSchema() *ValidationSchema {
 	// Return validation schema from inner OrchestrationStep if it exists
 	if o.OrchestrationStep != nil {
@@ -936,15 +898,13 @@ func (o *OrchestrationPlanStep) GetValidationSchema() *ValidationSchema {
 func (o *OrchestrationPlanStep) StepType() StepType { return StepTypeOrchestration }
 func (o *OrchestrationPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:                          o.ID,
-		Title:                       o.Title,
-		Description:                 "",  // Not used for orchestration wrapper
-		SuccessCriteria:             "",  // Not used for orchestration wrapper
-		ContextDependencies:         nil, // Not used for orchestration wrapper
-		ContextOutput:               "",  // Not used for orchestration wrapper
-		EnablePrerequisiteDetection: nil, // Not supported on orchestration wrappers
-		PrerequisiteRules:           nil, // Not supported on orchestration wrappers
-		ValidationSchema:            o.GetValidationSchema(),
+		ID:              o.ID,
+		Title:           o.Title,
+		Description:     "",  // Not used for orchestration wrapper
+		SuccessCriteria: "",  // Not used for orchestration wrapper
+		ContextDependencies: nil, // Not used for orchestration wrapper
+		ContextOutput:       "",  // Not used for orchestration wrapper
+		ValidationSchema:    o.GetValidationSchema(),
 	}
 }
 
@@ -1008,10 +968,6 @@ func (h *HumanInputPlanStep) GetDescription() string                  { return h
 func (h *HumanInputPlanStep) GetSuccessCriteria() string              { return h.SuccessCriteria }
 func (h *HumanInputPlanStep) GetContextDependencies() []string        { return h.ContextDependencies }
 func (h *HumanInputPlanStep) GetContextOutput() FlexibleContextOutput { return h.ContextOutput }
-func (h *HumanInputPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return h.EnablePrerequisiteDetection
-}
-func (h *HumanInputPlanStep) GetPrerequisiteRules() []PrerequisiteRule { return h.PrerequisiteRules }
 func (h *HumanInputPlanStep) GetValidationSchema() *ValidationSchema   { return h.ValidationSchema }
 func (h *HumanInputPlanStep) StepType() StepType                       { return StepTypeHumanInput }
 func (h *HumanInputPlanStep) GetCommonFields() CommonStepFields        { return h.CommonStepFields }
@@ -1092,12 +1048,6 @@ func (t *TodoTaskPlanStep) GetContextOutput() FlexibleContextOutput {
 	}
 	return ""
 }
-func (t *TodoTaskPlanStep) GetEnablePrerequisiteDetection() *bool {
-	return nil // Not supported on todo task wrappers
-}
-func (t *TodoTaskPlanStep) GetPrerequisiteRules() []PrerequisiteRule {
-	return nil // Not supported on todo task wrappers
-}
 func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema {
 	if t.TodoTaskStep != nil {
 		return t.TodoTaskStep.GetValidationSchema()
@@ -1107,15 +1057,13 @@ func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema {
 func (t *TodoTaskPlanStep) StepType() StepType { return StepTypeTodoTask }
 func (t *TodoTaskPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:                          t.ID,
-		Title:                       t.Title,
-		Description:                 t.GetDescription(),
-		SuccessCriteria:             t.GetSuccessCriteria(),
-		ContextDependencies:         t.GetContextDependencies(),
-		ContextOutput:               t.GetContextOutput(),
-		EnablePrerequisiteDetection: nil,
-		PrerequisiteRules:           nil,
-		ValidationSchema:            t.GetValidationSchema(),
+		ID:              t.ID,
+		Title:           t.Title,
+		Description:     t.GetDescription(),
+		SuccessCriteria: t.GetSuccessCriteria(),
+		ContextDependencies: t.GetContextDependencies(),
+		ContextOutput:       t.GetContextOutput(),
+		ValidationSchema:    t.GetValidationSchema(),
 	}
 }
 
@@ -1301,13 +1249,76 @@ type PlanStep = PlanStepInterface
 // PlanningResponse represents the structured response from planning
 // Uses type-safe PlanStepInterface - all plans must be in new format with "type" field
 type PlanningResponse struct {
-	Steps []PlanStepInterface `json:"-"`
+	Steps       []PlanStepInterface `json:"-"`
+	OrphanSteps []PlanStepInterface `json:"-"`
+}
+
+// parseStepFromJSON parses a single step from raw JSON using the type field
+func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanStepInterface, error) {
+	var stepWithType struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(stepData, &stepWithType); err != nil {
+		return nil, fmt.Errorf("failed to parse %s %d type: %w", label, index, err)
+	}
+
+	if stepWithType.Type == "" {
+		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", label, index)
+	}
+
+	switch stepWithType.Type {
+	case "regular":
+		var step RegularPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse regular %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "conditional":
+		var step ConditionalPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse conditional %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "decision":
+		var step DecisionPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse decision %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "orchestration":
+		var step OrchestrationPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse orchestration %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "human_input":
+		var step HumanInputPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse human_input %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "todo_task":
+		var step TodoTaskPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse todo_task %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "routing":
+		var step RoutingPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse routing %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	default:
+		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", stepWithType.Type, label, index)
+	}
 }
 
 // UnmarshalJSON implements custom unmarshaling for typed steps
 func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 	var temp struct {
-		Steps []json.RawMessage `json:"steps"`
+		Steps       []json.RawMessage `json:"steps"`
+		OrphanSteps []json.RawMessage `json:"orphan_steps"`
 	}
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return fmt.Errorf("failed to unmarshal plan: %w", err)
@@ -1315,68 +1326,22 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 
 	pr.Steps = make([]PlanStepInterface, len(temp.Steps))
 	for i, stepData := range temp.Steps {
-		// Check for type field
-		var stepWithType struct {
-			Type string `json:"type"`
+		typedStep, err := parseStepFromJSON(stepData, i, "step")
+		if err != nil {
+			return err
 		}
-		if err := json.Unmarshal(stepData, &stepWithType); err != nil {
-			return fmt.Errorf("failed to parse step %d type: %w", i, err)
-		}
-
-		if stepWithType.Type == "" {
-			return fmt.Errorf("step %d is missing required 'type' field (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", i)
-		}
-
-		// Unmarshal based on type
-		var typedStep PlanStepInterface
-		switch stepWithType.Type {
-		case "regular":
-			var step RegularPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse regular step %d: %w", i, err)
-			}
-			typedStep = &step
-		case "conditional":
-			var step ConditionalPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse conditional step %d: %w", i, err)
-			}
-			typedStep = &step
-		case "decision":
-			var step DecisionPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse decision step %d: %w", i, err)
-			}
-			typedStep = &step
-		case "orchestration":
-			var step OrchestrationPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse orchestration step %d: %w", i, err)
-			}
-			typedStep = &step
-		case "human_input":
-			var step HumanInputPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse human_input step %d: %w", i, err)
-			}
-			typedStep = &step
-		case "todo_task":
-			var step TodoTaskPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse todo_task step %d: %w", i, err)
-			}
-			typedStep = &step
-		case "routing":
-			var step RoutingPlanStep
-			if err := json.Unmarshal(stepData, &step); err != nil {
-				return fmt.Errorf("failed to parse routing step %d: %w", i, err)
-			}
-			typedStep = &step
-		default:
-			return fmt.Errorf("unknown step type %q in step %d (must be: regular, conditional, decision, orchestration, human_input, todo_task, or routing)", stepWithType.Type, i)
-		}
-
 		pr.Steps[i] = typedStep
+	}
+
+	if len(temp.OrphanSteps) > 0 {
+		pr.OrphanSteps = make([]PlanStepInterface, len(temp.OrphanSteps))
+		for i, stepData := range temp.OrphanSteps {
+			typedStep, err := parseStepFromJSON(stepData, i, "orphan step")
+			if err != nil {
+				return err
+			}
+			pr.OrphanSteps[i] = typedStep
+		}
 	}
 
 	return nil
@@ -1386,7 +1351,6 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 	wrappedSteps := make([]json.RawMessage, len(pr.Steps))
 	for i, step := range pr.Steps {
-		// Marshal the step (which already has type field)
 		stepJSON, err := json.Marshal(step)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal step %d: %w", i, err)
@@ -1394,9 +1358,23 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 		wrappedSteps[i] = stepJSON
 	}
 
-	return json.Marshal(map[string]interface{}{
+	result := map[string]interface{}{
 		"steps": wrappedSteps,
-	})
+	}
+
+	if len(pr.OrphanSteps) > 0 {
+		wrappedOrphans := make([]json.RawMessage, len(pr.OrphanSteps))
+		for i, step := range pr.OrphanSteps {
+			stepJSON, err := json.Marshal(step)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal orphan step %d: %w", i, err)
+			}
+			wrappedOrphans[i] = stepJSON
+		}
+		result["orphan_steps"] = wrappedOrphans
+	}
+
+	return json.Marshal(result)
 }
 
 // PartialPlanStep represents a partial update to a plan step (used only in tool schemas)
@@ -1414,8 +1392,6 @@ type PartialPlanStep struct {
 	LoopCondition               string                `json:"loop_condition,omitempty"`                // Optional: Updated loop condition
 	MaxIterations               *int                  `json:"max_iterations,omitempty"`                // Optional: Updated max iterations (use pointer to distinguish unset from 0)
 	LoopDescription             string                `json:"loop_description,omitempty"`              // Optional: Updated loop description
-	EnablePrerequisiteDetection *bool                 `json:"enable_prerequisite_detection,omitempty"` // Optional: Updated enable_prerequisite_detection (use pointer to distinguish unset from false)
-	PrerequisiteRules           []PrerequisiteRule    `json:"prerequisite_rules,omitempty"`            // Optional: Updated prerequisite rules
 	// Conditional step fields
 	HasCondition      *bool                    `json:"has_condition,omitempty"`      // Optional: Updated has_condition (use pointer to distinguish unset from false)
 	ConditionQuestion string                   `json:"condition_question,omitempty"` // Optional: Updated condition question
@@ -1583,11 +1559,17 @@ func generateChangelogFromPlanDiff(ctx context.Context, workspacePath string, ol
 		for _, step := range oldPlan.Steps {
 			oldStepsByID[step.GetID()] = step
 		}
+		for _, step := range oldPlan.OrphanSteps {
+			oldStepsByID[step.GetID()] = step
+		}
 	}
 
 	newStepsByID := make(map[string]PlanStepInterface)
 	if newPlan != nil {
 		for _, step := range newPlan.Steps {
+			newStepsByID[step.GetID()] = step
+		}
+		for _, step := range newPlan.OrphanSteps {
 			newStepsByID[step.GetID()] = step
 		}
 	}
@@ -1764,28 +1746,6 @@ func getUpdateRegularStepSchema() string {
 						"loop_description": {
 							"type": "string",
 							"description": "OPTIONAL: Updated loop description. Only include if you want to change it. If omitted, the existing loop description is preserved."
-						},
-						"enable_prerequisite_detection": {
-							"type": "boolean",
-							"description": "OPTIONAL: Updated enable_prerequisite_detection flag. Only include if you want to change it. Set to true when this step depends on outputs from previous steps that might expire or become invalid (e.g., login sessions, API tokens, config files). If omitted, the existing value is preserved."
-						},
-						"prerequisite_rules": {
-							"type": "array",
-							"items": {
-								"type": "object",
-								"properties": {
-									"depends_on_step": {
-										"type": "string",
-										"description": "REQUIRED: The step ID this rule depends on. Must be a step that appears earlier in the plan."
-									},
-									"description": {
-										"type": "string",
-										"description": "REQUIRED: Natural language description of when to detect prerequisite failures for this specific step. Examples: 'If login session is missing or expired, go back to step 0', 'If config file is missing, go back to step 1'."
-									}
-								},
-								"required": ["depends_on_step", "description"]
-							},
-							"description": "OPTIONAL: Updated prerequisite rules array. Only include if you want to change it. Each rule specifies one step dependency and one description of when to detect prerequisite failures. If omitted, the existing prerequisite rules are preserved."
 						}
 					},
 					"required": ["existing_step_id"]
@@ -1852,28 +1812,6 @@ func getAddRegularStepSchema() string {
 			"loop_description": {
 				"type": "string",
 				"description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."
-			},
-			"enable_prerequisite_detection": {
-				"type": "boolean",
-				"description": "OPTIONAL: Enable prerequisite failure detection for this step. Set to true when this step depends on outputs from previous steps that might expire or become invalid (e.g., login sessions, API tokens, config files). Default: false."
-			},
-			"prerequisite_rules": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"depends_on_step": {
-							"type": "string",
-							"description": "REQUIRED: The step ID this rule depends on. Must be a step that appears earlier in the plan."
-						},
-						"description": {
-							"type": "string",
-							"description": "REQUIRED: Natural language description of when to detect prerequisite failures for this specific step. Examples: 'If login session is missing or expired, go back to step 0', 'If config file is missing, go back to step 1'."
-						}
-					},
-					"required": ["depends_on_step", "description"]
-				},
-				"description": "OPTIONAL: Array of prerequisite rules. Each rule specifies one step dependency and one description of when to detect prerequisite failures. Only include if enable_prerequisite_detection is true."
 			},
 			"insert_after_step_id": {
 				"type": "string",
@@ -2964,28 +2902,6 @@ func getUpdateConditionalStepSchema() string {
 				"type": "string",
 				"description": "OPTIONAL: Updated loop description. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing loop description is preserved."
 			},
-			"enable_prerequisite_detection": {
-				"type": "boolean",
-				"description": "OPTIONAL: Updated enable_prerequisite_detection flag. Only include if you want to change it. Set to true when this step depends on outputs from previous steps that might expire or become invalid (e.g., login sessions, API tokens, config files). If omitted, the existing value is preserved."
-			},
-			"prerequisite_rules": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"depends_on_step": {
-							"type": "string",
-							"description": "REQUIRED: The step ID this rule depends on. Must be a step that appears earlier in the plan."
-						},
-						"description": {
-							"type": "string",
-							"description": "REQUIRED: Natural language description of when to detect prerequisite failures for this specific step. Examples: 'If login session is missing or expired, go back to step 0', 'If config file is missing, go back to step 1'."
-						}
-					},
-					"required": ["depends_on_step", "description"]
-				},
-				"description": "OPTIONAL: Updated prerequisite rules array. Only include if you want to change it. Each rule specifies one step dependency and one description of when to detect prerequisite failures. If omitted, the existing prerequisite rules are preserved."
-			},
 			"condition_question": {
 				"type": "string",
 				"description": "OPTIONAL: Updated condition question. Only include if you want to change it. Question to ask the ConditionalLLM for decision making (e.g., 'Is the deployment healthy?', 'Is user already logged in?'). If omitted, the existing question is preserved."
@@ -3175,28 +3091,6 @@ func getUpdateHumanInputStepSchema() string {
 				"type": "object",
 				"additionalProperties": { "type": "string" },
 				"description": "OPTIONAL: Updated option routes. Only include if you want to change them. For 'multiple_choice' response type, maps option index (as string '0', '1', etc.) or option value to next_step_id. If omitted, the existing option routes are preserved."
-			},
-			"enable_prerequisite_detection": {
-				"type": "boolean",
-				"description": "OPTIONAL: Updated enable_prerequisite_detection flag. Only include if you want to change it. Set to true when this step depends on outputs from previous steps that might expire or become invalid. If omitted, the existing value is preserved."
-			},
-			"prerequisite_rules": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"depends_on_step": {
-							"type": "string",
-							"description": "REQUIRED: The step ID this rule depends on. Must be a step that appears earlier in the plan."
-						},
-						"description": {
-							"type": "string",
-							"description": "REQUIRED: Natural language description of when to detect prerequisite failures for this specific step."
-						}
-					},
-					"required": ["depends_on_step", "description"]
-				},
-				"description": "OPTIONAL: Updated prerequisite rules. Only include if you want to change them. If omitted, the existing prerequisite rules are preserved."
 			}
 		},
 		"required": ["existing_step_id"]
@@ -3831,33 +3725,6 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 		})
 	}
 
-	// Compare prerequisite detection
-	oldPrereq := oldStep.GetEnablePrerequisiteDetection()
-	newPrereq := newStep.GetEnablePrerequisiteDetection()
-	if !equalBoolPtrs(oldPrereq, newPrereq) {
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    prefix + ".enable_prerequisite_detection",
-			OldValue: oldPrereq,
-			NewValue: newPrereq,
-		})
-	}
-
-	// Compare prerequisite rules
-	oldRules := oldStep.GetPrerequisiteRules()
-	newRules := newStep.GetPrerequisiteRules()
-	if !equalPrerequisiteRules(oldRules, newRules) {
-		// Store as JSON for proper revert
-		oldRulesJSON, _ := json.Marshal(oldRules)
-		newRulesJSON, _ := json.Marshal(newRules)
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   stepID,
-			Field:    prefix + ".prerequisite_rules",
-			OldValue: string(oldRulesJSON),
-			NewValue: string(newRulesJSON),
-		})
-	}
-
 	// Compare validation schema
 	oldSchema := oldStep.GetValidationSchema()
 	newSchema := newStep.GetValidationSchema()
@@ -4096,18 +3963,6 @@ func equalBoolPtrs(a, b *bool) bool {
 	return *a == *b
 }
 
-func equalPrerequisiteRules(a, b []PrerequisiteRule) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].DependsOnStep != b[i].DependsOnStep || a[i].Description != b[i].Description {
-			return false
-		}
-	}
-	return true
-}
-
 func equalValidationSchemas(a, b *ValidationSchema) bool {
 	if a == nil && b == nil {
 		return true
@@ -4163,12 +4018,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.LoopDescription != "" {
 			updated.LoopDescription = partialUpdate.LoopDescription
-		}
-		if partialUpdate.EnablePrerequisiteDetection != nil {
-			updated.EnablePrerequisiteDetection = partialUpdate.EnablePrerequisiteDetection
-		}
-		if partialUpdate.PrerequisiteRules != nil {
-			updated.PrerequisiteRules = partialUpdate.PrerequisiteRules
 		}
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
@@ -4367,12 +4216,6 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.OptionRoutes != nil {
 			updated.OptionRoutes = partialUpdate.OptionRoutes
-		}
-		if partialUpdate.EnablePrerequisiteDetection != nil {
-			updated.EnablePrerequisiteDetection = partialUpdate.EnablePrerequisiteDetection
-		}
-		if partialUpdate.PrerequisiteRules != nil {
-			updated.PrerequisiteRules = partialUpdate.PrerequisiteRules
 		}
 		if partialUpdate.ValidationSchema != nil {
 			updated.ValidationSchema = partialUpdate.ValidationSchema
@@ -4610,8 +4453,16 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 	existingStep, _, _ := findStepByID(plan.Steps, partialUpdate.ExistingStepID)
 
 	if existingStep == nil {
-		availableIDs := make([]string, 0, len(plan.Steps))
+		// Try orphan steps
+		existingStep, _, _ = findStepByID(plan.OrphanSteps, partialUpdate.ExistingStepID)
+	}
+
+	if existingStep == nil {
+		availableIDs := make([]string, 0, len(plan.Steps)+len(plan.OrphanSteps))
 		for _, step := range plan.Steps {
+			availableIDs = append(availableIDs, step.GetID())
+		}
+		for _, step := range plan.OrphanSteps {
 			availableIDs = append(availableIDs, step.GetID())
 		}
 		return -1, nil, fmt.Errorf("step ID '%s' not found in existing plan. Available top-level step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
@@ -4721,32 +4572,6 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			Field:    "loop_description",
 			OldValue: oldLoopDescription,
 			NewValue: partialUpdate.LoopDescription,
-		})
-	}
-	if partialUpdate.EnablePrerequisiteDetection != nil {
-		changedFields = append(changedFields, "enable_prerequisite_detection")
-		var oldValue interface{} = nil
-		if existingStep.GetEnablePrerequisiteDetection() != nil {
-			oldValue = *existingStep.GetEnablePrerequisiteDetection()
-		}
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "enable_prerequisite_detection",
-			OldValue: oldValue,
-			NewValue: *partialUpdate.EnablePrerequisiteDetection,
-		})
-	}
-	if partialUpdate.PrerequisiteRules != nil {
-		changedFields = append(changedFields, "prerequisite_rules")
-		oldRules := existingStep.GetPrerequisiteRules()
-		// Store as JSON for proper revert
-		oldRulesJSON, _ := json.Marshal(oldRules)
-		newRulesJSON, _ := json.Marshal(partialUpdate.PrerequisiteRules)
-		*fieldChanges = append(*fieldChanges, PlanFieldChange{
-			StepID:   partialUpdate.ExistingStepID,
-			Field:    "prerequisite_rules",
-			OldValue: string(oldRulesJSON),
-			NewValue: string(newRulesJSON),
 		})
 	}
 	// Conditional step fields
@@ -5554,11 +5379,17 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 		for _, step := range oldPlan.Steps {
 			existingStepsMap[step.GetID()] = true
 		}
+		for _, step := range oldPlan.OrphanSteps {
+			existingStepsMap[step.GetID()] = true
+		}
 		for _, id := range deletedIDs {
 			if !existingStepsMap[id] {
 				// Build list of available step IDs for better error message
-				availableIDs := make([]string, 0, len(oldPlan.Steps))
+				availableIDs := make([]string, 0, len(oldPlan.Steps)+len(oldPlan.OrphanSteps))
 				for _, step := range oldPlan.Steps {
+					availableIDs = append(availableIDs, step.GetID())
+				}
+				for _, step := range oldPlan.OrphanSteps {
 					availableIDs = append(availableIDs, step.GetID())
 				}
 				return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot delete). Available step IDs: %v", id, availableIDs)
@@ -5592,7 +5423,28 @@ func createDeletePlanStepsExecutor(workspacePath string, logger loggerv2.Logger,
 			}
 		}
 
-		newPlan := &PlanningResponse{Steps: filteredSteps}
+		// Also capture and filter orphan steps
+		for i, step := range oldPlan.OrphanSteps {
+			stepID := step.GetID()
+			if deletedSet[stepID] {
+				stepJSON, err := json.Marshal(step)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("⚠️ Failed to marshal deleted orphan step %s for changelog: %v", stepID, err))
+					continue
+				}
+				deletedSteps = append(deletedSteps, stepJSON)
+				deletedStepIndices[stepID] = len(oldPlan.Steps) + i // offset by main steps count
+			}
+		}
+
+		filteredOrphanSteps := make([]PlanStepInterface, 0, len(oldPlan.OrphanSteps))
+		for _, step := range oldPlan.OrphanSteps {
+			if !deletedSet[step.GetID()] {
+				filteredOrphanSteps = append(filteredOrphanSteps, step)
+			}
+		}
+
+		newPlan := &PlanningResponse{Steps: filteredSteps, OrphanSteps: filteredOrphanSteps}
 
 		// Write updated plan (creates backup automatically)
 		if err := writePlanToFile(ctx, workspacePath, newPlan, readFile, writeFile, logger); err != nil {
@@ -6091,56 +5943,70 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 			return "", fmt.Errorf("failed to read plan: %w", err)
 		}
 
-		// Find insertion point
-		var insertAfterStepID string
-		if insertID, ok := args["insert_after_step_id"].(string); ok {
-			insertAfterStepID = insertID
-		} else {
-			return "", fmt.Errorf(fmt.Sprintf("missing required insert_after_step_id field"), nil)
+		// Check if this is an orphan step
+		isOrphan := false
+		if orphanVal, ok := args["is_orphan"].(bool); ok {
+			isOrphan = orphanVal
 		}
 
-		// Create map of step IDs to indices
-		idToIndex := make(map[string]int)
-		for i, s := range oldPlan.Steps {
-			idToIndex[s.GetID()] = i
-		}
-
-		var afterIndex int
-		var found bool
-
-		if insertAfterStepID == "" {
-			// Insert at beginning
-			afterIndex = -1
+		var newPlan *PlanningResponse
+		if isOrphan {
+			// Orphan step: append to OrphanSteps array (no insertion point needed)
+			newOrphanSteps := make([]PlanStepInterface, len(oldPlan.OrphanSteps)+1)
+			copy(newOrphanSteps, oldPlan.OrphanSteps)
+			newOrphanSteps[len(oldPlan.OrphanSteps)] = typedStep
+			newPlan = &PlanningResponse{Steps: oldPlan.Steps, OrphanSteps: newOrphanSteps}
 		} else {
-			// Find the step to insert after
-			afterIndex, found = idToIndex[insertAfterStepID]
-			if !found {
-				availableIDs := make([]string, 0, len(oldPlan.Steps))
-				for _, s := range oldPlan.Steps {
-					availableIDs = append(availableIDs, s.GetID())
-				}
-				return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", insertAfterStepID, availableIDs)
+			// Normal step: find insertion point and insert into Steps array
+			var insertAfterStepID string
+			if insertID, ok := args["insert_after_step_id"].(string); ok {
+				insertAfterStepID = insertID
+			} else {
+				return "", fmt.Errorf(fmt.Sprintf("missing required insert_after_step_id field"), nil)
 			}
-		}
 
-		// Build new plan with insertion
-		newPlanSteps := make([]PlanStepInterface, 0, len(oldPlan.Steps)+1)
+			// Create map of step IDs to indices
+			idToIndex := make(map[string]int)
+			for i, s := range oldPlan.Steps {
+				idToIndex[s.GetID()] = i
+			}
 
-		// Insert at beginning if needed
-		if afterIndex == -1 {
-			newPlanSteps = append(newPlanSteps, typedStep)
-		}
+			var afterIndex int
+			var found bool
 
-		// Add existing steps and insert new step at the right position
-		for i, originalStep := range oldPlan.Steps {
-			newPlanSteps = append(newPlanSteps, originalStep)
-			if i == afterIndex {
-				// Insert new step after this one
+			if insertAfterStepID == "" {
+				// Insert at beginning
+				afterIndex = -1
+			} else {
+				// Find the step to insert after
+				afterIndex, found = idToIndex[insertAfterStepID]
+				if !found {
+					availableIDs := make([]string, 0, len(oldPlan.Steps))
+					for _, s := range oldPlan.Steps {
+						availableIDs = append(availableIDs, s.GetID())
+					}
+					return "", fmt.Errorf("step ID '%s' not found in existing plan (cannot insert after it). Available step IDs: %v", insertAfterStepID, availableIDs)
+				}
+			}
+
+			// Build new plan with insertion
+			newPlanSteps := make([]PlanStepInterface, 0, len(oldPlan.Steps)+1)
+
+			// Insert at beginning if needed
+			if afterIndex == -1 {
 				newPlanSteps = append(newPlanSteps, typedStep)
 			}
-		}
 
-		newPlan := &PlanningResponse{Steps: newPlanSteps}
+			// Add existing steps and insert new step at the right position
+			for i, originalStep := range oldPlan.Steps {
+				newPlanSteps = append(newPlanSteps, originalStep)
+				if i == afterIndex {
+					newPlanSteps = append(newPlanSteps, typedStep)
+				}
+			}
+
+			newPlan = &PlanningResponse{Steps: newPlanSteps, OrphanSteps: oldPlan.OrphanSteps}
+		}
 
 		// Validate all steps including the new one
 		if err := validatePlanStepIDs(newPlan.Steps); err != nil {
@@ -6227,7 +6093,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_regular_step",
-		"Update a regular step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, description, success_criteria, context fields, loop fields, prerequisite fields). The plan.json file is updated immediately when this tool is called.",
+		"Update a regular step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, description, success_criteria, context fields, loop fields). The plan.json file is updated immediately when this tool is called.",
 		regularUpdateParams,
 		createUpdateRegularStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",

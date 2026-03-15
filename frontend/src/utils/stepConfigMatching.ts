@@ -9,15 +9,12 @@ export interface AgentLLMConfig {
 // AgentConfigs represents per-agent configuration for a step
 export interface AgentConfigs {
   execution_llm?: AgentLLMConfig;
-  validation_llm?: AgentLLMConfig;
   learning_llm?: AgentLLMConfig;
   conditional_llm?: AgentLLMConfig;
   execution_max_turns?: number;
   validation_max_turns?: number;
   learning_max_turns?: number;
   orchestration_max_iterations?: number;
-  disable_validation?: boolean;
-  llm_validation_mode?: string; // "skip" (default), "auto", or "always". Controls LLM validation behavior when pre-validation passes.
   disable_learning?: boolean;
   lock_learnings?: boolean;
   learning_after_loop_iteration?: boolean;
@@ -30,8 +27,6 @@ export interface AgentConfigs {
   use_code_execution_mode?: boolean;
   use_tool_search_mode?: boolean;
   pre_discovered_tools?: string[];
-  enable_prerequisite_detection?: boolean;
-  prerequisite_rules?: PrerequisiteRule[];
   keep_learning_full?: boolean;
   disable_temp_llm?: boolean;
   todo_task_orchestrator_tier?: number;       // 1/2/3 - tier for orchestrator agent in tiered mode
@@ -40,12 +35,6 @@ export interface AgentConfigs {
   sub_agent_llm?: AgentLLMConfig;             // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
   disable_parallel_tool_execution?: boolean;  // Disable parallel tool execution (default: enabled)
   disable_tier_optimization?: boolean;        // If true, always use Tier 1 (high reasoning) regardless of learning maturity
-}
-
-// PrerequisiteRule represents a single prerequisite rule with one step dependency and one description
-export interface PrerequisiteRule {
-  depends_on_step: string; // Step ID this rule depends on
-  description: string; // User description of when to detect prerequisite failures for this specific step (e.g., "if login session is missing or expired, go back to step 0")
 }
 
 // Extended TodoStep with agent_configs
@@ -78,16 +67,6 @@ export interface TodoStepWithConfigs {
   decision_evaluation_question?: string;
   decision_result?: boolean;
   decision_reason?: string;
-  // Orchestration step fields (orchestrator with multiple sub-agents)
-  has_orchestration_step?: boolean;
-  orchestration_step?: TodoStepWithConfigs;
-  orchestration_routes?: Array<{
-    route_id: string;
-    route_name: string;
-    condition: string;
-    sub_agent_step: TodoStepWithConfigs;
-    context_to_pass?: string;
-  }>;
   next_step_id?: string;
   // Human input step fields (asks question to human and blocks for input)
   has_human_input?: boolean;
@@ -185,8 +164,6 @@ interface CommonStepFields {
   success_criteria?: string;
   context_dependencies?: string[];
   context_output?: string | string[];
-  enable_prerequisite_detection?: boolean;
-  prerequisite_rules?: PrerequisiteRule[];
   validation_schema?: ValidationSchema; // Optional structured validation schema for step outputs
   agent_configs?: AgentConfigs;       // Merged from step_config.json
 }
@@ -222,14 +199,6 @@ export interface DecisionPlanStep extends CommonStepFields {
   if_false_next_step_id?: string;     // ID of step to connect to if decision is false (or "end")
   decision_result?: boolean;          // runtime: stores evaluation result
   decision_reason?: string;           // runtime: stores evaluation reasoning
-}
-
-// Orchestration step (orchestrator with multiple sub-agents)
-export interface OrchestrationPlanStep extends CommonStepFields {
-  type: 'orchestration';
-  orchestration_step?: PlanStep;            // The main orchestrator step to execute
-  orchestration_routes?: PlanRoutingRoute[]; // Array of possible routes with conditions
-  next_step_id?: string;              // ID of step after orchestration completes (or "end")
 }
 
 // Todo task step (orchestrator with todo list management + predefined routes + generic agent)
@@ -272,7 +241,7 @@ export interface RoutingPlanStep extends CommonStepFields {
 }
 
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | OrchestrationPlanStep | HumanInputPlanStep | TodoTaskPlanStep | RoutingPlanStep;
+export type PlanStep = RegularPlanStep | ConditionalPlanStep | DecisionPlanStep | HumanInputPlanStep | TodoTaskPlanStep | RoutingPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -286,6 +255,7 @@ export interface PlanRoutingRoute {
 // PlanningResponse interface for plan.json
 export interface PlanningResponse {
   steps: PlanStep[];
+  orphan_steps?: PlanStep[];
   run_mode?: string;
   [key: string]: unknown;             // Allow other fields for flexibility
 }
@@ -301,10 +271,6 @@ export function isConditionalStep(step: PlanStep): step is ConditionalPlanStep {
 
 export function isDecisionStep(step: PlanStep): step is DecisionPlanStep {
   return step.type === 'decision';
-}
-
-export function isOrchestrationStep(step: PlanStep): step is OrchestrationPlanStep {
-  return step.type === 'orchestration';
 }
 
 export function isHumanInputStep(step: PlanStep): step is HumanInputPlanStep {

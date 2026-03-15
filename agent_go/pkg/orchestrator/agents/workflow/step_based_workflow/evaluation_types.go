@@ -24,11 +24,6 @@ func (e *EvaluationStep) GetDescription() string                  { return e.Des
 func (e *EvaluationStep) GetSuccessCriteria() string              { return e.SuccessCriteria }
 func (e *EvaluationStep) GetContextDependencies() []string        { return nil }
 func (e *EvaluationStep) GetContextOutput() FlexibleContextOutput { return FlexibleContextOutput(e.ContextOutput) }
-func (e *EvaluationStep) GetEnablePrerequisiteDetection() *bool {
-	val := false
-	return &val
-}
-func (e *EvaluationStep) GetPrerequisiteRules() []PrerequisiteRule { return nil }
 func (e *EvaluationStep) GetValidationSchema() *ValidationSchema   { return e.PreValidation }
 func (e *EvaluationStep) StepType() StepType                       { return StepTypeRegular }
 

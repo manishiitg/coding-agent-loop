@@ -281,7 +281,6 @@ type PresetLLMConfig struct {
 
 	// New: Agent-specific default models (takes priority over legacy fields)
 	ExecutionLLM  *AgentLLMConfig `json:"execution_llm,omitempty"`  // Default for execution agents
-	ValidationLLM *AgentLLMConfig `json:"validation_llm,omitempty"` // Default for validation agents
 	LearningLLM   *AgentLLMConfig `json:"learning_llm,omitempty"`   // Default for learning agents
 	PhaseLLM      *AgentLLMConfig `json:"phase_llm,omitempty"`      // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 
@@ -309,7 +308,14 @@ type TieredLLMConfig struct {
 
 // AgentLLMConfig represents LLM configuration for a specific agent type
 type AgentLLMConfig struct {
-	Provider string `json:"provider"` // openrouter, bedrock, openai, vertex, anthropic, azure
+	Provider  string             `json:"provider"`            // openrouter, bedrock, openai, vertex, anthropic, azure
+	ModelID   string             `json:"model_id"`
+	Fallbacks []AgentLLMFallback `json:"fallbacks,omitempty"` // Optional fallback models for retry on failure
+}
+
+// AgentLLMFallback represents a fallback LLM model
+type AgentLLMFallback struct {
+	Provider string `json:"provider"`
 	ModelID  string `json:"model_id"`
 }
 
@@ -413,11 +419,8 @@ type CreatePresetQueryRequest struct {
 // validatePresetLLMConfig validates a PresetLLMConfig, accepting either legacy Provider+ModelID
 // or at least one non-nil AgentLLMConfig with valid provider and model_id
 func validatePresetLLMConfig(config *PresetLLMConfig) error {
-	// Tiered mode validation: validate tier configs instead of agent-specific configs
-	if config.LLMAllocationMode == "tiered" {
-		if config.TieredConfig == nil {
-			return fmt.Errorf("tiered_config is required when llm_allocation_mode is 'tiered'")
-		}
+	// Validate tiered config if present
+	if config.TieredConfig != nil {
 		tierConfigs := []struct {
 			config *AgentLLMConfig
 			name   string
@@ -443,7 +446,7 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		return nil
 	}
 
-	// Manual mode validation (default)
+	// Legacy/fallback validation
 	// Check if legacy config is provided
 	hasLegacyConfig := config.Provider != "" && config.ModelID != ""
 
@@ -460,7 +463,6 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 		name   string
 	}{
 		{config.ExecutionLLM, "execution_llm"},
-		{config.ValidationLLM, "validation_llm"},
 		{config.LearningLLM, "learning_llm"},
 		{config.PhaseLLM, "phase_llm"},
 	}

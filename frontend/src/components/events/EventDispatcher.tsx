@@ -21,7 +21,6 @@ import {
   type WorkflowStartEventData,
   type WorkflowProgressEventData,
   type WorkflowEndEventData,
-  type PrerequisiteNavigationEvent,
   type TodoTaskRouteSelectedEvent,
   type TodoTaskItemCreatedEvent,
   type TodoTaskItemUpdatedEvent,
@@ -82,7 +81,6 @@ import {
   DecisionEvaluatedEventDisplay,
   RoutingEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
-  PrerequisiteNavigationEventDisplay,
   TodoTaskRouteSelectedEventDisplay,
   TodoTaskItemCreatedEventDisplay,
   TodoTaskItemUpdatedEventDisplay,
@@ -150,7 +148,7 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
           Working...
         </span>
       </div>
-      <div className="text-xs max-h-60 overflow-y-auto custom-scrollbar">
+      <div className="text-xs max-h-60 overflow-y-auto custom-scrollbar overscroll-y-contain">
         <MarkdownRenderer content={text} className="text-xs" />
         <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
       </div>
@@ -596,7 +594,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
         {childrenNodes && childrenNodes.length > 0 && onToggleNode && (
           <div className="mt-1 ml-1">
             <div
-              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words"
+              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words overscroll-y-contain"
               style={{ maxHeight: '50vh' }}
             >
               <SubAgentHierarchy
@@ -718,9 +716,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
   if (isEventType(event, 'workflow_end')) {
     return <CompactWrapper compact={compact}><WorkflowEndEvent event={getEventData(event) as WorkflowEndEventData} /></CompactWrapper>
-  }
-  if (isEventType(event, 'prerequisite_navigation')) {
-    return <CompactWrapper compact={compact}><PrerequisiteNavigationEventDisplay event={getEventData(event) as PrerequisiteNavigationEvent} compact={compact} /></CompactWrapper>
   }
   // Batch execution events
   if (isEventType(event, 'batch_group_start')) {
@@ -1391,7 +1386,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
           <div className="mt-1 ml-1">
             <div
               ref={scrollRef}
-              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words"
+              className="overflow-y-auto overflow-x-hidden p-1 custom-scrollbar break-words overscroll-y-contain"
               style={{ maxHeight: '50vh' }}
             >
               <SubAgentHierarchy
@@ -1510,7 +1505,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               </div>
             )}
             {resultText && (
-              <div className={`text-xs ${colorClasses.text} whitespace-pre-wrap break-words max-h-40 overflow-y-auto`}>
+              <div className={`text-xs ${colorClasses.text} whitespace-pre-wrap break-words max-h-40 overflow-y-auto overscroll-y-contain`}>
                 {resultText}
               </div>
             )}
@@ -1630,7 +1625,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               <div className="text-red-600 dark:text-red-400 whitespace-pre-wrap">{error}</div>
             )}
             {result && (
-              <div className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap max-h-40 overflow-y-auto">{result}</div>
+              <div className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap max-h-40 overflow-y-auto overscroll-y-contain">{result}</div>
             )}
           </div>
         </details>

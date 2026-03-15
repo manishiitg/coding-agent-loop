@@ -223,6 +223,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 		} else {
 			// Check if plan has validation errors
 			validationErr := validatePlanStepIDs(existingPlan.Steps)
+			if validationErr == nil && len(existingPlan.OrphanSteps) > 0 {
+				validationErr = validatePlanStepIDs(existingPlan.OrphanSteps)
+			}
 			if validationErr != nil {
 				// Fallback: concise instruction for plan updates with validation error fix
 				var result strings.Builder
@@ -464,6 +467,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) runPlanningPhase(ctx context.Context,
 	if err := validatePlanStepIDs(planResponse.Steps); err != nil {
 		return nil, nil, fmt.Errorf("plan validation failed: %w", err)
 	}
+	if len(planResponse.OrphanSteps) > 0 {
+		if err := validatePlanStepIDs(planResponse.OrphanSteps); err != nil {
+			return nil, nil, fmt.Errorf("orphan steps validation failed: %w", err)
+		}
+	}
+
+	// Check for ID collisions between main and orphan steps
+	if len(planResponse.OrphanSteps) > 0 {
+		mainIDs := make(map[string]bool)
+		for _, step := range planResponse.Steps {
+			mainIDs[step.GetID()] = true
+		}
+		for _, step := range planResponse.OrphanSteps {
+			if mainIDs[step.GetID()] {
+				return nil, nil, fmt.Errorf("orphan step ID %q collides with a main step ID", step.GetID())
+			}
+		}
+	}
 
 	// Plan is already saved by tools (both CREATE and UPDATE modes)
 	// Planning agent creates empty plan.json in CREATE mode, then tools add steps
@@ -608,47 +629,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) requestPlanApproval(
 func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig) error {
 	// Match config by step ID
 	var agentConfigs *AgentConfigs
+	var validationSchemaOverride *ValidationSchema
 	stepID := typedStep.GetID()
 	if stepID == "" {
 		return fmt.Errorf("step is missing required ID field. Step title: %q", typedStep.GetTitle())
 	} else if stepConfigs != nil {
 		agentConfigs = MatchStepConfigByID(stepID, stepConfigs)
+		// Check for validation schema override in step_config.json
+		for i := range stepConfigs {
+			if stepConfigs[i].ID == stepID && stepConfigs[i].ValidationSchema != nil {
+				validationSchemaOverride = stepConfigs[i].ValidationSchema
+				break
+			}
+		}
 	}
 
 	// Use type switch to handle different step types
 	switch step := typedStep.(type) {
 	case *RegularPlanStep:
 		// Regular step (may have loops)
-		// Merge prerequisite detection settings from PlanStep into AgentConfigs
-		if step.EnablePrerequisiteDetection != nil || len(step.PrerequisiteRules) > 0 {
-			if agentConfigs == nil {
-				agentConfigs = &AgentConfigs{}
-			}
-			if agentConfigs.EnablePrerequisiteDetection == nil && step.EnablePrerequisiteDetection != nil {
-				agentConfigs.EnablePrerequisiteDetection = step.EnablePrerequisiteDetection
-			}
-			if len(agentConfigs.PrerequisiteRules) == 0 && len(step.PrerequisiteRules) > 0 {
-				agentConfigs.PrerequisiteRules = step.PrerequisiteRules
-			}
-		}
-
-		// LLM validation is required for loop steps (to evaluate loop condition)
-		// Since LLM validation is disabled by default (nil = disabled), always force it on for loop steps
-		if step.HasLoop {
-			val := false // false = validation enabled
-			if agentConfigs == nil {
-				agentConfigs = &AgentConfigs{
-					DisableValidation: &val,
-				}
-			} else if agentConfigs.DisableValidation == nil || *agentConfigs.DisableValidation {
-				enabledConfigs := *agentConfigs
-				enabledConfigs.DisableValidation = &val
-				agentConfigs = &enabledConfigs
-			}
-		}
-
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
 		return nil
 
 	case *ConditionalPlanStep:
@@ -669,27 +673,20 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 			}
 		}
 
-		// Conditional steps should never have validation - they only evaluate conditions
-		if agentConfigs == nil {
-			val := true
-			agentConfigs = &AgentConfigs{
-				DisableValidation: &val,
-			}
-		} else if agentConfigs.DisableValidation == nil || !*agentConfigs.DisableValidation {
-			val := true
-			disabledConfigs := *agentConfigs
-			disabledConfigs.DisableValidation = &val
-			agentConfigs = &disabledConfigs
-		}
-
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
 		return nil
 
 	case *DecisionPlanStep:
 		// Decision step is now flattened - no nested step to populate
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
 		return nil
 
 	case *OrchestrationPlanStep:
@@ -707,59 +704,27 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
 					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
 				}
-				// Sub-agents should have validation disabled
-				// Get the populated config from the sub-agent step
-				switch subStep := route.SubAgentStep.(type) {
-				case *RegularPlanStep:
-					if subStep.AgentConfigs == nil {
-						val := true
-						subStep.AgentConfigs = &AgentConfigs{
-							DisableValidation: &val,
-						}
-					} else if subStep.AgentConfigs.DisableValidation == nil || !*subStep.AgentConfigs.DisableValidation {
-						val := true
-						disabledConfigs := *subStep.AgentConfigs
-						disabledConfigs.DisableValidation = &val
-						subStep.AgentConfigs = &disabledConfigs
-					}
 				}
-			}
 		}
 
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		// OrchestrationPlanStep delegates ValidationSchema to its inner OrchestrationStep,
+		// which gets populated via recursive populateRuntimeFields above
 		return nil
 
 	case *HumanInputPlanStep:
 		// Human input step: no execution, validation, or learning - just asks question and blocks
-		// Merge prerequisite detection settings from PlanStep into AgentConfigs
-		if step.EnablePrerequisiteDetection != nil || len(step.PrerequisiteRules) > 0 {
-			if agentConfigs == nil {
-				agentConfigs = &AgentConfigs{}
-			}
-			if agentConfigs.EnablePrerequisiteDetection == nil && step.EnablePrerequisiteDetection != nil {
-				agentConfigs.EnablePrerequisiteDetection = step.EnablePrerequisiteDetection
-			}
-			if len(agentConfigs.PrerequisiteRules) == 0 && len(step.PrerequisiteRules) > 0 {
-				agentConfigs.PrerequisiteRules = step.PrerequisiteRules
-			}
-		}
 
-		// Human input steps should never have validation, learning, or execution agents
+		// Human input steps should never have learning or execution agents
 		if agentConfigs == nil {
 			val := true
 			agentConfigs = &AgentConfigs{
-				DisableValidation: &val,
-				DisableLearning:   &val,
+				DisableLearning: &val,
 			}
 		} else {
-			// Ensure validation and learning are disabled
+			// Ensure learning is disabled
 			val := true
-			if agentConfigs.DisableValidation == nil || !*agentConfigs.DisableValidation {
-				disabledConfigs := *agentConfigs
-				disabledConfigs.DisableValidation = &val
-				agentConfigs = &disabledConfigs
-			}
 			if agentConfigs.DisableLearning == nil || !*agentConfigs.DisableLearning {
 				disabledConfigs := *agentConfigs
 				disabledConfigs.DisableLearning = &val
@@ -769,17 +734,26 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
 		return nil
 
 	case *EvaluationStep:
 		// Evaluation step
 		step.AgentConfigs = agentConfigs
+		if validationSchemaOverride != nil {
+			step.PreValidation = validationSchemaOverride
+		}
 		return nil
 
 	case *RoutingPlanStep:
 		// Routing step: similar to decision step - evaluates a question and routes to one of N next steps
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
 		return nil
 
 	case *TodoTaskPlanStep:
@@ -797,26 +771,13 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
 					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
 				}
-				// Sub-agents should have validation disabled
-				switch subStep := route.SubAgentStep.(type) {
-				case *RegularPlanStep:
-					if subStep.AgentConfigs == nil {
-						val := true
-						subStep.AgentConfigs = &AgentConfigs{
-							DisableValidation: &val,
-						}
-					} else if subStep.AgentConfigs.DisableValidation == nil || !*subStep.AgentConfigs.DisableValidation {
-						val := true
-						disabledConfigs := *subStep.AgentConfigs
-						disabledConfigs.DisableValidation = &val
-						subStep.AgentConfigs = &disabledConfigs
-					}
 				}
-			}
 		}
 
 		// Populate runtime field directly on plan step
 		step.AgentConfigs = agentConfigs
+		// TodoTaskPlanStep delegates ValidationSchema to its inner TodoTaskStep,
+		// which gets populated via recursive populateRuntimeFields above
 		return nil
 
 	default:
@@ -1568,7 +1529,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreatePlanOnly(ctx context.Context, o
 		updatePrompt := "What would you like to update in the existing plan? Please describe the changes or improvements you want."
 		
 		// Check if plan has validation errors by attempting validation
-		if validationErr := validatePlanStepIDs(existingPlan.Steps); validationErr != nil {
+		validationErr := validatePlanStepIDs(existingPlan.Steps)
+		if validationErr == nil && len(existingPlan.OrphanSteps) > 0 {
+			validationErr = validatePlanStepIDs(existingPlan.OrphanSteps)
+		}
+		if validationErr != nil {
 			updatePrompt = fmt.Sprintf("The existing plan has validation errors that need to be fixed: %v\n\nThe planning agent will automatically fix these validation errors. You can also describe any additional changes or improvements you want.", validationErr)
 		}
 

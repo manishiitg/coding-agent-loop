@@ -252,6 +252,90 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 	es.subscribersMu.RUnlock()
 }
 
+// ToolCallSummary holds a compact representation of a tool call event.
+type ToolCallSummary struct {
+	ToolCallID string        `json:"tool_call_id"`
+	ToolName   string        `json:"tool_name"`
+	Status     string        `json:"status"` // "running", "done", "error"
+	Duration   time.Duration `json:"duration,omitempty"`
+	StartedAt  time.Time     `json:"started_at"`
+	Args       string        `json:"args,omitempty"`   // full arguments from ToolCallStartEvent
+	Result     string        `json:"result,omitempty"` // full result from ToolCallEndEvent (or error message)
+}
+
+// GetToolCallsByCorrelation returns tool call summaries for events matching the given correlationID.
+// Used by query_step to show which tools a running step is calling.
+func (es *EventStore) GetToolCallsByCorrelation(sessionID, correlationID string) []ToolCallSummary {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+
+	evts, exists := es.events[sessionID]
+	if !exists {
+		return nil
+	}
+
+	// Track tool calls: toolCallID -> summary
+	toolCalls := make(map[string]*ToolCallSummary)
+	var order []string // preserve insertion order
+
+	for _, evt := range evts {
+		if evt.Data == nil || evt.Data.CorrelationID != correlationID {
+			continue
+		}
+		switch d := evt.Data.Data.(type) {
+		case *events.ToolCallStartEvent:
+			if _, exists := toolCalls[d.ToolCallID]; !exists {
+				order = append(order, d.ToolCallID)
+			}
+			toolCalls[d.ToolCallID] = &ToolCallSummary{
+				ToolCallID: d.ToolCallID,
+				ToolName:   d.ToolName,
+				Status:     "running",
+				StartedAt:  evt.Timestamp,
+				Args:       d.ToolParams.Arguments,
+			}
+		case *events.ToolCallEndEvent:
+			if tc, ok := toolCalls[d.ToolCallID]; ok {
+				tc.Status = "done"
+				tc.Duration = d.Duration
+				tc.Result = d.Result
+			} else {
+				order = append(order, d.ToolCallID)
+				toolCalls[d.ToolCallID] = &ToolCallSummary{
+					ToolCallID: d.ToolCallID,
+					ToolName:   d.ToolName,
+					Status:     "done",
+					Duration:   d.Duration,
+					StartedAt:  evt.Timestamp,
+					Result:     d.Result,
+				}
+			}
+		case *events.ToolCallErrorEvent:
+			if tc, ok := toolCalls[d.ToolCallID]; ok {
+				tc.Status = "error"
+				tc.Duration = d.Duration
+				tc.Result = d.Error
+			} else {
+				order = append(order, d.ToolCallID)
+				toolCalls[d.ToolCallID] = &ToolCallSummary{
+					ToolCallID: d.ToolCallID,
+					ToolName:   d.ToolName,
+					Status:     "error",
+					Duration:   d.Duration,
+					StartedAt:  evt.Timestamp,
+					Result:     d.Error,
+				}
+			}
+		}
+	}
+
+	result := make([]ToolCallSummary, 0, len(order))
+	for _, id := range order {
+		result = append(result, *toolCalls[id])
+	}
+	return result
+}
+
 // InitializeSession creates an empty event list for a session
 func (es *EventStore) InitializeSession(sessionID string, baseIndex int) {
 	es.mu.Lock()

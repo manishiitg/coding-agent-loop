@@ -38,6 +38,7 @@ interface LLMSelectionDropdownProps {
   inModal?: boolean; // Add prop to indicate if used inside a modal
   openDirection?: 'up' | 'down'; // Add prop to control dropdown direction
   title?: string; // Custom title for the dropdown modal (defaults to "Select Primary LLM")
+  placeholder?: string; // Custom placeholder text when no LLM is selected
 }
 
 export default function LLMSelectionDropdown({
@@ -48,7 +49,8 @@ export default function LLMSelectionDropdown({
   disabled = false,
   inModal = false,
   openDirection = 'down', // Default to downward
-  title = 'Select Primary LLM' // Default title
+  title = 'Select Primary LLM', // Default title
+  placeholder
 }: LLMSelectionDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -105,7 +107,7 @@ export default function LLMSelectionDropdown({
       }
       return label;
     }
-    return 'Select LLM';
+    return placeholder || 'Select LLM';
   };
 
   // Filter LLMs based on search query

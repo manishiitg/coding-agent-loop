@@ -65,33 +65,27 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{}, // No options for planning phase
 			},
 			{
+				ID:          "human-assisted-execution",
+				Title:       "Human In The Loop",
+				Description: "Run workflow steps interactively via chat. Choose which steps to run, monitor progress, and review results — without plan modifications or optimization.",
+				Options:     []WorkflowPhaseOption{},
+			},
+			{
 				ID:          database.WorkflowStatusPreVerification,
 				Title:       "Execution",
 				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
 			},
 			{
-				ID:          "evaluation-designer",
-				Title:       "Evaluation Designer",
-				Description: "Create evaluation guides to assess workflow execution results. Define what to check, how to pre-validate, and score-based success criteria (0-10).",
+				ID:          "evaluation-builder",
+				Title:       "Evaluation Builder",
+				Description: "Design, review, and refine evaluation plans in a free-flow conversation. Create new evaluation steps, analyze results from past runs, and improve criteria — all in one place.",
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
 				ID:          "evaluation-execution",
 				Title:       "Evaluation Execution",
 				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
-				Options:     []WorkflowPhaseOption{},
-			},
-			{
-				ID:          "evaluation-debugger",
-				Title:       "Evaluation Debugger",
-				Description: "Analyze evaluation results and plan to provide feedback and suggestions for improving the evaluation plan based on scores.",
-				Options:     []WorkflowPhaseOption{},
-			},
-			{
-				ID:          "human-assisted-execution",
-				Title:       "Human Assisted Execution",
-				Description: "Run workflow steps interactively via chat. Choose which steps to run, monitor progress, and review results — without plan modifications or optimization.",
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
@@ -146,7 +140,6 @@ type WorkflowOrchestrator struct {
 
 	// Preset-level agent defaults (used when step config doesn't specify)
 	presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
-	presetValidationLLM           *step_based_workflow.AgentLLMConfig // Default for validation agents
 	presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
 	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
@@ -156,8 +149,7 @@ type WorkflowOrchestrator struct {
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
 
 	// Tiered LLM allocation mode
-	tieredConfig      *step_based_workflow.TieredLLMConfig
-	llmAllocationMode string
+	tieredConfig *step_based_workflow.TieredLLMConfig
 
 	// Frontend-provided execution options (when provided, skips interactive prompts)
 	executionOptions *step_based_workflow.ExecutionOptions
@@ -171,6 +163,16 @@ type WorkflowOrchestrator struct {
 
 	// HTTP session ID (from the frontend/API layer) for scoped MCP cleanup
 	httpSessionID string
+
+	// toolCallQueryFunc provides live tool call query capability for workshop sessions.
+	// Set by the server layer which has access to the EventStore.
+	toolCallQueryFunc step_based_workflow.ToolCallQueryFunc
+}
+
+// SetToolCallQueryFunc sets the function for querying live tool calls from the event store.
+// Called by server.go after creating the orchestrator to inject EventStore access.
+func (wo *WorkflowOrchestrator) SetToolCallQueryFunc(fn step_based_workflow.ToolCallQueryFunc) {
+	wo.toolCallQueryFunc = fn
 }
 
 // SetVirtualPlan sets a synthetic plan for the workflow (used by Task Agent mode)
@@ -233,6 +235,28 @@ type TodoVerificationResponse struct {
 	ModifiedTodoListMarkdown string    `json:"modified_todo_list_markdown,omitempty"`
 }
 
+// convertDBAgentLLMConfig converts a database.AgentLLMConfig to step_based_workflow.AgentLLMConfig,
+// including fallback models.
+func convertDBAgentLLMConfig(dbConfig *database.AgentLLMConfig) *step_based_workflow.AgentLLMConfig {
+	if dbConfig == nil {
+		return nil
+	}
+	cfg := &step_based_workflow.AgentLLMConfig{
+		Provider: dbConfig.Provider,
+		ModelID:  dbConfig.ModelID,
+	}
+	if len(dbConfig.Fallbacks) > 0 {
+		cfg.Fallbacks = make([]step_based_workflow.AgentLLMFallback, len(dbConfig.Fallbacks))
+		for i, fb := range dbConfig.Fallbacks {
+			cfg.Fallbacks[i] = step_based_workflow.AgentLLMFallback{
+				Provider: fb.Provider,
+				ModelID:  fb.ModelID,
+			}
+		}
+	}
+	return cfg
+}
+
 // NewWorkflowOrchestrator creates a new workflow orchestrator
 // Note: provider and model parameters removed - LLM selection uses temp override → step config → preset LLM priority
 func NewWorkflowOrchestrator(
@@ -280,7 +304,7 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetValidationLLM, presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
+	var presetExecutionLLM, presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
 	if presetLLMConfig != nil {
 		// Use agent-specific defaults if available, otherwise fall back to legacy single default
 		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
@@ -298,18 +322,6 @@ func NewWorkflowOrchestrator(
 			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from legacy Provider/ModelID: %s/%s", presetExecutionLLM.Provider, presetExecutionLLM.ModelID)
 		} else {
 			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] No presetExecutionLLM found - presetLLMConfig.ExecutionLLM is nil and legacy Provider/ModelID are empty")
-		}
-		if presetLLMConfig.ValidationLLM != nil && presetLLMConfig.ValidationLLM.Provider != "" && presetLLMConfig.ValidationLLM.ModelID != "" {
-			presetValidationLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.ValidationLLM.Provider,
-				ModelID:  presetLLMConfig.ValidationLLM.ModelID,
-			}
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for validation
-			presetValidationLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
 		}
 		if presetLLMConfig.LearningLLM != nil && presetLLMConfig.LearningLLM.Provider != "" && presetLLMConfig.LearningLLM.ModelID != "" {
 			presetLearningLLM = &step_based_workflow.AgentLLMConfig{
@@ -344,23 +356,12 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract tiered LLM allocation config
-	var llmAllocationMode string
 	var tieredConfig *step_based_workflow.TieredLLMConfig
-	if presetLLMConfig != nil && presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
-		llmAllocationMode = "tiered"
+	if presetLLMConfig != nil && presetLLMConfig.TieredConfig != nil {
 		tieredConfig = &step_based_workflow.TieredLLMConfig{
-			Tier1: &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
-				ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
-			},
-			Tier2: &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
-				ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
-			},
-			Tier3: &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
-				ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
-			},
+			Tier1: convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier1),
+			Tier2: convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier2),
+			Tier3: convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier3),
 		}
 		// Phase LLM is independent of tiered mode - it's always configured separately
 		// The frontend saves phase_llm with Tier1 as default when user hasn't explicitly set one
@@ -391,14 +392,12 @@ func NewWorkflowOrchestrator(
 	wo := &WorkflowOrchestrator{
 		BaseOrchestrator:              baseOrchestrator,
 		presetExecutionLLM:            presetExecutionLLM,
-		presetValidationLLM:           presetValidationLLM,
 		presetLearningLLM:             presetLearningLLM,
 		presetPhaseLLM:                presetPhaseLLM,
 		presetPlanImprovementLLM:      presetPlanImprovementLLM,
 		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
 		useKnowledgebase:              useKnowledgebase,
 		tieredConfig:                  tieredConfig,
-		llmAllocationMode:             llmAllocationMode,
 	}
 
 	return wo, nil
@@ -439,26 +438,17 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runPlanningOnly(ctx, objective, selectedOptions)
 	}
 
-	if workflowStatus == "evaluation-designer" {
-		return wo.runEvaluationDesignerOnly(ctx, objective, selectedOptions)
-	}
-
 	if workflowStatus == "evaluation-execution" {
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
-
-	if workflowStatus == "evaluation-debugger" {
-		return wo.runEvaluationDebugger(ctx, objective, selectedOptions)
-	}
-
 
 	if workflowStatus == "execution-qa" {
 		return wo.runExecutionDebugger(ctx, objective, selectedOptions)
 	}
 
-	// workflow-builder and human-assisted-execution are chat-only phases —
+	// workflow-builder, human-assisted-execution, and evaluation-builder are chat-only phases —
 	// they should never reach the orchestrator path. If they do, return an error.
-	if workflowStatus == "workflow-builder" || workflowStatus == "human-assisted-execution" {
+	if workflowStatus == "workflow-builder" || workflowStatus == "human-assisted-execution" || workflowStatus == "evaluation-builder" {
 		return "", fmt.Errorf("%s is a chat-only phase — use phase chat mode instead of orchestrator execution", workflowStatus)
 	}
 
@@ -530,14 +520,13 @@ func (wo *WorkflowOrchestrator) runPlanningOnly(ctx context.Context, objective s
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,     // NEW: Pass category map
 		wo.presetExecutionLLM, // Pass preset defaults
-		wo.presetValidationLLM,
+		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
-		wo.llmAllocationMode, // Tiered LLM allocation mode
-		wo.tieredConfig,      // Tiered LLM config
+		wo.tieredConfig,     // Tiered LLM config
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
@@ -601,13 +590,12 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
 		wo.presetExecutionLLM,
-		wo.presetValidationLLM,
+		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated)
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase,
-		wo.llmAllocationMode,
 		wo.tieredConfig,
 	)
 	if err != nil {
@@ -647,6 +635,11 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
+
+	// Wire up live tool call query if available
+	if wo.toolCallQueryFunc != nil {
+		workshopManager.SetToolCallQuery(wo.httpSessionID, wo.toolCallQueryFunc)
+	}
 
 	// Resolve run folder from execution options if provided
 	var runFolder string
@@ -766,14 +759,13 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
 		wo.presetExecutionLLM,
-		wo.presetValidationLLM,
+		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
 		nil,
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
-		wo.llmAllocationMode, // Tiered LLM allocation mode
-		wo.tieredConfig,      // Tiered LLM config
+		wo.tieredConfig,     // Tiered LLM config
 	)
 	if err != nil {
 		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
@@ -877,14 +869,13 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,     // NEW: Pass category map
 		wo.presetExecutionLLM, // Pass preset defaults
-		wo.presetValidationLLM,
+		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated, no longer used)
 		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
-		wo.llmAllocationMode, // Tiered LLM allocation mode
-		wo.tieredConfig,      // Tiered LLM config
+		wo.tieredConfig,     // Tiered LLM config
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)

@@ -2294,7 +2294,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const phaseNames: Record<string, string> = {
         'planning': 'planning agent',
         'execution-qa': 'execution Q&A',
-        'evaluation-debugger': 'evaluation debugger',
+        'evaluation-builder': 'evaluation builder',
       }
       return `Chat with the ${phaseNames[workflowPhaseId!] ?? 'agent'}...`
     }

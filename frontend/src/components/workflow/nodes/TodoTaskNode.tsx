@@ -79,7 +79,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
-  const { id, title, todo_task_step, predefined_routes, enable_generic_agent, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder } = data
+  const { id, title, todo_task_step, predefined_routes, enable_generic_agent, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, isOrphan } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
   const layoutDirection = useWorkflowStore(state => state.layoutDirection)
@@ -115,8 +115,6 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const innerStep = todo_task_step as { agent_configs?: {
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
-    enable_prerequisite_detection?: boolean
-    prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
     conditional_llm?: { provider?: string; model_id?: string }
     execution_llm?: { provider?: string; model_id?: string }
     learning_llm?: { provider?: string; model_id?: string }
@@ -439,11 +437,11 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   }, [todo_task_step, hasContext, predefined_routes, enable_generic_agent])
 
   return (
-    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''} ${isOrphan ? 'border-dashed border-2 border-amber-400 dark:border-amber-500 rounded-xl' : ''}`}>
       {/* Header with buttons - above the card */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
-        {onRunFromStep ? (
+        {onRunFromStep && !isOrphan ? (
           <button
             onClick={handleRunClick}
             disabled={isRunDisabled}
@@ -489,20 +487,6 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
         ) : (
           <div className="flex items-center justify-center w-7 h-7 rounded-md bg-slate-100 dark:bg-slate-800/60 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700" title="Simple Agent Mode">
             <Code className="w-3.5 h-3.5" />
-          </div>
-        )}
-        {/* Prerequisite Detection Badge */}
-        {stepConfig?.agent_configs?.enable_prerequisite_detection && (
-          <div
-            className="flex items-center gap-1 px-2 py-1 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
-            title={
-              stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0
-                ? `Prerequisite detection enabled. ${stepConfig.agent_configs.prerequisite_rules.length} rule(s) configured`
-                : 'Prerequisite detection enabled'
-            }
-          >
-            <AlertTriangle className="w-3 h-3" />
-            <span>Prereq</span>
           </div>
         )}
         {/* Lock Learnings Badge */}

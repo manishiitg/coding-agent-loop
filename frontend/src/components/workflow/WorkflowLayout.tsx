@@ -962,7 +962,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowChatArea(true)
   }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById])
 
-  // Handle create plan - starts the planning or evaluation-designer phase depending on workflow mode
+  // Handle create plan - starts the planning or evaluation-builder phase depending on workflow mode
   const handleCreatePlan = useCallback(() => {
     // Ensure we're in workflow mode before creating plan (only if we have an active preset)
     if (activePresetId) {
@@ -976,8 +976,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     const phases = useWorkflowStore.getState().phases
 
     if (workflowMode === 'eval') {
-      const evalDesignerPhase = phases.find(p => p.id === 'evaluation-designer')
-      const evalPhaseId = evalDesignerPhase?.id || 'evaluation-designer'
+      const evalBuilderPhase = phases.find(p => p.id === 'evaluation-builder')
+      const evalPhaseId = evalBuilderPhase?.id || 'evaluation-builder'
       logger.debug('WorkflowLayout', 'Create eval plan requested, starting eval designer phase:', evalPhaseId)
       setShowChatArea(true)
       handleStartPhase(evalPhaseId)

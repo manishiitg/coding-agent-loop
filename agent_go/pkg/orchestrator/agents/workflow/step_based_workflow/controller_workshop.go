@@ -13,8 +13,26 @@ import (
 // Uses ReadWorkspaceFile (workspace HTTP API) — NOT os.ReadFile — because the workspace
 // path is a logical path resolved by the workspace service, not a local filesystem path.
 func (hcpo *StepBasedWorkflowOrchestrator) LoadPlanForWorkshop(ctx context.Context) error {
-	hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP_DEBUG] LoadPlanForWorkshop: workspacePath=%s, selectedRunFolder=%s",
-		hcpo.GetWorkspacePath(), hcpo.selectedRunFolder))
+	hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP_DEBUG] LoadPlanForWorkshop: workspacePath=%s, selectedRunFolder=%s, isEvaluationMode=%v",
+		hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.isEvaluationMode))
+
+	// In evaluation mode, load the evaluation plan instead
+	if hcpo.isEvaluationMode {
+		planContent, err := hcpo.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
+		if err != nil {
+			return fmt.Errorf("cannot read evaluation_plan.json: %w", err)
+		}
+		var evalPlan EvaluationPlan
+		if err := json.Unmarshal([]byte(planContent), &evalPlan); err != nil {
+			return fmt.Errorf("cannot parse evaluation_plan.json: %w", err)
+		}
+		// Convert to PlanningResponse so workshop tools work uniformly
+		hcpo.approvedPlan = &PlanningResponse{
+			Steps: evalPlan.ToPlanSteps(),
+		}
+		hcpo.GetLogger().Debug(fmt.Sprintf("[WORKSHOP_DEBUG] LoadPlanForWorkshop: loaded evaluation plan with %d steps", len(evalPlan.Steps)))
+		return nil
+	}
 
 	// ReadWorkspaceFile auto-prepends workspacePath to relative paths
 	planContent, err := hcpo.ReadWorkspaceFile(ctx, "planning/plan.json")
@@ -42,6 +60,8 @@ type WorkshopExecuteOptions struct {
 	RunFolder    string // e.g., "iteration-3/xtech" — overrides session-level run folder
 	SkipLearning bool   // If true, skip the learning phase for this execution only (doesn't modify step_config)
 	Instructions string // Optional orchestrator instructions for inner steps — appended to step description as "## Orchestrator Instructions"
+	HumanInput   string // Optional human input for top-level steps — injected as critical feedback in PreviousStepsSummary
+	Tier         int    // Optional LLM tier override (1=high, 2=medium, 3=low). 0 means no override.
 }
 
 // ExecuteStepForWorkshop executes a single step by its ID for the interactive workshop phase.
@@ -62,12 +82,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] presetExecutionLLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	}
 
-	// 1. Apply per-call overrides (group_id, run_folder)
+	// 1. Apply per-call overrides (group_id, run_folder, human_input)
 	if opts != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupID=%s, runFolder=%s", opts.GroupID, opts.RunFolder))
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupID=%s, runFolder=%s, humanInput=%d chars", opts.GroupID, opts.RunFolder, len(opts.HumanInput)))
 		if err := hcpo.applyWorkshopExecuteOptions(ctx, opts); err != nil {
 			return "", fmt.Errorf("failed to apply execute options: %w", err)
 		}
+		// Set workshop human input (cleared after execution)
+		hcpo.interactiveWorkflowHumanInput = opts.HumanInput
 	}
 	if hcpo.selectedRunFolder == "" {
 		return "", fmt.Errorf("no run folder selected; cannot execute step %q — pass group_id or run_folder in execute_step, or select a group first", stepID)
@@ -173,6 +195,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		stepID, targetIndex, totalSteps, isInnerStep, hcpo.selectedRunFolder))
 
 	// 4. Ensure run folder exists
+	// In evaluation mode, redirect outputs to evaluation/runs/ instead of runs/
+	if hcpo.isEvaluationMode && !strings.Contains(hcpo.selectedRunFolder, "evaluation") {
+		hcpo.selectedRunFolder = fmt.Sprintf("../evaluation/runs/%s", hcpo.selectedRunFolder)
+		hcpo.SetIterationFolder(hcpo.selectedRunFolder)
+		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Evaluation mode: redirected run folder to %s", hcpo.selectedRunFolder))
+	}
 	fullRunFolderPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	if err := hcpo.createRunFolderStructure(ctx, fullRunFolderPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Failed to create run folder structure: %v (continuing)", err))
@@ -264,8 +292,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Step %q completed (result len=%d)", stepID, len(result)))
 	}
 
-	// Reset single step mode so subsequent calls don't inherit it
+	// Reset single step mode and workshop human input so subsequent calls don't inherit them
 	hcpo.SetRunSingleStepMode(false, -1)
+	hcpo.interactiveWorkflowHumanInput = ""
 
 	return result, execErr
 }

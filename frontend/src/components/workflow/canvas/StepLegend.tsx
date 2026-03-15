@@ -1,8 +1,8 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react'
-import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, SkipForward, ShieldCheck, Search, Route } from 'lucide-react'
-import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, OrchestratorNodeData, RoutingStepNodeData } from '../hooks/usePlanToFlow'
+import { ChevronDown, ChevronUp, CheckCircle, XCircle, Loader2, ArrowRight, Code, GitBranch, Repeat, Zap, Lock, Search, Route } from 'lucide-react'
+import type { WorkflowNode, StepNodeData, ConditionalNodeData, LoopNodeData, DecisionNodeData, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isOrchestrationStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { agentApi } from '../../../services/api'
 import { WorkflowLegend } from './WorkflowLegend'
@@ -52,10 +52,10 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   const presetUseToolSearchMode = activePreset?.useToolSearchMode ?? false
 
   // Type guard to check if node has step data
-  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | RoutingStepNodeData } => {
-    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'routing') &&
+  const hasStepData = (node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingStepNodeData } => {
+    return (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'routing') &&
            'step' in node.data &&
-           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | RoutingStepNodeData).step === 'object'
+           typeof (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | RoutingStepNodeData).step === 'object'
   }
 
   // Build a flat list of all steps including branch steps
@@ -186,72 +186,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
       return result
     }
 
-    const mainSteps = processStepsRecursive(plan.steps)
-    
-    // Add sub-agents from orchestrator nodes
-    const subAgentSteps: Array<{
-      step: PlanStep
-      stepIndex: number
-      node: WorkflowNode | undefined
-      nodeId: string
-      branchType?: 'true' | 'false'
-      depth: number
-      parentStepIndex?: number
-    }> = []
-    
-    // Find all orchestrator nodes and their sub-agents
-    nodes.forEach(node => {
-      if (node.type === 'orchestrator' && hasStepData(node)) {
-        const orchestratorData = node.data as OrchestratorNodeData
-        const orchestratorStep = orchestratorData.step
-        const orchestratorStepIndex = orchestratorData.stepIndex
-        
-        // Find sub-agent nodes that belong to this orchestrator node
-        if (isOrchestrationStep(orchestratorStep) && orchestratorStep.orchestration_routes) {
-          orchestratorStep.orchestration_routes.forEach((route, routeIndex) => {
-            if (route.sub_agent_step) {
-              // Find the sub-agent node by ID pattern
-              const subAgentNodeId = `${node.id}-sub-agent-${route.route_id || route.sub_agent_step.id || routeIndex}`
-              const subAgentNode = nodeMapByNodeId.get(subAgentNodeId)
-              
-              if (subAgentNode && hasStepData(subAgentNode)) {
-                subAgentSteps.push({
-                  step: route.sub_agent_step,
-                  stepIndex: orchestratorStepIndex, // Use parent's step index
-                  node: subAgentNode,
-                  nodeId: subAgentNodeId,
-                  depth: 1, // Indent sub-agents one level
-                  parentStepIndex: orchestratorStepIndex
-                })
-              }
-            }
-          })
-        }
-      }
-    })
-    
-    // Combine main steps and sub-agents, inserting sub-agents after their parent orchestrator step
-    const result: Array<{
-      step: PlanStep
-      stepIndex: number
-      node: WorkflowNode | undefined
-      nodeId: string
-      branchType?: 'true' | 'false'
-      depth: number
-      parentStepIndex?: number
-    }> = []
-    
-    mainSteps.forEach(mainStep => {
-      result.push(mainStep)
-      
-      // If this is an orchestrator step, add its sub-agents right after it
-      if (mainStep.node?.type === 'orchestrator') {
-        const orchestratorSubAgents = subAgentSteps.filter(sa => sa.parentStepIndex === mainStep.stepIndex)
-        result.push(...orchestratorSubAgents)
-      }
-    })
-    
-    return result
+    return processStepsRecursive(plan.steps)
   }, [plan, nodes])
 
   // Generate a stable key for allSteps to prevent infinite loops in useEffect
@@ -270,7 +205,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
     // Collect unique step IDs that need checking
     const stepIdsToCheck = new Set<string>()
     allSteps.forEach(({ step }) => {
-      const stepId = (isOrchestrationStep(step) && step.orchestration_step?.id) ?? step.id
+      const stepId = step.id
       if (stepId && !learningsExistCache.has(stepId)) {
         stepIdsToCheck.add(stepId)
       }
@@ -331,11 +266,9 @@ export const StepLegend: React.FC<StepLegendProps> = ({
     const runningStep = allSteps.find(({ step, node }) => {
       // Match by step.id
       if (step.id === currentStepId) return true
-      // For orchestration steps, also check orchestration_step.id
-      if (isOrchestrationStep(step) && step.orchestration_step?.id === currentStepId) return true
       // Match by node.data.step.id
       if (node && hasStepData(node)) {
-        const nodeStepId = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData).step?.id
+        const nodeStepId = (node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData).step?.id
         if (nodeStepId === currentStepId) return true
       }
       return false
@@ -344,9 +277,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
     if (!runningStep) return null
 
     const { step, stepIndex } = runningStep
-    const title = isOrchestrationStep(step) && step.orchestration_step?.title
-      ? step.orchestration_step.title
-      : step.title || `Step ${stepIndex + 1}`
+    const title = step.title || `Step ${stepIndex + 1}`
 
     return { title, stepIndex }
   }, [currentStepId, allSteps])
@@ -443,33 +374,16 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                 : presetUseToolSearchMode         // Fall back to preset default
 
               // Check if learnings are locked (matching StepNode logic - show icon if lock_learnings is true)
-              // For orchestration steps, check orchestration_step.agent_configs
-              // For regular steps, check step.agent_configs
-              const orchestrationStepConfigs = isOrchestrationStep(step) ? step.orchestration_step?.agent_configs : undefined
               const stepConfigs = step.agent_configs
-              
-              // Check lock_learnings in the appropriate config based on step type
-              const lockLearningsConfig = isOrchestrationStep(step)
-                ? orchestrationStepConfigs?.lock_learnings
-                : stepConfigs?.lock_learnings
-              
-              // Check disable_learning in the appropriate config
-              const isLearningDisabled = isOrchestrationStep(step)
-                ? (orchestrationStepConfigs?.disable_learning ?? stepConfigs?.disable_learning) === true
-                : stepConfigs?.disable_learning === true
-              
+
+              // Check lock_learnings in step config
+              const lockLearningsConfig = stepConfigs?.lock_learnings
+
+              // Check disable_learning in step config
+              const isLearningDisabled = stepConfigs?.disable_learning === true
+
               // Show lock icon if lock_learnings is true and learning is not disabled (matching StepNode behavior)
               const lockLearnings = lockLearningsConfig === true && !isLearningDisabled
-
-              // Check validation skipped (llm_validation_mode === 'skip')
-              const skipLLMValidation = isOrchestrationStep(step)
-                ? orchestrationStepConfigs?.llm_validation_mode === 'skip'
-                : stepConfigs?.llm_validation_mode === 'skip'
-              
-              // Check if LLM validation is disabled (disabled by default, only enabled when false)
-              const isValidationDisabled = isOrchestrationStep(step)
-                ? orchestrationStepConfigs?.disable_validation !== false
-                : stepConfigs?.disable_validation !== false
 
               // Check if this is a sub-agent (node ID contains '-sub-agent-')
               const isSubAgent = nodeId.includes('-sub-agent-')
@@ -535,17 +449,11 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         {nodeType === 'decision' && (
                           <Zap className="w-3 h-3 text-indigo-500 flex-shrink-0" />
                         )}
-                        {nodeType === 'orchestrator' && (
-                          <GitBranch className="w-3 h-3 text-indigo-500 flex-shrink-0" />
-                        )}
                         {nodeType === 'routing' && (
                           <Route className="w-3 h-3 text-teal-500 flex-shrink-0" />
                         )}
                         <span>
-                          {nodeType === 'orchestrator' && isOrchestrationStep(step) && step.orchestration_step?.title
-                            ? step.orchestration_step.title
-                            : step.title || `Step ${stepIndex + 1}`
-                          }
+                          {step.title || `Step ${stepIndex + 1}`}
                         </span>
                         {useCodeExecutionMode && (
                           <Code className="w-3 h-3 text-blue-500 flex-shrink-0" />
@@ -556,16 +464,6 @@ export const StepLegend: React.FC<StepLegendProps> = ({
                         {lockLearnings && (
                           <span title="Learnings are locked" className="flex-shrink-0">
                             <Lock className="w-3 h-3 text-purple-500" />
-                          </span>
-                        )}
-                        {skipLLMValidation && (
-                          <span title="LLM validation will be skipped if pre-validation passes" className="flex-shrink-0">
-                            <SkipForward className="w-3 h-3 text-indigo-500" />
-                          </span>
-                        )}
-                        {isValidationDisabled && (
-                          <span title="Validation disabled - only pre-validation runs" className="flex-shrink-0">
-                            <ShieldCheck className="w-3 h-3 text-orange-500" />
                           </span>
                         )}
                       </div>

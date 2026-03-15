@@ -1,7 +1,6 @@
 import { StepNode } from './StepNode'
 import { ConditionalNode } from './ConditionalNode'
 import { DecisionNode } from './DecisionNode'
-import { OrchestratorNode } from './RoutingNode'
 import { TodoTaskNode } from './TodoTaskNode'
 import { LoopNode } from './LoopNode'
 import { HumanInputNode } from './HumanInputNode'
@@ -14,7 +13,6 @@ import { ExecutionSettingsNode } from './ExecutionSettingsNode'
 export { StepNode } from './StepNode'
 export { ConditionalNode } from './ConditionalNode'
 export { DecisionNode } from './DecisionNode'
-export { OrchestratorNode } from './RoutingNode'
 export { TodoTaskNode } from './TodoTaskNode'
 export { LoopNode } from './LoopNode'
 export { HumanInputNode } from './HumanInputNode'
@@ -30,7 +28,6 @@ export const nodeTypes = {
   step: StepNode,
   conditional: ConditionalNode,
   decision: DecisionNode,
-  orchestrator: OrchestratorNode,
   todo_task: TodoTaskNode,
   human_input: HumanInputNode,
   loop: LoopNode,

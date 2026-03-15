@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
-import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, PrerequisiteRule, ValidationSchema, RoutingRoute } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep, isTodoTaskStep, isRoutingStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep, PlanningResponse, AgentConfigs, AgentLLMConfig, ValidationSchema, RoutingRoute } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isHumanInputStep, isTodoTaskStep, isRoutingStep } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -36,6 +36,7 @@ export interface StepNodeData extends Record<string, unknown> {
   parentOrchestratorTitle?: string  // Title of parent orchestrator node (for sub-agents)
   routeName?: string  // Route name from orchestration_routes (for sub-agents)
   routeCondition?: string  // Condition from orchestration_routes (for sub-agents)
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface ConditionalNodeData extends Record<string, unknown> {
@@ -55,6 +56,7 @@ export interface ConditionalNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface DecisionNodeData extends Record<string, unknown> {
@@ -73,6 +75,7 @@ export interface DecisionNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json (from decision_step)
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface LoopNodeData extends Record<string, unknown> {
@@ -91,24 +94,7 @@ export interface LoopNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
-}
-
-export interface OrchestratorNodeData extends Record<string, unknown> {
-  id: string
-  title: string
-  orchestration_step?: PlanStep
-  orchestration_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step: PlanStep; context_to_pass?: string }>
-  status: 'pending' | 'running' | 'failed' | 'executing' | 'evaluating' | 'orchestrating' | 'completed'
-  stepIndex: number
-  step: PlanStep
-  changeType?: ChangeType  // Highlight type for visual feedback
-  onRunFromStep?: OnRunFromStepCallback  // Callback to run from this step
-  onOpenSidebar?: OnOpenSidebarCallback  // Callback to open sidebar for editing
-  isExecuting?: boolean  // Whether execution is in progress
-  canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
-  workspacePath?: string | null  // Workspace path for file opening
-  selectedRunFolder?: string  // Selected iteration folder for file opening
-  validation_schema?: ValidationSchema  // Validation schema from plan.json (from orchestration_step)
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface TodoTaskNodeData extends Record<string, unknown> {
@@ -128,6 +114,7 @@ export interface TodoTaskNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json (from todo_task_step)
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface HumanInputNodeData extends Record<string, unknown> {
@@ -146,6 +133,7 @@ export interface HumanInputNodeData extends Record<string, unknown> {
   canRun?: boolean  // Deprecated: always true (all steps can run regardless of previous completion)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface RoutingStepNodeData extends Record<string, unknown> {
@@ -164,6 +152,7 @@ export interface RoutingStepNodeData extends Record<string, unknown> {
   workspacePath?: string | null
   selectedRunFolder?: string
   validation_schema?: ValidationSchema
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
 export interface ValidationNodeData extends Record<string, unknown> {
@@ -210,7 +199,7 @@ export interface EvaluationStepNodeData extends Record<string, unknown> {
   isEvaluationStep: boolean
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -223,7 +212,6 @@ interface UsePlanToFlowResult {
 
 interface UsePlanToFlowOptions {
   showDependencyEdges?: boolean // Default: false (hide dependency edges for cleaner view)
-  showPrerequisiteEdges?: boolean // Default: false (hide prerequisite edges for cleaner view)
   changes?: PlanChanges | null  // Optional: highlight changes on nodes
   onRunFromStep?: OnRunFromStepCallback  // Callback for "run from step" button
   onOpenSidebar?: OnOpenSidebarCallback  // Callback for opening sidebar when settings icon is clicked
@@ -255,7 +243,6 @@ const NODE_DIMENSIONS = {
   conditional: { width: 240, height: 100 },
   decision: { width: 260, height: 120 },
   routing: { width: 280, height: 200 },
-  orchestrator: { width: 300, height: 120 },
   todo_task: { width: 300, height: 120 },
   human_input: { width: 260, height: 120 },
   loop: { width: 300, height: 140 },
@@ -268,30 +255,26 @@ const NODE_DIMENSIONS = {
 /**
  * Estimate node height based on content
  * Simplified version - nodes no longer show description, success criteria, or validation schema
- * Only accounts for: context files, prerequisite rules, loop conditions
+ * Only accounts for: context files, loop conditions
  */
 function estimateNodeHeight(node: WorkflowNode): number {
   const baseDimensions = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
   let estimatedHeight = baseDimensions.height
 
   // Get node data
-  const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | Record<string, unknown>
+  const data = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | Record<string, unknown>
 
   // Base height components (header, padding, footer) - simplified
   const headerHeight = 60 // Header with buttons
   const footerHeight = 40 // Config footer
   const padding = 16 // Top and bottom padding
 
-  // Content height estimation - only for context files and prerequisite rules
+  // Content height estimation - only for context files
   let contentHeight = 0
 
-  // Prerequisite rules and context files (from step.agent_configs)
+  // Context files (from step.agent_configs)
   if ('step' in data && data.step && typeof data.step === 'object') {
     const step = data.step as PlanStep
-    if (step.agent_configs?.enable_prerequisite_detection && step.agent_configs?.prerequisite_rules) {
-      const ruleCount = step.agent_configs.prerequisite_rules.length
-      contentHeight += (ruleCount * 40) + 8 // ~40px per rule + spacing
-    }
 
     // Context files (inputs and outputs)
     const contextInputs = Array.isArray(step.context_dependencies) ? step.context_dependencies : []
@@ -359,12 +342,10 @@ function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boo
   let maxOrchestratorSubAgents = 0
 
   nodes.forEach(node => {
-    if (node.type === 'orchestrator' || node.type === 'todo_task') {
+    if (node.type === 'todo_task') {
       hasOrchestrator = true
-      const data = node.data as OrchestratorNodeData | TodoTaskNodeData
-      const routes = node.type === 'orchestrator' 
-        ? (data as OrchestratorNodeData).orchestration_routes 
-        : (data as TodoTaskNodeData).predefined_routes
+      const data = node.data as TodoTaskNodeData
+      const routes = (data as TodoTaskNodeData).predefined_routes
       const numRoutes = routes?.length || 0
       
       // Count actual sub-agents
@@ -403,14 +384,14 @@ function positionBranchNodes(nodes: WorkflowNode[], direction: 'LR' | 'TB'): Wor
     const parentCenterX = currentParent.position.x + parentDims.width / 2
     const parentCenterY = currentParent.position.y + parentDims.height / 2
 
-    // Check for orchestrators in branches to determine spacing
+    // Check for todo_task nodes in branches to determine spacing
     // We look at all nodes in the branch to be safe, or just direct children?
     // Looking at all nodes in branch is better for spacing safety.
     const trueBranchPrefix = `${currentParent.id}-true-`
     const falseBranchPrefix = `${currentParent.id}-false-`
     
-    const trueHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(trueBranchPrefix) && n.type === 'orchestrator')
-    const falseHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(falseBranchPrefix) && n.type === 'orchestrator')
+    const trueHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(trueBranchPrefix) && n.type === 'todo_task')
+    const falseHasOrchestrator = adjustedNodes.some(n => n.id.startsWith(falseBranchPrefix) && n.type === 'todo_task')
 
     // Base offset
     let branchOffset = 200
@@ -470,7 +451,7 @@ function positionBranchNodes(nodes: WorkflowNode[], direction: 'LR' | 'TB'): Wor
 /**
  * Global collision detection and resolution
  * Detects overlaps between all nodes and resolves them by shifting nodes
- * This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
+ * This handles overlaps from todo_task sub-agents, conditional branches, loops, etc.
  * For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
  */
 function detectAndResolveCollisions(nodes: WorkflowNode[], direction: 'LR' | 'TB'): WorkflowNode[] {
@@ -693,7 +674,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
   const baseConfig = getDagreConfig(direction)
 
   // Dynamic config based on topology
-  // Increase spacing if we have orchestrators/todo tasks with many sub-agents
+  // Increase spacing if we have todo tasks with many sub-agents
   const spacingMultiplier = maxOrchestratorSubAgents > 2 ? 1.5 : 1
   
   const dynamicConfig = {
@@ -707,7 +688,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
   g.setDefaultEdgeLabel(() => ({}))
 
   // Exclude SUB-AGENT nodes and HEADER nodes from Dagre
-  // Sub-agents are positioned manually below orchestrators
+  // Sub-agents are positioned manually below todo_task nodes
   // Header nodes (start, execution-settings, variables) are positioned manually in a horizontal row
   // Branch nodes MUST be in Dagre to maintain graph connectivity
   const excludedNodeIds = new Set<string>()
@@ -736,12 +717,10 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
       let width = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.width || NODE_DIMENSIONS.step.width
       let height = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS]?.height || NODE_DIMENSIONS.step.height
 
-      // For orchestrators and todo tasks, use compound dimensions to reserve space for sub-agents
-      if (node.type === 'orchestrator' || node.type === 'todo_task') {
-        const data = node.data as OrchestratorNodeData | TodoTaskNodeData
-        const routes = node.type === 'orchestrator' 
-          ? (data as OrchestratorNodeData).orchestration_routes 
-          : (data as TodoTaskNodeData).predefined_routes
+      // For todo tasks, use compound dimensions to reserve space for sub-agents
+      if (node.type === 'todo_task') {
+        const data = node.data as TodoTaskNodeData
+        const routes = (data as TodoTaskNodeData).predefined_routes
         const numSubAgents = routes?.length || 0
         
         if (numSubAgents > 0) {
@@ -824,12 +803,10 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
     x -= dims.width / 2
     y -= dims.height / 2
 
-    // Adjust for Orchestrator/TodoTask Compound positioning
-    if (node.type === 'orchestrator' || node.type === 'todo_task') {
-      const data = node.data as OrchestratorNodeData | TodoTaskNodeData
-      const routes = node.type === 'orchestrator' 
-        ? (data as OrchestratorNodeData).orchestration_routes 
-        : (data as TodoTaskNodeData).predefined_routes
+    // Adjust for TodoTask Compound positioning
+    if (node.type === 'todo_task') {
+      const data = node.data as TodoTaskNodeData
+      const routes = (data as TodoTaskNodeData).predefined_routes
       const numSubAgents = routes?.length || 0
       
       if (numSubAgents > 0) {
@@ -941,10 +918,6 @@ function stepToNode(
       // For decision nodes, prefer decision_evaluation_question over generic title
       return step.title || step.decision_evaluation_question || `Decision ${stepIndex + 1}`
     }
-    if (isOrchestrationStep(step)) {
-      // For orchestration nodes, use step title or fallback
-      return step.title || `Orchestrator ${stepIndex + 1}`
-    }
     if (isTodoTaskStep(step)) {
       // For todo task nodes, use step title or fallback
       return step.title || `Todo Task ${stepIndex + 1}`
@@ -1017,22 +990,6 @@ function stepToNode(
         routes: step.routes,
         validation_schema: step.validation_schema
       } as RoutingStepNodeData
-    }
-  }
-
-  if (isOrchestrationStep(step)) {
-    return {
-      id: nodeId,
-      type: 'orchestrator',
-      position: { x: 0, y: 0 },
-      data: {
-        ...baseData,
-        orchestration_step: step.orchestration_step,
-        orchestration_routes: step.orchestration_routes,
-        // Use validation_schema from orchestration_step (inner step) if available, otherwise from wrapper
-        validation_schema: step.orchestration_step?.validation_schema || step.validation_schema
-        // Note: status is inherited from baseData (computed based on completedStepIndices)
-      } as OrchestratorNodeData
     }
   }
 
@@ -1142,7 +1099,6 @@ function processSteps(
   changes: PlanChanges | null | undefined,
   presetUseCodeExecutionMode: boolean,
   presetLLMConfig: AgentLLMConfig | undefined,
-  presetValidationLLM: AgentLLMConfig | undefined,
   presetLearningLLM: AgentLLMConfig | undefined,
   availableLLMs: Array<{ provider: string; model: string; label: string }>,
   completedStepIndices: number[] = [],
@@ -1298,7 +1254,6 @@ function processSteps(
           changes,
           presetUseCodeExecutionMode,
           presetLLMConfig,
-          presetValidationLLM,
           presetLearningLLM,
           availableLLMs,
           completedStepIndices,
@@ -1356,7 +1311,6 @@ function processSteps(
           changes,
           presetUseCodeExecutionMode,
           presetLLMConfig,
-          presetValidationLLM,
           presetLearningLLM,
           availableLLMs,
           completedStepIndices,
@@ -1785,164 +1739,9 @@ function processSteps(
       lastExitNodeId = null
     }
 
-    // Handle routing step edge routing
-    // Orchestrator steps execute a main orchestrator step, then route to sub-agents based on evaluation
-    // After sub-agents complete, they return to the main orchestrator for re-evaluation
-    // The orchestrator step connects to next_step_id when success criteria is met
-    if (isOrchestrationStep(step)) {
-      const orchestratorEdges: WorkflowEdge[] = []
-      const orchestratorSubAgentNodes: WorkflowNode[] = []
-
-      // Use learning/evaluation node as source if it exists, otherwise use orchestrator node
-      const sourceNodeId = (typeof lastExitNodeId === 'string' ? lastExitNodeId : node.id)
-
-      // Create nodes for sub-agents (private to orchestration step)
-      // Handle "end" route separately - it doesn't execute a sub-agent, just terminates workflow
-      if (step.orchestration_routes && step.orchestration_routes.length > 0) {
-        step.orchestration_routes.forEach((route) => {
-          const isEndRoute = route.route_id?.toLowerCase() === "end"
-
-          // Handle "end" route - create edge to end node but skip sub-agent node creation
-          if (isEndRoute) {
-            // Create edge from orchestrator to "end" node
-            orchestratorEdges.push({
-              id: `${node.id}-route-${route.route_id}-to-end`,
-              source: node.id,
-              sourceHandle: route.route_id, // Use route_id as handle (on bottom)
-              target: 'end',
-              type: 'smoothstep',
-              style: { stroke: '#ef4444', strokeWidth: 2 }, // Solid red line for end route
-              animated: false
-            })
-            return // Skip sub-agent node creation for "end" route
-          }
-
-          if (route.sub_agent_step) {
-            // Use route_id if available, otherwise use step ID or index as fallback
-            const routeId = route.route_id || route.sub_agent_step.id || String(step.orchestration_routes?.indexOf(route) ?? 0)
-            const subAgentNodeId = `${node.id}-sub-agent-${routeId}`
-
-            // Get the stepIndex from the node data (parent routing step's index)
-            const parentStepIndex = (node.data as OrchestratorNodeData).stepIndex
-            const orchestratorNodeData = node.data as OrchestratorNodeData
-            const orchestratorTitle = orchestratorNodeData.title || step.title || `Orchestrator ${parentStepIndex + 1}`
-
-            // Create sub-agent node directly (don't use stepToNode to avoid wrong ID generation)
-            const subAgentStep = route.sub_agent_step
-            const stepId = subAgentStep.id || subAgentNodeId
-
-            // Determine status
-            let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
-            if (stepStatusMap && stepStatusMap.has(stepId)) {
-              status = stepStatusMap.get(stepId)!
-            }
-
-            // Determine change type
-            const changeType = getChangeType(stepId, changes)
-
-            // Create the sub-agent node with correct ID from the start
-            const subAgentNode: WorkflowNode = {
-              id: subAgentNodeId,
-              type: 'step',
-              position: { x: 0, y: 0 },
-              data: {
-                id: subAgentNodeId, // CRITICAL: data.id must match node.id
-                title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
-                description: subAgentStep.description,
-                success_criteria: subAgentStep.success_criteria,
-                status,
-                stepIndex: parentStepIndex,
-                step: subAgentStep,
-                changeType,
-                validation_schema: subAgentStep.validation_schema, // Include validation schema for sub-agent
-                workspacePath,
-                selectedRunFolder,
-                // Sub-agent specific info for display
-                parentOrchestratorTitle: orchestratorTitle,
-                routeName: route.route_name || undefined,
-                routeCondition: route.condition || undefined
-              } as StepNodeData
-            }
-
-            orchestratorSubAgentNodes.push(subAgentNode)
-
-            // Learning nodes are no longer displayed in the workflow canvas
-            const subAgentExitNodeId = subAgentNodeId
-
-            // Connect orchestrator node to sub-agent (from orchestrator node's bottom handle to sub-agent's top)
-            orchestratorEdges.push({
-              id: `${node.id}-route-${route.route_id}-to-sub-agent`,
-              source: node.id,
-              sourceHandle: route.route_id, // Use route_id as handle (on bottom)
-              target: subAgentNodeId,
-              targetHandle: 'top', // Connect to top of sub-agent
-              type: 'smoothstep',
-              style: { stroke: '#3b82f6', strokeWidth: 2, strokeDasharray: '5,5' }, // Dashed to show it's conditional
-              animated: false
-            })
-
-            // Connect sub-agent back to orchestrator node (sub-agents always return)
-            orchestratorEdges.push({
-              id: `${subAgentExitNodeId}-return-to-${node.id}`,
-              source: subAgentExitNodeId,
-              target: node.id,
-              type: 'smoothstep',
-              label: 'Return',
-              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
-              labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
-              labelBgPadding: [2, 2] as [number, number],
-              labelBgBorderRadius: 3,
-              style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' }, // Dashed return path
-              animated: false
-            })
-          }
-        })
-      }
-
-      // Add sub-agent nodes to the nodes array
-      nodes.push(...orchestratorSubAgentNodes)
-
-      // Orchestrator steps connect to next_step_id when success criteria is met (for normal completion)
-      // Note: "end" route edges are created above when processing routes
-      if (step.next_step_id) {
-        const targetNodeId = stepIdToNodeIdMap?.get(step.next_step_id)
-        if (targetNodeId) {
-          orchestratorEdges.push({
-            id: `${sourceNodeId}-orchestrator-to-${targetNodeId}`,
-            source: sourceNodeId,
-            target: targetNodeId,
-            type: 'smoothstep',
-            style: { stroke: '#3b82f6', strokeWidth: 2 },
-            animated: false
-          })
-        } else if (step.next_step_id === 'end') {
-          // Connect to "end" node (static routing via next_step_id)
-          // Use red styling to indicate workflow termination (consistent with "end" route)
-          orchestratorEdges.push({
-            id: `${sourceNodeId}-orchestrator-to-end-static`,
-            source: sourceNodeId,
-            target: 'end',
-            type: 'smoothstep',
-            label: 'Complete',
-            labelStyle: { fill: '#ef4444', fontWeight: 600, fontSize: 11 },
-            labelBgStyle: { fill: '#fef2f2', fillOpacity: 0.9 },
-            labelBgPadding: [4, 4] as [number, number],
-            labelBgBorderRadius: 4,
-            style: { stroke: '#ef4444', strokeWidth: 2 }, // Red to indicate termination
-            animated: false
-          })
-        }
-      }
-
-      edges.push(...orchestratorEdges)
-
-      // Orchestrator steps handle their own routing - don't connect to next sequential step
-      lastExitNodeId = null
-    }
-
     // Handle todo_task step edge routing
-    // Todo task steps are similar to orchestrator steps - they have predefined routes (sub-agents)
-    // and optionally a generic agent. After sub-agents complete, they return to the main orchestrator.
+    // Todo task steps have predefined routes (sub-agents)
+    // and optionally a generic agent. After sub-agents complete, they return to the main todo task node.
     // The todo task step connects to next_step_id when all tasks are complete.
     if (isTodoTaskStep(step)) {
       const todoTaskEdges: WorkflowEdge[] = []
@@ -2086,8 +1885,7 @@ function processSteps(
               description: 'Executes ad-hoc tasks using workspace tools',
               type: 'regular',
               agent_configs: {
-                disable_learning: true,
-                disable_validation: true
+                disable_learning: true
               }
             } as PlanStep,
             changeType: undefined,
@@ -2173,8 +1971,8 @@ function processSteps(
 /**
  * Check if a node is a step-type node (has step data)
  */
-function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData | HumanInputNodeData } {
-  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'orchestrator' || node.type === 'todo_task' || node.type === 'human_input'
+function isStepTypeNode(node: WorkflowNode): node is WorkflowNode & { data: StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData | HumanInputNodeData } {
+  return node.type === 'step' || node.type === 'conditional' || node.type === 'decision' || node.type === 'loop' || node.type === 'todo_task' || node.type === 'human_input'
 }
 
 /**
@@ -2231,250 +2029,6 @@ function createDependencyEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
 }
 
 /**
- * Helper function to safely extract enable_prerequisite_detection from PlanStep
- * Checks agent_configs first, then falls back to top-level property (for backward compatibility)
- */
-function getEnablePrerequisiteDetection(step: PlanStep): boolean | undefined {
-  if (step.agent_configs?.enable_prerequisite_detection !== undefined) {
-    return step.agent_configs.enable_prerequisite_detection
-  }
-  // Check top-level property (for backward compatibility)
-  const topLevelValue = step['enable_prerequisite_detection']
-  if (typeof topLevelValue === 'boolean') {
-    return topLevelValue
-  }
-  return undefined
-}
-
-/**
- * Helper function to safely extract prerequisite_rules from PlanStep
- * Checks agent_configs first, then falls back to top-level property (for backward compatibility)
- */
-function getPrerequisiteRules(step: PlanStep): PrerequisiteRule[] | undefined {
-  if (step.agent_configs?.prerequisite_rules !== undefined) {
-    return step.agent_configs.prerequisite_rules
-  }
-  // Check top-level property (for backward compatibility)
-  const topLevelValue = step['prerequisite_rules']
-  if (Array.isArray(topLevelValue)) {
-    // Type guard: ensure all items match PrerequisiteRule structure
-    const isValidRule = (rule: unknown): rule is PrerequisiteRule => {
-      if (typeof rule !== 'object' || rule === null) {
-        return false
-      }
-      const ruleObj = rule as Record<string, unknown>
-      return (
-        'depends_on_step' in ruleObj &&
-        'description' in ruleObj &&
-        typeof ruleObj.depends_on_step === 'string' &&
-        typeof ruleObj.description === 'string'
-      )
-    }
-    if (topLevelValue.every(isValidRule)) {
-      return topLevelValue
-    }
-  }
-  return undefined
-}
-
-/**
- * Create edges based on prerequisite dependencies
- * Edges go from validation nodes (or step/learning nodes if no validation) to previous step nodes
- * Uses handle-based routing to prevent overlapping edges
- */
-function createPrerequisiteEdges(nodes: WorkflowNode[]): WorkflowEdge[] {
-  const edges: WorkflowEdge[] = []
-
-  // Filter to validation nodes, learning nodes, and step-type nodes
-  const validationNodes = nodes.filter(node => node.type === 'validation')
-  const learningNodes = nodes.filter(node => node.type === 'learning')
-  const stepNodes = nodes.filter(isStepTypeNode)
-
-  // Create a map of step ID to step node ID
-  const stepIdToNodeMap = new Map<string, string>()
-  stepNodes.forEach(node => {
-    const step = node.data.step
-    if (step.id) {
-      stepIdToNodeMap.set(step.id, node.id)
-    }
-  })
-
-  // Create a map of step node ID to step (for getting prerequisite rules)
-  const stepNodeIdToStepMap = new Map<string, PlanStep>()
-  stepNodes.forEach(node => {
-    const step = node.data.step
-    if (step.id) {
-      stepNodeIdToStepMap.set(node.id, step as PlanStep)
-    }
-  })
-
-  // Create a map of parent step ID to validation/learning node ID
-  const parentStepIdToValidationNodeMap = new Map<string, string>()
-  validationNodes.forEach(validationNode => {
-    const validationData = validationNode.data as ValidationNodeData
-    parentStepIdToValidationNodeMap.set(validationData.parentStepId, validationNode.id)
-  })
-
-  const parentStepIdToLearningNodeMap = new Map<string, string>()
-  learningNodes.forEach(learningNode => {
-    const learningData = learningNode.data as LearningNodeData
-    parentStepIdToLearningNodeMap.set(learningData.parentStepId, learningNode.id)
-  })
-
-  // Track edges per target step to assign different handles and prevent overlapping
-  const targetEdgeCounts = new Map<string, number>()
-
-  // Helper function to create prerequisite edge
-  const createPrerequisiteEdge = (
-    sourceNodeId: string,
-    targetStepNodeId: string,
-    depStepId: string,
-    rule: { depends_on_step: string; description: string },
-    sourceHandle: string,
-    targetHandle?: string
-  ) => {
-    // Get current count for this target to assign handle position
-    const currentCount = targetEdgeCounts.get(targetStepNodeId) || 0
-    targetEdgeCounts.set(targetStepNodeId, currentCount + 1)
-
-    // Assign handle positions to spread edges horizontally along bottom
-    // Use modulo to cycle through handle positions if many edges
-    const handlePositions = ['left', 'middle', 'right']
-    const handleIndex = currentCount % handlePositions.length
-    const finalTargetHandle = targetHandle || `prereq-target-${handlePositions[handleIndex]}`
-
-    // Use description as label (truncate if too long, but allow more characters)
-    // Split long text into multiple lines for better readability
-    let label = rule.description
-    if (label.length > 60) {
-      // Try to break at word boundaries
-      const words = label.split(' ')
-      let line = ''
-      const lines: string[] = []
-      for (const word of words) {
-        if ((line + word).length > 50 && line.length > 0) {
-          lines.push(line.trim())
-          line = word + ' '
-        } else {
-          line += word + ' '
-        }
-      }
-      if (line.trim().length > 0) {
-        lines.push(line.trim())
-      }
-      // If still too long, truncate the last line
-      if (lines.length > 2) {
-        label = lines.slice(0, 2).join('\n') + '...'
-      } else {
-        label = lines.join('\n')
-      }
-    }
-
-    edges.push({
-      id: `prereq-${sourceNodeId}-to-${targetStepNodeId}-${depStepId}-${currentCount}`,
-      source: sourceNodeId,
-      target: targetStepNodeId,
-      sourceHandle: sourceHandle,
-      targetHandle: finalTargetHandle,
-      type: 'smoothstep',
-      style: { stroke: '#f59e0b', strokeDasharray: '5,5', strokeWidth: 2, opacity: 0.8 },
-      animated: false,
-      label: label,
-      labelStyle: {
-        fill: '#f59e0b',
-        fontSize: 8,
-        fontWeight: 600,
-        whiteSpace: 'pre-line',
-        textAlign: 'center',
-        maxWidth: '200px'
-      },
-      labelBgStyle: {
-        fill: '#fef3c7',
-        fillOpacity: 0.95,
-        stroke: '#f59e0b',
-        strokeWidth: 1
-      },
-      labelBgPadding: [6, 8] as [number, number],
-      labelBgBorderRadius: 4,
-      labelShowBg: true
-    })
-  }
-
-  // Prerequisite detection happens during execution (via detect_prerequisite_failure tool call)
-  // Create prerequisite edges from step/learning nodes (not from validation nodes)
-  stepNodes.forEach(stepNode => {
-    const step = stepNodeIdToStepMap.get(stepNode.id)
-    if (!step) return
-
-    // Check for prerequisite rules in agent_configs first, then fall back to top level (for backward compatibility)
-    const enablePrerequisiteDetection = getEnablePrerequisiteDetection(step)
-    const prerequisiteRules = getPrerequisiteRules(step)
-
-    // Only process if prerequisite detection is enabled and rules exist
-    if (!enablePrerequisiteDetection || !prerequisiteRules || prerequisiteRules.length === 0) {
-      return
-    }
-
-    // Find the appropriate source node: learning node if exists, otherwise step node
-    // Prerequisite detection happens during execution, so edges come from execution/learning nodes
-    const learningNodeId = parentStepIdToLearningNodeMap.get(stepNode.id)
-    const sourceNodeId = learningNodeId || stepNode.id
-
-    prerequisiteRules.forEach((rule: { depends_on_step: string; description: string }) => {
-      const depStepId = rule.depends_on_step
-      if (depStepId) {
-        const targetStepNodeId = stepIdToNodeMap.get(depStepId)
-        if (!targetStepNodeId) {
-          console.warn('[PrerequisiteEdges] Target step not found in stepIdToNodeMap:', {
-            depStepId,
-            stepId: step.id,
-            stepTitle: step.title,
-            availableStepIds: Array.from(stepIdToNodeMap.keys())
-          })
-        } else if (targetStepNodeId === stepNode.id) {
-          // Skip self-reference
-        } else {
-          // CRITICAL: Verify target node exists and is a StepNode (type 'step') before creating edge
-          // Only StepNode (type 'step') has prerequisite target handles (prereq-target-left, prereq-target-middle, prereq-target-right)
-          // Other step-type nodes (conditional, decision, loop, orchestrator, human_input) don't have these handles
-          const targetNode = nodes.find(node => node.id === targetStepNodeId)
-          if (!targetNode) {
-            console.warn('[PrerequisiteEdges] Target node not found in nodes array:', {
-              targetStepNodeId,
-              depStepId,
-              stepId: step.id,
-              stepTitle: step.title
-            })
-            return
-          }
-          
-          if (targetNode.type !== 'step') {
-            console.warn('[PrerequisiteEdges] Target node is not a StepNode (type "step") - missing prerequisite target handles:', {
-              targetStepNodeId,
-              targetNodeType: targetNode.type,
-              depStepId,
-              stepId: step.id,
-              stepTitle: step.title
-            })
-            return
-          }
-          
-          // Use step or learning node as source (execution node)
-          const sourceHandleIndex = (targetEdgeCounts.get(targetStepNodeId) || 0) % 3
-          const handlePositions = ['left', 'middle', 'right']
-          const sourceHandle = `prereq-${handlePositions[sourceHandleIndex]}`
-          const targetHandleIndex = (targetEdgeCounts.get(targetStepNodeId) || 0) % 3
-          const targetHandle = `prereq-target-${handlePositions[targetHandleIndex]}`
-          createPrerequisiteEdge(sourceNodeId, targetStepNodeId, depStepId, rule, sourceHandle, targetHandle)
-        }
-      }
-    })
-  })
-
-  return edges
-}
-
-/**
  * Hook to convert plan.json to React Flow nodes and edges
  */
 export function usePlanToFlow(
@@ -2483,7 +2037,6 @@ export function usePlanToFlow(
 ): UsePlanToFlowResult {
   const {
     showDependencyEdges = false,
-    showPrerequisiteEdges = true, // Always show prerequisite edges by default
     changes = null,
     onRunFromStep,
     onOpenSidebar,
@@ -2515,7 +2068,6 @@ export function usePlanToFlow(
 
   // Get preset LLM configs
   const presetLLMConfig = activePreset?.llmConfig || undefined
-  const presetValidationLLM = activePreset?.llmConfig?.validation_llm
   const presetLearningLLM = activePreset?.llmConfig?.learning_llm
 
   // Get available LLMs for model name formatting
@@ -2532,12 +2084,22 @@ export function usePlanToFlow(
     return stepStatusMap
   }, [stepStatusMap])
 
-  // Convert serialized stepStatusMap back to Map for use in processing
-  const stepStatusMapAsMap = useMemo(() => {
-    if (!stepStatusMapSerialized) return undefined
-    // Convert object back to Map
-    return new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+  // Use a ref for stepStatusMap so status changes don't trigger full node recalculation.
+  // Status updates are handled by the fast-path effect in WorkflowCanvas (setNodes in-place).
+  const stepStatusMapRef = useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'> | undefined>(undefined)
+  useEffect(() => {
+    if (!stepStatusMapSerialized) {
+      stepStatusMapRef.current = undefined
+    } else {
+      stepStatusMapRef.current = new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+    }
   }, [stepStatusMapSerialized])
+  // Also keep a computed value for initial render (ref won't be set yet on first render)
+  const stepStatusMapAsMap = stepStatusMapRef.current ?? (
+    stepStatusMapSerialized
+      ? new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+      : undefined
+  )
 
   return useMemo(() => {
     if (!plan || !plan.steps || plan.steps.length === 0) {
@@ -2585,6 +2147,16 @@ export function usePlanToFlow(
     }
     buildStepIdMap(plan.steps)
 
+    // Also map orphan step IDs
+    if (plan.orphan_steps) {
+      plan.orphan_steps.forEach((step, index) => {
+        const nodeId = `orphan-${step.id || `step-${index}`}`
+        if (step.id) {
+          stepIdToNodeIdMap.set(step.id, nodeId)
+        }
+      })
+    }
+
     // Process all steps to create nodes and sequential edges (with change highlighting)
     const { nodes: processedNodes, edges: sequentialEdges } = processSteps(
       plan.steps,
@@ -2593,7 +2165,6 @@ export function usePlanToFlow(
       changes,
       presetUseCodeExecutionMode,
       presetLLMConfig,
-      presetValidationLLM,
       presetLearningLLM,
       availableLLMs,
       completedStepIndices,
@@ -2603,6 +2174,55 @@ export function usePlanToFlow(
       stepIdToNodeIdMap,
       completedStepIds
     )
+
+    // Process orphan steps (workshop-only, not connected to main flow)
+    let orphanNodes: WorkflowNode[] = []
+    if (plan.orphan_steps && plan.orphan_steps.length > 0) {
+      const { nodes: orphanProcessedNodes } = processSteps(
+        plan.orphan_steps,
+        undefined,
+        undefined,
+        changes,
+        presetUseCodeExecutionMode,
+        presetLLMConfig,
+        presetLearningLLM,
+        availableLLMs,
+        [],  // no completed step indices for orphan steps
+        stepStatusMapAsMap,
+        options.workspacePath,
+        options.selectedRunFolder,
+        stepIdToNodeIdMap,
+        new Set<string>()  // no completed step IDs for orphan steps
+      )
+
+      // Mark all orphan nodes and remap IDs with 'orphan-' prefix
+      orphanNodes = orphanProcessedNodes.map((node, index) => ({
+        ...node,
+        id: `orphan-${node.id}`,
+        data: {
+          ...node.data,
+          isOrphan: true,
+          onRunFromStep: undefined,  // No "Run from here" for orphan steps
+        }
+      }))
+    }
+
+    // Add orphan section label node if there are orphan steps
+    if (orphanNodes.length > 0) {
+      const orphanLabelNode: WorkflowNode = {
+        id: 'orphan-label',
+        type: 'start',  // Reuse start node type for simple label
+        position: { x: 0, y: 0 },
+        data: {
+          id: 'orphan-label',
+          title: 'Orphan Steps (workshop-only)',
+          status: 'pending' as const,
+          stepIndex: -1,
+          step: {} as PlanStep
+        }
+      }
+      orphanNodes = [orphanLabelNode, ...orphanNodes]
+    }
 
     // Add start node
     const startNode: WorkflowNode = {
@@ -2652,8 +2272,8 @@ export function usePlanToFlow(
       }
     }
 
-    // Node order: Start -> Execution Settings -> Variables -> Steps -> End
-    const nodes = [startNode, executionSettingsNode, variablesNode, ...processedNodes, endNode]
+    // Node order: Start -> Execution Settings -> Variables -> Steps -> End (+ orphan nodes)
+    const nodes = [startNode, executionSettingsNode, variablesNode, ...processedNodes, endNode, ...orphanNodes]
 
     // Create edges: Start -> Execution Settings -> Variables -> First step (or End if no steps)
     const edges: WorkflowEdge[] = []
@@ -2703,12 +2323,6 @@ export function usePlanToFlow(
     if (showDependencyEdges) {
       const dependencyEdges = createDependencyEdges(processedNodes)
       edges.push(...dependencyEdges)
-    }
-
-    // Create prerequisite edges - only if enabled
-    if (showPrerequisiteEdges) {
-      const prerequisiteEdges = createPrerequisiteEdges(processedNodes)
-      edges.push(...prerequisiteEdges)
     }
 
     // Find last node to connect to end (could be step, validation, or learning node)
@@ -2920,11 +2534,9 @@ export function usePlanToFlow(
       if (firstStepNode) {
         // Calculate the leftmost point of this node (accounting for sub-agent overflow if it's a compound node)
         let firstStepLeftEdge = firstStepNode.position.x
-        if (firstStepNode.type === 'orchestrator' || firstStepNode.type === 'todo_task') {
-          const data = firstStepNode.data as OrchestratorNodeData | TodoTaskNodeData
-          const routes = firstStepNode.type === 'orchestrator' 
-            ? (data as OrchestratorNodeData).orchestration_routes 
-            : (data as TodoTaskNodeData).predefined_routes
+        if (firstStepNode.type === 'todo_task') {
+          const data = firstStepNode.data as TodoTaskNodeData
+          const routes = (data as TodoTaskNodeData).predefined_routes
           const numSubAgents = routes?.length || 0
           
           if (numSubAgents > 0 && layoutDirection === 'LR') {
@@ -3008,14 +2620,14 @@ export function usePlanToFlow(
 
     }
 
-    // Position sub-agents relative to their parent nodes (orchestrator or todo_task)
+    // Position sub-agents relative to their parent nodes (todo_task)
     // LR layout: horizontal row BELOW parent
     // TB layout: vertical column to the RIGHT of parent
     const parentNodeMap = new Map<string, { nodeIndex: number; subAgentIndices: number[] }>()
 
-    // Pass 1: Find all orchestrator and todo task nodes first to initialize map
+    // Pass 1: Find all todo task nodes first to initialize map
     layoutedResult.nodes.forEach((node, index) => {
-      if (node.type === 'orchestrator' || node.type === 'todo_task') {
+      if (node.type === 'todo_task') {
         parentNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
       }
     })
@@ -3119,7 +2731,7 @@ export function usePlanToFlow(
       }
     })
 
-    // After Dagre + orchestrator positioning, keep validation/learning/evaluation nodes
+    // After Dagre + todo_task positioning, keep validation/learning/evaluation nodes
     // visually close to their parent step/decision nodes (but with overall higher spacing)
     const positionedNodes: WorkflowNode[] = layoutedResult.nodes.map(node => ({ ...node }))
     const nodeIndexById = new Map<string, number>()
@@ -3312,7 +2924,7 @@ export function usePlanToFlow(
     }
 
     // Apply global collision detection and resolution to fix any remaining overlaps
-    // This handles overlaps from orchestrator sub-agents, conditional branches, loops, etc.
+    // This handles overlaps from todo_task sub-agents, conditional branches, loops, etc.
     // For LR layout: prefer vertical shifts. For TB layout: prefer horizontal shifts.
     const nodesBeforeCollision = layoutedResult.nodes.length
     layoutedResult.nodes = detectAndResolveCollisions(layoutedResult.nodes, layoutDirection)
@@ -3330,7 +2942,7 @@ export function usePlanToFlow(
     // Inject onRunFromStep callback, onOpenSidebar callback, isExecuting state, canRun, workspacePath, and selectedRunFolder into step-type nodes
     // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator' || node.type === 'human_input' || node.type === 'todo_task') {
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'human_input' || node.type === 'todo_task') {
         const canRun = canStepRun()
         // Sub-agents cannot be run independently (they are part of routing steps)
         // We pass onRunFromStep even for sub-agents so the UI shows a disabled button instead of a warning icon
@@ -3356,8 +2968,46 @@ export function usePlanToFlow(
 
     // Log critical nodes only
 
+    // Position orphan nodes below the main flow
+    if (orphanNodes.length > 0) {
+      // Find max Y position of all non-orphan nodes
+      const mainNodes = layoutedResult.nodes.filter(n => !n.id.startsWith('orphan-'))
+      const maxY = Math.max(...mainNodes.map(n => {
+        const dims = NODE_DIMENSIONS[n.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+        return n.position.y + dims.height
+      }))
+
+      const ORPHAN_GAP = 200  // Gap between main flow and orphan section
+      const ORPHAN_SPACING = 30  // Spacing between orphan nodes
+
+      // Position orphan nodes below the main flow
+      let currentX = HEADER_START_X
+      layoutedResult.nodes = layoutedResult.nodes.map(node => {
+        if (!node.id.startsWith('orphan-')) return node
+
+        if (node.id === 'orphan-label') {
+          return {
+            ...node,
+            position: { x: HEADER_START_X, y: maxY + ORPHAN_GAP }
+          }
+        }
+
+        const dims = NODE_DIMENSIONS[node.type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
+        const positioned = {
+          ...node,
+          position: { x: currentX, y: maxY + ORPHAN_GAP + 60 }  // 60px below label
+        }
+        currentX += dims.width + ORPHAN_SPACING
+        return positioned
+      })
+    }
+
     return layoutedResult
-  }, [plan, showDependencyEdges, showPrerequisiteEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetValidationLLM, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, stepStatusMapAsMap, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
+  // Note: stepStatusMapAsMap is intentionally NOT a dependency here.
+  // Status updates are handled by the fast-path effect in WorkflowCanvas (surgical node updates),
+  // so we avoid recalculating the entire node/edge layout on every status change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
 }
 
 export default usePlanToFlow

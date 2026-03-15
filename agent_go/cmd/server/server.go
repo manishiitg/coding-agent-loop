@@ -2045,9 +2045,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							if presetLLMConfig.ExecutionLLM != nil {
 								log.Printf("[PRESET LLM DEBUG] ExecutionLLM: provider=%s, model=%s", presetLLMConfig.ExecutionLLM.Provider, presetLLMConfig.ExecutionLLM.ModelID)
 							}
-							if presetLLMConfig.ValidationLLM != nil {
-								log.Printf("[PRESET LLM DEBUG] ValidationLLM: provider=%s, model=%s", presetLLMConfig.ValidationLLM.Provider, presetLLMConfig.ValidationLLM.ModelID)
-							}
 							if presetLLMConfig.LearningLLM != nil {
 								log.Printf("[PRESET LLM DEBUG] LearningLLM: provider=%s, model=%s", presetLLMConfig.LearningLLM.Provider, presetLLMConfig.LearningLLM.ModelID)
 							}
@@ -2324,6 +2321,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Track HTTP session ID on the orchestrator so MCP sessions can be closed on stop
 		workflowOrchestrator.SetHTTPSessionID(sessionID)
 
+		// Wire up live tool call query for workshop query_step_tools
+		workflowOrchestrator.SetToolCallQueryFunc(formatToolCallSummaries(api))
+
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being canceled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
@@ -2512,7 +2512,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					SkipLearningWhenTempLLM1:       req.ExecutionOptions.SkipLearningWhenTempLLM1,
 					SkipLearningWhenTempLLM2:       req.ExecutionOptions.SkipLearningWhenTempLLM2,
 					EnabledGroupIDs:                req.ExecutionOptions.EnabledGroupIDs,
-					SaveValidationResponses:        req.ExecutionOptions.SaveValidationResponses,
 					SkipExecutionCleanup:           req.ExecutionOptions.SkipExecutionCleanup,
 				}
 
@@ -4223,6 +4222,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW_PHASE] Loaded variable names")
 				}
 
+				// Load evaluation context for evaluation-builder phase
+				if workflowPhaseID == "evaluation-builder" {
+					// Read evaluation plan
+					evalPlanContent, evalPlanErr := phaseReadFile(r.Context(), phaseWorkspacePath+"/evaluation/evaluation_plan.json")
+					if evalPlanErr == nil && evalPlanContent != "" {
+						phaseTemplateVars["EvaluationPlanJSON"] = evalPlanContent
+						log.Printf("[WORKFLOW_PHASE] Loaded evaluation plan (%d bytes)", len(evalPlanContent))
+					}
+					// Read latest evaluation report if a run folder is selected
+					if phaseRunFolder != "" {
+						evalReportContent, evalReportErr := phaseReadFile(r.Context(), phaseWorkspacePath+"/evaluation/runs/"+phaseRunFolder+"/evaluation_report.json")
+						if evalReportErr == nil && evalReportContent != "" {
+							phaseTemplateVars["EvaluationReportJSON"] = evalReportContent
+							log.Printf("[WORKFLOW_PHASE] Loaded evaluation report from %s (%d bytes)", phaseRunFolder, len(evalReportContent))
+						}
+					}
+				}
+
 				// Generate phase-specific system prompt (dispatches by phaseId)
 				phaseSystemPrompt := todo_creation_human.PhaseChatSystemPrompt(workflowPhaseID, phaseTemplateVars)
 
@@ -4236,8 +4253,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				case "execution-qa":
 					// Read-only phase — no modification tools
 					log.Printf("[WORKFLOW_PHASE] Read-only phase, no modification tools registered")
-				case "evaluation-debugger":
-					// Evaluation modification tools (update/add/delete evaluation steps)
+				case "evaluation-builder":
+					// Evaluation modification tools (update/add/delete evaluation steps + update_eval_step_config)
 					if err := todo_creation_human.RegisterEvaluationModificationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4249,6 +4266,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools: %v", err)
 					} else {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools")
+					}
+
+					// Workshop execution tools (execute_step, query_step, generate_learnings, etc.) in evaluation mode
+					evalSessionKey := "eval-" + sessionID
+					var evalSession *todo_creation_human.WorkshopChatSession
+					if cached, ok := api.workshopChatSessions.Load(evalSessionKey); ok {
+						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
+						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for evaluation-builder %s", sessionID)
+						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
+							evalSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
+						}
+					} else {
+						evalCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						evalCfg.IsEvaluationMode = true
+						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
+						if sessionErr != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create evaluation-builder workshop session: %v", sessionErr)
+						} else {
+							evalSession = newSession
+							api.workshopChatSessions.Store(evalSessionKey, evalSession)
+							log.Printf("[WORKFLOW_PHASE] Created evaluation-builder workshop session for %s", sessionID)
+						}
+					}
+					if evalSession != nil {
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger)
+						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for evaluation-builder (execute_step, query_step, generate_learnings, run_full_evaluation, etc.)")
 					}
 				case "human-assisted-execution":
 					// Workshop execution tools only (NO plan modification tools)
@@ -4372,18 +4416,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									if jsonErr := json.Unmarshal(refreshPreset.LLMConfig, &presetLLMConfig); jsonErr == nil {
 										// Refresh LLM configs
 										execLLM := workshopExtractLLM(presetLLMConfig.ExecutionLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-										validLLM := workshopExtractLLM(presetLLMConfig.ValidationLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 										learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 										phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-										workshopSession.UpdatePresetLLMConfigs(execLLM, validLLM, learnLLM, phaseLLM, nil)
-										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: exec=%v valid=%v learn=%v phase=%v",
-											execLLM != nil, validLLM != nil, learnLLM != nil, phaseLLM != nil)
+										workshopSession.UpdatePresetLLMConfigs(execLLM, nil, learnLLM, phaseLLM, nil)
+										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: exec=%v learn=%v phase=%v",
+											execLLM != nil, learnLLM != nil, phaseLLM != nil)
 										if execLLM != nil {
 											log.Printf("[WORKFLOW_PHASE] Refreshed execution LLM: %s/%s", execLLM.Provider, execLLM.ModelID)
 										}
 
 										// Refresh tiered LLM allocation config
-										if presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
+										if presetLLMConfig.TieredConfig != nil {
 											refreshedTiered := &todo_creation_human.TieredLLMConfig{
 												Tier1: &todo_creation_human.AgentLLMConfig{
 													Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
@@ -4398,15 +4441,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 													ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
 												},
 											}
-											workshopSession.UpdateTieredConfig("tiered", refreshedTiered)
+											workshopSession.UpdateTieredConfig(refreshedTiered)
 											log.Printf("[WORKFLOW_PHASE] Refreshed tiered config: T1=%s/%s T2=%s/%s T3=%s/%s",
 												refreshedTiered.Tier1.Provider, refreshedTiered.Tier1.ModelID,
 												refreshedTiered.Tier2.Provider, refreshedTiered.Tier2.ModelID,
 												refreshedTiered.Tier3.Provider, refreshedTiered.Tier3.ModelID)
-										} else if presetLLMConfig.LLMAllocationMode != "tiered" {
-											// User switched from tiered to manual — disable tiered mode
-											workshopSession.UpdateTieredConfig("manual", nil)
-											log.Printf("[WORKFLOW_PHASE] Tiered mode disabled (switched to manual)")
+										} else {
+											workshopSession.UpdateTieredConfig(nil)
+											log.Printf("[WORKFLOW_PHASE] Tiered config not present")
 										}
 
 										if presetLLMConfig.UseKnowledgebase != nil {
@@ -8439,13 +8481,12 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				} else {
 					// Extract all preset LLMs (same extraction as workflow_orchestrator.go)
 					cfg.PresetExecutionLLM = workshopExtractLLM(presetLLMConfig.ExecutionLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-					cfg.PresetValidationLLM = workshopExtractLLM(presetLLMConfig.ValidationLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 					cfg.PresetLearningLLM = workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 					cfg.PresetPhaseLLM = workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 					// Plan improvement uses phase LLM (not a separate config)
 
-					log.Printf("[WORKSHOP] LLM configs: exec=%v valid=%v learn=%v phase=%v",
-						cfg.PresetExecutionLLM != nil, cfg.PresetValidationLLM != nil,
+					log.Printf("[WORKSHOP] LLM configs: exec=%v learn=%v phase=%v",
+						cfg.PresetExecutionLLM != nil,
 						cfg.PresetLearningLLM != nil, cfg.PresetPhaseLLM != nil)
 
 					// Knowledgebase toggle
@@ -8554,7 +8595,75 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		},
 	}
 
+	// Wire up live tool call query for query_step_tools
+	cfg.ToolCallQueryFunc = formatToolCallSummaries(api)
+
 	return cfg
+}
+
+// truncateString truncates s to maxLen and appends "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// formatToolCallSummaries returns a ToolCallQueryFunc that formats event store tool calls.
+// When toolCallID is empty, returns a summary with truncated args/results.
+// When toolCallID is set, returns full input/output for that specific call.
+func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQueryFunc {
+	return func(mainSessID, correlationID, toolCallID string) string {
+		summaries := api.eventStore.GetToolCallsByCorrelation(mainSessID, correlationID)
+		if len(summaries) == 0 {
+			return ""
+		}
+
+		// Detailed mode: find specific tool call and return full args/result
+		if toolCallID != "" {
+			for _, tc := range summaries {
+				if tc.ToolCallID == toolCallID {
+					var sb strings.Builder
+					sb.WriteString(fmt.Sprintf("**%s** [%s]", tc.ToolName, strings.ToUpper(tc.Status)))
+					if tc.Duration > 0 {
+						sb.WriteString(fmt.Sprintf(" (%s)", tc.Duration.Round(time.Millisecond)))
+					}
+					sb.WriteString(fmt.Sprintf("\ntool_call_id: %s", tc.ToolCallID))
+					if tc.Args != "" {
+						sb.WriteString(fmt.Sprintf("\n\n**Input:**\n```json\n%s\n```", tc.Args))
+					}
+					if tc.Result != "" {
+						sb.WriteString(fmt.Sprintf("\n\n**Output:**\n```\n%s\n```", tc.Result))
+					}
+					return sb.String()
+				}
+			}
+			return fmt.Sprintf("tool_call_id %q not found", toolCallID)
+		}
+
+		// Summary mode: truncated args/results
+		var sb strings.Builder
+		for i, tc := range summaries {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			switch tc.Status {
+			case "running":
+				sb.WriteString(fmt.Sprintf("- [RUNNING] %s (id: %s)", tc.ToolName, tc.ToolCallID))
+			case "done":
+				sb.WriteString(fmt.Sprintf("- [DONE] %s (%s) (id: %s)", tc.ToolName, tc.Duration.Round(time.Millisecond), tc.ToolCallID))
+			case "error":
+				sb.WriteString(fmt.Sprintf("- [ERROR] %s (%s) (id: %s)", tc.ToolName, tc.Duration.Round(time.Millisecond), tc.ToolCallID))
+			}
+			if tc.Args != "" {
+				sb.WriteString(fmt.Sprintf("\n  Args: %s", truncateString(tc.Args, 200)))
+			}
+			if tc.Result != "" {
+				sb.WriteString(fmt.Sprintf("\n  Result: %s", truncateString(tc.Result, 200)))
+			}
+		}
+		return sb.String()
+	}
 }
 
 // workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.

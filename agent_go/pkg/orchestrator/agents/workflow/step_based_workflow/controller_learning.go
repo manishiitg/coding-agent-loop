@@ -14,6 +14,36 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// appendOrchestrationLogEntry appends a JSON entry to an execution log file (JSONL format).
+// Each entry is a single JSON object on its own line.
+func (hcpo *StepBasedWorkflowOrchestrator) appendOrchestrationLogEntry(ctx context.Context, filePath string, entry map[string]interface{}) error {
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("failed to marshal log entry to JSON: %w", err)
+	}
+
+	existingContent := ""
+	existingContent, err = hcpo.ReadWorkspaceFile(ctx, filePath)
+	if err != nil {
+		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "no such file") {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read existing log file %s: %v (will create new file)", filePath, err))
+		}
+		existingContent = ""
+	}
+
+	newContent := existingContent
+	if existingContent != "" {
+		newContent += "\n"
+	}
+	newContent += string(entryJSON)
+
+	if err := hcpo.WriteWorkspaceFile(ctx, filePath, newContent); err != nil {
+		return fmt.Errorf("failed to append log entry to %s: %w", filePath, err)
+	}
+
+	return nil
+}
+
 // runSuccessLearningPhase analyzes successful executions to capture best practices and improve plan.json
 // learningPathIdentifier: Learning folder identifier (e.g., "step-3" for regular steps, "step-3-true-0" for branch steps)
 // isCodeExecutionMode: The step-specific code execution mode value (already computed with step-level priority) to ensure consistency with execution agent

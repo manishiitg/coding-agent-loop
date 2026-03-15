@@ -47,6 +47,7 @@ type WorkshopStepInfo struct {
 	ParentType StepType
 	BranchName string // e.g. "if_true", "if_false", "route:route-id", "todo_task_step"
 	TopIndex   int    // 1-based index of the top-level step this belongs to (-1 if inner)
+	IsOrphan   bool   // true for orphan steps (workshop-only, not in main execution flow)
 }
 
 // collectAllSteps returns a flat list of all steps in the plan, including inner steps
@@ -57,6 +58,20 @@ func collectAllSteps(steps []PlanStepInterface) []WorkshopStepInfo {
 		result = append(result, WorkshopStepInfo{
 			Step:     step,
 			TopIndex: i + 1,
+		})
+		result = append(result, collectInnerSteps(step)...)
+	}
+	return result
+}
+
+// collectAllStepsWithOrphans returns a flat list of all steps including orphan steps.
+func collectAllStepsWithOrphans(steps []PlanStepInterface, orphanSteps []PlanStepInterface) []WorkshopStepInfo {
+	result := collectAllSteps(steps)
+	for _, step := range orphanSteps {
+		result = append(result, WorkshopStepInfo{
+			Step:     step,
+			TopIndex: -1,
+			IsOrphan: true,
 		})
 		result = append(result, collectInnerSteps(step)...)
 	}
@@ -129,6 +144,33 @@ func findWorkshopStepByID(steps []PlanStepInterface, stepID string) *WorkshopSte
 	for _, info := range all {
 		if info.Step.GetID() == stepID {
 			return &info
+		}
+	}
+	return nil
+}
+
+// findWorkshopStepByIDWithOrphans searches all steps including orphans for a matching ID.
+func findWorkshopStepByIDWithOrphans(steps []PlanStepInterface, orphanSteps []PlanStepInterface, stepID string) *WorkshopStepInfo {
+	// First search main steps
+	info := findWorkshopStepByID(steps, stepID)
+	if info != nil {
+		return info
+	}
+	// Then search orphan steps
+	for _, step := range orphanSteps {
+		if step.GetID() == stepID {
+			return &WorkshopStepInfo{
+				Step:     step,
+				TopIndex: -1,
+				IsOrphan: true,
+			}
+		}
+		// Check inner steps of orphan
+		for _, inner := range collectInnerSteps(step) {
+			if inner.Step.GetID() == stepID {
+				inner.IsOrphan = true
+				return &inner
+			}
 		}
 	}
 	return nil
@@ -264,15 +306,21 @@ const (
 	WorkshopStepCancelled WorkshopStepStatus = "cancelled"
 )
 
+// ToolCallQueryFunc queries the event store for tool calls associated with a correlation ID.
+// Parameters: sessionID (main session), correlationID (agentSessionID for the step execution), toolCallID (empty for summary, specific ID for detail).
+// Returns a formatted string summary of tool calls. Nil means the feature is unavailable.
+type ToolCallQueryFunc func(sessionID, correlationID, toolCallID string) string
+
 // WorkshopStepExecution tracks a single background step execution
 type WorkshopStepExecution struct {
-	ID     string
-	StepID string
-	Status WorkshopStepStatus
-	Result string
-	Err    error
-	cancel context.CancelFunc
-	mu     sync.RWMutex
+	ID             string
+	StepID         string
+	AgentSessionID string // correlation ID used to tag events for this execution
+	Status         WorkshopStepStatus
+	Result         string
+	Err            error
+	cancel         context.CancelFunc
+	mu             sync.RWMutex
 }
 
 // WorkshopStepRegistry tracks all background step executions for a workshop session
@@ -333,12 +381,14 @@ func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 
 // InteractiveWorkshopManager manages the interactive workshop phase
 type InteractiveWorkshopManager struct {
-	controller   *StepBasedWorkflowOrchestrator
-	presetLLM    *AgentLLMConfig
-	sessionID    string
-	workflowID   string
-	stepRegistry *WorkshopStepRegistry
-	sessionCtx   context.Context // long-lived ctx for background goroutines
+	controller         *StepBasedWorkflowOrchestrator
+	presetLLM          *AgentLLMConfig
+	sessionID          string
+	workflowID         string
+	stepRegistry       *WorkshopStepRegistry
+	sessionCtx         context.Context    // long-lived ctx for background goroutines
+	toolCallQueryFunc  ToolCallQueryFunc  // optional: query live tool calls for running steps
+	mainSessionID      string             // event store session ID for tool call queries
 }
 
 // NewInteractiveWorkshopManager creates a new InteractiveWorkshopManager
@@ -355,6 +405,13 @@ func NewInteractiveWorkshopManager(
 		workflowID:   workflowID,
 		stepRegistry: newWorkshopStepRegistry(),
 	}
+}
+
+// SetToolCallQuery configures the live tool call query capability.
+// mainSessionID is the event store session ID; queryFunc queries tool calls by correlation ID.
+func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, queryFunc ToolCallQueryFunc) {
+	iwm.mainSessionID = mainSessionID
+	iwm.toolCallQueryFunc = queryFunc
 }
 
 // InteractiveWorkshopOnly runs the interactive workshop phase
@@ -562,6 +619,8 @@ You are a workflow builder agent. You help users build, run, optimize, and debug
 - Delegate debugging and analysis to background agents (optimize_step, generate_learnings) — do NOT read execution logs or conversation history yourself
 - Run shell commands only for quick checks (ls, cat output files) — NOT for investigating execution logs
 
+**NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (get_step_details, debug_step, get_workflow_config, etc.).
+
 ## 📐 PLAN DESIGN — From Requirements to Steps
 
 When a user describes what they want to automate, follow this process to design the plan.
@@ -583,6 +642,7 @@ Break the user's requirement into **concrete actions** — things an agent must 
 | Need user input before proceeding | **Human Input** | Blocks until user responds |
 | User input determines the path | **Human Input** → **Routing** | Collect input first, then LLM routes based on it |
 | Repeat until a condition is met | **Loop** | Polling, retrying, waiting for external state |
+| Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 
 **Default to Regular** unless the task clearly needs branching, iteration, or sub-agents.
 
@@ -653,17 +713,21 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 ### Background Step Execution
 - **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration (e.g., 'iteration-2/group-name'); if omitted, auto-resolves to the latest iteration. **instructions** provides orchestrator context for inner steps. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
 - **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
+- **query_step_tools(execution_id)** — Show which tools a running step is calling in real time. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, prefer debug_step for richer insights.
 - **debug_step(step_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
+- **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
+- **run_background_task(task, task_name, max_turns?)** — Run a generic background sub-agent with full tool access. Use to offload complex work like bulk analysis, data transformation, file cleanup, or any task that doesn't fit the other tools.
 - **stop_step(execution_id)** — Cancel a running step
 
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
 - **analyze_step(step_id)** — Analyze a step's config and execution history; returns optimization suggestions
-- **generate_learnings(step_id, guidance?)** — Start the learning agent in the background. You will be automatically notified when it completes. Optionally provide human guidance to focus on specific patterns (e.g., "focus on the API pagination pattern"). Requires a completed execution.
+- **generate_learnings(step_id, guidance?, execution_history?)** — Start the learning agent in the background. You will be automatically notified when it completes. Optionally provide human guidance to focus on specific patterns (e.g., "focus on the API pagination pattern"). If you ran the test yourself (not via execute_step), pass your recent tool calls as execution_history — the learning agent will use that directly instead of reading execution logs.
 - **optimize_step(step_id, focus?)** — Start a background optimization agent. Analyzes logs, output, learnings, and config for a step. You will be automatically notified when it completes. Optionally provide focus guidance (e.g., "learnings quality", "tool usage", "output correctness").
 - **get_cost_summary** — Show token usage and cost breakdown (per-step, per-model, per-phase) for the current run
 
 ### Read-Only Info
+- **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types (execution, todo_task, conditional, decision, routing).
 - **get_workflow_config** — **Use this to see which MCP servers are available and which are selected.** Shows all discoverable MCP servers from the system config plus which ones are currently active in this workflow. Always use this tool when asked about MCP servers — do NOT explore the filesystem.
 - **get_llm_config** — Show current LLM configuration: workflow defaults (execution, learning), tiered config, and per-step overrides
 - **get_variables** — Read current variable definitions and group configurations
@@ -674,7 +738,13 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **update_workflow_config(add_servers?, remove_servers?)** — Add or remove MCP servers from the workflow. Use get_workflow_config first to see available server names. Changes take effect immediately for subsequent step executions.
 
 ### Plan Modification
-Use the 26 plan modification tools (update_regular_step, add_plan_step, delete_plan_steps, etc.) to edit the plan.
+### Plan Modification
+- **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
+- **Update steps**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
+- **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
+- **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
+- **Validation & criteria**: update_validation_schema, update_success_criteria
+- **Variables**: extract_variables, update_variable
 
 ### Shell & Human
 - **execute_shell_command** — Run shell commands for investigation
@@ -809,8 +879,16 @@ When the user asks to enable code execution for a step, use: update_step_config(
 **Variable handling in code-exec learnings**: When writing or reviewing learnings for code execution steps, **never hardcode variable values** (account IDs, URLs, credentials, etc.) in the code. Variables are available in the step description as resolved values — the generated code should use sys.argv or argparse to accept them as CLI arguments. The learning agent automatically replaces hardcoded values with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders, which the system resolves at runtime and passes to the script. If you notice hardcoded values in code learnings, fix them immediately.
 
 ### 8. Optimization Lifecycle — Avoid Repeated Optimization
-**Optimize each step only once per iteration.** After running optimize_step and applying any fixes:
-- If no changes were needed (or only minor tweaks), **immediately mark the step as optimized**: update_step_config(step_id, optimized=true). This prevents re-running optimization on every subsequent execution.
+**Optimize each step only once per iteration.** A step should only be marked optimized when ALL of these are in place:
+
+**Checklist before marking optimized=true:**
+1. **Learnings exist** — generate_learnings has been run and produced learning files with correct tool names and sequences. Without learnings, future runs start from scratch.
+2. **Pre-validation schema** — A validation_schema is defined with file checks and/or JSON path rules. This catches structural errors without an LLM validation pass.
+3. **Successful execution** — The step has passed at least once with the current config, learnings, and validation.
+4. *(Optional)* **Pre-discovered tools** — For tool-search steps, adding explicit tool filtering speeds up execution but is not required for optimization.
+
+**After running optimize_step and applying any fixes:**
+- If all checklist items are satisfied and no significant changes were needed, mark as optimized: update_step_config(step_id, optimized=true).
 - If significant changes were applied, re-run the step to verify, then mark as optimized once it passes.
 - **Already-optimized steps** (optimized=true in step_config) skip the optimization prompt on completion — the notification just says "proceed to next step".
 - **Reset optimization** (optimized=false) only if you make major changes to the step description, tools, or validation schema — then re-run and re-optimize once.
@@ -854,6 +932,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 - 'learnings/{step-id}/*.md' — Learning files (task-specific patterns captured by the learning agent)
 - 'learnings/{step-id}/code/*.py' — Code examples (for code execution mode steps)
 - 'learnings/{step-id}/.learning_metadata.json' — Metadata (iteration counts, success history, auto-lock info)
+- **Learnings are keyed purely by step ID** (e.g., 'learnings/step-icici-login/'), NOT by positional path (step-1, step-3, etc.). Each step (including sub-agent route steps) has its own learnings folder using its plan.json step ID.
 
 ### Plan & Config
 - 'planning/plan.json' — The current workflow plan
@@ -890,7 +969,7 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 
 ### Running Steps
 1. User says "run step-X" → determine iteration + group first (see above) → call **execute_step("step-id", run_folder, group_id)** → get execution_id
-2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. Pass skip_learning=false to generate learnings.
+2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. Pass skip_learning=false to generate learnings. When learning is enabled, **success learnings run in background** (the next step starts immediately without waiting), while **failure learnings run sequentially** (needed before retry attempts).
 3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop. Move on to other work or wait.
 4. When the auto-notification arrives with the result — **always review the output**:
    - ✅ If success: briefly tell user the result, then call **optimize_step(step_id)** to analyze the output in the background. Continue to run the next step while optimization runs.
@@ -899,7 +978,7 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 6. **Delegate analysis to background agents**: Use **optimize_step** for debugging and analysis, **generate_learnings** for learning generation. Do NOT read execution logs, conversation history, or prompts yourself — the background agents do this more thoroughly and without blocking you.
 
 ### Auto-Notification System
-All background agents (execute_step, optimize_step, generate_learnings) **automatically notify you** when they complete. These arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated messages, NOT from the user**. Do not treat them as user requests. Do NOT ask the user to tell you when something finishes — the system handles this automatically. Use query_step only if you need to check progress mid-execution (e.g., user asks "how's step X doing?").
+All background agents (execute_step, optimize_step, generate_learnings) **automatically notify you** when they complete. These arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated messages, NOT from the user**. Do not treat them as user requests. Do NOT ask the user to tell you when something finishes — the system handles this automatically. Use query_step for a status check or query_step_tools to see which tools the step is currently calling (e.g., user asks "how's step X doing?" or "what's it doing right now?").
 
 ### Debugging Failed or Incorrect Steps
 
@@ -943,6 +1022,7 @@ The plan can contain several step types. Top-level steps appear in the plan's "s
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** (main evaluator) and **orchestration_routes** — each route has a **sub_agent_step** (inner step).
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports response types: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Loop** (type: "loop"): Repeat until criteria met (polled progress).
+- **Orphan** (is_orphan: true): A step not part of the main execution flow. Sits outside the main chain and can only be triggered manually via 'execute_step' in the workshop.
 
 ### Inner Steps
 Inner steps live inside conditional branches, orchestration routes, or todo_task routes. They have their own step IDs and can be individually:
@@ -955,7 +1035,7 @@ When debugging a failing workflow, use **list_steps** to see ALL steps including
 
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
-2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes.
+2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. Use query_step_tools if you need to see what tools a running step is calling.
 3. **Report results**: Always show the user the step result after completion
 4. **Update before re-run**: Apply plan/config changes before re-running a failed step
 5. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report")
@@ -966,9 +1046,9 @@ When debugging a failing workflow, use **list_steps** to see ALL steps including
 
 var interactiveWorkshopUserTemplate = MustRegisterTemplate("interactiveWorkshopUser", `{{if .UserRequest}}{{.UserRequest}}{{else}}What would you like to do in the workshop?{{end}}`)
 
-// humanAssistedExecutionSystemTemplate is the system prompt for the human-assisted execution phase.
+// humanAssistedExecutionSystemTemplate is the system prompt for the human-in-the-loop execution phase.
 // Same execution capabilities as the workshop but without optimization/plan-modification guidance.
-var humanAssistedExecutionSystemTemplate = MustRegisterTemplate("humanAssistedExecutionSystem", `# Human Assisted Execution Agent
+var humanAssistedExecutionSystemTemplate = MustRegisterTemplate("humanAssistedExecutionSystem", `# Human In The Loop Execution Agent
 
 You are a workflow execution assistant. You help users run workflow steps interactively — choosing which steps to run, monitoring progress, and reporting results.
 
@@ -977,7 +1057,9 @@ You are a workflow execution assistant. You help users run workflow steps intera
 - Help the user choose which steps to run and in what order
 - Report step results clearly and concisely
 - Debug execution failures and help the user understand what went wrong
-- Run shell commands when needed for investigation
+- Run shell commands only for quick checks (ls, cat output files) — NOT for investigating execution logs
+
+**NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the tools (get_step_details, debug_step, get_workflow_config, etc.).
 
 ## ⚙️ TOOLS
 
@@ -990,9 +1072,18 @@ You are a workflow execution assistant. You help users run workflow steps intera
 ### Background Step Execution
 - **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration; if omitted, auto-resolves. **instructions** provides orchestrator context for inner steps. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
 - **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
+- **query_step_tools(execution_id)** — Show which tools a running step is calling in real time. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, prefer debug_step for richer insights.
 - **debug_step(step_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
+- **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
+- **run_background_task(task, task_name, max_turns?)** — Run a generic background sub-agent with full tool access. Use to offload complex work like bulk analysis, data transformation, file cleanup, or any task that doesn't fit the other tools.
 - **stop_step(execution_id)** — Cancel a running step
 - **get_cost_summary** — Show token usage and cost breakdown (per-step, per-model, per-phase) for the current run
+
+### Read-Only Info
+- **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types.
+- **get_workflow_config** — See available/selected MCP servers
+- **get_llm_config** — Show LLM configuration: defaults, tiered config, per-step overrides
+- **get_variables** — Read variable definitions and group configurations
 
 ### Shell & Human
 - **execute_shell_command** — Run shell commands for investigation
@@ -1064,7 +1155,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 
 ### Running Steps
 1. User says "run step-X" (or "run all") → determine iteration + group first (see above) → call **execute_step("step-id", run_folder, group_id)** → get execution_id
-2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. If the user wants learnings generated, pass skip_learning=false explicitly.
+2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. If the user wants learnings generated, pass skip_learning=false explicitly. When learning is enabled, **success learnings run in background** (the next step starts immediately without waiting), while **failure learnings run sequentially** (needed before retry attempts).
 3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop.
 4. When the auto-notification arrives with the result — report it to the user clearly
    - ✅ If success: show the key output/result and ask what to do next
@@ -1091,6 +1182,7 @@ The plan can contain several step types. Top-level steps appear in the plan's "s
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** (main evaluator) and **orchestration_routes** — each route has a **sub_agent_step** (inner step).
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports response types: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Loop** (type: "loop"): Repeat until criteria met (polled progress).
+- **Orphan** (is_orphan: true): A step not part of the main execution flow. Sits outside the main chain and can only be triggered manually via 'execute_step' in the workshop.
 
 ### Inner Steps
 Inner steps live inside conditional branches, orchestration routes, or todo_task routes. They have their own step IDs and can be individually:
@@ -1099,7 +1191,7 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
-2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes.
+2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. Use query_step_tools if you need to see what tools a running step is calling.
 3. **Report results**: Always show the user the step result after completion
 4. **User decides**: Let the user choose what to run and when — don't force a sequence
 5. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report")
@@ -1332,7 +1424,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				step := info.Step
 				stepID := step.GetID()
 
-				// Build tags (optimized, learning mode)
+				// Build tags (optimized, learning mode, agent mode)
 				var tags []string
 				if cfg, ok := stepConfigMap[stepID]; ok {
 					if cfg.Optimized != nil && *cfg.Optimized {
@@ -1343,6 +1435,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 					if cfg.DisableLearning != nil && *cfg.DisableLearning {
 						tags = append(tags, "learning:disabled")
+					}
+					// Agent execution mode
+					if cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode {
+						tags = append(tags, "mode:code-exec")
+					} else if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
+						tags = append(tags, "mode:tool-search")
+					} else {
+						tags = append(tags, "mode:simple")
 					}
 				}
 				tagStr := ""
@@ -1619,7 +1719,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
-		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is skipped (skip_learning=true) for faster iteration. Set skip_learning=false to generate/update learnings after execution.",
+		"Start a workflow step in the background. Returns an execution_id immediately. You will be automatically notified when it completes. By default, learning is skipped (skip_learning=true) for faster iteration. Set skip_learning=false to generate/update learnings after execution. When enabled, success learnings run in background (next step starts immediately), failure learnings run sequentially (needed for retry).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1642,6 +1742,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"instructions": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional orchestrator instructions for inner steps (sub-agents from todo_task/orchestration routes). Appended to the step description as '## Orchestrator Instructions'. Simulates what the parent orchestrator would provide when delegating. Ignored for top-level steps.",
+				},
+				"human_input": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional human input/custom instructions for the step agent. Injected as high-priority '🚨 HUMAN FEEDBACK (CRITICAL)' context that takes precedence over other instructions. Use this to guide the agent's behavior, override defaults, or provide clarifications. Works for all step types (execution, todo_task, etc.).",
+				},
+				"tier": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"high", "medium", "low"},
+					"description": "Optional LLM tier override for this execution. 'high' = Tier 1 (most capable), 'medium' = Tier 2, 'low' = Tier 3 (fastest/cheapest). Overrides the default maturity-based tier selection. Only works in tiered mode.",
 				},
 			},
 			"required": []string{"step_id"},
@@ -1678,11 +1787,29 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Optional orchestrator instructions for inner steps
 			instructions, _ := args["instructions"].(string)
 
+			// Optional human input for any step type
+			humanInput, _ := args["human_input"].(string)
+
+			// Optional tier override (high=1, medium=2, low=3)
+			tierValue := 0
+			if tierStr, ok := args["tier"].(string); ok && tierStr != "" {
+				switch tierStr {
+				case "high":
+					tierValue = 1
+				case "medium":
+					tierValue = 2
+				case "low":
+					tierValue = 3
+				}
+			}
+
 			execOpts := &WorkshopExecuteOptions{
 				GroupID:      groupID,
 				RunFolder:    runFolder,
 				SkipLearning: skipLearning,
 				Instructions: instructions,
+				HumanInput:   humanInput,
+				Tier:         tierValue,
 			}
 
 			// Resolve flexible step ID (handles "1", "step-1", "step1" etc.)
@@ -1695,7 +1822,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			stepID = resolvedID
 
-			execID := fmt.Sprintf("exec-%s-%d", stepID, time.Now().UnixNano())
+			execID := fmt.Sprintf("exec-%s-%05d", stepID, time.Now().UnixNano()%100000)
 			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
 
 			// Inject correlation IDs so step execution events are tagged as sub-agent
@@ -1709,14 +1836,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
 
 			exec := &WorkshopStepExecution{
-				ID:     execID,
-				StepID: stepID,
-				Status: WorkshopStepRunning,
-				cancel: cancel,
+				ID:             execID,
+				StepID:         stepID,
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
 			}
 			iwm.stepRegistry.Register(exec)
 
 			go func() {
+				// Inject tier override into context if specified (concurrent-safe via context, not shared field)
+				if execOpts.Tier >= 1 && execOpts.Tier <= 3 {
+					execCtx = context.WithValue(execCtx, WorkshopTierOverrideKey, execOpts.Tier)
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
@@ -1804,7 +1937,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			learningInfo := "Learning: skipped (default for faster iteration). To generate learnings after execution, use generate_learnings(step_id). To run with learning enabled, use execute_step(step_id, skip_learning=false)."
 			if !skipLearning {
-				learningInfo = "Learning: enabled — learnings will be generated after execution completes."
+				learningInfo = "Learning: enabled — success learnings run in background (won't block next step), failure learnings run sequentially (needed for retry)."
 			}
 			logger.Info(fmt.Sprintf("🚀 Workshop: step %q started in background, execution_id=%q%s, skip_learning=%v", stepID, execID, groupInfo, skipLearning))
 			return fmt.Sprintf("Step %q started in background.\nexecution_id: %q\n%s\nYou will be automatically notified when it completes.", stepID, execID, learningInfo), nil
@@ -1862,6 +1995,90 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register query_step tool: %v", err))
+	}
+
+	// Tool 2a: query_step_tools — real-time tool call visibility for running steps
+	if err := mcpAgent.RegisterCustomTool(
+		"query_step_tools",
+		"Show which tools a running step is currently calling in real time. By default returns a summary with truncated args/results. Pass tool_call_id to get full input/output for a specific call. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, use debug_step instead for richer insights.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"execution_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The execution_id returned by execute_step",
+				},
+				"tool_call_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional: a specific tool_call_id from the summary to get full input/output details",
+				},
+			},
+			"required": []string{"execution_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			execIDRaw, ok := args["execution_id"]
+			if !ok || execIDRaw == nil {
+				return "execution_id is required", nil
+			}
+			execID, ok := execIDRaw.(string)
+			if !ok || execID == "" {
+				return "execution_id must be a non-empty string", nil
+			}
+
+			// Optional: specific tool_call_id for detailed view
+			toolCallID := ""
+			if val, ok := args["tool_call_id"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					toolCallID = s
+				}
+			}
+
+			exec := iwm.stepRegistry.Get(execID)
+			if exec == nil {
+				return fmt.Sprintf("execution %q not found", execID), nil
+			}
+
+			exec.mu.RLock()
+			status := exec.Status
+			stepID := exec.StepID
+			agentSessID := exec.AgentSessionID
+			exec.mu.RUnlock()
+
+			if status != WorkshopStepRunning {
+				return fmt.Sprintf("Step %q is not running (status: %s). Use query_step for the final result.", stepID, status), nil
+			}
+
+			if iwm.toolCallQueryFunc == nil {
+				return fmt.Sprintf("Step %q is running but real-time tool call tracking is not available in this session.", stepID), nil
+			}
+
+			mainSessID := iwm.mainSessionID
+			if mainSessID == "" {
+				mainSessID = iwm.sessionID
+			}
+
+			summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, toolCallID)
+
+			// Detect execution type from ID prefix and add context
+			isAnalysisAgent := strings.HasPrefix(execID, "learn-") || strings.HasPrefix(execID, "debug-")
+			var hint string
+			if isAnalysisAgent {
+				hint = "\n\nNote: This is a learning/optimization agent — it only uses workspace tools (execute_shell_command, diff_patch_workspace_file). For richer insights, use debug_step(step_id) instead."
+			}
+
+			if summary == "" {
+				return fmt.Sprintf("Step %q is running. No tool calls observed yet.%s", stepID, hint), nil
+			}
+
+			if toolCallID != "" {
+				return fmt.Sprintf("Step %q — tool call detail:\n%s", stepID, summary), nil
+			}
+
+			return fmt.Sprintf("Step %q is running. Tool calls:\n%s%s", stepID, summary, hint), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register query_step_tools tool: %v", err))
 	}
 
 	// Tool 2b: debug_step — rich insights about a step's execution
@@ -1992,6 +2209,71 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register debug_step tool: %v", err))
+	}
+
+	// Tool 2b: list_executions — list all tracked background executions
+	if err := mcpAgent.RegisterCustomTool(
+		"list_executions",
+		"List all background executions (execute_step, generate_learnings, optimize_step). Shows execution_id, step_id, status (running/done/failed/cancelled), and type. Useful when you need to find execution IDs for query_step or stop_step.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"status_filter": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional filter: 'running', 'done', 'failed', 'cancelled'. If omitted, returns all.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			statusFilter, _ := args["status_filter"].(string)
+
+			allExecs := iwm.stepRegistry.List()
+			if len(allExecs) == 0 {
+				return "No background executions tracked in this session.", nil
+			}
+
+			// Sort by ID (contains timestamp) for chronological order
+			sort.Slice(allExecs, func(i, j int) bool {
+				return allExecs[i].ID < allExecs[j].ID
+			})
+
+			var sb strings.Builder
+			count := 0
+			for _, exec := range allExecs {
+				exec.mu.RLock()
+				status := string(exec.Status)
+				execErr := exec.Err
+				exec.mu.RUnlock()
+
+				if statusFilter != "" && status != statusFilter {
+					continue
+				}
+
+				count++
+				sb.WriteString(fmt.Sprintf("- **%s** | step: %s | status: %s", exec.ID, exec.StepID, status))
+				if status == "failed" && execErr != nil {
+					sb.WriteString(fmt.Sprintf(" | error: %v", execErr))
+				}
+				sb.WriteString("\n")
+			}
+
+			if count == 0 {
+				if statusFilter != "" {
+					return fmt.Sprintf("No executions with status %q. Total tracked: %d.", statusFilter, len(allExecs)), nil
+				}
+				return "No background executions tracked.", nil
+			}
+
+			return fmt.Sprintf("**%d execution(s)**%s:\n%s", count, func() string {
+				if statusFilter != "" {
+					return fmt.Sprintf(" (filter: %s)", statusFilter)
+				}
+				return ""
+			}(), sb.String()), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_executions tool: %v", err))
 	}
 
 	// Tool 3: stop_step — cancel a running step
@@ -2140,6 +2422,23 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						"model_id": map[string]interface{}{"type": "string"},
 					},
 				},
+				"validation_schema": map[string]interface{}{
+					"type":        "object",
+					"description": "Override the pre-validation schema for this step. Takes precedence over plan.json validation_schema. Defines file existence checks and JSON structure validation rules.",
+					"properties": map[string]interface{}{
+						"files": map[string]interface{}{
+							"type": "array",
+							"items": map[string]interface{}{
+								"type": "object",
+								"properties": map[string]interface{}{
+									"file_name":   map[string]interface{}{"type": "string", "description": "File name to validate (e.g., 'results.json')"},
+									"must_exist":  map[string]interface{}{"type": "boolean", "description": "Whether the file must exist"},
+									"json_checks": map[string]interface{}{"type": "array", "description": "JSON structure validation checks"},
+								},
+							},
+						},
+					},
+				},
 			},
 			"required": []string{"step_id"},
 		},
@@ -2255,6 +2554,46 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			if val, ok := args["optimized"]; ok && val != nil {
 				if b, ok := val.(bool); ok {
+					if b {
+						// Validate optimization prerequisites before marking as optimized
+						var missing []string
+
+						// 1. Check learnings exist
+						learningsPath := getLearningFolderPathByStepID("", stepID, "", iwm.controller.isEvaluationMode)
+						learningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
+						if len(learningFiles) == 0 {
+							missing = append(missing, "learnings (no learning files found — run generate_learnings first)")
+						}
+
+						// 2. Check pre-validation schema exists in plan
+						if err := iwm.controller.LoadPlanForWorkshop(ctx); err == nil {
+							stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID)
+							if stepInfo != nil {
+								schema := stepInfo.Step.GetValidationSchema()
+								if schema == nil || len(schema.Files) == 0 {
+									missing = append(missing, "pre-validation schema (no validation_schema defined in plan — add file checks/JSON path rules)")
+								}
+							}
+						}
+
+						if len(missing) > 0 {
+							var sb strings.Builder
+							sb.WriteString(fmt.Sprintf("Cannot mark step %q as optimized. Missing prerequisites:\n", stepID))
+							for i, m := range missing {
+								sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, m))
+							}
+							sb.WriteString("\nFix these issues first, then retry.")
+							return sb.String(), nil
+						}
+
+						// Optional suggestion: pre-discovered tools (not blocking)
+						if len(targetConfig.AgentConfigs.PreDiscoveredTools) == 0 && len(targetConfig.AgentConfigs.SelectedTools) == 0 {
+							isToolSearch := targetConfig.AgentConfigs.UseToolSearchMode != nil && *targetConfig.AgentConfigs.UseToolSearchMode
+							if isToolSearch {
+								iwm.controller.GetLogger().Info(fmt.Sprintf("ℹ️ Step %q marked optimized without pre_discovered_tools — consider adding them for tool search efficiency", stepID))
+							}
+						}
+					}
 					targetConfig.AgentConfigs.Optimized = &b
 				}
 			}
@@ -2275,7 +2614,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				target **AgentLLMConfig
 			}{
 				{"execution_llm", &targetConfig.AgentConfigs.ExecutionLLM},
-				{"validation_llm", &targetConfig.AgentConfigs.ValidationLLM},
 				{"learning_llm", &targetConfig.AgentConfigs.LearningLLM},
 				{"orchestrator_llm", &targetConfig.AgentConfigs.OrchestratorLLM},
 				{"sub_agent_llm", &targetConfig.AgentConfigs.SubAgentLLM},
@@ -2288,6 +2626,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						if provider != "" && modelID != "" {
 							*f.target = &AgentLLMConfig{Provider: provider, ModelID: modelID}
 						}
+					}
+				}
+			}
+
+			// Parse validation_schema override
+			if val, ok := args["validation_schema"]; ok && val != nil {
+				// Marshal back to JSON and unmarshal into ValidationSchema struct
+				vsJSON, jsonErr := json.Marshal(val)
+				if jsonErr == nil {
+					var vs ValidationSchema
+					if jsonErr := json.Unmarshal(vsJSON, &vs); jsonErr == nil {
+						targetConfig.ValidationSchema = &vs
+						logger.Info(fmt.Sprintf("🔧 Step config for %q: validation_schema updated (%d file rules)", stepID, len(vs.Files)))
+					} else {
+						logger.Warn(fmt.Sprintf("⚠️ Failed to parse validation_schema for step %q: %v", stepID, jsonErr))
 					}
 				}
 			}
@@ -2451,13 +2804,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 5: get_step_prompts — read saved system prompt + user message for a step run
 	if err := mcpAgent.RegisterCustomTool(
 		"get_step_prompts",
-		"Get the system prompt and user message that were sent to the execution agent for a specific step run. Useful for debugging what instructions the agent actually received.",
+		"Get the system prompt and user message for a step. Works both during execution (prompts saved at start) and after completion. Useful for debugging what instructions the agent received. For sub-agent steps, pass the inner step ID directly (e.g., 'step-icici-login') or use route_id with the parent step.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"step_id": map[string]interface{}{
 					"type":        "string",
-					"description": "The step ID from plan.json (e.g., 'step-create-report')",
+					"description": "The step ID from plan.json (e.g., 'step-create-report') or inner step ID (e.g., 'step-icici-login')",
+				},
+				"route_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional route ID for sub-agent steps (e.g., 'icici-login'). When provided with a parent step_id, looks up logs at step-{N}-sub-{route_id}/",
 				},
 				"attempt": map[string]interface{}{
 					"type":        "integer",
@@ -2480,26 +2837,25 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "step_id must be a non-empty string", nil
 			}
 
+			routeID, _ := args["route_id"].(string)
+
 			// Ensure plan is loaded (best-effort — for get_step_prompts we only need step index)
 			if iwm.controller.approvedPlan == nil {
 				_ = iwm.controller.LoadPlanForWorkshop(ctx) // ignore error; nil check below handles failure
 			}
-			// Resolve flexible step_id → 1-based step number
 			if iwm.controller.approvedPlan == nil {
 				return "no plan loaded; run execute_step first or ensure plan.json exists", nil
 			}
+
+			// Resolve flexible step_id
 			resolvedForPrompts, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
 			if resolveErr != nil {
 				return resolveErr.Error(), nil
 			}
-			stepNum := -1
-			for i, s := range iwm.controller.approvedPlan.Steps {
-				if s.GetID() == resolvedForPrompts {
-					stepNum = i + 1 // 1-based
-					break
-				}
-			}
-			if stepNum == -1 {
+
+			// Find step info (handles both top-level and inner steps)
+			stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedForPrompts)
+			if stepInfo == nil {
 				return fmt.Sprintf("step %q not found in plan", stepID), nil
 			}
 
@@ -2521,33 +2877,80 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "no run folder selected", nil
 			}
 
-			stepPath := fmt.Sprintf("step-%d", stepNum)
+			// Determine the correct log path based on step type
+			var stepPath string
+			if stepInfo.TopIndex > 0 {
+				// Top-level step
+				if routeID != "" {
+					// User wants sub-agent logs under this top-level step
+					stepPath = fmt.Sprintf("step-%d-sub-%s", stepInfo.TopIndex, routeID)
+				} else {
+					stepPath = fmt.Sprintf("step-%d", stepInfo.TopIndex)
+				}
+			} else {
+				// Inner step — resolve to the correct log path (e.g., step-3-sub-icici-login)
+				stepPath = resolveInnerStepPath(iwm.controller.approvedPlan.Steps, stepInfo)
+			}
 			logDir := fmt.Sprintf("runs/%s/logs/%s/execution", runFolder, stepPath)
 			filenameBase := fmt.Sprintf("execution-attempt-%d-iteration-%d", attempt, iteration)
 
 			var result strings.Builder
+			hasUserMessage := false // Track if user message was already included from prompts.json
 
-			// Read system prompt from prompts.json (saved by executeSingleStep post-run)
+			// Read system prompt and user message from prompts.json (saved pre-execution and updated post-execution)
+			// Try execution-step prompts first, then other agent type prompts
 			promptsPath := fmt.Sprintf("%s/%s-prompts.json", logDir, filenameBase)
 			promptsContent, err := iwm.controller.ReadWorkspaceFile(ctx, promptsPath)
 			if err != nil {
-				result.WriteString(fmt.Sprintf("⚠️ System prompt file not found (%s).\nNote: only available for runs after this feature was added.\n\n", promptsPath))
+				// Try other prompt file types (todo_task, conditional, decision, routing)
+				for _, altName := range []string{"todo-task-prompts.json", "conditional-prompts.json", "decision-prompts.json", "routing-prompts.json"} {
+					altPath := fmt.Sprintf("%s/%s", logDir, altName)
+					if tc, te := iwm.controller.ReadWorkspaceFile(ctx, altPath); te == nil {
+						promptsContent = tc
+						err = nil
+						promptsPath = altPath
+						break
+					}
+				}
+			}
+			if err != nil {
+				result.WriteString(fmt.Sprintf("⚠️ Prompts file not found (%s).\nNote: only available for runs after this feature was added.\n\n", promptsPath))
 			} else {
-				result.WriteString("## System Prompt\n\n")
 				var promptsData map[string]interface{}
 				if jsonErr := workshopJSONUnmarshal([]byte(promptsContent), &promptsData); jsonErr == nil {
+					// Show when the prompt was saved (pre_execution = still running, post_execution = completed)
+					if savedAt, ok := promptsData["saved_at"].(string); ok {
+						result.WriteString(fmt.Sprintf("**Prompt saved at**: %s\n", savedAt))
+					}
+					if model, ok := promptsData["model"].(string); ok && model != "" {
+						result.WriteString(fmt.Sprintf("**Model**: %s\n\n", model))
+					}
+					result.WriteString("## System Prompt\n\n")
 					if sp, ok := promptsData["system_prompt"].(string); ok {
 						result.WriteString(sp)
 					} else {
 						result.WriteString("(system_prompt field missing)")
 					}
+					result.WriteString("\n\n")
+					// User message from prompts.json (available from pre-execution save)
+					if um, ok := promptsData["user_message"].(string); ok && um != "" {
+						result.WriteString("## User Message\n\n")
+						result.WriteString(um)
+						result.WriteString("\n\n")
+						hasUserMessage = true
+					}
 				} else {
+					result.WriteString("## System Prompt\n\n")
 					result.WriteString(promptsContent)
+					result.WriteString("\n\n")
 				}
-				result.WriteString("\n\n")
 			}
 
 			// Read user message from conversation.json (first human message in history)
+			// Skip if user message was already included from prompts.json
+			if hasUserMessage {
+				return result.String(), nil
+			}
 			convPath := fmt.Sprintf("%s/%s-conversation.json", logDir, filenameBase)
 			convContent, err := iwm.controller.ReadWorkspaceFile(ctx, convPath)
 			if err != nil {
@@ -2997,7 +3400,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7: generate_learnings — background learning agent with optional human guidance
 	if err := mcpAgent.RegisterCustomTool(
 		"generate_learnings",
-		"Start the learning agent in the background for a step. Returns execution_id immediately — you will be automatically notified when it completes. Optionally provide human guidance to focus the learning agent on specific aspects. Works for both top-level and inner steps (conditional branches, sub-agents). Requires a completed execution (run execute_step first).",
+		"Start the learning agent in the background for a step. Returns execution_id immediately — you will be automatically notified when it completes. Optionally provide human guidance to focus the learning agent on specific aspects. Works for both top-level and inner steps (conditional branches, sub-agents). If you ran the test yourself (not via execute_step), pass your recent tool calls as execution_history — the learning agent will use that directly instead of reading execution logs.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3008,6 +3411,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"guidance": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional human guidance for what the learning agent should focus on. E.g., 'focus on the API pagination pattern' or 'capture the retry logic for rate limits'. Appended to step description for the learning agent.",
+				},
+				"execution_history": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional execution history from your own tool calls. Pass this when you ran the test yourself (not via execute_step). Format: describe the tool calls you made, their arguments, and results. The learning agent will use this directly instead of reading execution log files.",
 				},
 			},
 			"required": []string{"step_id"},
@@ -3026,6 +3433,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if val, ok := args["guidance"]; ok && val != nil {
 				if s, ok := val.(string); ok {
 					guidance = s
+				}
+			}
+
+			passedExecutionHistory := ""
+			if val, ok := args["execution_history"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					passedExecutionHistory = s
 				}
 			}
 
@@ -3052,20 +3466,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// Determine log path and stepPath based on whether this is an inner or top-level step.
-			// Inner steps are executed as single-step plans, so their logs always go to step-1/.
+			// Inner steps use resolveInnerStepPath to get the correct log folder (e.g., step-3-sub-icici-login).
 			// Top-level steps use step-{N}/ based on their position.
-			var logStepNum int
 			var stepPath string
 			var parentStepIndex int // 0-based, for token tracking attribution
 			if stepNum >= 1 {
 				// Top-level step
-				logStepNum = stepNum
 				stepPath = fmt.Sprintf("step-%d", stepNum)
 				parentStepIndex = stepNum - 1
 			} else {
-				// Inner step — executed standalone as step-1
-				logStepNum = 1
-				stepPath = "step-1"
+				// Inner step — resolve to the correct log path (e.g., step-3-sub-icici-login)
+				stepPath = resolveInnerStepPath(iwm.controller.approvedPlan.Steps, stepInfo)
 				// Find parent's 0-based index for token attribution
 				parentStepIndex = 0
 				if stepInfo.ParentID != "" {
@@ -3076,50 +3487,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 					}
 				}
-			}
-
-			logDir := fmt.Sprintf("runs/%s/logs/step-%d/execution", runFolder, logStepNum)
-
-			// Find the latest conversation log (try attempts/iterations in reverse)
-			var executionHistory []llmtypes.MessageContent
-			var foundConvPath string
-			for attempt := 5; attempt >= 1; attempt-- {
-				for iteration := 5; iteration >= 0; iteration-- {
-					convPath := fmt.Sprintf("%s/execution-attempt-%d-iteration-%d-conversation.json", logDir, attempt, iteration)
-					content, err := iwm.controller.ReadWorkspaceFile(ctx, convPath)
-					if err != nil {
-						continue
-					}
-
-					var convData map[string]interface{}
-					if err := json.Unmarshal([]byte(content), &convData); err != nil {
-						continue
-					}
-
-					convHistoryRaw, ok := convData["conversation_history"]
-					if !ok {
-						continue
-					}
-
-					convHistoryJSON, err := json.Marshal(convHistoryRaw)
-					if err != nil {
-						continue
-					}
-
-					if err := json.Unmarshal(convHistoryJSON, &executionHistory); err != nil {
-						continue
-					}
-
-					foundConvPath = convPath
-					break
-				}
-				if foundConvPath != "" {
-					break
-				}
-			}
-
-			if foundConvPath == "" {
-				return fmt.Sprintf("No execution history found for step %q in %s. Run execute_step first.", stepID, logDir), nil
 			}
 
 			// Read step config for learning agent settings
@@ -3150,8 +3517,59 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			sanitizedTitle := iwm.controller.sanitizeTitleForAgentName(resolvedTitle)
 			agentName := fmt.Sprintf("%s-workshop-learning-%s", learningPathIdentifier, sanitizedTitle)
 
-			// Format execution history (aggressive truncation for cost)
-			formattedHistory := shared.FormatHistoryForLearningAggressive(executionHistory)
+			// Get execution history — either from passed parameter or from execution log files
+			var formattedHistory string
+			if passedExecutionHistory != "" {
+				// Main agent passed its own tool call history directly — use it as-is
+				formattedHistory = passedExecutionHistory
+				logger.Info(fmt.Sprintf("🧠 generate_learnings: using passed execution_history for step %q (len=%d)", resolvedID, len(passedExecutionHistory)))
+			} else {
+				// Read from execution log files (written by execute_step)
+				logDir := fmt.Sprintf("runs/%s/logs/%s/execution", runFolder, stepPath)
+				var executionHistory []llmtypes.MessageContent
+				var foundConvPath string
+				for attempt := 5; attempt >= 1; attempt-- {
+					for iteration := 5; iteration >= 0; iteration-- {
+						convPath := fmt.Sprintf("%s/execution-attempt-%d-iteration-%d-conversation.json", logDir, attempt, iteration)
+						content, err := iwm.controller.ReadWorkspaceFile(ctx, convPath)
+						if err != nil {
+							continue
+						}
+
+						var convData map[string]interface{}
+						if err := json.Unmarshal([]byte(content), &convData); err != nil {
+							continue
+						}
+
+						convHistoryRaw, ok := convData["conversation_history"]
+						if !ok {
+							continue
+						}
+
+						convHistoryJSON, err := json.Marshal(convHistoryRaw)
+						if err != nil {
+							continue
+						}
+
+						if err := json.Unmarshal(convHistoryJSON, &executionHistory); err != nil {
+							continue
+						}
+
+						foundConvPath = convPath
+						break
+					}
+					if foundConvPath != "" {
+						break
+					}
+				}
+
+				if foundConvPath == "" {
+					return fmt.Sprintf("No execution history found for step %q in %s. Either run execute_step first, or pass execution_history if you ran the test yourself.", stepID, logDir), nil
+				}
+
+				// Format execution history (aggressive truncation for cost)
+				formattedHistory = shared.FormatHistoryForLearningAggressive(executionHistory)
+			}
 
 			// Build step description — inject human guidance if provided
 			stepDescription := targetStep.GetDescription()
@@ -3162,7 +3580,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Read validation result from the step log folder (not execution/ subfolder)
 			// Validation files: validation.json (first), validation-2.json, validation-3.json, etc.
 			validationResult := "No validation result available"
-			validationLogDir := fmt.Sprintf("runs/%s/logs/step-%d", runFolder, logStepNum)
+			validationLogDir := fmt.Sprintf("runs/%s/logs/%s", runFolder, stepPath)
 			foundValidation := false
 			// Try numbered validations in reverse to find the latest, then fall back to base
 			for i := 5; i >= 2; i-- {
@@ -3181,7 +3599,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Prepare template variables
 			runWorkspacePath := fmt.Sprintf("%s/runs/%s", iwm.controller.GetWorkspacePath(), runFolder)
-			executionLogsPath := fmt.Sprintf("%s/logs/step-%d/execution", runWorkspacePath, logStepNum)
+			executionLogsPath := fmt.Sprintf("%s/logs/%s/execution", runWorkspacePath, stepPath)
 
 			templateVars := map[string]string{
 				"StepTitle":                targetStep.GetTitle(),
@@ -3213,7 +3631,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// Launch learning agent in background (same pattern as execute_step / optimize_step)
-			execID := fmt.Sprintf("learn-%s-%d", resolvedID, time.Now().UnixNano())
+			execID := fmt.Sprintf("learn-%s-%05d", resolvedID, time.Now().UnixNano()%100000)
 			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
 
 			// Inject correlation IDs for sub-agent event tagging
@@ -3223,10 +3641,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
 
 			exec := &WorkshopStepExecution{
-				ID:     execID,
-				StepID: resolvedID,
-				Status: WorkshopStepRunning,
-				cancel: cancel,
+				ID:             execID,
+				StepID:         resolvedID,
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
 			}
 			iwm.stepRegistry.Register(exec)
 
@@ -3281,10 +3700,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				logger.Info(fmt.Sprintf("🧠 Workshop: generating learnings for step %q (guidance: %q, inner=%v)", resolvedID, guidance, stepNum < 1))
 				learningResult, _, execErr := learningAgent.Execute(execCtx, templateVars, []llmtypes.MessageContent{})
 
-				// Build result string
+				// Build result string and update metadata
 				var result string
 				if execErr == nil {
 					updatedFiles, _ := iwm.controller.readStepLearningFiles(execCtx, learningsPath)
+
+					// Update .learning_metadata.json so tiered mode and keepLearningFull thresholds work
+					iwm.updateWorkshopLearningMetadata(execCtx, learningPathIdentifier, stepPath, resolvedID, len(updatedFiles) > 0)
+
 					var sb strings.Builder
 					sb.WriteString(fmt.Sprintf("✅ Learnings generated for step %q\n", resolvedID))
 					if stepNum < 1 {
@@ -3405,7 +3828,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			stepID = resolvedID
 
-			execID := fmt.Sprintf("debug-%s-%d", stepID, time.Now().UnixNano())
+			execID := fmt.Sprintf("debug-%s-%05d", stepID, time.Now().UnixNano()%100000)
 			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
 
 			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
@@ -3415,10 +3838,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
 
 			exec := &WorkshopStepExecution{
-				ID:     execID,
-				StepID: stepID,
-				Status: WorkshopStepRunning,
-				cancel: cancel,
+				ID:             execID,
+				StepID:         stepID,
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
 			}
 			iwm.stepRegistry.Register(exec)
 
@@ -3639,6 +4063,137 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_cost_summary tool: %v", err))
 	}
 
+	// Tool 9: run_background_task — generic background sub-agent for offloading work
+	if err := mcpAgent.RegisterCustomTool(
+		"run_background_task",
+		"Run a generic background task with a sub-agent that has full tool access (workspace tools + all MCP servers). Use this to offload complex or time-consuming work that doesn't fit execute_step/generate_learnings/optimize_step. Examples: bulk file analysis, data transformation, research across multiple files, generating reports, cleanup tasks. The sub-agent runs independently and you will be notified when it completes.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"task": map[string]interface{}{
+					"type":        "string",
+					"description": "Detailed description of the task for the sub-agent. Be specific about what to do, what files/paths to work with, and what output is expected.",
+				},
+				"task_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Short label for the task (shown in UI and list_executions). E.g., 'analyze-logs', 'cleanup-outputs', 'compare-results'.",
+				},
+				"max_turns": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum LLM turns for the sub-agent (default: 50). Use higher values for complex multi-step tasks.",
+				},
+			},
+			"required": []string{"task", "task_name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			task, _ := args["task"].(string)
+			if task == "" {
+				return "task is required and must be non-empty", nil
+			}
+			taskName, _ := args["task_name"].(string)
+			if taskName == "" {
+				return "task_name is required and must be non-empty", nil
+			}
+
+			maxTurns := 50
+			if v, ok := args["max_turns"]; ok && v != nil {
+				if f, ok := v.(float64); ok && f > 0 {
+					maxTurns = int(f)
+				}
+			}
+
+			execID := fmt.Sprintf("task-%s-%05d", taskName, time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-task-%s-%d", taskName, time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         taskName,
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			go func() {
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-background-task",
+						AgentName:     fmt.Sprintf("Task: %s", taskName),
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				// Create agent with same tools/servers as the workshop agent
+				result, execErr := iwm.runGenericBackgroundTask(execCtx, task, taskName, maxTurns)
+
+				// Emit end event
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-background-task",
+						AgentName:     fmt.Sprintf("Task: %s", taskName),
+						Success:       execErr == nil,
+					}
+					if execErr != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				exec.mu.Lock()
+				defer exec.mu.Unlock()
+				if exec.Status == WorkshopStepCancelled {
+					return
+				}
+				if execErr != nil {
+					if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
+						exec.Status = WorkshopStepCancelled
+						exec.Err = execErr
+					} else {
+						exec.Status = WorkshopStepFailed
+						exec.Err = execErr
+					}
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = result
+				}
+			}()
+
+			return fmt.Sprintf("Background task %q started.\nexecution_id: %q\nmax_turns: %d\nYou will be automatically notified when it completes.", taskName, execID, maxTurns), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_background_task tool: %v", err))
+	}
+
+	// NOTE: update_variable and manage_variable_group tools have been removed.
+	// Variable/group management is now handled via the workspace UI.
+	// The read-only tools below (get_llm_config, get_variables) are kept for discovery.
+
 	// Tool: get_llm_config — show current LLM configuration (read-only)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_llm_config",
@@ -3664,7 +4219,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			writeLLMEntry("Learning LLM", iwm.controller.presetLearningLLM)
 
 			// Show tiered config if enabled
-			if iwm.controller.useTieredMode && iwm.controller.tierResolver != nil {
+			if iwm.controller.tierResolver != nil {
 				sb.WriteString("\n### Tiered LLM Config (active)\n")
 				// Use ResolveTier to show tier configs
 				if t1 := iwm.controller.tierResolver.ResolveTier(TierHigh); t1 != nil {
@@ -4272,4 +4827,193 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 	}
 
 	return result, nil
+}
+
+// runGenericBackgroundTask creates and runs a generic sub-agent with full tool access.
+func (iwm *InteractiveWorkshopManager) runGenericBackgroundTask(ctx context.Context, task string, taskName string, maxTurns int) (string, error) {
+	logger := iwm.controller.GetLogger()
+	workspacePath := iwm.controller.GetWorkspacePath()
+
+	// Folder guard: read everything, write to runs/ and learnings/
+	readPaths := []string{workspacePath}
+	runsPath := fmt.Sprintf("%s/runs", workspacePath)
+	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
+	writePaths := []string{runsPath, learningsPath}
+
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+
+	// Use the workshop agent's LLM, fall back to preset execution LLM
+	effectiveLLM := iwm.presetLLM
+	if effectiveLLM == nil || effectiveLLM.Provider == "" || effectiveLLM.ModelID == "" {
+		effectiveLLM = iwm.controller.presetExecutionLLM
+	}
+	if effectiveLLM == nil || effectiveLLM.Provider == "" || effectiveLLM.ModelID == "" {
+		return "", fmt.Errorf("no valid LLM configuration for background task — neither presetPhaseLLM nor presetExecutionLLM is configured")
+	}
+	llmConfig := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: effectiveLLM.Provider,
+			ModelID:  effectiveLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	agentName := fmt.Sprintf("background-task-%s", taskName)
+	config := iwm.controller.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(effectiveLLM)
+	config.UseToolSearchMode = false
+
+	// MCP Servers — same as workshop agent
+	selectedServers := iwm.controller.GetSelectedServers()
+	selectedTools := iwm.controller.GetSelectedTools()
+	mcpConfigPath := iwm.controller.GetMCPConfigPath()
+
+	if len(selectedServers) > 0 && mcpConfigPath != "" {
+		config.ServerNames = selectedServers
+		config.SelectedTools = selectedTools
+		config.MCPConfigPath = mcpConfigPath
+		config.MCPSessionID = iwm.controller.GetMCPSessionID()
+	} else {
+		config.ServerNames = []string{mcpclient.NoServers}
+	}
+
+	// Phase tools: shell_command etc.
+	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
+
+	systemPrompt := fmt.Sprintf(`# Background Task Agent
+
+## Context: %s
+
+## Role
+You are a background task agent with full tool access (workspace tools + all MCP servers).
+Execute the task described below thoroughly and return a clear summary of what was done.
+
+## Workspace
+- **Path**: %s
+- **Run Folder**: %s
+
+## Task
+%s`, time.Now().Format("2006-01-02 15:04:05"), workspacePath, iwm.controller.selectedRunFolder, task)
+
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newGenericBackgroundAgent(cfg, log, tracer, eventBridge, systemPrompt, task)
+	}
+
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		"background-task",
+		0, 0,
+		"background-task",
+		createAgentFunc,
+		phaseTools,
+		phaseExecutors,
+		true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create background task agent: %w", err)
+	}
+
+	logger.Info(fmt.Sprintf("🔧 Running background task %q (max_turns: %d)", taskName, maxTurns))
+	result, _, err := agent.Execute(ctx, map[string]string{}, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
+}
+
+// GenericBackgroundAgent is a simple agent that executes a task with a provided system prompt.
+type GenericBackgroundAgent struct {
+	*agents.BaseOrchestratorAgent
+	systemPrompt string
+	userMessage  string
+}
+
+func newGenericBackgroundAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, systemPrompt string, userMessage string) *GenericBackgroundAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
+		config,
+		logger,
+		tracer,
+		agents.TodoPlannerExecutionQAAgentType,
+		eventBridge,
+	)
+	return &GenericBackgroundAgent{
+		BaseOrchestratorAgent: baseAgent,
+		systemPrompt:          systemPrompt,
+		userMessage:           userMessage,
+	}
+}
+
+func (agent *GenericBackgroundAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	baseAgent := agent.BaseOrchestratorAgent.BaseAgent()
+	if baseAgent == nil || baseAgent.Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+
+	inputProcessor := func(map[string]string) string { return agent.userMessage }
+
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(
+		ctx, templateVars, inputProcessor,
+		conversationHistory, struct{}{},
+		agent.systemPrompt, true,
+	)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return result, updatedHistory, nil
+}
+
+// updateWorkshopLearningMetadata updates .learning_metadata.json after workshop generate_learnings completes.
+// This ensures tiered mode and keepLearningFull thresholds work for workshop-generated learnings.
+func (iwm *InteractiveWorkshopManager) updateWorkshopLearningMetadata(
+	ctx context.Context,
+	learningPathIdentifier string,
+	stepPath string,
+	stepID string,
+	hasLearningFiles bool,
+) {
+	logger := iwm.controller.GetLogger()
+	learningsBase := iwm.controller.getLearningsBasePath()
+	metadataPath := fmt.Sprintf("%s/%s/.learning_metadata.json", learningsBase, learningPathIdentifier)
+
+	// Read existing metadata or create new
+	var metadata LearningMetadata
+	content, err := iwm.controller.ReadWorkspaceFile(ctx, metadataPath)
+	if err != nil {
+		metadata = LearningMetadata{
+			StepID:   stepID,
+			StepPath: stepPath,
+		}
+	} else {
+		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata for %s: %v (creating new)", stepID, err))
+			metadata = LearningMetadata{
+				StepID:   stepID,
+				StepPath: stepPath,
+			}
+		}
+	}
+
+	// Update fields
+	metadata.TotalIterations++
+	if hasLearningFiles {
+		metadata.LastLearningDetectedAt = time.Now().Format(time.RFC3339)
+		metadata.LastDetectionReasoning = "workshop generate_learnings"
+		metadata.LastDetectionConfidence = 1.0
+	}
+
+	// Write updated metadata
+	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to marshal learning metadata for %s: %v", stepID, err))
+		return
+	}
+	if err := iwm.controller.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to write learning metadata for %s: %v", stepID, err))
+	} else {
+		logger.Info(fmt.Sprintf("📝 Updated learning metadata for %s (iterations: %d)", stepID, metadata.TotalIterations))
+	}
 }

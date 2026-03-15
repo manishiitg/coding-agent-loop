@@ -20,7 +20,6 @@ import type {
   ConditionalNodeData,
   DecisionNodeData,
   LoopNodeData,
-  OrchestratorNodeData,
   TodoTaskNodeData,
   ValidationNodeData,
   LearningNodeData,
@@ -28,7 +27,7 @@ import type {
 } from '../hooks/usePlanToFlow'
 import type { PlanStep, PlanningResponse, AgentConfigs, ValidationSchema } from '../../../utils/stepConfigMatching'
 import type { TodoStepWithConfigs } from '../../../utils/stepConfigMatching'
-import { isRegularStep, isConditionalStep, isDecisionStep, isOrchestrationStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isRegularStep, isConditionalStep, isDecisionStep, isHumanInputStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 
 interface StepSidebarProps {
   node: WorkflowNode | null
@@ -177,10 +176,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
     // Get step ID
     let stepId: string | undefined
-    if (node?.type === 'orchestrator') {
-      const orchestratorData = node.data as OrchestratorNodeData
-      stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
-    } else if (node?.data) {
+    if (node?.data) {
       const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       stepId = stepData.step?.id
     }
@@ -218,16 +214,12 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     // Get step ID from node data
-    // For orchestration steps, use orchestration_step.ID (backend uses orchestration_step.ID for learnings)
     // For todo_task steps, use todo_task_step.ID (backend uses todo_task_step.ID for learnings)
     // For other steps, use step.ID
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | TodoTaskNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | TodoTaskNodeData
     let stepId: string | undefined
 
-    if ((node.type as string) === 'orchestrator') {
-      const orchestratorData = stepData as OrchestratorNodeData
-      stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id
-    } else if ((node.type as string) === 'todo_task') {
+    if ((node.type as string) === 'todo_task') {
       const todoTaskData = stepData as TodoTaskNodeData
       stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id
     } else {
@@ -434,19 +426,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       }
     }
 
-    if (isOrchestrationStep(planStep)) {
-      return {
-        ...base,
-        has_orchestration_step: true,
-        orchestration_step: planStep.orchestration_step ? convertPlanStepToTodoStep(planStep.orchestration_step) : undefined,
-        orchestration_routes: planStep.orchestration_routes?.map(route => ({
-          ...route,
-          sub_agent_step: convertPlanStepToTodoStep(route.sub_agent_step)
-        })),
-        next_step_id: planStep.next_step_id,
-      } as TodoStepWithConfigs
-    }
-
     if (isHumanInputStep(planStep)) {
       return {
         ...base,
@@ -487,9 +466,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     
-    // Check if step exists (for step/conditional/loop/decision/orchestrator nodes)
+    // Check if step exists (for step/conditional/loop/decision nodes)
     // Sub-agents are type 'step', so they should be handled here
-    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+    const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
     if (!stepData || !stepData.step) {
       return null
     }
@@ -502,8 +481,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Initialize edit fields when node changes or edit mode is enabled
   React.useEffect(() => {
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -521,8 +500,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
   // Handle start edit
   const handleStartEdit = () => {
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -579,8 +558,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
   const handleCancelEdit = () => {
     setIsEditing(false)
     // Reset to original values
-    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')) {
-      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
+    if (node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')) {
+      const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
       if (stepData.step) {
         const step = stepData.step
         setEditedTitle(step.title || '')
@@ -721,22 +700,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           await onEditStep(innerStepId, innerStepUpdates)
         }
 
-        // For orchestration steps, also save agent_configs to the inner orchestration_step
-        if (stepDataForLogging && isOrchestrationStep(stepDataForLogging) && stepDataForLogging.orchestration_step?.id) {
-          const innerStepId = stepDataForLogging.orchestration_step.id
-          console.log('[StepSidebar] Saving agent config to inner step of orchestration step:', {
-            parentStepId: stepId,
-            innerStepId: innerStepId,
-            hasAgentConfigs: !!agentConfigs
-          })
-
-          // Save only agent_configs to the inner step (don't update other fields)
-          const innerStepUpdates: Partial<PlanStep> = {
-            agent_configs: agentConfigs
-          }
-
-          await onEditStep(innerStepId, innerStepUpdates)
-        }
       }
       
       onClose()
@@ -797,18 +760,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     }
 
     // Helper to get preset default LLM for an agent type
-    const getPresetDefaultLLM = (agentType: 'execution' | 'validation' | 'learning'): LLMOption | null => {
+    const getPresetDefaultLLM = (agentType: 'execution' | 'learning'): LLMOption | null => {
       if (!presetLLMConfig) {
         return null
       }
       let config: AgentLLMConfig | undefined
       if (agentType === 'execution') {
         config = presetLLMConfig.execution_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
-          provider: presetLLMConfig.provider,
-          model_id: presetLLMConfig.model_id
-        } : undefined)
-      } else if (agentType === 'validation') {
-        config = presetLLMConfig.validation_llm || (presetLLMConfig.provider && presetLLMConfig.model_id ? {
           provider: presetLLMConfig.provider,
           model_id: presetLLMConfig.model_id
         } : undefined)
@@ -837,18 +795,17 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 
     // Get current LLM option (step-specific, or preset default, or null for "use preset default")
     const currentLLMOption = isValidation
-      ? llmConfigToOption(agentConfigs?.validation_llm) || getPresetDefaultLLM('validation')
+      ? null // Validation LLM no longer used
       : useCodeExecutionMode
         ? llmConfigToOption(agentConfigs?.execution_llm) || getPresetDefaultLLM('execution')
         : llmConfigToOption(agentConfigs?.learning_llm) || getPresetDefaultLLM('learning')
-    
+
     // Check if disabled (only relevant if not in code exec mode)
-    // LLM validation is disabled by default (undefined/null/true = disabled, false = enabled)
-    // Learning follows the old pattern (undefined/null = enabled, true = disabled)
+    // Learning follows the pattern: undefined/null = enabled, true = disabled
     const isDisabled = isAlwaysEnabled
       ? false
       : (isValidation
-          ? agentConfigs?.disable_validation !== false  // LLM validation disabled by default
+          ? true  // Validation sidebar is no longer used
           : agentConfigs?.disable_learning === true)
     
     // Handle LLM change
@@ -856,25 +813,21 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       if (!parentStep) return
       
       // Check if the selected LLM is the same as preset default - if so, clear it to use preset
-      const presetDefault = isValidation
-        ? getPresetDefaultLLM('validation')
-        : useCodeExecutionMode
-          ? getPresetDefaultLLM('execution')
-          : getPresetDefaultLLM('learning')
-      
+      const presetDefault = useCodeExecutionMode
+        ? getPresetDefaultLLM('execution')
+        : getPresetDefaultLLM('learning')
+
       // If selected LLM matches preset default, clear the step-specific config
-      const shouldUsePresetDefault = presetDefault && 
-        llm.provider === presetDefault.provider && 
+      const shouldUsePresetDefault = presetDefault &&
+        llm.provider === presetDefault.provider &&
         llm.model === presetDefault.model
-      
+
       const updates: Partial<PlanStep> = {
         agent_configs: {
           ...agentConfigs,
-          ...(isValidation 
-            ? { validation_llm: shouldUsePresetDefault ? undefined : optionToLLMConfig(llm) }
-            : useCodeExecutionMode
-              ? { execution_llm: shouldUsePresetDefault ? undefined : optionToLLMConfig(llm) }
-              : { learning_llm: shouldUsePresetDefault ? undefined : optionToLLMConfig(llm) }
+          ...(useCodeExecutionMode
+            ? { execution_llm: shouldUsePresetDefault ? undefined : optionToLLMConfig(llm) }
+            : { learning_llm: shouldUsePresetDefault ? undefined : optionToLLMConfig(llm) }
           )
         } as AgentConfigs
       }
@@ -889,10 +842,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
       const updates: Partial<PlanStep> = {
         agent_configs: {
           ...agentConfigs,
-          ...(isValidation 
-            ? { disable_validation: !isDisabled }
-            : { disable_learning: !isDisabled }
-          )
+          ...{ disable_learning: !isDisabled }
         } as AgentConfigs
       }
       
@@ -1005,9 +955,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               
               {currentLLMOption && (
                 <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                  {llmConfigToOption(isValidation 
-                    ? agentConfigs?.validation_llm
-                    : useCodeExecutionMode
+                  {llmConfigToOption(useCodeExecutionMode
                       ? agentConfigs?.execution_llm
                       : agentConfigs?.learning_llm
                   ) ? (
@@ -1028,8 +976,8 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
     return null
   }
 
-  // At this point, node must be step/conditional/loop/decision/orchestrator (validation/learning handled above)
-  const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+  // At this point, node must be step/conditional/loop/decision (validation/learning handled above)
+  const stepData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
   const step = stepData.step
 
   // When ChatArea is visible, match its width (50% of viewport), otherwise use fixed widths
@@ -1506,68 +1454,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 </div>
               )}
 
-              {/* Prerequisites */}
-              {(() => {
-                type PrereqRule = { depends_on_step: string; description: string }
-                const agentConfigs = (step as PlanStep & { agent_configs?: AgentConfigs }).agent_configs
-                const enabled =
-                  agentConfigs?.enable_prerequisite_detection ??
-                  (step as unknown as { enable_prerequisite_detection?: boolean }).enable_prerequisite_detection
-                const rules =
-                  (agentConfigs?.prerequisite_rules ??
-                    (step as unknown as { prerequisite_rules?: PrereqRule[] }).prerequisite_rules) as
-                    | PrereqRule[]
-                    | undefined
-
-                if (!enabled && (!rules || rules.length === 0)) return null
-
-                return (
-                  <div className="space-y-2">
-                    <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-                      Prerequisites:
-                    </span>
-                    <div className="space-y-1 text-sm">
-                      <div className="text-xs text-gray-700 dark:text-gray-300">
-                        <span className="font-medium">Detection:</span>{' '}
-                        <span
-                          className={
-                            enabled
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : 'text-gray-500 dark:text-gray-500'
-                          }
-                        >
-                          {enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      </div>
-                      {rules && rules.length > 0 && (
-                        <div className="mt-1 space-y-1.5">
-                          {rules.map((rule, idx) => (
-                            <div
-                              key={`${rule.depends_on_step}-${idx}`}
-                              className="text-xs text-gray-700 dark:text-gray-300 border border-orange-200 dark:border-orange-800/60 bg-orange-50 dark:bg-orange-900/20 rounded px-2 py-1"
-                            >
-                              <div>
-                                <span className="font-medium text-orange-700 dark:text-orange-300">
-                                  Depends on:
-                                </span>{' '}
-                                <span className="font-mono text-[11px] break-all">
-                                  {rule.depends_on_step}
-                                </span>
-                              </div>
-                              {rule.description && (
-                                <div className="mt-0.5 text-[11px] text-orange-700 dark:text-orange-300 whitespace-pre-line">
-                                  {rule.description}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })()}
-
               {/* Validation Schema */}
               {(() => {
                 // For different node types, validation_schema is stored in different places:
@@ -1577,10 +1463,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 // - Regular/Loop: step.validation_schema
                 let validationSchema: ValidationSchema | undefined
                 
-                if ((node.type as string) === 'orchestrator') {
-                  const orchestratorData = node.data as OrchestratorNodeData
-                  validationSchema = orchestratorData.validation_schema || step.validation_schema as ValidationSchema | undefined
-                } else if ((node.type as string) === 'decision' && isDecisionStep(step)) {
+                if ((node.type as string) === 'decision' && isDecisionStep(step)) {
                   // For decision steps, validation_schema is on the nested decision_step
                   validationSchema = step.decision_step?.validation_schema as ValidationSchema | undefined
                 } else if ((node.type as string) === 'conditional' && isConditionalStep(step)) {
@@ -1810,70 +1693,6 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 planSteps={plan?.steps || []}
               />
             </div>
-          ) : isOrchestrationStep(step) && (node.type as string) === 'orchestrator' ? (
-            <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-              {/* Orchestrator Step Info */}
-              <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                <p className="text-xs text-blue-700 dark:text-blue-300">
-                  <strong>Orchestrator Step:</strong> Evaluates the input and routes to a specific sub-agent or ends the workflow.
-                </p>
-                {/* Routes Display */}
-                {step.orchestration_routes && step.orchestration_routes.length > 0 && (
-                  <div className="mt-3">
-                    <p className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wide mb-2">
-                      Available Routes:
-                    </p>
-                    <div className="space-y-2">
-                      {step.orchestration_routes.map((route) => {
-                        const isEndRoute = route.route_id?.toLowerCase() === "end"
-                        return (
-                          <div key={route.route_id || 'unknown'} className="p-2 bg-white dark:bg-gray-800 rounded border border-blue-100 dark:border-blue-900">
-                            <div className="flex items-center gap-2 mb-1">
-                              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                isEndRoute
-                                  ? "bg-red-500 dark:bg-red-400"
-                                  : "bg-blue-500 dark:bg-blue-400"
-                              }`} />
-                              <span className={`text-xs font-medium ${
-                                isEndRoute
-                                  ? "text-red-700 dark:text-red-300"
-                                  : "text-blue-700 dark:text-blue-300"
-                              }`}>
-                                {route.route_name || route.route_id}
-                              </span>
-                            </div>
-                            {route.condition && (
-                              <p className="text-xs text-gray-600 dark:text-gray-400 ml-4">
-                                Condition: {route.condition}
-                              </p>
-                            )}
-                            {route.context_to_pass && (
-                              <p className="text-xs text-gray-500 dark:text-gray-500 ml-4 mt-1 italic">
-                                Context: {route.context_to_pass}
-                              </p>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <StepEditPanel
-                step={stepWithConfigs}
-                stepIndex={stepIndex}
-                onSave={handleSave}
-                onCancel={() => {}}
-                isSaving={isSaving}
-                presetServers={presetServers}
-                presetLLMConfig={presetLLMConfig}
-                presetUseCodeExecutionMode={presetUseCodeExecutionMode}
-                isTodoTaskStep={(node.type as string) === 'todo_task'}
-                isExpanded={true}
-                onToggleExpanded={() => {}}
-                planSteps={plan?.steps || []}
-              />
-            </div>
           ) : isTodoTaskStep(step) && (node.type as string) === 'todo_task' ? (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Todo Task Step Info */}
@@ -2011,9 +1830,9 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         }}
         title="Delete Step"
         message={
-          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
                 return `Are you sure you want to delete "${stepTitle}"? This action cannot be undone. Any context dependencies referencing this step's output will be automatically removed.`
               })()
@@ -2031,18 +1850,14 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
         onConfirm={handleDeleteLearnings}
         title="Delete Learnings"
         message={
-          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'orchestrator' || (node.type as string) === 'todo_task')
+          node && ((node.type as string) === 'step' || (node.type as string) === 'conditional' || (node.type as string) === 'decision' || (node.type as string) === 'loop' || (node.type as string) === 'todo_task')
             ? (() => {
-                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | OrchestratorNodeData | TodoTaskNodeData
+                const stepData = node.data as StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData
                 const stepTitle = stepData.step?.title || `Step ${stepIndex + 1}`
-                // For orchestration steps, use orchestration_step.ID (backend uses orchestration_step.ID for learnings)
                 // For todo_task steps, use todo_task_step.ID
                 // For other steps, use step.ID
                 let stepId: string
-                if ((node.type as string) === 'orchestrator') {
-                  const orchestratorData = stepData as OrchestratorNodeData
-                  stepId = orchestratorData.orchestration_step?.id ?? orchestratorData.step?.id ?? `step-${stepIndex + 1}`
-                } else if ((node.type as string) === 'todo_task') {
+                if ((node.type as string) === 'todo_task') {
                   const todoTaskData = stepData as TodoTaskNodeData
                   stepId = todoTaskData.todo_task_step?.id ?? todoTaskData.step?.id ?? `step-${stepIndex + 1}`
                 } else {

@@ -212,47 +212,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		// Emit route selected event
 		hcpo.emitTodoTaskRouteSelectedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
 
-		// Run pre-validation after each agent execution (if validation schema exists)
-		// This is the PRIMARY completion check - step completes when validation passes
-		validationSchema := step.GetValidationSchema()
-		if validationSchema != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after agent execution (iteration %d)", taskIteration+1))
-			preValidationPassed, preValidationReason := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
-
-			if preValidationPassed {
-				// Pre-validation passed - step is complete!
-				completionReason := fmt.Sprintf("Pre-validation passed after iteration %d. %s", taskIteration+1, response.ProgressSummary)
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (pre-validation passed): %s", completionReason))
-				// Emit todo task step completed event
-				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, completionReason, todoTaskStep.NextStepID)
-				// Emit step finished event
-				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-				return true, todoTaskStep.NextStepID, nil
-			}
-
-			// Pre-validation failed - continue with feedback
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed for todo task step (iteration %d): continuing with feedback", taskIteration+1))
-			lastSubAgentResult = fmt.Sprintf("PRE-VALIDATION FAILED:\n%s\n\nPlease fix the validation issues before the step can complete.", preValidationReason)
-			lastSubAgentName = "pre-validation"
-			lastTodoID = "validation-failure"
-			// Continue to next iteration with feedback
-			continue
-		}
-
-		// No validation schema - use legacy completion detection
 		// Process the response based on next_action
 		switch response.NextAction {
 		case "complete":
-			if response.AllTasksComplete {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (no validation schema): %s", response.CompletionReason))
-				// Emit todo task step completed event
-				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, response.CompletionReason, todoTaskStep.NextStepID)
-				// Emit step finished event
-				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-				return true, todoTaskStep.NextStepID, nil
+			// Orchestrator signaled completion — run pre-validation if schema exists
+			validationSchema := step.GetValidationSchema()
+			if validationSchema != nil {
+				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after orchestrator signaled complete (iteration %d)", taskIteration+1))
+				preValidationPassed, preValidationReason := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
+
+				if preValidationPassed {
+					completionReason := fmt.Sprintf("Pre-validation passed after iteration %d. %s", taskIteration+1, response.ProgressSummary)
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (pre-validation passed): %s", completionReason))
+					hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, completionReason, todoTaskStep.NextStepID)
+					hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+					return true, todoTaskStep.NextStepID, nil
+				}
+
+				// Pre-validation failed — feed back to orchestrator so it can fix remaining issues
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed after orchestrator signaled complete (iteration %d): continuing with feedback", taskIteration+1))
+				validationFeedback := fmt.Sprintf("\n\n---\nSTEP PRE-VALIDATION FAILED (you called mark_step_complete but validation checks did not pass):\n%s\n\nFix the failing checks and call mark_step_complete again when ready.", preValidationReason)
+				lastSubAgentResult = validationFeedback
+				// Continue to next iteration with feedback
+			} else {
+				// No validation schema — trust the orchestrator's completion signal
+				if response.AllTasksComplete {
+					hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (no validation schema): %s", response.CompletionReason))
+					hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, response.CompletionReason, todoTaskStep.NextStepID)
+					hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+					return true, todoTaskStep.NextStepID, nil
+				}
+				hcpo.GetLogger().Warn("⚠️ Agent said complete but all_tasks_complete is false, continuing...")
 			}
-			// Not all tasks complete but agent said complete - continue
-			hcpo.GetLogger().Warn("⚠️ Agent said complete but all_tasks_complete is false, continuing...")
 
 		case "delegate":
 			// Delegate to sub-agent via structured output (legacy path)
@@ -304,6 +295,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			// Continue - agent is managing tasks via shell commands
 			hcpo.GetLogger().Info("📝 Continuing task management...")
 
+			// On the second-to-last iteration, remind the orchestrator to call mark_step_complete
+			if taskIteration == maxIterations-2 {
+				lastSubAgentResult = lastSubAgentResult + "\n\n---\n⚠️ IMPORTANT: This is your LAST iteration. If the objective is met, you MUST call mark_step_complete(reason) now or the step will fail. If the objective is NOT met, focus on the most critical remaining work."
+			}
+
 		default:
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown next_action: %s, continuing...", response.NextAction))
 		}
@@ -336,9 +332,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		if i > 0 {
 			routesBuilder.WriteString("\n")
 		}
-		fmt.Fprintf(&routesBuilder, "- **%s** (%s): %s", route.RouteName, route.RouteID, route.Condition)
+		fmt.Fprintf(&routesBuilder, "- **%s** (%s): %s", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID, ResolveVariables(route.Condition, hcpo.variableValues))
 		if route.SubAgentStep != nil {
-			fmt.Fprintf(&routesBuilder, "\n  Description: %s", route.SubAgentStep.GetDescription())
+			fmt.Fprintf(&routesBuilder, "\n  Description: %s", ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues))
 		}
 	}
 
@@ -394,11 +390,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 
 	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)
 	previousStepsSummary := hcpo.buildPreviousStepsSummary(allSteps, stepIndex, previousContextFiles, previousExecutionResults)
+
+	// Append workshop human input as critical feedback (passed via execute_step's human_input parameter)
+	if hcpo.interactiveWorkflowHumanInput != "" {
+		if previousStepsSummary == "" {
+			previousStepsSummary = "## 📋 Previous Steps Context\n\n"
+		}
+		previousStepsSummary += fmt.Sprintf("\n## 🚨 HUMAN FEEDBACK (CRITICAL - READ CAREFULLY)\n\n")
+		previousStepsSummary += "The human provided the following instructions via the interactive workshop.\n"
+		previousStepsSummary += "**You MUST incorporate this human feedback into your work. This takes priority over other context.**\n\n"
+		previousStepsSummary += fmt.Sprintf("```\n%s\n```\n", hcpo.interactiveWorkflowHumanInput)
+	}
+
 	templateVars["PreviousStepsSummary"] = previousStepsSummary
 
 	// Add EnableDynamicTierSelection flag for system prompt
 	enableDynamicTier := false
-	if hcpo.useTieredMode {
+	if hcpo.tierResolver != nil {
 		if stepConfig := getAgentConfigs(step); stepConfig != nil &&
 			stepConfig.EnableDynamicTierSelection != nil {
 			enableDynamicTier = *stepConfig.EnableDynamicTierSelection
@@ -489,7 +497,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	}
 
 	// 3. TIERED MODE: Use configured orchestrator tier if pinned on the step (only when no explicit LLM is set).
-	if hcpo.useTieredMode && hcpo.tierResolver != nil && stepConfig != nil &&
+	if hcpo.tierResolver != nil && stepConfig != nil &&
 		stepConfig.TodoTaskOrchestratorTier != nil {
 		tier := TierLevel(*stepConfig.TodoTaskOrchestratorTier)
 		if tier >= TierHigh && tier <= TierLow {
@@ -582,15 +590,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 	defer agent.Close()
 
-	// Override prompt template var for CLI providers: use normal prompt (not code execution prompt)
-	// Also set ShowToolsSection so CLI providers get an explicit tool listing in the system prompt
+	// CLI providers (claude-code, gemini-cli) keep IsCodeExecutionMode=true because they ARE
+	// code execution environments. Set ShowToolsSection so they get an explicit tool listing.
 	if agent.GetConfig() != nil {
 		provider := agent.GetConfig().LLMConfig.Primary.Provider
 		if isCliProviderForPrompt(provider) {
-			templateVars["IsCodeExecutionMode"] = "false"
 			templateVars["ShowToolsSection"] = "true"
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 CLI provider '%s' - using normal prompt (code exec mode still enabled for tool routing)", provider))
 		}
+	}
+
+	// Pre-save prompts.json so get_step_prompts works during execution (not just after)
+	if todoAgent, ok := agent.(*WorkflowTodoTaskOrchestratorAgent); ok {
+		preSystemPrompt := todoAgent.todoTaskOrchestratorSystemPromptProcessor(templateVars)
+		preUserMessage := todoAgent.todoTaskOrchestratorUserMessageProcessor(templateVars, conversationHistory)
+		hcpo.preSavePromptsJSON(stepIndex, stepPath, "todo_task_orchestrator", preSystemPrompt, preUserMessage, executionLLM, "todo-task-prompts.json")
 	}
 
 	// Execute with tool-based approach (no structured output)
@@ -675,7 +688,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 			}
 			return &AgentConfigs{
 				DisableLearning:              boolPtr(true), // No learning for generic agent
-				DisableValidation:            boolPtr(true), // No validation for generic agent
 				UseToolSearchMode:            useToolSearchMode,
 				UseCodeExecutionMode:         useCodeExecutionMode,
 				DisableParallelToolExecution: disableParallelToolExec, // inherit from parent

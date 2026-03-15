@@ -232,20 +232,6 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
 	}
 
-	// VALIDATION: Check if task exists in tasks.md before delegation
-	if validateFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateFunc != nil {
-		exists, totalTasks, tasksFilePath, err := validateFunc(ctx, todoID)
-		if err != nil {
-			return "", fmt.Errorf("failed to validate task: %w", err)
-		}
-		if totalTasks == 0 {
-			return "", fmt.Errorf("VALIDATION ERROR: Cannot delegate - tasks.md is EMPTY or does not exist. You MUST create tasks.md with task entries first using execute_shell_command before delegating. Expected path: %s", tasksFilePath)
-		}
-		if !exists {
-			return "", fmt.Errorf("VALIDATION ERROR: Task '%s' does not exist in tasks.md. Create it first using execute_shell_command, or use an existing task_id from tasks.md. File path: %s", todoID, tasksFilePath)
-		}
-	}
-
 	// Get the execution function from context
 	executeFunc, ok := ctx.Value(ExecutePredefinedSubAgentKey).(ExecutePredefinedSubAgentFunc)
 	if !ok || executeFunc == nil {
@@ -304,20 +290,6 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	// Extract share_browser param (defaults to true — shared browser)
 	if sb, ok := args["share_browser"].(bool); ok && !sb {
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
-	}
-
-	// VALIDATION: Check if task exists in tasks.md before delegation
-	if validateFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateFunc != nil {
-		exists, totalTasks, tasksFilePath, err := validateFunc(ctx, todoID)
-		if err != nil {
-			return "", fmt.Errorf("failed to validate task: %w", err)
-		}
-		if totalTasks == 0 {
-			return "", fmt.Errorf("VALIDATION ERROR: Cannot delegate - tasks.md is EMPTY or does not exist. You MUST create tasks.md with task entries first using execute_shell_command before delegating. Expected path: %s", tasksFilePath)
-		}
-		if !exists {
-			return "", fmt.Errorf("VALIDATION ERROR: Task '%s' does not exist in tasks.md. Create it first using execute_shell_command, or use an existing task_id from tasks.md. File path: %s", todoID, tasksFilePath)
-		}
 	}
 
 	// Get the execution function from context

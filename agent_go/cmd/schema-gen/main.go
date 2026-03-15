@@ -200,10 +200,7 @@ type EventDataUnion struct {
 	BatchExecutionStart *orchestrator_events.BatchExecutionStartEvent `json:"batch_execution_start,omitempty"`
 	BatchGroupStart     *orchestrator_events.BatchGroupStartEvent     `json:"batch_group_start,omitempty"`
 	BatchGroupEnd       *orchestrator_events.BatchGroupEndEvent       `json:"batch_group_end,omitempty"`
-	BatchExecutionEnd   *orchestrator_events.BatchExecutionEndEvent   `json:"batch_execution_end,omitempty"`
-
-	// Prerequisite Navigation Event
-	PrerequisiteNavigation *events.PrerequisiteNavigationEvent `json:"prerequisite_navigation,omitempty"`
+	BatchExecutionEnd *orchestrator_events.BatchExecutionEndEvent `json:"batch_execution_end,omitempty"`
 }
 
 // =============================================================================
@@ -300,7 +297,6 @@ var EventTypeMapping = map[events.EventType]string{
 	orchestrator_events.DecisionEvaluated:      "decision_evaluated",
 	orchestrator_events.RoutingEvaluated:       "routing_evaluated",
 	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
-	events.PrerequisiteNavigation:              "prerequisite_navigation",
 
 	// Todo/Planning Events
 	orchestrator_events.TodoStepsExtracted:       "todo_steps_extracted",

@@ -22,7 +22,7 @@ import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
-import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type OrchestratorNodeData } from '../hooks/usePlanToFlow'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData } from '../hooks/usePlanToFlow'
 import { useEvaluationPlanToFlow } from '../hooks/useEvaluationPlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
@@ -203,7 +203,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           node.type === 'conditional' || 
           node.type === 'decision' || 
           node.type === 'loop' || 
-          node.type === 'orchestrator' ||
           node.type === 'human_input' ||
           node.type === 'start' ||
           node.type === 'end') {
@@ -564,7 +563,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
              node.type === 'conditional' || 
              node.type === 'decision' || 
              node.type === 'loop' || 
-             node.type === 'orchestrator' ||
              node.type === 'human_input'
     }
 
@@ -611,19 +609,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           }
         }
       })
-
-      // Find sub-agents for orchestrator nodes (node IDs start with orchestrator node ID)
-      if (parentNode.type === 'orchestrator') {
-        currentNodes.forEach(childNode => {
-          if (childNode.id.includes('-sub-agent-') && childNode.id.startsWith(parentNode.id + '-')) {
-            children.push(childNode.id)
-            childToParent.set(childNode.id, parentNode.id)
-            const dx = childNode.position.x - parentNode.position.x
-            const dy = childNode.position.y - parentNode.position.y
-            offsets.set(childNode.id, { dx, dy })
-          }
-        })
-      }
 
       if (children.length > 0) {
         groups.set(parentNode.id, children)
@@ -926,7 +911,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const planFlow = usePlanToFlow(plan, {
-    // Prerequisite edges are always shown (default: true in usePlanToFlow)
     changes,  // Pass changes to highlight modified nodes
     onRunFromStep: handleRunFromStepCallback,
     onOpenSidebar: handleOpenSidebarCallback,
@@ -959,8 +943,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Find the node by matching step.id in node data (works for both top-level and branch steps)
     // Branch steps have node IDs like "step-3-true-0" but step.id is the actual step ID
     const nodeToFocus = nodesRef.current.find(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
-        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
         const nodeStepId = nodeData?.step?.id
         // Match by step.id (for branch steps) or by node ID (for top-level steps)
         return nodeStepId === stepId || (nodeStepId === undefined && node.id === stepId)
@@ -988,8 +972,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // The node ID might be stepId, or it might be step-${stepIndex} if stepId doesn't exist
     // We need to find the node by matching step.id in the node data
     const nodeToFocus = nodesRef.current.find(node => {
-      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
-        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+      if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+        const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
         const nodeStepId = nodeData?.step?.id || node.id
         // Match by stepId or by stepIndex if stepId matches
         return nodeStepId === stepId || (nodeData?.stepIndex === stepIndex && node.id === stepId)
@@ -1182,8 +1166,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         
         // Check if step data changed (especially agent_configs)
         // This is important when saving config in the side panel
-        const oldData = node?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
-        const newData = newNode?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
+        const oldData = node?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
+        const newData = newNode?.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
         const oldStep = oldData?.step
         const newStep = newData?.step
         if (oldStep && newStep) {
@@ -1475,8 +1459,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           // For conditional steps: nodeData.step.id is the wrapper step ID
           // For branch steps: nodeData.step.id is the actual step ID from plan.json (not the constructed node ID)
           const nodeToFocus = initialNodes.find(n => {
-            if (n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision' || n.type === 'orchestrator') {
-              const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+            if (n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision') {
+              const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
               // Match by step.id first (this is the actual step ID from plan.json - the wrapper step ID for orchestration/conditional)
               // This matches what the backend sends in changed_step_ids
               const stepId = nodeData?.step?.id
@@ -1495,7 +1479,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           if (nodeToFocus) {
             // Focus on the changed step (position viewport, but don't open sidebar)
             focusNodeFn(nodeToFocus.id, { topPadding: 150, selectNode: false, delay: 0 })
-            const nodeData = nodeToFocus.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+            const nodeData = nodeToFocus.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
             console.log('[WorkflowCanvas] Auto-focused on step that was changed by backend:', {
               stepId: stepIdToFocus,
               nodeId: nodeToFocus.id,
@@ -1505,9 +1489,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           } else {
             console.warn('[WorkflowCanvas] Could not find node for changed step ID:', stepIdToFocus, {
               availableNodes: initialNodes
-                .filter(n => n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision' || n.type === 'orchestrator')
+                .filter(n => n.type === 'step' || n.type === 'conditional' || n.type === 'loop' || n.type === 'decision')
                 .map(n => {
-                  const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+                  const nodeData = n.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
                   return {
                     nodeId: n.id,
                     stepId: nodeData?.step?.id,
@@ -1572,8 +1556,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     // Compare step data to see if it changed
-    const oldData = currentSelected.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
-    const newData = updatedNode.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
+    const oldData = currentSelected.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
+    const newData = updatedNode.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
     const oldStep = oldData?.step
     const newStep = newData?.step
 
@@ -1695,8 +1679,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       const updatedNodes = nds.map(node => {
         // Only update status for step-type nodes (step, conditional, loop, decision)
         // Validation and learning nodes have different status types
-        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
-          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
           const stepId = nodeData?.step?.id || node.id
           const stepStatus = stepStatusMap.get(stepId)
           const currentStatus = nodeData?.status
@@ -1735,14 +1719,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                   ...node.data, 
                   status: stepStatus
                 } as DecisionNodeData
-              } as WorkflowNode
-            } else if (node.type === 'orchestrator') {
-              return {
-                ...node,
-                data: {
-                  ...node.data,
-                  status: stepStatus
-                } as OrchestratorNodeData
               } as WorkflowNode
             }
           }
@@ -1823,8 +1799,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       console.log('[WorkflowCanvas] Updating nodes, total nodes:', nds.length)
       let hasUpdates = false
       const updatedNodes = nds.map(node => {
-        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision' || node.type === 'orchestrator') {
-          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData
+        if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
+          const nodeData = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData
           const stepId = nodeData?.step?.id || node.id
           const currentStatus = nodeData?.status
 
@@ -1865,7 +1841,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Handle multi-selection changes from React Flow
   const onSelectionChange = useCallback(({ nodes: selectedFlowNodes }: OnSelectionChangeParams) => {
     // Filter to only include configurable step nodes
-    const configurableTypes = ['step', 'conditional', 'decision', 'loop', 'orchestrator', 'todo_task', 'human_input']
+    const configurableTypes = ['step', 'conditional', 'decision', 'loop', 'todo_task', 'human_input']
     const stepNodes = selectedFlowNodes.filter(n =>
       configurableTypes.includes(n.type || '')
     ) as WorkflowNode[]
@@ -1884,7 +1860,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const selectedStepIds = React.useMemo(() => {
     return selectedNodes.map(node => {
       // Get step ID from node data if available, otherwise use node ID
-      const data = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | OrchestratorNodeData | undefined
+      const data = node.data as StepNodeData | ConditionalNodeData | LoopNodeData | DecisionNodeData | undefined
       return data?.step?.id || node.id
     })
   }, [selectedNodes])

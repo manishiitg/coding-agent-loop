@@ -401,6 +401,7 @@ func (em *EvaluationManager) registerEvaluationTools(mcpAgent *mcpagent.Agent) {
 		em.createDeleteEvaluationStepTool(),
 		"workspace",
 	)
+
 }
 
 func (em *EvaluationManager) createAddEvaluationStepTool() func(context.Context, map[string]interface{}) (string, error) {
@@ -668,3 +669,4 @@ func (em *EvaluationManager) createDeleteEvaluationStepTool() func(context.Conte
 		return response.String(), nil
 	}
 }
+

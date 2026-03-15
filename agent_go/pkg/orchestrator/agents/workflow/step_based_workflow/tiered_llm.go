@@ -4,6 +4,12 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 )
 
+// workshopTierContextKey is used to pass tier overrides via context (concurrent-safe)
+type workshopTierContextKey struct{}
+
+// WorkshopTierOverrideKey is the context key for workshop execute_step tier override
+var WorkshopTierOverrideKey = workshopTierContextKey{}
+
 // TierLevel represents a tier in the tiered LLM allocation system
 type TierLevel int
 
@@ -75,13 +81,31 @@ func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
 		return nil
 	}
 
-	return &orchestrator.LLMConfig{
+	config := &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
 			Provider: agentConfig.Provider,
 			ModelID:  agentConfig.ModelID,
 		},
-		APIKeys: tr.apiKeys,
+		Fallbacks: convertAgentFallbacks(agentConfig.Fallbacks),
+		APIKeys:   tr.apiKeys,
 	}
+
+	return config
+}
+
+// convertAgentFallbacks converts AgentLLMFallback slice to orchestrator.LLMModel slice.
+func convertAgentFallbacks(fallbacks []AgentLLMFallback) []orchestrator.LLMModel {
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	models := make([]orchestrator.LLMModel, len(fallbacks))
+	for i, fb := range fallbacks {
+		models[i] = orchestrator.LLMModel{
+			Provider: fb.Provider,
+			ModelID:  fb.ModelID,
+		}
+	}
+	return models
 }
 
 // ResolveForExecution returns the LLM for execution agents based on learning maturity

@@ -208,24 +208,35 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 
 {{"{{TOOL_STRUCTURE}}"}}`)
 
-var evaluationDebuggerChatTemplate = MustRegisterTemplate("evaluationDebuggerChatSystem", `# Evaluation Debugger (Chat Mode)
+var evaluationBuilderChatTemplate = MustRegisterTemplate("evaluationBuilderChatSystem", `# Evaluation Builder (Chat Mode)
 
 ## 🤖 ROLE
-You are an evaluation debugging assistant. Help the user improve their evaluation plan based on execution results.
+You are an evaluation plan designer and debugger. Help the user create, review, and refine evaluation plans — and analyze results from past evaluation runs to improve criteria.
 
 ## ⚠️ RULES
 1. **Conversational**: Discuss proposed changes with the user. Apply changes when they agree.
 2. **Answer Directly**: For general questions, answer from the context below.
-3. **Read Files Only When Needed**: Only read logs/files if user asks for deep debugging.
-4. **Concrete Criteria**: When updating evaluation criteria, make them specific and file-verifiable.
+3. **Read Files Only When Needed**: Only read logs/files if user asks for deep analysis.
+4. **Concrete Criteria**: Evaluation criteria must be specific and file-verifiable.
+5. **Scoring**: Use 0-10 scale. Define what constitutes each score range for clarity.
 
 ## 📋 CONTEXT
 - **Workspace**: {{.WorkspacePath}}
 
-### Current Plan
-{{if .ExistingPlanJSON}}`+"`"+`json
-{{.ExistingPlanJSON}}
-`+"`"+`{{else}}No plan provided. Read it from 'planning/plan.json'.{{end}}
+### Execution Plan
+{{if .ExecutionPlanJSON}}` + "`" + `json
+{{.ExecutionPlanJSON}}
+` + "`" + `{{else}}No execution plan found. Read it from 'planning/plan.json'.{{end}}
+
+### Evaluation Plan
+{{if .EvaluationPlanJSON}}` + "`" + `json
+{{.EvaluationPlanJSON}}
+` + "`" + `{{else}}No evaluation plan exists yet. Help the user create one using the evaluation modification tools.{{end}}
+
+{{if .EvaluationReportJSON}}### Latest Evaluation Report
+` + "`" + `json
+{{.EvaluationReportJSON}}
+` + "`" + `{{end}}
 
 ## 📁 FILE LOCATIONS
 - **Evaluation Plan**: '{{.WorkspacePath}}/evaluation/evaluation_plan.json'
@@ -233,13 +244,46 @@ You are an evaluation debugging assistant. Help the user improve their evaluatio
 - **Execution outputs**: '{{.WorkspacePath}}/runs/{iteration}/execution/'
 - **Learnings**: '{{.WorkspacePath}}/evaluation/learnings/'
 
-## 📖 ANALYSIS GUIDE
-- **Low Scores**: Check steps with scores < 50%. Read 'reasoning' in the report.
-- **Criteria Issues**: If reasoning says "criteria too vague", update 'success_criteria' in the evaluation plan.
-- **Missing Evidence**: If reasoning says "file not found", check if the step checks for the right output files.
+## 🏗️ EVAL STEP DESIGN
+Each evaluation step checks one execution step's output:
+- **step_id**: Which execution step to evaluate
+- **evaluation_criteria**: What to check (be specific — reference file names, expected fields, formats)
+- **pre_validation**: Optional code-based checks (file existence, JSON schema) that run before LLM scoring
+- **scoring**: 0-10 scale with clear rubric for each range
+
+## 📖 ANALYSIS GUIDE (when evaluation report is available)
+- **Low Scores (< 5)**: Read 'reasoning' in the report. Check if criteria were too vague or output files were missing.
+- **Criteria Issues**: If reasoning says "criteria too vague", make success_criteria more specific with exact file/field references.
+- **Missing Evidence**: If reasoning says "file not found", verify the step checks for the correct output file names.
+- **Score Inflation**: If all scores are 8-10 but outputs look mediocre, tighten the criteria.
+
+## ⚙️ AGENT EXECUTION MODES
+Each evaluation step runs as an agent. Choose the right mode via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
+
+- **Simple mode** (default): Agent calls MCP tools directly. Best for straightforward checks (read a file, verify a field).
+- **Code Execution mode** (use_code_execution_mode=true): Agent writes Python code to call tools programmatically. **Use when**:
+  - The eval step needs to parse/compare multiple files or run data transformations
+  - Complex validation logic (e.g., diff two outputs, compute metrics, check row counts)
+  - Deterministic checks that benefit from Python (regex, JSON parsing, math)
+- **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime. Best when the eval step needs to use tools that aren't known at build time.
+
+**Default**: Simple mode works for most eval steps since they typically read outputs and verify criteria.
 
 ## 🛠️ TOOLS
-You have evaluation modification tools (update_evaluation_step, add_evaluation_step, delete_evaluation_steps) and workspace tools.
+### Evaluation Plan
+- **add_evaluation_step, update_evaluation_step, delete_evaluation_steps** — Modify the evaluation plan
+
+### Execution & Optimization
+- **execute_step(step_id)** — Run a single eval step in background
+- **query_step(execution_id)** — Check status of a running step
+- **generate_learnings(step_id, guidance?)** — Generate learnings from eval step runs
+- **optimize_step(step_id, focus?)** — Analyze and optimize an eval step
+- **analyze_step(step_id)** — Get optimization suggestions for an eval step
+- **update_step_config(step_id, ...)** — Update eval step config (mode, LLM, learning_mode, etc.)
+- **run_full_evaluation(target_run_folder)** — Run ALL eval steps + scoring against a target execution run (e.g., 'iteration-1'). Generates evaluation_report.json.
+- **list_runs** — List available execution runs to evaluate
+- **list_steps** — List all eval steps with their config
+
 Discuss changes with the user before applying them.
 
 {{"{{TOOL_STRUCTURE}}"}}`)
@@ -267,8 +311,11 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		tmpl = planningChatSystemTemplate
 	case "execution-qa":
 		tmpl = executionDebuggerChatTemplate
-	case "evaluation-debugger":
-		tmpl = evaluationDebuggerChatTemplate
+	case "evaluation-builder":
+		templateData["EvaluationPlanJSON"] = templateVars["EvaluationPlanJSON"]
+		templateData["EvaluationReportJSON"] = templateVars["EvaluationReportJSON"]
+		templateData["ExecutionPlanJSON"] = templateVars["ExistingPlanJSON"]
+		tmpl = evaluationBuilderChatTemplate
 	case "workflow-builder":
 		// Use the full workshop system template (same as orchestrator mode)
 		// so the chat agent gets all plan design guidance, optimization tips, etc.
@@ -299,10 +346,13 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 // WorkshopChatSession holds the per-session controller and step registry for interactive
 // workshop in chat mode. Create with NewWorkshopChatSession; clean up with Close().
 type WorkshopChatSession struct {
-	controller   *StepBasedWorkflowOrchestrator
-	StepRegistry *WorkshopStepRegistry
-	sessionCtx   context.Context
-	cancelFunc   context.CancelFunc
+	controller        *StepBasedWorkflowOrchestrator
+	StepRegistry      *WorkshopStepRegistry
+	sessionCtx        context.Context
+	cancelFunc        context.CancelFunc
+	toolCallQueryFunc ToolCallQueryFunc
+	mainSessionID     string
+	config            *WorkshopConfig // Original config for creating fresh controllers
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -322,7 +372,6 @@ type WorkshopConfig struct {
 	ToolCategories       map[string]string
 	LLMConfig            *orchestrator.LLMConfig
 	PresetExecutionLLM   *AgentLLMConfig
-	PresetValidationLLM  *AgentLLMConfig
 	PresetLearningLLM    *AgentLLMConfig
 	PresetPhaseLLM       *AgentLLMConfig
 	PresetPlanImprovementLLM *AgentLLMConfig
@@ -343,6 +392,11 @@ type WorkshopConfig struct {
 	// EnabledGroupIDs holds the group IDs selected from the workspace toolbar.
 	// When set, the session auto-resolves variable values and run folder for these groups.
 	EnabledGroupIDs      []string
+	// ToolCallQueryFunc provides live tool call query capability for query_step_tools.
+	// Set by server.go which has access to the EventStore.
+	ToolCallQueryFunc    ToolCallQueryFunc
+	// IsEvaluationMode when true, the controller uses evaluation/ paths for step_config, learnings, etc.
+	IsEvaluationMode     bool
 }
 
 // NewWorkshopChatSession creates a WorkshopChatSession using the full tool/LLM config
@@ -356,9 +410,6 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		cfg.UseCodeExecutionMode, cfg.UseToolSearchMode, cfg.UseKnowledgebase, cfg.LLMAllocationMode))
 	if cfg.PresetExecutionLLM != nil {
 		logger.Info(fmt.Sprintf("[WORKSHOP] presetExecutionLLM=%s/%s", cfg.PresetExecutionLLM.Provider, cfg.PresetExecutionLLM.ModelID))
-	}
-	if cfg.PresetValidationLLM != nil {
-		logger.Info(fmt.Sprintf("[WORKSHOP] presetValidationLLM=%s/%s", cfg.PresetValidationLLM.Provider, cfg.PresetValidationLLM.ModelID))
 	}
 	if cfg.PresetPhaseLLM != nil {
 		logger.Info(fmt.Sprintf("[WORKSHOP] presetPhaseLLM=%s/%s", cfg.PresetPhaseLLM.Provider, cfg.PresetPhaseLLM.ModelID))
@@ -401,13 +452,12 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		cfg.CustomToolExecutors,
 		cfg.ToolCategories,
 		cfg.PresetExecutionLLM,
-		cfg.PresetValidationLLM,
+		nil, // presetValidationLLM (LLM validation removed)
 		cfg.PresetLearningLLM,
 		cfg.PresetPhaseLLM,
 		nil, // presetAnonymizationLLM (deprecated)
 		cfg.PresetPlanImprovementLLM,
 		cfg.UseKnowledgebase,
-		cfg.LLMAllocationMode,
 		cfg.TieredConfig,
 	)
 	if err != nil {
@@ -416,6 +466,11 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	}
 
 	controller.SetWorkspacePath(cfg.WorkspacePath)
+
+	// Set evaluation mode if configured (uses evaluation/ paths for step_config, learnings, etc.)
+	if cfg.IsEvaluationMode {
+		controller.isEvaluationMode = true
+	}
 
 	// Propagate session IDs for MCP connection sharing and session cleanup
 	if cfg.SessionID != "" {
@@ -499,10 +554,13 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	}
 
 	return &WorkshopChatSession{
-		controller:   controller,
-		StepRegistry: NewWorkshopStepRegistry(),
-		sessionCtx:   sessionCtx,
-		cancelFunc:   cancelFunc,
+		controller:        controller,
+		StepRegistry:      NewWorkshopStepRegistry(),
+		sessionCtx:        sessionCtx,
+		cancelFunc:        cancelFunc,
+		toolCallQueryFunc: cfg.ToolCallQueryFunc,
+		mainSessionID:     cfg.SessionID,
+		config:            cfg,
 	}, nil
 }
 
@@ -513,7 +571,8 @@ func (s *WorkshopChatSession) UpdatePresetLLMConfigs(
 	executionLLM, validationLLM, learningLLM, phaseLLM, planImprovementLLM *AgentLLMConfig,
 ) {
 	s.controller.presetExecutionLLM = executionLLM
-	s.controller.presetValidationLLM = validationLLM
+	// validationLLM parameter kept for API compatibility but no longer used (LLM validation removed)
+	_ = validationLLM
 	s.controller.presetLearningLLM = learningLLM
 	s.controller.presetPhaseLLM = phaseLLM
 	s.controller.presetPlanImprovementLLM = planImprovementLLM
@@ -522,18 +581,16 @@ func (s *WorkshopChatSession) UpdatePresetLLMConfigs(
 // UpdateTieredConfig refreshes the controller's tiered LLM allocation config.
 // Called when reusing a cached workshop session to pick up any tiered config changes
 // the user made in the workflow editor since the session was first created.
-func (s *WorkshopChatSession) UpdateTieredConfig(llmAllocationMode string, tieredConfig *TieredLLMConfig) {
-	if llmAllocationMode == "tiered" && tieredConfig != nil {
+func (s *WorkshopChatSession) UpdateTieredConfig(tieredConfig *TieredLLMConfig) {
+	if tieredConfig != nil {
 		orchestratorLLMConfig := s.controller.GetLLMConfig()
 		var apiKeys *orchestrator.APIKeys
 		if orchestratorLLMConfig != nil {
 			apiKeys = orchestratorLLMConfig.APIKeys
 		}
 		s.controller.tierResolver = NewTierResolver(tieredConfig, apiKeys)
-		s.controller.useTieredMode = true
 	} else {
 		s.controller.tierResolver = nil
-		s.controller.useTieredMode = false
 	}
 }
 
@@ -612,9 +669,11 @@ func RegisterWorkshopChatTools(
 	logger loggerv2.Logger,
 ) {
 	iwm := &InteractiveWorkshopManager{
-		controller:   session.controller,
-		stepRegistry: session.StepRegistry,
-		sessionCtx:   session.sessionCtx,
+		controller:        session.controller,
+		stepRegistry:      session.StepRegistry,
+		sessionCtx:        session.sessionCtx,
+		toolCallQueryFunc: session.toolCallQueryFunc,
+		mainSessionID:     session.mainSessionID,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
 }
@@ -626,8 +685,128 @@ func (s *WorkshopChatSession) Close() {
 	}
 }
 
+// RegisterRunFullEvaluationTool registers a run_full_evaluation tool that executes all
+// evaluation steps and scoring against a target execution run. Runs in background.
+func RegisterRunFullEvaluationTool(
+	mcpAgent *mcpagent.Agent,
+	session *WorkshopChatSession,
+	logger loggerv2.Logger,
+) {
+	if err := mcpAgent.RegisterCustomTool(
+		"run_full_evaluation",
+		"Run the full evaluation pipeline: execute all evaluation steps against a target execution run, then score each step and generate an evaluation report. Runs in background — you will be notified when complete.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_run_folder": map[string]interface{}{
+					"type":        "string",
+					"description": "The execution run folder to evaluate (e.g., 'iteration-1'). This is the folder under runs/ whose outputs will be checked.",
+				},
+			},
+			"required": []string{"target_run_folder"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			targetRunFolder, _ := args["target_run_folder"].(string)
+			if targetRunFolder == "" {
+				return "target_run_folder is required", nil
+			}
+
+			cfg := session.config
+			if cfg == nil {
+				return "session config not available — cannot create evaluation controller", nil
+			}
+
+			execID := fmt.Sprintf("eval-full-%s-%d", targetRunFolder, time.Now().UnixNano())
+			execCtx, cancel := context.WithCancel(session.sessionCtx)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         fmt.Sprintf("full-eval-%s", targetRunFolder),
+				AgentSessionID: execID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			session.StepRegistry.Register(exec)
+
+			go func() {
+				// Create a fresh controller for the full evaluation run
+				evalController, err := NewStepBasedWorkflowOrchestrator(
+					execCtx,
+					"", "", 0.7, "simple",
+					cfg.SelectedServers,
+					cfg.SelectedTools,
+					cfg.UseCodeExecutionMode,
+					cfg.UseToolSearchMode,
+					cfg.PreDiscoveredTools,
+					cfg.MCPConfigPath,
+					cfg.LLMConfig,
+					100,
+					logger,
+					nil, // tracer
+					cfg.EventBridge,
+					cfg.CustomTools,
+					cfg.CustomToolExecutors,
+					cfg.ToolCategories,
+					cfg.PresetExecutionLLM,
+					nil, // presetValidationLLM
+					cfg.PresetLearningLLM,
+					cfg.PresetPhaseLLM,
+					nil, // presetAnonymizationLLM
+					cfg.PresetPlanImprovementLLM,
+					cfg.UseKnowledgebase,
+					cfg.TieredConfig,
+				)
+				if err != nil {
+					exec.mu.Lock()
+					exec.Status = WorkshopStepFailed
+					exec.Err = fmt.Errorf("failed to create evaluation controller: %w", err)
+					exec.mu.Unlock()
+					return
+				}
+
+				// Propagate session settings
+				if cfg.SessionID != "" {
+					evalController.SetMCPSessionID(cfg.SessionID)
+					evalController.SetHTTPSessionID(cfg.SessionID)
+				}
+				if len(cfg.Secrets) > 0 {
+					evalController.SetSecrets(cfg.Secrets)
+				}
+				if cfg.WorkspaceEnvRef != nil {
+					evalController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
+				}
+
+				result, execErr := evalController.ExecuteEvaluationOnly(
+					execCtx,
+					session.controller.GetObjective(),
+					cfg.WorkspacePath,
+					targetRunFolder,
+				)
+
+				exec.mu.Lock()
+				defer exec.mu.Unlock()
+				if exec.Status == WorkshopStepCancelled {
+					return
+				}
+				if execErr != nil {
+					exec.Status = WorkshopStepFailed
+					exec.Err = execErr
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = result
+				}
+			}()
+
+			return fmt.Sprintf("Full evaluation started for run %q.\nexecution_id: %q\nThis will execute all evaluation steps and generate a scoring report.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_evaluation tool: %v", err))
+	}
+}
+
 // RegisterEvaluationModificationTools is the exported wrapper for registering evaluation
-// modification tools on an MCP agent. Used by server.go for evaluation-debugger phase.
+// modification tools on an MCP agent. Used by server.go for evaluation-builder phase.
 func RegisterEvaluationModificationTools(
 	mcpAgent *mcpagent.Agent,
 	workspacePath string,

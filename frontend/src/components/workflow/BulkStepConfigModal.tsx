@@ -15,7 +15,7 @@ import type {
   PlanningResponse,
   PlanStep,
 } from "../../utils/stepConfigMatching";
-import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from "../../utils/stepConfigMatching";
+import { isConditionalStep, isDecisionStep, isTodoTaskStep } from "../../utils/stepConfigMatching";
 import LLMSelectionDropdown from "../LLMSelectionDropdown";
 
 // --- Reusable sub-components ---
@@ -252,28 +252,6 @@ export default function BulkStepConfigModal({
             step: step.decision_step,
             path: `${stepPath}.decision_step`,
           });
-        }
-
-        if (isOrchestrationStep(step)) {
-          if (step.orchestration_step) {
-            allSteps.push({
-              stepId: step.orchestration_step.id,
-              step: step.orchestration_step,
-              path: `${stepPath}.orchestration_step`,
-            });
-          }
-
-          if (step.orchestration_routes && step.orchestration_routes.length > 0) {
-            step.orchestration_routes.forEach((route, routeIndex) => {
-              if (route.sub_agent_step) {
-                allSteps.push({
-                  stepId: route.sub_agent_step.id,
-                  step: route.sub_agent_step,
-                  path: `${stepPath}.orchestration_routes[${routeIndex}].sub_agent_step`,
-                });
-              }
-            });
-          }
         }
 
         if (isTodoTaskStep(step)) {

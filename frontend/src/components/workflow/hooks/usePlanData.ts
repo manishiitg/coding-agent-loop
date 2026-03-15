@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isDecisionStep, isOrchestrationStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
@@ -129,18 +129,6 @@ function mergeStepConfigs(
       } as PlanStep
     }
     
-    // Handle orchestration step
-    if (isOrchestrationStep(step)) {
-      mergedStep = {
-        ...mergedStep,
-        orchestration_step: step.orchestration_step ? mergeIntoStep(step.orchestration_step) : undefined,
-        orchestration_routes: step.orchestration_routes ? step.orchestration_routes.map(route => ({
-          ...route,
-          sub_agent_step: mergeIntoStep(route.sub_agent_step)
-        })) : undefined,
-      } as PlanStep
-    }
-
     // Handle todo task step
     if (isTodoTaskStep(step)) {
       mergedStep = {

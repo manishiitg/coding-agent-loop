@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock, FastForward, Search } from 'lucide-react'
+import { RefreshCw, CheckCircle, XCircle, Loader2, Plus, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Repeat, Play, Settings, Lock, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -75,7 +75,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
-  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting } = data
+  const { id, title, loop_condition, max_iterations, current_iteration, status, stepIndex, changeType, step, workspacePath, selectedRunFolder, onRunFromStep, onOpenSidebar, isExecuting, isOrphan } = data
   const { availableLLMs } = useLLMStore()
   const stepOverride = useWorkflowStore(state => state.stepOverride)
   const { capabilities } = useCapabilitiesStore()
@@ -149,7 +149,6 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    llm_validation_mode?: string
   } }
   
   // Get preset's default code execution mode
@@ -430,6 +429,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
     <div className={`
       relative w-[300px] rounded-xl border-2 border-dashed bg-white dark:bg-gray-900 shadow-lg
       ${statusBorderColors[status]}
+      ${isOrphan ? 'border-amber-400 dark:border-amber-500' : ''}
       ${selected ? 'ring-2 ring-purple-500/60' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
@@ -473,7 +473,7 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
         {/* Second row: Action buttons */}
         <div className="flex items-center gap-1.5">
           {/* Run from this step button */}
-          {onRunFromStep ? (
+          {onRunFromStep && !isOrphan ? (
             <button
               onClick={handleRunClick}
               disabled={isRunDisabled}
@@ -485,8 +485,8 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
                 }
               `}
               title={
-                isExecuting 
-                  ? 'Execution in progress...' 
+                isExecuting
+                  ? 'Execution in progress...'
                   : `Run step ${stepIndex + 1} only`
               }
             >
@@ -530,13 +530,6 @@ export const LoopNode = memo(({ data, selected }: LoopNodeProps) => {
               <Lock className="w-3.5 h-3.5" />
             </div>
           )}
-          {/* Validation Skipped Badge */}
-          {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
-              <span className="flex items-center text-[10px] text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded border border-amber-200 dark:border-amber-800">
-                <FastForward className="w-3 h-3 mr-1" />
-                SKIP VAL
-              </span>
-            )}
           {statusIcons[status]}
         </div>
       </div>

@@ -10,7 +10,7 @@ import { SkillSelectionSection } from './skills/SkillSelectionSection';
 import { SecretSelectionSection } from './secrets/SecretSelectionSection';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 import type { CustomPreset } from '../types/preset';
-import type { PlannerFile, PresetLLMConfig, AgentLLMConfig } from '../services/api-types';
+import type { PlannerFile, PresetLLMConfig, AgentLLMConfig, AgentLLMFallback } from '../services/api-types';
 import { useLLMStore } from '../stores/useLLMStore';
 import { useModeStore } from '../stores/useModeStore';
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore';
@@ -114,10 +114,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [executionLLM, setExecutionLLM] = useState<AgentLLMConfig | null>(null);
   const [learningLLM, setLearningLLM] = useState<AgentLLMConfig | null>(null);
   const [phaseLLM, setPhaseLLM] = useState<AgentLLMConfig | null>(null);
-  const [llmAllocationMode, setLlmAllocationMode] = useState<'manual' | 'tiered'>('manual');
   const [tier1LLM, setTier1LLM] = useState<AgentLLMConfig | null>(null);
   const [tier2LLM, setTier2LLM] = useState<AgentLLMConfig | null>(null);
   const [tier3LLM, setTier3LLM] = useState<AgentLLMConfig | null>(null);
+  const [tier1Fallbacks, setTier1Fallbacks] = useState<AgentLLMFallback[]>([]);
+  const [tier2Fallbacks, setTier2Fallbacks] = useState<AgentLLMFallback[]>([]);
+  const [tier3Fallbacks, setTier3Fallbacks] = useState<AgentLLMFallback[]>([]);
 
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore();
   const primaryConfig = useLLMStore(state => state.primaryConfig);
@@ -262,10 +264,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLearningLLM(presetLLM.learning_llm || null);
       setPhaseLLM(presetLLM.phase_llm || null);
       // Load tiered LLM allocation config
-      setLlmAllocationMode(presetLLM.llm_allocation_mode || 'manual');
       setTier1LLM(presetLLM.tiered_config?.tier_1 || null);
       setTier2LLM(presetLLM.tiered_config?.tier_2 || null);
       setTier3LLM(presetLLM.tiered_config?.tier_3 || null);
+      setTier1Fallbacks(presetLLM.tiered_config?.tier_1?.fallbacks || []);
+      setTier2Fallbacks(presetLLM.tiered_config?.tier_2?.fallbacks || []);
+      setTier3Fallbacks(presetLLM.tiered_config?.tier_3?.fallbacks || []);
     } else {
       setLabel('');
       setQuery('');
@@ -295,10 +299,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setLearningLLM(null);
       setPhaseLLM(null);
       // Initialize tiered config
-      setLlmAllocationMode('manual');
       setTier1LLM(null);
       setTier2LLM(null);
       setTier3LLM(null);
+      setTier1Fallbacks([]);
+      setTier2Fallbacks([]);
+      setTier3Fallbacks([]);
     }
   }, [editingPreset, fixedAgentMode, primaryConfig, selectedModeCategory, getAgentModeFromCategory]);
 
@@ -365,14 +371,14 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
           ...(llmConfig || {}),
           execution_llm: executionLLM || defaultAgentLLM,
           learning_llm: learningLLM || defaultAgentLLM,
-          phase_llm: phaseLLM || (llmAllocationMode === 'tiered' && tier1LLM ? tier1LLM : defaultAgentLLM),
+          phase_llm: phaseLLM || (tier1LLM ? tier1LLM : defaultAgentLLM),
           use_knowledgebase: useKnowledgebase,
-          llm_allocation_mode: llmAllocationMode,
-          ...(llmAllocationMode === 'tiered' && tier1LLM && tier2LLM && tier3LLM ? {
+          llm_allocation_mode: 'tiered' as const,
+          ...(tier1LLM && tier2LLM && tier3LLM ? {
             tiered_config: {
-              tier_1: tier1LLM,
-              tier_2: tier2LLM,
-              tier_3: tier3LLM,
+              tier_1: { provider: tier1LLM.provider, model_id: tier1LLM.model_id, ...(tier1Fallbacks.length > 0 ? { fallbacks: tier1Fallbacks } : {}) },
+              tier_2: { provider: tier2LLM.provider, model_id: tier2LLM.model_id, ...(tier2Fallbacks.length > 0 ? { fallbacks: tier2Fallbacks } : {}) },
+              tier_3: { provider: tier3LLM.provider, model_id: tier3LLM.model_id, ...(tier3Fallbacks.length > 0 ? { fallbacks: tier3Fallbacks } : {}) },
             }
           } : {}),
         };
@@ -429,7 +435,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, llmAllocationMode, tier1LLM, tier2LLM, tier3LLM, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1LLM, tier2LLM, tier3LLM, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -589,44 +595,15 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                       </div>
                     </div>
 
-                    {/* LLM Allocation Mode Toggle */}
-                    <div className="mb-4">
-                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                        LLM Allocation Mode
-                      </label>
-                      <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
-                        <button
-                          type="button"
-                          onClick={() => setLlmAllocationMode('manual')}
-                          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                            llmAllocationMode === 'manual' ? 'agent-mode-selected' : 'agent-mode-unselected'
-                          }`}
-                        >
-                          Fixed Models
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setLlmAllocationMode('tiered')}
-                          className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-                            llmAllocationMode === 'tiered' ? 'agent-mode-selected' : 'agent-mode-unselected'
-                          }`}
-                        >
-                          Tiered Auto
-                        </button>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {llmAllocationMode === 'manual' && 'Manual: Configure each agent type separately'}
-                        {llmAllocationMode === 'tiered' && 'Auto: System selects tier based on learning maturity'}
-                      </div>
-                    </div>
-
-                    {llmAllocationMode === 'tiered' ? (
-                      <>
-                        {/* Tier 1 - High Reasoning */}
-                        <div>
+                    {[
+                          { label: 'Tier 1 - High Reasoning', tooltip: 'Used for first-time execution (no learnings yet) and initial learning extraction.', desc: 'Most capable model for complex first-time tasks.', llm: tier1LLM, setLLM: setTier1LLM, fallbacks: tier1Fallbacks, setFallbacks: setTier1Fallbacks, num: 1 },
+                          { label: 'Tier 2 - Medium Reasoning', tooltip: 'Used for execution with existing learnings and learning refinement.', desc: 'Balanced model for tasks with existing learnings.', llm: tier2LLM, setLLM: setTier2LLM, fallbacks: tier2Fallbacks, setFallbacks: setTier2Fallbacks, num: 2 },
+                          { label: 'Tier 3 - Low Reasoning', tooltip: 'Used for validation (always) and mature learning refinement (2+ runs).', desc: 'Cost-efficient model for validation and mature learnings.', llm: tier3LLM, setLLM: setTier3LLM, fallbacks: tier3Fallbacks, setFallbacks: setTier3Fallbacks, num: 3 },
+                        ].map((tier) => (
+                        <div key={tier.num}>
                           <div className="flex items-center gap-1.5 mb-2">
                             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Tier 1 - High Reasoning
+                              {tier.label}
                             </label>
                             <TooltipProvider>
                               <Tooltip>
@@ -634,18 +611,18 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                                   <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Used for first-time execution (no learnings yet) and initial learning extraction.</p>
+                                  <p className="text-xs">{tier.tooltip}</p>
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
                           </div>
                           <LLMSelectionDropdown
                             availableLLMs={availableLLMs}
-                            selectedLLM={tier1LLM ? availableLLMs.find(llm =>
-                              llm.provider === tier1LLM.provider && llm.model === tier1LLM.model_id
+                            selectedLLM={tier.llm ? availableLLMs.find(llm =>
+                              llm.provider === tier.llm!.provider && llm.model === tier.llm!.model_id
                             ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setTier1LLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
+                            onLLMSelect={(llm) => tier.setLLM({
+                              provider: llm.provider as AgentLLMConfig['provider'],
                               model_id: llm.model
                             })}
                             onRefresh={refreshAvailableLLMs}
@@ -653,81 +630,35 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             inModal={true}
                             openDirection="down"
                           />
+                          <div className="mt-1.5">
+                            {tier.fallbacks.map((fb, i) => (
+                              <span key={`t${tier.num}-fb-${i}`} className="inline-flex items-center gap-1 mr-1 mb-1 px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-xs rounded-full">
+                                {fb.provider}/{fb.model_id.split('/').pop()}
+                                <button type="button" onClick={() => tier.setFallbacks(prev => prev.filter((_, idx) => idx !== i))} className="text-gray-400 hover:text-red-500">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                            <LLMSelectionDropdown
+                              availableLLMs={availableLLMs.filter(llm =>
+                                !(tier.llm && llm.provider === tier.llm.provider && llm.model === tier.llm.model_id) &&
+                                !tier.fallbacks.some(fb => fb.provider === llm.provider && fb.model_id === llm.model)
+                              )}
+                              selectedLLM={null}
+                              onLLMSelect={(llm) => tier.setFallbacks(prev => [...prev, { provider: llm.provider, model_id: llm.model }])}
+                              onRefresh={refreshAvailableLLMs}
+                              disabled={false}
+                              inModal={true}
+                              openDirection="down"
+                              placeholder="+ Add fallback"
+                            />
+                          </div>
                           <div className="text-xs text-gray-500 mt-1">
-                            Most capable model for complex first-time tasks.
+                            {tier.desc}
                           </div>
                         </div>
-                        {/* Tier 2 - Medium Reasoning */}
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Tier 2 - Medium Reasoning
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Used for execution with existing learnings and learning refinement.</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={tier2LLM ? availableLLMs.find(llm =>
-                              llm.provider === tier2LLM.provider && llm.model === tier2LLM.model_id
-                            ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setTier2LLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                              model_id: llm.model
-                            })}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Balanced model for tasks with existing learnings.
-                          </div>
-                        </div>
-                        {/* Tier 3 - Low Reasoning */}
-                        <div>
-                          <div className="flex items-center gap-1.5 mb-2">
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                              Tier 3 - Low Reasoning
-                            </label>
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-xs">
-                                  <p className="text-xs">Used for validation (always) and mature learning refinement (2+ runs).</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
-                          </div>
-                          <LLMSelectionDropdown
-                            availableLLMs={availableLLMs}
-                            selectedLLM={tier3LLM ? availableLLMs.find(llm =>
-                              llm.provider === tier3LLM.provider && llm.model === tier3LLM.model_id
-                            ) || null : currentLLMOption}
-                            onLLMSelect={(llm) => setTier3LLM({
-                              provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                              model_id: llm.model
-                            })}
-                            onRefresh={refreshAvailableLLMs}
-                            disabled={false}
-                            inModal={true}
-                            openDirection="down"
-                          />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Cost-efficient model for validation and mature learnings.
-                          </div>
-                        </div>
-                        {/* Phase Agent - also available in tiered mode */}
+                        ))}
+                        {/* Phase Agent */}
                         <div>
                           <div className="flex items-center gap-1.5 mb-2">
                             <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -771,121 +702,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div>Learning: Tier 2 → Tier 3 (after 2+ runs)</div>
                           <div>Validation: Always Tier 3</div>
                           <div>Phase Agent: Independent — always uses the configured Phase LLM above</div>
-                          <div className="text-yellow-600 dark:text-yellow-400 mt-1">Temp LLM overrides and per-step LLM configs are disabled in tiered mode</div>
                         </div>
-                      </>
-                    ) : (
-                      <>
-                    {/* Execution Agent */}
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                          Execution Agent
-                        </label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Executes each plan step by calling MCP tools, reading files, and performing actions. This is the main workhorse that carries out the plan.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
-                        selectedLLM={executionLLM ? availableLLMs.find(llm =>
-                          llm.provider === executionLLM.provider && llm.model === executionLLM.model_id
-                        ) || null : currentLLMOption}
-                        onLLMSelect={(llm) => setExecutionLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                          model_id: llm.model
-                        })}
-                        onRefresh={refreshAvailableLLMs}
-                        disabled={false}
-                        inModal={true}
-                        openDirection="down"
-                      />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Performs the actual work - calling tools, reading files, executing commands.
-                      </div>
-                    </div>
-                    {/* Learning Agent */}
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                          Learning Agent
-                        </label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Extracts reusable patterns and insights from execution results to improve future runs. Also handles plan improvement, tool optimization, and learning consolidation.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
-                        selectedLLM={learningLLM ? availableLLMs.find(llm =>
-                          llm.provider === learningLLM.provider && llm.model === learningLLM.model_id
-                        ) || null : currentLLMOption}
-                        onLLMSelect={(llm) => setLearningLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                          model_id: llm.model
-                        })}
-                        onRefresh={refreshAvailableLLMs}
-                        disabled={false}
-                        inModal={true}
-                        openDirection="down"
-                      />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Analyzes execution history and extracts reusable patterns.
-                      </div>
-                    </div>
-                    {/* Phase Agent */}
-                    <div>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                          Phase Agent
-                        </label>
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="w-3 h-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="text-xs">Independent LLM for all workflow phases: planning, variable extraction, evaluation design, anonymization, plan improvement, learning consolidation, and debugging. This is separate from the execution/validation/learning agent LLMs.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <LLMSelectionDropdown
-                        availableLLMs={availableLLMs}
-                        selectedLLM={phaseLLM ? availableLLMs.find(llm =>
-                          llm.provider === phaseLLM.provider && llm.model === phaseLLM.model_id
-                        ) || null : currentLLMOption}
-                        onLLMSelect={(llm) => setPhaseLLM({
-                          provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure',
-                          model_id: llm.model
-                        })}
-                        onRefresh={refreshAvailableLLMs}
-                        disabled={false}
-                        inModal={true}
-                        openDirection="down"
-                      />
-                      <div className="text-xs text-gray-500 mt-1">
-                        Used for planning, evaluation design, anonymization, plan improvement, and debugging phases.
-                      </div>
-                    </div>
-                    <div className="text-xs text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">
-                      Step-specific configs in step_config.json take priority over these defaults
-                    </div>
-                      </>
-                    )}
                   </div>
                 </div>
               </div>

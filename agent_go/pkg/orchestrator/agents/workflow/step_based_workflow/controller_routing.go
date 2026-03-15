@@ -197,6 +197,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 		variableValues = FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
 	}
 
+	// Pre-save prompts.json so get_step_prompts works during execution
+	{
+		var routesDesc strings.Builder
+		for i, route := range routingStep.Routes {
+			routesDesc.WriteString(fmt.Sprintf("%d. **%s** (route_id: `%s`)\n   Condition: %s\n   Routes to: %s\n\n", i+1, route.RouteName, route.RouteID, route.Condition, route.NextStepID))
+		}
+		tv := map[string]string{
+			"ExecutionOutput":   executionResult,
+			"ConditionContext":  conditionContext,
+			"Question":          routingStep.RoutingQuestion,
+			"RoutesDescription": routesDesc.String(),
+			"VariableNames":     variableNames,
+			"VariableValues":    variableValues,
+		}
+		sp := conditionalAgent.routingSystemPromptProcessor(tv)
+		um := conditionalAgent.routingUserMessageProcessor(tv)
+		var model string
+		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
+			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
+		}
+		hcpo.preSavePromptsJSON(stepIndex, routingStepPath, "routing_evaluation", sp, um, model, "routing-prompts.json")
+	}
+
 	// Evaluate routing
 	hcpo.GetLogger().Info(fmt.Sprintf("🤔 Evaluating routing question: %s", routingStep.RoutingQuestion))
 	routingResponse, err := conditionalAgent.EvaluateRouting(ctx, executionResult, conditionContext, routingStep.RoutingQuestion, routingStep.Routes, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, variableNames, variableValues)

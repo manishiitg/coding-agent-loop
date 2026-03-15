@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo, useState, useEffect, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, AlertTriangle, Lock, SkipForward, CheckCircle, Search } from 'lucide-react'
+import { XCircle, Loader2, Plus, RefreshCw, GitBranch, Play, Settings, Code, Terminal, Lock, CheckCircle, Search } from 'lucide-react'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
@@ -74,7 +74,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) => {
-  const { id, title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath } = data
+  const { id, title, condition_question, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, isOrphan } = data
 
   // Process text to convert escaped newlines to actual newlines
   const processText = (text: string | undefined): string | undefined => {
@@ -104,8 +104,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   const stepConfig = step as { agent_configs?: { 
     use_code_execution_mode?: boolean
     use_tool_search_mode?: boolean
-    enable_prerequisite_detection?: boolean
-    prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
     conditional_llm?: { provider?: string; model_id?: string }
     execution_llm?: { provider?: string; model_id?: string }
     learning_llm?: { provider?: string; model_id?: string }
@@ -117,7 +115,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    llm_validation_mode?: string
   } }
 
   // Determine code execution mode: override > step config > preset default
@@ -361,11 +358,11 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
   }, [onOpenSidebar, id, stepIndex, step.id])
 
   return (
-    <div className={`relative w-[240px] ${changeType ? changeHighlightStyles[changeType] : ''}`}>
+    <div className={`relative w-[240px] ${changeType ? changeHighlightStyles[changeType] : ''} ${isOrphan ? 'border-dashed border-2 border-amber-400 dark:border-amber-500 rounded-xl' : ''}`}>
       {/* Header with buttons - above the diamond */}
       <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
         {/* Run from this step button */}
-        {onRunFromStep ? (
+        {onRunFromStep && !isOrphan ? (
           <button
             onClick={handleRunClick}
             disabled={isRunDisabled}
@@ -377,8 +374,8 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
               }
             `}
             title={
-              isExecuting 
-                ? 'Execution in progress...' 
+              isExecuting
+                ? 'Execution in progress...'
                 : `Run step ${stepIndex + 1} only`
             }
           >
@@ -413,20 +410,6 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
             <Code className="w-3.5 h-3.5" />
           </div>
         )}
-        {/* Prerequisite Detection Badge */}
-        {stepConfig?.agent_configs?.enable_prerequisite_detection && (
-          <div 
-            className="flex items-center gap-1 px-2 py-1 rounded-md bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300 text-[10px] font-semibold border border-orange-200 dark:border-orange-800"
-            title={
-              stepConfig.agent_configs.prerequisite_rules && stepConfig.agent_configs.prerequisite_rules.length > 0
-                ? `Prerequisite detection enabled. ${stepConfig.agent_configs.prerequisite_rules.length} rule(s) configured`
-                : 'Prerequisite detection enabled'
-            }
-          >
-            <AlertTriangle className="w-3 h-3" />
-            <span>Prereq</span>
-          </div>
-        )}
         {/* Lock Learnings Badge */}
         {lockLearnings && (
           <div 
@@ -437,15 +420,7 @@ export const ConditionalNode = memo(({ data, selected }: ConditionalNodeProps) =
             <span>Locked</span>
           </div>
         )}
-        {/* Validation Skipped Badge */}
-                  {stepConfig?.agent_configs?.llm_validation_mode === 'skip' && (
-                    <div 
-                      className="flex items-center justify-center w-8 h-8 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
-                      title="LLM validation will be skipped if pre-validation passes"
-                    >
-                      <SkipForward className="w-3.5 h-3.5" />
-                    </div>
-                  )}      </div>
+      </div>
 
       {/* Condition Badge - Top */}
       <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-600 dark:bg-purple-500 text-white text-[11px] font-semibold shadow-lg">

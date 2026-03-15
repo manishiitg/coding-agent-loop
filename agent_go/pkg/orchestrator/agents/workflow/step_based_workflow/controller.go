@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -85,22 +86,20 @@ type StepBasedWorkflowOrchestrator struct {
 	// If true, when validation fails, use original LLM instead of temp override for retry attempts
 	fallbackToOriginalLLMOnFailure bool
 
-	// Save validation responses to workspace (from ExecutionOptions)
-	// If true, save validation responses to workspace validation folder
-	saveValidationResponses bool
-
 	// Preset-level feature toggles
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
 
 	// Tiered LLM allocation mode
-	tierResolver  *TierResolver // nil when manual mode
-	useTieredMode bool
+	tierResolver *TierResolver // nil when no tiered config
 
 	// Debouncer for todo task status update events (coalesces parallel sub-agent completions)
 	todoStatusDebouncer *todoTaskStatusDebouncer
 
 	// Workshop: toolbar-selected group IDs (used for auto-resolving variable values and run folders)
 	enabledGroupIDs []string
+
+	// Workshop: ad-hoc human input passed via execute_step (injected into PreviousStepsSummary as critical feedback)
+	interactiveWorkflowHumanInput string
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator
@@ -131,8 +130,7 @@ func NewStepBasedWorkflowOrchestrator(
 	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
 	presetPlanImprovementLLM *AgentLLMConfig, // Optional preset default for plan improvement agent
 	useKnowledgebase bool, // Whether to create and reference knowledgebase folder (default: true)
-	llmAllocationMode string, // "manual" (default) or "tiered"
-	tieredConfig *TieredLLMConfig, // Tiered LLM config (only used when llmAllocationMode == "tiered")
+	tieredConfig *TieredLLMConfig, // Tiered LLM config (nil when not using tiered allocation)
 ) (*StepBasedWorkflowOrchestrator, error) {
 
 	// Create base workflow orchestrator
@@ -183,19 +181,17 @@ func NewStepBasedWorkflowOrchestrator(
 		presetPhaseLLM:           presetPhaseLLM,
 		presetAnonymizationLLM:   presetAnonymizationLLM,
 		presetPlanImprovementLLM: presetPlanImprovementLLM,
-		saveValidationResponses:  true, // Default to true (save validation responses by default)
 		useKnowledgebase:         useKnowledgebase,
 	}
 
 	// Set up tiered LLM allocation mode
-	if llmAllocationMode == "tiered" && tieredConfig != nil {
+	if tieredConfig != nil {
 		orchestratorLLMConfig := llmConfig
 		var apiKeys *orchestrator.APIKeys
 		if orchestratorLLMConfig != nil {
 			apiKeys = orchestratorLLMConfig.APIKeys
 		}
 		hcpo.tierResolver = NewTierResolver(tieredConfig, apiKeys)
-		hcpo.useTieredMode = true
 		// Phase LLM is independent of tiered mode - always configured separately
 		if hcpo.presetPhaseLLM != nil {
 			logger.Info(fmt.Sprintf("🏷️ Phase LLM (independent): %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
@@ -252,8 +248,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
 
 	// TIERED MODE: Use tier resolver for conditional agents
-	if hcpo.useTieredMode && hcpo.tierResolver != nil {
-		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath)
+	if hcpo.tierResolver != nil {
+		learningMode := ""
+		if agentConfigs != nil {
+			learningMode = agentConfigs.LearningMode
+		}
+		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
 		if agentConfigs != nil && agentConfigs.DisableTierOptimization != nil && *agentConfigs.DisableTierOptimization {
 			llmConfig = hcpo.tierResolver.ResolveTier(TierHigh)
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using Tier 1 (High) — tier optimization disabled", step.GetTitle()))
@@ -1149,10 +1149,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *Executio
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Fallback to original LLM on validation failure enabled - will use original LLM instead of temp override when validation fails"))
 		}
 
-		// Store save validation responses flag (always enabled)
-		hcpo.saveValidationResponses = true
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Save validation responses enabled - validation responses will be saved to workspace"))
-
 		// Log skip execution cleanup flag
 		if options.SkipExecutionCleanup {
 			hcpo.GetLogger().Info("🔧 Skip execution cleanup enabled - execution folders will NOT be deleted before running steps")
@@ -1163,7 +1159,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetExecutionOptions(options *Executio
 		hcpo.tempOverrideLLM = nil
 		hcpo.tempOverrideLLM2 = nil
 		hcpo.fallbackToOriginalLLMOnFailure = false
-		hcpo.saveValidationResponses = true // Default to true when no options provided
 	}
 }
 
@@ -1243,7 +1238,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatValidationResponseForTemplate(v
 
 // getLearningMaturity determines the learning maturity level for a step by counting learning files
 // 0 files = NoLearnings, 1 file = HasLearnings, 2+ files = MatureLearnings
-func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Context, stepID string, stepPath string) LearningMaturity {
+// For human_assisted learning mode, 1 file is treated as MatureLearnings since curated learnings are higher quality.
+func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Context, stepID string, stepPath string, learningMode string) LearningMaturity {
 	if stepID == "" {
 		return NoLearnings
 	}
@@ -1262,6 +1258,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) getLearningMaturity(ctx context.Conte
 	}
 
 	if len(learningFiles) == 1 {
+		// Human-assisted learnings are manually curated and higher quality,
+		// so even 1 file is sufficient to consider the step mature.
+		if learningMode == "human_assisted" {
+			return MatureLearnings
+		}
 		return HasLearnings
 	}
 
@@ -1290,4 +1291,32 @@ func requiresCodeExecutionForProvider(config *AgentLLMConfig) bool {
 // even though code execution mode is technically enabled for HTTP bridge/tool routing.
 func isCliProviderForPrompt(provider string) bool {
 	return provider == "claude-code" || provider == "gemini-cli"
+}
+
+// preSavePromptsJSON saves a prompts.json file before agent execution so get_step_prompts works in real time.
+// filename: e.g. "todo-task-prompts.json", "conditional-prompts.json", etc.
+func (hcpo *StepBasedWorkflowOrchestrator) preSavePromptsJSON(stepIndex int, stepPath, agentType, systemPrompt, userMessage, model, filename string) {
+	go func() {
+		var vwp string
+		if hcpo.selectedRunFolder != "" {
+			vwp = fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
+		} else {
+			vwp = hcpo.GetWorkspacePath()
+		}
+		ld := getExecutionFolderPathForLogs(vwp, stepPath)
+		pp := fmt.Sprintf("%s/%s", ld, filename)
+		pd := map[string]interface{}{
+			"step_index":    stepIndex + 1,
+			"step_path":     stepPath,
+			"agent_type":    agentType,
+			"system_prompt": systemPrompt,
+			"user_message":  userMessage,
+			"model":         model,
+			"saved_at":      "pre_execution",
+			"timestamp":     time.Now().Format(time.RFC3339),
+		}
+		if pj, e := json.MarshalIndent(pd, "", "  "); e == nil {
+			_ = hcpo.WriteWorkspaceFile(context.Background(), pp, string(pj))
+		}
+	}()
 }

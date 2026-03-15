@@ -113,7 +113,6 @@ var DB_SKIP_EVENTS = map[string]bool{
 	"batch_execution_canceled":   true,
 	"batch_group_start":          true,
 	"batch_group_end":            true,
-	"prerequisite_navigation":    true,
 	"learning_skipped":           true,
 	"temp_llm_skipped":           true,
 	"decision_evaluated":         true,

@@ -14,9 +14,10 @@ import (
 
 // StepConfig represents a single step's configuration in step_config.json
 type StepConfig struct {
-	ID           string        `json:"id"`              // Stable step ID (from plan.json) - required identifier
-	Title        string        `json:"title,omitempty"` // Step title (optional, for reference/display only)
-	AgentConfigs *AgentConfigs `json:"agent_configs,omitempty"`
+	ID               string            `json:"id"`                          // Stable step ID (from plan.json) - required identifier
+	Title            string            `json:"title,omitempty"`             // Step title (optional, for reference/display only)
+	AgentConfigs     *AgentConfigs     `json:"agent_configs,omitempty"`
+	ValidationSchema *ValidationSchema `json:"validation_schema,omitempty"` // Override pre-validation schema (takes precedence over plan.json)
 }
 
 // StepConfigFile represents the step_config.json file format
@@ -365,9 +366,6 @@ func MergeAgentConfigFields(target *AgentConfigs, source *AgentConfigs, stepID s
 	}
 	if source.ExecutionLLM != nil {
 		target.ExecutionLLM = source.ExecutionLLM
-	}
-	if source.ValidationLLM != nil {
-		target.ValidationLLM = source.ValidationLLM
 	}
 	if source.LearningLLM != nil {
 		target.LearningLLM = source.LearningLLM

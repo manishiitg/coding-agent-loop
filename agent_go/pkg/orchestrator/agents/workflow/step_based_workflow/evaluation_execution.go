@@ -75,16 +75,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 		}
 
 		if evalStep, ok := step.(*EvaluationStep); ok {
-			// Initialize AgentConfigs if nil (if ApplyStepConfigFromFile didn't create it)
-			if evalStep.AgentConfigs == nil {
-				evalStep.AgentConfigs = &AgentConfigs{}
-			}
-			// Set DisableValidation to true (skip all validation - pre-validation and LLM validation)
-			disableValidation := true
-			evalStep.AgentConfigs.DisableValidation = &disableValidation
 			// Keep learning enabled (we want to learn from evaluation runs)
 			// DisableLearning is not set (nil = enabled by default)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Evaluation step %d (%s): Validation disabled (auto-approve), learning enabled", i+1, evalStep.Title))
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Evaluation step %d (%s): learning enabled", i+1, evalStep.Title))
 		}
 	}
 
@@ -130,64 +123,42 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteEvaluationOnly(ctx context.Con
 	return fmt.Sprintf("Evaluation complete. Score: %d/%d (%.1f%%)", report.TotalScore, report.MaxPossibleScore, report.ScorePercentage), nil
 }
 
-// runEvaluationScoringPhase analyzes execution outputs and calculates scores for each step
+// runEvaluationScoringPhase collects all eval step outputs and runs a single scoring agent
+// that scores all steps at once with holistic analysis.
 func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context.Context, evaluationPlan *EvaluationPlan, targetRunFolder string) (*EvaluationReport, error) {
-	// Note: We use relative paths here because WriteWorkspaceFile/ReadWorkspaceFile auto-prepend the workspace path
-	// Using baseWorkspacePath in paths would cause double-prepending
-
-	// Evaluation execution outputs are in: evaluation/runs/{targetRunFolder}/execution/step-{N}/
 	evalExecutionPath := filepath.Join("evaluation", "runs", targetRunFolder, "execution")
 
-	report := &EvaluationReport{
-		TargetRunFolder:  targetRunFolder,
-		GeneratedAt:      time.Now().Format(time.RFC3339),
-		StepScores:       make([]*EvaluationStepScore, 0),
-		MaxPossibleScore: len(evaluationPlan.Steps) * 10, // Assuming max score per step is 10
-	}
-
-	// Process each evaluation step
+	// Collect all step outputs
+	var stepInputs []EvaluationStepInput
 	for i, step := range evaluationPlan.Steps {
 		stepFolder := fmt.Sprintf("step-%d", i+1)
 		stepPath := filepath.Join(evalExecutionPath, stepFolder)
 
-		hcpo.GetLogger().Info(fmt.Sprintf("📊 Scoring step %d: %s", i+1, step.Title))
+		hcpo.GetLogger().Info(fmt.Sprintf("📂 Reading output for step %d: %s", i+1, step.Title))
 
-		// Read execution output from step folder
 		executionOutput, err := hcpo.readStepExecutionOutput(ctx, stepPath)
 		if err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not read execution output for step %d: %v", i+1, err))
 			executionOutput = fmt.Sprintf("Error reading output: %v", err)
 		}
 
-		// Calculate score for this step using LLM
-		stepScore, err := hcpo.calculateStepScore(ctx, step, executionOutput)
-		if err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Error calculating score for step %d: %v", i+1, err))
-			// Create a zero-score entry for failed scoring
-			stepScore = &EvaluationStepScore{
-				StepID:          step.ID,
-				StepTitle:       step.Title,
-				Score:           0,
-				MaxScore:        10,
-				Reasoning:       fmt.Sprintf("Scoring failed: %v", err),
-				Evidence:        "",
-				SuccessCriteria: step.SuccessCriteria,
-			}
-		}
-
-		report.StepScores = append(report.StepScores, stepScore)
-		report.TotalScore += stepScore.Score
+		stepInputs = append(stepInputs, EvaluationStepInput{
+			ID:              step.ID,
+			Title:           step.Title,
+			Description:     step.Description,
+			SuccessCriteria: step.SuccessCriteria,
+			ExecutionOutput: executionOutput,
+		})
 	}
 
-	// Calculate percentage
-	if report.MaxPossibleScore > 0 {
-		report.ScorePercentage = float64(report.TotalScore) / float64(report.MaxPossibleScore) * 100
+	// Run single scoring agent with all steps
+	hcpo.GetLogger().Info(fmt.Sprintf("📊 Running scoring agent for all %d evaluation steps", len(stepInputs)))
+	report, err := hcpo.scoreAllSteps(ctx, evaluationPlan, stepInputs, targetRunFolder)
+	if err != nil {
+		return nil, fmt.Errorf("scoring agent failed: %w", err)
 	}
 
-	// Generate summary
-	report.Summary = hcpo.generateEvaluationSummary(report)
-
-	// Save report to file (use relative path - WriteWorkspaceFile auto-prepends workspace path)
+	// Save report
 	reportPath := filepath.Join("evaluation", "runs", targetRunFolder, "evaluation_report.json")
 	reportJSON, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
@@ -199,7 +170,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runEvaluationScoringPhase(ctx context
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("📄 Evaluation report saved to: %s", reportPath))
-
 	return report, nil
 }
 
@@ -285,34 +255,46 @@ func (hcpo *StepBasedWorkflowOrchestrator) readStepExecutionOutput(ctx context.C
 	return strings.Join(outputs, "\n\n"), nil
 }
 
-// calculateStepScore uses LLM to analyze output and determine score
-// This method uses the factory pattern from controller_agent_factory.go for proper event bridging
-func (hcpo *StepBasedWorkflowOrchestrator) calculateStepScore(ctx context.Context, step *EvaluationStep, executionOutput string) (*EvaluationStepScore, error) {
-	// Use the factory method which handles:
-	// - presetPhaseLLM selection (Priority: presetPhaseLLM > orchestrator default)
-	// - Proper event bridging via CreateAndSetupStandardAgentWithConfig
-	// - submit_score tool registration
-	// - Agent execution and score capture
-	_, stepScore, err := hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", step, executionOutput)
+// scoreAllSteps runs a single scoring agent that scores all evaluation steps at once.
+func (hcpo *StepBasedWorkflowOrchestrator) scoreAllSteps(ctx context.Context, evaluationPlan *EvaluationPlan, stepInputs []EvaluationStepInput, targetRunFolder string) (*EvaluationReport, error) {
+	report, err := hcpo.createEvaluationScoringAgent(ctx, "evaluation-scoring", evaluationPlan, stepInputs)
 	if err != nil {
 		return nil, err
 	}
-	return stepScore, nil
-}
 
-// generateEvaluationSummary creates a human-readable summary of the evaluation
-func (hcpo *StepBasedWorkflowOrchestrator) generateEvaluationSummary(report *EvaluationReport) string {
-	var summary strings.Builder
+	report.TargetRunFolder = targetRunFolder
+	report.GeneratedAt = time.Now().Format(time.RFC3339)
+	report.MaxPossibleScore = len(evaluationPlan.Steps) * 10
 
-	summary.WriteString(fmt.Sprintf("Evaluation of %s completed.\n", report.TargetRunFolder))
-	summary.WriteString(fmt.Sprintf("Overall Score: %d/%d (%.1f%%)\n\n", report.TotalScore, report.MaxPossibleScore, report.ScorePercentage))
-
-	summary.WriteString("Step Results:\n")
-	for _, stepScore := range report.StepScores {
-		summary.WriteString(fmt.Sprintf("- %s: %d/%d - %s\n", stepScore.StepTitle, stepScore.Score, stepScore.MaxScore, stepScore.Reasoning))
+	// Fill in any steps that the scoring agent missed
+	scoredStepIDs := make(map[string]bool)
+	for _, s := range report.StepScores {
+		scoredStepIDs[s.StepID] = true
+	}
+	for _, step := range evaluationPlan.Steps {
+		if !scoredStepIDs[step.ID] {
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Scoring agent did not score step %s — adding zero score", step.ID))
+			report.StepScores = append(report.StepScores, &EvaluationStepScore{
+				StepID:          step.ID,
+				StepTitle:       step.Title,
+				Score:           0,
+				MaxScore:        10,
+				Reasoning:       "Scoring agent did not provide a score for this step",
+				SuccessCriteria: step.SuccessCriteria,
+			})
+		}
 	}
 
-	return summary.String()
+	// Calculate totals
+	report.TotalScore = 0
+	for _, s := range report.StepScores {
+		report.TotalScore += s.Score
+	}
+	if report.MaxPossibleScore > 0 {
+		report.ScorePercentage = float64(report.TotalScore) / float64(report.MaxPossibleScore) * 100
+	}
+
+	return report, nil
 }
 
 // ============================================================================

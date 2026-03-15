@@ -9,7 +9,7 @@ import { useCapabilitiesStore } from '../../../stores/useCapabilitiesStore'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../../ui/tooltip'
 import type { LLMOption } from '../../../types/llm'
 import type { AgentLLMConfig, AgentConfigs, PlanStep, PlanningResponse } from '../../../utils/stepConfigMatching'
-import { isConditionalStep, isOrchestrationStep, isDecisionStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 import { getToolsByCategory, getCategoryForTool, HUMAN_TOOLS } from '../../../utils/customToolNames'
 
 // Sub-categories that belong to workspace_tools parent
@@ -84,20 +84,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
           if (step.if_true_steps) collectSteps(step.if_true_steps)
           if (step.if_false_steps) collectSteps(step.if_false_steps)
         }
-        if (isOrchestrationStep(step)) {
-          // Add the inner orchestration_step
-          if (step.orchestration_step) {
-            steps.push({ step: step.orchestration_step as PlanStep, stepId: step.orchestration_step.id })
-          }
-          // Add sub-agent steps from orchestration_routes (use actual step ID)
-          if (step.orchestration_routes) {
-            step.orchestration_routes.forEach((route) => {
-              if (route.sub_agent_step && route.sub_agent_step.id) {
-                steps.push({ step: route.sub_agent_step as PlanStep, stepId: route.sub_agent_step.id })
-              }
-            })
-          }
-        }
         if (isDecisionStep(step) && step.decision_step) {
           steps.push({ step: step.decision_step as PlanStep, stepId: step.decision_step.id })
         }
@@ -139,7 +125,6 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
         execution_llm: configs.execution_llm,
         learning_llm: configs.learning_llm,
         execution_max_turns: configs.execution_max_turns,
-        disable_validation: configs.disable_validation,
         disable_learning: configs.disable_learning,
         use_code_execution_mode: configs.use_code_execution_mode,
         use_tool_search_mode: configs.use_tool_search_mode,
@@ -564,7 +549,7 @@ export const MultiStepSidebar: React.FC<MultiStepSidebarProps> = ({
                           <TooltipTrigger asChild>
                             <button
                               type="button"
-                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: true, use_tool_search_mode: false, disable_learning: false, disable_validation: false }))}
+                              onClick={() => setAgentConfigs(prev => ({ ...prev, use_code_execution_mode: true, use_tool_search_mode: false, disable_learning: false }))}
                               className={`px-2 py-1 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
                                 !agentConfigs.use_tool_search_mode && (agentConfigs.use_code_execution_mode === true || (agentConfigs.use_code_execution_mode === undefined && presetUseCodeExecutionMode))
                                   ? 'bg-green-500 text-white'

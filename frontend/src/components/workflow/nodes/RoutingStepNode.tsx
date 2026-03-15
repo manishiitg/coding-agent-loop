@@ -42,7 +42,7 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) => {
-  const { id, title, routing_question, routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting } = data
+  const { id, title, routing_question, routes, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, isOrphan } = data
 
   // Get preset for config badges
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -157,6 +157,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
           w-[260px] rounded-xl border-2 ${borderColor}
           bg-white dark:bg-gray-900
           shadow-lg overflow-visible transition-all duration-200
+          ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
           ${selected ? 'ring-2 ring-teal-500/60' : ''}
           ${status === 'executing' || status === 'evaluating' ? 'shadow-lg shadow-teal-500/30' : ''}
         `}
@@ -175,14 +176,16 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
 
           {/* Action buttons */}
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={handleRunClick}
-              className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              title="Run from this step"
-              disabled={isExecuting}
-            >
-              <Play className="w-3 h-3 text-gray-600 dark:text-gray-400" />
-            </button>
+            {!isOrphan && (
+              <button
+                onClick={handleRunClick}
+                className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                title="Run from this step"
+                disabled={isExecuting}
+              >
+                <Play className="w-3 h-3 text-gray-600 dark:text-gray-400" />
+              </button>
+            )}
             <button
               onClick={handleSettingsClick}
               className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"

@@ -1,6 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, AlertTriangle, Lock, SkipForward, Search, Bot, Pause } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, Lock, Search, Bot, Pause } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
@@ -87,7 +87,7 @@ const getCategoryToolCount = (category: string, enabledTools: string[], allCateg
 }
 
 export const StepNode = memo(({ data, selected }: StepNodeProps) => {
-  const { id, title, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, routeName, routeCondition } = data
+  const { id, title, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, routeName, routeCondition, isOrphan } = data
   
   const { availableLLMs, workflowPrimaryConfig, primaryConfig } = useLLMStore()
   const { capabilities } = useCapabilitiesStore()
@@ -152,24 +152,10 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     selected_tools?: string[]
     enabled_custom_tools?: string[]
     enable_context_offloading?: boolean
-    enable_prerequisite_detection?: boolean
-    prerequisite_rules?: Array<{ depends_on_step: string; description: string }>
-    llm_validation_mode?: string
     pre_discovered_tools?: string[]
     disable_parallel_tool_execution?: boolean
   } }
-  
-  // Backward-compatible prerequisite flags/rules (agent_configs takes priority over top-level fields)
-  type PrereqRule = { depends_on_step: string; description: string }
-  const prerequisiteEnabled =
-    stepConfig?.agent_configs?.enable_prerequisite_detection ??
-    (step as unknown as { enable_prerequisite_detection?: boolean }).enable_prerequisite_detection
-  const prerequisiteRules =
-    (stepConfig?.agent_configs?.prerequisite_rules ??
-      (step as unknown as { prerequisite_rules?: PrereqRule[] }).prerequisite_rules) as
-      | PrereqRule[]
-      | undefined
-  
+
   // Get preset's default code execution mode
   const presetUseCodeExecutionMode = activePreset?.useCodeExecutionMode ?? false
   
@@ -474,6 +460,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
       ${isSubAgent ? 'overflow-visible' : 'overflow-hidden'}
       ${statusBorderColors[status]}
       ${isSubAgent ? 'border-dashed border-indigo-400 dark:border-indigo-500' : ''}
+      ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
       ${selected ? 'ring-2 ring-purple-500/60' : ''}
       ${changeType ? changeHighlightStyles[changeType] : ''}
     `}>
@@ -534,7 +521,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
         </div>
         {/* Second row: Actions + Status */}
         <div className="flex items-center gap-1.5">
-          {onRunFromStep ? (
+          {onRunFromStep && !isOrphan ? (
             <button
               onClick={handleRunClick}
               disabled={isRunDisabled}
@@ -613,15 +600,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               })
             }
             // Config flags
-            if (prerequisiteEnabled) {
-              flags.push({
-                icon: <AlertTriangle className="w-3 h-3" />,
-                label: prerequisiteRules && prerequisiteRules.length > 0
-                  ? `Prerequisite detection (${prerequisiteRules.length} rule${prerequisiteRules.length > 1 ? 's' : ''})`
-                  : 'Prerequisite detection',
-                color: 'text-orange-500 dark:text-orange-400',
-              })
-            }
             if (lockLearnings) {
               flags.push({
                 icon: <Lock className="w-3 h-3" />,
@@ -634,13 +612,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
                 icon: <Pause className="w-3 h-3" />,
                 label: 'Parallel tool execution disabled',
                 color: 'text-rose-500 dark:text-rose-400',
-              })
-            }
-            if (stepConfig?.agent_configs?.llm_validation_mode === 'skip') {
-              flags.push({
-                icon: <SkipForward className="w-3 h-3" />,
-                label: 'LLM validation skipped',
-                color: 'text-indigo-500 dark:text-indigo-400',
               })
             }
             return (
@@ -672,27 +643,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       {/* Content */}
       <div className="px-4 py-3 space-y-3">
-        {/* Prerequisite Rules */}
-        {prerequisiteEnabled && prerequisiteRules && prerequisiteRules.length > 0 && (
-          <div className="space-y-2">
-            {prerequisiteRules.map((rule, ruleIndex) => (
-              <div key={ruleIndex} className="flex items-start gap-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50">
-                <AlertTriangle className="w-3.5 h-3.5 text-orange-500 mt-0.5 flex-shrink-0" />
-                <div className="flex-1">
-                  <div className="text-[10px] font-semibold text-orange-700 dark:text-orange-300 mb-1">
-                    Rule {ruleIndex + 1}: Depends on {rule.depends_on_step}
-                  </div>
-                  {rule.description && (
-                    <div className="mt-1 text-[10px] text-orange-600 dark:text-orange-400 italic leading-relaxed">
-                      "{rule.description}"
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Context Files */}
         {hasContext && (
           <div className="space-y-1.5">
@@ -774,54 +724,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
       <Handle type="source" position={Position.Right} className="!w-3 !h-3 !bg-gray-400 dark:!bg-gray-500 !border-2 !border-white dark:!border-gray-900" />
       
-      {/* Prerequisite source handles (bottom, for edges going back to previous steps when prerequisite is detected during execution) */}
-      {/* Hidden by default, only functional for edge connections */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="prereq-left"
-        style={{ left: '25%' }}
-        className="!w-2 !h-2 !bg-transparent !border-0"
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="prereq-middle"
-        style={{ left: '50%' }}
-        className="!w-2 !h-2 !bg-transparent !border-0"
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="prereq-right"
-        style={{ left: '75%' }}
-        className="!w-2 !h-2 !bg-transparent !border-0"
-      />
-
-      {/* Prerequisite target handles (bottom, for edges coming from step/learning nodes when prerequisite is detected during execution) */}
-      {/* Hidden by default, only functional for edge connections */}
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="prereq-target-left"
-        style={{ left: '25%' }}
-        className="!w-2 !h-2 !bg-transparent !border-0"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="prereq-target-middle"
-        style={{ left: '50%' }}
-        className="!w-2 !h-2 !bg-transparent !border-0"
-      />
-      <Handle
-        type="target"
-        position={Position.Bottom}
-        id="prereq-target-right"
-        style={{ left: '75%' }}
-        className="!w-2 !h-2 !bg-transparent !border-0"
-      />
-
       {/* Retry Handle - for validation loop-back (hidden by default) */}
       <Handle
         type="target"

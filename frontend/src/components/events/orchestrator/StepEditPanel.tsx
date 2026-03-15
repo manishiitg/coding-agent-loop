@@ -15,8 +15,6 @@ import {
   getToolsByCategory,
   getCategoryForTool,
 } from '../../../utils/customToolNames';
-import { PrerequisiteConfigPanel } from '../../workflow/canvas/PrerequisiteConfigPanel';
-
 interface StepEditPanelProps {
   step: TodoStepWithConfigs;
   stepIndex: number;
@@ -29,7 +27,6 @@ interface StepEditPanelProps {
   isTodoTaskStep?: boolean; // Whether this step is a todo_task step (for tier selection UI)
   isExpanded?: boolean; // Controlled expanded state from parent
   onToggleExpanded?: (expanded: boolean) => void; // Callback when expansion state changes
-  planSteps?: import('../../../utils/stepConfigMatching').PlanStep[]; // All plan steps (for prerequisite detection)
 }
 
 const MAX_TURNS_OPTIONS = [10, 25, 50, 75, 100] as const;
@@ -45,7 +42,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   isTodoTaskStep: isTodoTask = false,
   isExpanded: controlledIsExpanded,
   onToggleExpanded,
-  planSteps = [],
 }) => {
   const { availableLLMs, getCurrentLLMOption } = useLLMStore();
   const { currentPresetTools } = usePresetApplication();
@@ -74,7 +70,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       stepId: step.id,
       step_agent_configs: step.agent_configs,
       disable_learning: configs.disable_learning,
-      disable_validation: configs.disable_validation,
       use_tool_search_mode: configs.use_tool_search_mode,
       configs,
     });
@@ -87,18 +82,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     const updatedConfigs = { ...configs };
     let needsUpdate = false;
     
-    // Force enable validation for loop steps
-    if (step.has_loop && configs.disable_validation) {
-      updatedConfigs.disable_validation = false;
-      needsUpdate = true;
-    }
-    
-    // Force enable validation and learning for code execution mode
+    // Force enable learning for code execution mode
     if (effectiveCodeExecMode) {
-      if (configs.disable_validation) {
-        updatedConfigs.disable_validation = false;
-        needsUpdate = true;
-      }
       if (configs.disable_learning) {
         updatedConfigs.disable_learning = false;
         needsUpdate = true;
@@ -239,16 +224,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       
       const newAgentConfigs: AgentConfigs = { ...currentConfigs };
       
-      // Force enable validation for loop steps
-      if (step.has_loop && currentConfigs.disable_validation) {
-        newAgentConfigs.disable_validation = false;
-      }
-      
-      // Force enable validation and learning for code execution mode
+      // Force enable learning for code execution mode
       if (effectiveCodeExecMode) {
-        if (currentConfigs.disable_validation) {
-          newAgentConfigs.disable_validation = false;
-        }
         if (currentConfigs.disable_learning) {
           newAgentConfigs.disable_learning = false;
         }
@@ -613,11 +590,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       ...agentConfigs,
     };
     
-    // Force enable validation for loop steps (required to check loop conditions)
-    if (step.has_loop) {
-      finalConfigs.disable_validation = false;
-    }
-
     // Handle server/tool selection:
     // - If NO_SERVERS is selected → save ["NO_SERVERS"] explicitly
     // - If user has selected servers/tools → save them
@@ -723,19 +695,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
       finalConfigs.lock_learnings = undefined;
     }
 
-    // Handle disable_validation: explicitly save false when enabled, true when disabled
-    // Similar logic to disable_learning
-    if (agentConfigs.disable_validation === false) {
-      // User explicitly enabled validation (unchecked the checkbox)
-      finalConfigs.disable_validation = false;
-    } else if (agentConfigs.disable_validation === true) {
-      // User explicitly disabled validation (checked the checkbox)
-      finalConfigs.disable_validation = true;
-    } else {
-      // State is undefined - reset to default
-      finalConfigs.disable_validation = undefined;
-    }
-
     // Handle use_code_execution_mode: save if explicitly set by user
     // If undefined, step will use preset default (field will be omitted from JSON)
     if (agentConfigs.use_code_execution_mode !== undefined) {
@@ -760,7 +719,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
         selected_servers: finalConfigs.selected_servers,
         selected_tools: finalConfigs.selected_tools,
         disable_learning: finalConfigs.disable_learning,
-        disable_validation: finalConfigs.disable_validation,
         use_code_execution_mode: finalConfigs.use_code_execution_mode,
         use_tool_search_mode: finalConfigs.use_tool_search_mode,
         pre_discovered_tools: finalConfigs.pre_discovered_tools
@@ -802,7 +760,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
     if (learnLLM && !agentConfigs.disable_learning) {
       parts.push(`Learn: ${learnLLM.label} (Exact)`);
     }
-    if (agentConfigs.disable_validation !== false) parts.push('Val: Disabled');
     if (agentConfigs.disable_learning) parts.push('Learn: Disabled');
     
     return parts.length > 0 ? parts.join(' • ') : 'Default config';
@@ -1265,9 +1222,8 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                               ...prev,
                               use_code_execution_mode: true,
                               use_tool_search_mode: false,
-                              // Auto-enable learning and validation when code exec is enabled
+                              // Auto-enable learning when code exec is enabled
                               disable_learning: false,
-                              disable_validation: false,
                               // Auto-set learning detail level to 'exact' for code exec mode
                               learning_detail_level: 'exact',
                             }));
@@ -2037,18 +1993,6 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 </label>
               </div>
             </div>
-
-            {/* Prerequisite Detection Configuration - Hidden for decision steps and conditional steps */}
-            {!step.has_decision_step && !step.has_condition && (
-            <PrerequisiteConfigPanel
-              agentConfigs={agentConfigs}
-              onUpdate={(updatedConfigs) => {
-                setAgentConfigs(updatedConfigs);
-              }}
-              planSteps={planSteps}
-              currentStepIndex={stepIndex}
-            />
-            )}
 
             {/* Action Buttons */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">

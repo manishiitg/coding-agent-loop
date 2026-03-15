@@ -181,6 +181,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 		variableValues = FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
 	}
 
+	// Pre-save prompts.json so get_step_prompts works during execution
+	{
+		tv := map[string]string{
+			"ExecutionOutput": executionResult,
+			"Question":        decisionStep.DecisionEvaluationQuestion,
+			"LearningHistory": learningHistory,
+			"VariableNames":   variableNames,
+			"VariableValues":  variableValues,
+		}
+		sp := conditionalAgent.decisionSystemPromptProcessor(tv)
+		um := conditionalAgent.decisionUserMessageProcessor(tv)
+		var model string
+		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
+			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
+		}
+		hcpo.preSavePromptsJSON(stepIndex, decisionStepPath, "decision_evaluation", sp, um, model, "decision-prompts.json")
+	}
+
 	decisionResponse, err := conditionalAgent.EvaluateDecision(ctx, executionResult, decisionStep.DecisionEvaluationQuestion, stepIndex, 0, conditionalAgent.GetConfig().UseCodeExecutionMode, learningHistory, variableNames, variableValues)
 	if err != nil {
 		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to evaluate decision step %d: %v", stepIndex+1, err), nil)

@@ -9,7 +9,6 @@ export { StepProgressUpdatedEventDisplay } from './StepProgressUpdatedEvent'
 export { DecisionEvaluatedEventDisplay } from './DecisionEvaluatedEvent'
 export { RoutingEvaluatedEventDisplay } from './RoutingEvaluatedEvent'
 export { PreValidationCompletedEventDisplay } from './PreValidationCompletedEvent'
-export { PrerequisiteNavigationEventDisplay } from './PrerequisiteNavigationEvent'
 export * from './TodoTaskEvents'
 export { TodoTaskStatusUpdateEventDisplay } from './TodoTaskStatusUpdateEvent'
 

@@ -89,9 +89,6 @@ type ExecutionOptions struct {
 	// If no learnings exist (new learning), always use default LLM (step config → preset)
 	TempLearningLLM *AgentLLMConfig `json:"temp_learning_llm,omitempty"`
 
-	// Validation response persistence
-	SaveValidationResponses bool `json:"save_validation_responses,omitempty"` // If true, save validation responses to workspace validation folder (default: true)
-
 	// Variable group execution options (for batch execution with multiple groups)
 	EnabledGroupIDs []string `json:"enabled_group_ids,omitempty"` // Group IDs to execute (if empty, uses groups' enabled flags)
 

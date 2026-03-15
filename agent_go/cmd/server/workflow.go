@@ -1987,9 +1987,7 @@ type PlanStepUpdate struct {
 	Description                 *string                                    `json:"description,omitempty"`
 	SuccessCriteria             *string                                    `json:"success_criteria,omitempty"`
 	ContextDependencies         *[]string                                  `json:"context_dependencies,omitempty"`
-	ContextOutput               *todo_creation_human.FlexibleContextOutput `json:"context_output,omitempty"`
-	EnablePrerequisiteDetection *bool                                      `json:"enable_prerequisite_detection,omitempty"`
-	PrerequisiteRules           *[]todo_creation_human.PrerequisiteRule    `json:"prerequisite_rules,omitempty"`
+	ContextOutput *todo_creation_human.FlexibleContextOutput `json:"context_output,omitempty"`
 
 	// Regular step fields
 	HasLoop         *bool   `json:"has_loop,omitempty"`
@@ -2796,12 +2794,6 @@ func applyCommonFields(common *todo_creation_human.CommonStepFields, updates *Pl
 	}
 	if updates.ContextOutput != nil {
 		common.ContextOutput = *updates.ContextOutput
-	}
-	if updates.EnablePrerequisiteDetection != nil {
-		common.EnablePrerequisiteDetection = updates.EnablePrerequisiteDetection
-	}
-	if updates.PrerequisiteRules != nil {
-		common.PrerequisiteRules = *updates.PrerequisiteRules
 	}
 }
 

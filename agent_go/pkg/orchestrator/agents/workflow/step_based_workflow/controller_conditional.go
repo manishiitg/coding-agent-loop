@@ -139,6 +139,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 		variableValues = FormatVariableValues(hcpo.variablesManifest, hcpo.variableValues)
 	}
 
+	// Pre-save prompts.json so get_step_prompts works during execution
+	{
+		tv := map[string]string{
+			"ConditionContext": conditionContext,
+			"Question":         conditionalStep.ConditionQuestion,
+			"Description":      stepDescription,
+			"LearningHistory":  learningHistory,
+			"VariableNames":    variableNames,
+			"VariableValues":   variableValues,
+		}
+		sp := conditionalAgent.conditionalSystemPromptProcessor(tv, isCodeExecutionMode)
+		um := conditionalAgent.conditionalUserMessageProcessor(tv)
+		var model string
+		if conditionalAgent.GetConfig() != nil && conditionalAgent.GetConfig().LLMConfig.Primary.ModelID != "" {
+			model = fmt.Sprintf("%s/%s", conditionalAgent.GetConfig().LLMConfig.Primary.Provider, conditionalAgent.GetConfig().LLMConfig.Primary.ModelID)
+		}
+		hcpo.preSavePromptsJSON(stepIndex, conditionalStepPath, "conditional_evaluation", sp, um, model, "conditional-prompts.json")
+	}
+
 	conditionalResponse, err := conditionalAgent.Decide(ctx, conditionContext, conditionalStep.ConditionQuestion, stepDescription, stepIndex, 0, isCodeExecutionMode, learningHistory, variableNames, variableValues)
 
 	if err != nil {
@@ -300,81 +319,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeConditionalStep(
 				return fmt.Errorf("failed to execute nested conditional step '%s': %w", branchStepPlan.GetTitle(), err)
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed nested conditional step: %s", branchStepPlan.GetTitle()))
-		} else if isOrchestrationStep(branchStepPlan) {
-			// Execute orchestration branch step using orchestration orchestrator
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Executing orchestration branch step: %s (branchStepPath: %s)", branchStepPlan.GetTitle(), branchStepPath))
-
-			// Build previous branch steps context files (previous steps in the same branch)
-			previousBranchContextFiles := make([]string, 0)
-			// Include all previous branch steps' context outputs
-			for prevBranchIdx := 0; prevBranchIdx < branchIdx; prevBranchIdx++ {
-				if prevBranchIdx < len(branchStepsPlan) {
-					prevBranchStep := branchStepsPlan[prevBranchIdx]
-					contextOutput := prevBranchStep.GetContextOutput()
-					if contextOutput.String() != "" {
-						resolvedOutput := ResolveVariables(contextOutput.String(), hcpo.variableValues)
-						previousBranchContextFiles = append(previousBranchContextFiles, resolvedOutput)
-					}
-				}
-			}
-			// Combine: previous regular steps + previous branch steps
-			combinedBranchContextFiles := make([]string, len(branchContextFiles))
-			copy(combinedBranchContextFiles, branchContextFiles)
-			combinedBranchContextFiles = append(combinedBranchContextFiles, previousBranchContextFiles...)
-
-			// Load step config for orchestration branch step
-			if err := ApplyStepConfigFromFile(ctx, branchStepPlan, hcpo); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to load step config for orchestration branch step '%s' (ID: %s): %v", branchStepPlan.GetTitle(), branchStepPlan.GetID(), err))
-			}
-
-			// Execute orchestration step - pass branch step path so files are written to correct location
-			successCriteriaMet, nextStepID, err := hcpo.executeOrchestrationStep(ctx, branchStepPlan, stepIndex, progress, combinedBranchContextFiles, previousExecutionResults, iteration, execCtx, allSteps, branchStepPath)
-			if err != nil {
-				hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to execute orchestration branch step '%s': %v", branchStepPlan.GetTitle(), err), nil)
-				return fmt.Errorf("failed to execute orchestration branch step '%s': %w", branchStepPlan.GetTitle(), err)
-			}
-
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration branch step completed successfully: %s (SuccessCriteriaMet: %t, NextStepID: %s)", branchStepPlan.GetTitle(), successCriteriaMet, nextStepID))
-
-			// Track branch step completion
-			branchProgress := progress.BranchSteps[stepIndex]
-			branchProgress.CompletedSteps = append(branchProgress.CompletedSteps, branchStepPath)
-			progress.BranchSteps[stepIndex] = branchProgress
-			// Save progress after each branch step completion
-			if err := hcpo.saveStepProgress(ctx, progress); err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to save branch step progress: %v", err))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved branch step progress: %s completed", branchStepPath))
-			}
-
-			// Extract context output from orchestration step's main step and add to context files
-			if orchestrationStepPlan, ok := branchStepPlan.(*OrchestrationPlanStep); ok && orchestrationStepPlan.OrchestrationStep != nil {
-				contextOutput := orchestrationStepPlan.OrchestrationStep.GetContextOutput()
-				if contextOutput.String() != "" {
-					resolvedOutput := ResolveVariables(contextOutput.String(), hcpo.variableValues)
-					branchContextFiles = append(branchContextFiles, resolvedOutput)
-					hcpo.GetLogger().Info(fmt.Sprintf("📝 Added orchestration branch step context output to branch context: %s", resolvedOutput))
-				}
-			}
-
-			// Create execution result summary for orchestration branch step
-			branchExecutionResult := fmt.Sprintf("Orchestration step completed: SuccessCriteriaMet=%t, NextStepID=%s", successCriteriaMet, nextStepID)
-			if successCriteriaMet {
-				branchExecutionResult = fmt.Sprintf("✅ %s", branchExecutionResult)
-			} else {
-				branchExecutionResult = fmt.Sprintf("⚠️ %s", branchExecutionResult)
-			}
-
-			// Check if orchestration branch step signaled early workflow termination via nextStepID
-			if nextStepID == "end" {
-				hcpo.GetLogger().Info(fmt.Sprintf("🏁 Orchestration branch step '%s' specified 'end' - terminating workflow", branchStepPlan.GetTitle()))
-				return fmt.Errorf("WORKFLOW_END: orchestration branch step '%s' signaled workflow termination", branchStepPlan.GetTitle())
-			}
-
-			// Track execution result for use by subsequent conditional steps
-			branchExecutionResults = append(branchExecutionResults, branchExecutionResult)
-			hcpo.GetLogger().Info(fmt.Sprintf("✅ Completed orchestration branch step: %s", branchStepPlan.GetTitle()))
-			hcpo.GetLogger().Info(fmt.Sprintf("💾 Stored orchestration branch step execution result (will be used by subsequent conditional steps)"))
 		} else {
 			// Execute regular branch step using extracted execution logic
 			hcpo.GetLogger().Info(fmt.Sprintf("🔍 [BRANCH STEP] Calling executeSingleStep with branchStepPath: %s (isBranchStep=true)", branchStepPath))

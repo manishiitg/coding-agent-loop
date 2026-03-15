@@ -86,17 +86,18 @@ const PHASE_CHAT_INFO: Record<string, {
       'No plan modification tools available',
     ],
   },
-  'evaluation-debugger': {
-    title: 'Evaluation Debugger',
-    description: 'Analyze evaluation results and improve the evaluation plan.',
+  'evaluation-builder': {
+    title: 'Evaluation Builder',
+    description: 'Design and refine evaluation plans, analyze results.',
     capabilities: [
-      'Review evaluation scores and reasoning',
-      'Identify low-scoring steps and suggest fixes',
+      'Create new evaluation steps from the execution plan',
+      'Review evaluation scores and reasoning from past runs',
+      'Identify low-scoring steps and suggest improvements',
       'Update, add, or remove evaluation steps',
       'Read execution outputs for context',
     ],
     limitations: [
-      'Cannot modify the execution plan (use Plan Debugger)',
+      'Cannot modify the execution plan (use Workflow Builder)',
       'Cannot execute evaluations — use Evaluation Execution phase',
       'Cannot modify learnings or knowledgebase files',
     ],
@@ -1159,9 +1160,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               const isOptimized = inputData?.step_optimized === 'true'
 
               if (success && isOptimized) {
-                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.`
+                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.\nResult: ${truncated}`
               } else if (success) {
-                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.`
+                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.\nResult: ${truncated}`
               } else {
                 notification = `${AUTO_PREFIX}[STEP FAILED] ${agentName} failed.\nError: ${truncated}`
               }
@@ -2342,7 +2343,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
 
       {/* Chat Content - Separated to prevent input re-renders */}
-      <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative ${compact ? 'text-sm' : ''}`}>
+      <div ref={chatContentRef} className={`flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative overscroll-y-none ${compact ? 'text-sm' : ''}`} style={{ scrollBehavior: 'auto' }}>
         
         <div className={`min-w-0 ${compact ? 'px-2 pb-2' : 'px-4 pb-4'}`}>
           {/* Loading indicator for historical events */}

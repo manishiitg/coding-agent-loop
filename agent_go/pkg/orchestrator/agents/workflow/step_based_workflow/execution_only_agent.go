@@ -66,12 +66,6 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 {{.PreviousStepsSummary}}
 {{end}}
 
-{{if .PrerequisiteRulesInfo}}
-## Project Rules
-{{.PrerequisiteRulesInfo}}
-{{end}}
-
-
 {{if eq .HasLearnings "true"}}
 ## Learning Application (Secondary Guidance)
 {{.LearningHistory}}
@@ -104,6 +98,17 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 ## Validation Schema (Output Requirement)
 Your '{{.StepContextOutput}}' MUST match this structure:
 {{printf "%s" .ValidationSchema}}
+{{end}}
+
+{{if eq .IsEvaluationMode "true"}}
+## Evaluation Mode
+You are running as an **evaluation agent** — your job is to **verify and assess** outputs from a previous execution run, NOT to create new artifacts.
+
+- **Read** the target execution outputs referenced in your step description
+- **Check** whether outputs meet the defined criteria (file existence, content correctness, data quality)
+- **Write** your evaluation findings to your context_output file as structured JSON
+- **Do NOT** re-execute or modify the original workflow outputs — only read and assess them
+- Focus on evidence-based assessment: quote specific content from files, reference exact field values
 {{end}}
 
 {{if eq .SkipExecutionCleanup "true"}}
@@ -274,7 +279,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	// Get variable names and values for system prompt
 	variableNames := templateVars["VariableNames"]
 	variableValues := templateVars["VariableValues"]
-	prerequisiteRulesInfo := templateVars["PrerequisiteRulesInfo"]
 	decisionEvaluationQuestion := templateVars["DecisionEvaluationQuestion"]
 	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
 	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
@@ -303,7 +307,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"StepNumber":                 stepNumber,
 		"StepExecutionPath":          stepExecutionPath,
 		"PreviousStepsSummary":       previousStepsSummary,
-		"PrerequisiteRulesInfo":      prerequisiteRulesInfo,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
 		"ValidationSchema":           validationSchema,                        // Validation schema JSON string
 		"KnowledgebasePath":          knowledgebasePath,                       // Knowledgebase folder path
@@ -311,6 +314,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"FolderGuardReadPaths":       folderGuardReadPaths,                    // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":      folderGuardWritePaths,                   // Folder guard write paths for agent guidance
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],    // Skip cleanup mode flag
+		"IsEvaluationMode":           templateVars["IsEvaluationMode"],       // Evaluation mode flag
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

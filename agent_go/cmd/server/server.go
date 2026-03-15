@@ -202,6 +202,9 @@ type StreamingAPI struct {
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
 	workshopChatSessions sync.Map
 
+	// Cron scheduler service for scheduled workflow executions
+	scheduler *SchedulerService
+
 	// Background completion loop tracking — prevents multiple loops per session
 	completionLoopStarted   map[string]bool
 	completionLoopStartedMu sync.Mutex
@@ -932,6 +935,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
 	schedulerSvc := NewSchedulerService(chatDB, api)
+	api.scheduler = schedulerSvc
 	go func() {
 		if err := schedulerSvc.Start(schedulerCtx); err != nil {
 			log.Printf("[SCHEDULER] Error: %v", err)
@@ -2932,6 +2936,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Workflow phase agents (workflow-builder, evaluation-builder) always use tool search mode —
+		// they get 21+ workshop tools registered after agent creation, which aren't counted in
+		// the MCP tool count above. Force tool search mode so these tools are discoverable.
+		if isWorkflowPhase && (workflowPhaseID == "workflow-builder" || workflowPhaseID == "evaluation-builder") {
+			if !useToolSearchMode {
+				log.Printf("[TOOL_SEARCH] Forcing tool search mode for %s phase (21+ workshop tools)", workflowPhaseID)
+				useToolSearchMode = true
+			}
+		}
+
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
 		if req.DelegationMode == "plan" {
 			tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
@@ -4290,7 +4304,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if evalSession != nil {
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger)
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger, true)
 						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for evaluation-builder (execute_step, query_step, generate_learnings, run_full_evaluation, etc.)")
 					}
@@ -4319,7 +4333,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if haeSession != nil {
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, haeSession, api.logger)
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, haeSession, api.logger, false)
 						log.Printf("[WORKFLOW_PHASE] Registered execution tools for human-assisted-execution (execute_step, query_step, stop_step, list_steps, etc.)")
 					}
 				case "workflow-builder":
@@ -4490,7 +4504,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 
 					if workshopSession != nil {
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger, true)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools (execute_step, query_step, stop_step, list_steps, etc.)")
 					}
 				default:
@@ -8598,7 +8612,171 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	// Wire up live tool call query for query_step_tools
 	cfg.ToolCallQueryFunc = formatToolCallSummaries(api)
 
+	// Wire up schedule management callbacks
+	cfg.PresetQueryID = req.PresetQueryID
+	cfg.SchedulerFuncs = api.buildSchedulerCallbacks()
+
 	return cfg
+}
+
+// buildSchedulerCallbacks creates SchedulerCallbacks that bridge the workshop tools
+// to the database and scheduler service. Returns nil-safe callbacks.
+func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.SchedulerCallbacks {
+	return &todo_creation_human.SchedulerCallbacks{
+		ListSchedules: func(ctx context.Context, presetID string) (string, error) {
+			jobs, total, err := api.chatDB.ListScheduledJobs(ctx, 50, 0, nil, nil)
+			if err != nil {
+				return "", err
+			}
+			// Filter by presetID
+			var filtered []database.ScheduledJob
+			for _, j := range jobs {
+				if j.PresetQueryID == presetID {
+					filtered = append(filtered, j)
+				}
+			}
+			if len(filtered) == 0 {
+				return fmt.Sprintf("No schedules found for this workflow (total schedules across all workflows: %d).", total), nil
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## Schedules (%d found)\n\n", len(filtered)))
+			for _, j := range filtered {
+				status := "disabled"
+				if j.Enabled {
+					status = "enabled"
+				}
+				sb.WriteString(fmt.Sprintf("### %s\n", j.Name))
+				sb.WriteString(fmt.Sprintf("- **ID**: `%s`\n", j.ID))
+				sb.WriteString(fmt.Sprintf("- **Cron**: `%s`\n", j.CronExpression))
+				sb.WriteString(fmt.Sprintf("- **Timezone**: %s\n", j.Timezone))
+				sb.WriteString(fmt.Sprintf("- **Status**: %s\n", status))
+				if j.LastStatus != "" {
+					sb.WriteString(fmt.Sprintf("- **Last Run**: %v (status: %s)\n", j.LastRunAt, j.LastStatus))
+				}
+				if j.NextRunAt != nil {
+					sb.WriteString(fmt.Sprintf("- **Next Run**: %v\n", j.NextRunAt))
+				}
+				if len(j.GroupIDs) > 0 {
+					sb.WriteString(fmt.Sprintf("- **Groups**: %v\n", j.GroupIDs))
+				} else {
+					sb.WriteString("- **Groups**: all\n")
+				}
+				sb.WriteString(fmt.Sprintf("- **Run Count**: %d\n\n", j.RunCount))
+			}
+			return sb.String(), nil
+		},
+		CreateSchedule: func(ctx context.Context, presetID, name, cronExpr, timezone string, groupIDs []string) (string, error) {
+			if err := ValidateCronExpression(cronExpr); err != nil {
+				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
+			}
+			if timezone == "" {
+				timezone = "UTC"
+			}
+			enabled := true
+			job, err := api.chatDB.CreateScheduledJob(ctx, &database.CreateScheduledJobRequest{
+				Name:           name,
+				EntityType:     "workflow",
+				PresetQueryID:  presetID,
+				CronExpression: cronExpr,
+				Timezone:       timezone,
+				GroupIDs:       groupIDs,
+				Enabled:        &enabled,
+			})
+			if err != nil {
+				return "", err
+			}
+			// Load into gocron scheduler
+			if api.scheduler != nil {
+				if err := api.scheduler.LoadJob(job); err != nil {
+					return fmt.Sprintf("Schedule created (ID: %s) but failed to activate: %v", job.ID, err), nil
+				}
+			}
+			nextRun := ""
+			if job.NextRunAt != nil {
+				nextRun = fmt.Sprintf("%v", job.NextRunAt)
+			}
+			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", job.ID, job.Name, job.CronExpression, job.Timezone, nextRun), nil
+		},
+		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool) (string, error) {
+			if cronExpr != "" {
+				if err := ValidateCronExpression(cronExpr); err != nil {
+					return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
+				}
+			}
+			req := &database.UpdateScheduledJobRequest{
+				Name:           name,
+				CronExpression: cronExpr,
+				Timezone:       timezone,
+				GroupIDs:       groupIDs,
+				SetGroupIDs:    setGroupIDs,
+				Enabled:        enabled,
+			}
+			job, err := api.chatDB.UpdateScheduledJob(ctx, jobID, req)
+			if err != nil {
+				return "", err
+			}
+			// Reload in gocron
+			if api.scheduler != nil {
+				if job.Enabled {
+					if err := api.scheduler.LoadJob(job); err != nil {
+						return fmt.Sprintf("Schedule updated but failed to reload: %v", err), nil
+					}
+				} else {
+					api.scheduler.RemoveJob(jobID)
+				}
+			}
+			nextRun := ""
+			if job.NextRunAt != nil {
+				nextRun = fmt.Sprintf("%v", job.NextRunAt)
+			}
+			return fmt.Sprintf("Schedule updated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Enabled**: %v\n- **Next Run**: %s", job.ID, job.Name, job.CronExpression, job.Enabled, nextRun), nil
+		},
+		DeleteSchedule: func(ctx context.Context, jobID string) error {
+			if api.scheduler != nil {
+				api.scheduler.RemoveJob(jobID)
+			}
+			return api.chatDB.DeleteScheduledJob(ctx, jobID)
+		},
+		TriggerSchedule: func(ctx context.Context, jobID string) (string, error) {
+			if api.scheduler == nil {
+				return "", fmt.Errorf("scheduler not available")
+			}
+			sessionID, err := api.scheduler.TriggerNow(jobID)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Schedule triggered. Execution session: `%s`", sessionID), nil
+		},
+		GetScheduleRuns: func(ctx context.Context, jobID string, limit int) (string, error) {
+			if limit <= 0 {
+				limit = 10
+			}
+			runs, total, err := api.chatDB.ListScheduledJobRuns(ctx, jobID, limit, 0)
+			if err != nil {
+				return "", err
+			}
+			if len(runs) == 0 {
+				return "No runs found for this schedule.", nil
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## Run History (%d of %d)\n\n", len(runs), total))
+			for _, r := range runs {
+				duration := ""
+				if r.DurationMs != nil {
+					duration = fmt.Sprintf(" (%dms)", *r.DurationMs)
+				}
+				sb.WriteString(fmt.Sprintf("- **%s** [%s]%s — %s", r.ID[:8], r.Status, duration, r.StartedAt.Format("2006-01-02 15:04:05")))
+				if r.RunFolder != "" {
+					sb.WriteString(fmt.Sprintf(" → `%s`", r.RunFolder))
+				}
+				if r.Error != "" {
+					sb.WriteString(fmt.Sprintf("\n  Error: %s", r.Error))
+				}
+				sb.WriteString("\n")
+			}
+			return sb.String(), nil
+		},
+	}
 }
 
 // truncateString truncates s to maxLen and appends "..." if truncated.

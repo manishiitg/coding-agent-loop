@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -343,6 +344,17 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 	return result.String()
 }
 
+// SchedulerCallbacks provides schedule CRUD operations via callbacks from server.go.
+// This avoids importing database/scheduler packages in the workshop package.
+type SchedulerCallbacks struct {
+	ListSchedules   func(ctx context.Context, presetID string) (string, error)
+	CreateSchedule  func(ctx context.Context, presetID, name, cronExpr, timezone string, groupIDs []string) (string, error)
+	UpdateSchedule  func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool) (string, error)
+	DeleteSchedule  func(ctx context.Context, jobID string) error
+	TriggerSchedule func(ctx context.Context, jobID string) (string, error)
+	GetScheduleRuns func(ctx context.Context, jobID string, limit int) (string, error)
+}
+
 // WorkshopChatSession holds the per-session controller and step registry for interactive
 // workshop in chat mode. Create with NewWorkshopChatSession; clean up with Close().
 type WorkshopChatSession struct {
@@ -353,6 +365,8 @@ type WorkshopChatSession struct {
 	toolCallQueryFunc ToolCallQueryFunc
 	mainSessionID     string
 	config            *WorkshopConfig // Original config for creating fresh controllers
+	presetQueryID     string
+	schedulerFuncs    *SchedulerCallbacks
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -397,6 +411,11 @@ type WorkshopConfig struct {
 	ToolCallQueryFunc    ToolCallQueryFunc
 	// IsEvaluationMode when true, the controller uses evaluation/ paths for step_config, learnings, etc.
 	IsEvaluationMode     bool
+	// PresetQueryID is the preset this workshop belongs to (needed for schedule management)
+	PresetQueryID        string
+	// SchedulerFuncs provides callbacks for schedule CRUD operations.
+	// Set by server.go which has access to the database and scheduler service.
+	SchedulerFuncs       *SchedulerCallbacks
 }
 
 // NewWorkshopChatSession creates a WorkshopChatSession using the full tool/LLM config
@@ -577,6 +596,8 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		toolCallQueryFunc: cfg.ToolCallQueryFunc,
 		mainSessionID:     cfg.SessionID,
 		config:            cfg,
+		presetQueryID:     cfg.PresetQueryID,
+		schedulerFuncs:    cfg.SchedulerFuncs,
 	}, nil
 }
 
@@ -683,6 +704,7 @@ func RegisterWorkshopChatTools(
 	mcpAgent *mcpagent.Agent,
 	session *WorkshopChatSession,
 	logger loggerv2.Logger,
+	fullMode bool,
 ) {
 	iwm := &InteractiveWorkshopManager{
 		controller:        session.controller,
@@ -690,8 +712,10 @@ func RegisterWorkshopChatTools(
 		sessionCtx:        session.sessionCtx,
 		toolCallQueryFunc: session.toolCallQueryFunc,
 		mainSessionID:     session.mainSessionID,
+		presetQueryID:     session.presetQueryID,
+		schedulerFuncs:    session.schedulerFuncs,
 	}
-	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
+	registerInteractiveWorkshopTools(iwm, mcpAgent, logger, fullMode)
 }
 
 // Close cancels all background goroutines for this workshop session.
@@ -735,10 +759,18 @@ func RegisterRunFullEvaluationTool(
 			execID := fmt.Sprintf("eval-full-%s-%d", targetRunFolder, time.Now().UnixNano())
 			execCtx, cancel := context.WithCancel(session.sessionCtx)
 
+			// Inject correlation IDs so eval execution events are tagged as sub-agent events.
+			// Without this, query_step_tools cannot find tool calls — it matches by correlationID
+			// which is only set when ForceCorrelationIDKey is in the context.
+			agentSessionID := fmt.Sprintf("workshop-eval-%s-%d", targetRunFolder, time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
 			exec := &WorkshopStepExecution{
 				ID:             execID,
 				StepID:         fmt.Sprintf("full-eval-%s", targetRunFolder),
-				AgentSessionID: execID,
+				AgentSessionID: agentSessionID,
 				Status:         WorkshopStepRunning,
 				cancel:         cancel,
 			}

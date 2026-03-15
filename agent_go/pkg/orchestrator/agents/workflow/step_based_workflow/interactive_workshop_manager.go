@@ -392,6 +392,8 @@ type InteractiveWorkshopManager struct {
 	sessionCtx         context.Context    // long-lived ctx for background goroutines
 	toolCallQueryFunc  ToolCallQueryFunc  // optional: query live tool calls for running steps
 	mainSessionID      string             // event store session ID for tool call queries
+	presetQueryID      string             // preset ID for schedule management
+	schedulerFuncs     *SchedulerCallbacks // schedule CRUD callbacks from server.go
 }
 
 // NewInteractiveWorkshopManager creates a new InteractiveWorkshopManager
@@ -715,10 +717,10 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
 
 ### Background Step Execution
-- **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration (e.g., 'iteration-2/group-name'); if omitted, auto-resolves to the latest iteration. **instructions** provides orchestrator context for inner steps. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
+- **execute_step(step_id, iteration, group_id?, instructions?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
 - **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
 - **query_step_tools(execution_id)** — Show which tools a running step is calling in real time. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, prefer debug_step for richer insights.
-- **debug_step(step_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
+- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
 - **run_background_task(task, task_name, max_turns?)** — Run a generic background sub-agent with full tool access. Use to offload complex work like bulk analysis, data transformation, file cleanup, or any task that doesn't fit the other tools.
 - **stop_step(execution_id)** — Cancel a running step
@@ -741,7 +743,14 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 ### Workflow Config
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow config: add/remove MCP servers, skills, or secrets. Use get_workflow_config first to see available options. Changes take effect immediately for subsequent step executions.
 
-### Plan Modification
+### Schedule Management
+- **list_schedules** — List all cron schedules for this workflow
+- **create_schedule(name, cron_expression, timezone?, group_ids?)** — Create a new cron schedule
+- **update_schedule(job_id, name?, cron_expression?, timezone?, group_ids?, enabled?)** — Update a schedule
+- **delete_schedule(job_id)** — Delete a schedule
+- **trigger_schedule(job_id)** — Manually trigger a schedule run now
+- **get_schedule_runs(job_id, limit?)** — View run history for a schedule
+
 ### Plan Modification
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
 - **Update steps**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
@@ -1074,10 +1083,10 @@ You are a workflow execution assistant. You help users run workflow steps intera
 - **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
 
 ### Background Step Execution
-- **execute_step(step_id, group_id?, run_folder?, instructions?)** — Start a step in the background; returns execution_id immediately. **group_id** defaults to the toolbar-selected group; pass explicitly to override. **run_folder** targets a specific iteration; if omitted, auto-resolves. **instructions** provides orchestrator context for inner steps. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
+- **execute_step(step_id, iteration, group_id?, instructions?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
 - **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
 - **query_step_tools(execution_id)** — Show which tools a running step is calling in real time. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, prefer debug_step for richer insights.
-- **debug_step(step_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
+- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
 - **run_background_task(task, task_name, max_turns?)** — Run a generic background sub-agent with full tool access. Use to offload complex work like bulk analysis, data transformation, file cleanup, or any task that doesn't fit the other tools.
 - **stop_step(execution_id)** — Cancel a running step
@@ -1241,7 +1250,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	}
 
 	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
-	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
+	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger, true)
 
 	// Update code execution registry for CLI providers (claude-code, gemini-cli)
 	if agent.GetConfig().UseCodeExecutionMode {
@@ -1387,8 +1396,10 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 	return "", fmt.Errorf("step %q not found in plan. Valid IDs: %s", inputID, strings.Join(ids, ", "))
 }
 
-// registerInteractiveWorkshopTools registers the custom workshop tools on the agent
-func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
+// registerInteractiveWorkshopTools registers the custom workshop tools on the agent.
+// When fullMode is true (workflow-builder), all tools are registered including config/optimization/learning tools.
+// When fullMode is false (human-assisted-execution), only execution-related tools are registered.
+func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger, fullMode bool) {
 	// Tool 0: list_steps — list all steps with IDs and titles
 	if err := mcpAgent.RegisterCustomTool(
 		"list_steps",
@@ -2127,8 +2138,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
 				},
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "Iteration folder name (e.g., 'iteration-3'). Use list_runs to see available iterations.",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Variable group ID (e.g., 'group-1'). Use list_groups to see available groups.",
+				},
 			},
-			"required": []string{"step_id"},
+			"required": []string{"step_id", "iteration", "group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -2139,6 +2158,35 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if !ok || stepID == "" {
 				return "step_id must be a non-empty string", nil
 			}
+
+			// Extract iteration and group_id
+			iteration, _ := args["iteration"].(string)
+			groupID, _ := args["group_id"].(string)
+
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-3'). Use list_runs to see available iterations.", nil
+			}
+			if groupID == "" {
+				return "group_id is required (e.g., 'group-1'). Use list_groups to see available groups.", nil
+			}
+
+			// Resolve group folder name and build run folder
+			groupFolderName := groupID
+			if iwm.controller.variablesManifest != nil {
+				for _, g := range iwm.controller.variablesManifest.Groups {
+					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
+						if g.DisplayName != "" {
+							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+							if sanitized != "" {
+								groupFolderName = sanitized
+							}
+						}
+						break
+					}
+				}
+			}
+			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
+			iwm.controller.SetSelectedRunFolder(runFolder)
 
 			// Resolve step ID
 			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
@@ -2152,11 +2200,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedID)
 			if stepInfo == nil {
 				return fmt.Sprintf("step %q not found in plan", stepID), nil
-			}
-
-			runFolder := iwm.controller.selectedRunFolder
-			if runFolder == "" {
-				return "no run folder selected", nil
 			}
 
 			var result strings.Builder
@@ -2352,6 +2395,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register stop_step tool: %v", err))
 	}
+
+	// === Builder-only tools (not registered for human-assisted-execution) ===
+	if fullMode {
 
 	// Tool 4: update_step_config — update step_config.json for a specific step
 	if err := mcpAgent.RegisterCustomTool(
@@ -2836,6 +2882,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_step_config tool: %v", err))
 	}
 
+	} // end fullMode guard for update_step_config
+
 	// Tool 5: get_step_prompts — read saved system prompt + user message for a step run
 	if err := mcpAgent.RegisterCustomTool(
 		"get_step_prompts",
@@ -3048,6 +3096,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_step_prompts tool: %v", err))
 	}
+
+	// === Builder-only tools: analyze, learn, optimize, background tasks ===
+	if fullMode {
 
 	// Tool 6: analyze_step — analyze a step's config and suggest optimizations
 	if err := mcpAgent.RegisterCustomTool(
@@ -3973,6 +4024,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_step tool: %v", err))
 	}
 
+	} // end fullMode guard for analyze_step, generate_learnings, optimize_step
+
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
 	if err := mcpAgent.RegisterCustomTool(
 		"get_cost_summary",
@@ -4114,6 +4167,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_cost_summary tool: %v", err))
 	}
 
+	// === Builder-only tools: background tasks, LLM config, workflow config ===
+	if fullMode {
+
 	// Tool 9: run_background_task — generic background sub-agent for offloading work
 	if err := mcpAgent.RegisterCustomTool(
 		"run_background_task",
@@ -4241,10 +4297,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_background_task tool: %v", err))
 	}
 
-	// NOTE: update_variable and manage_variable_group tools have been removed.
-	// Variable/group management is now handled via the workspace UI.
-	// The read-only tools below (get_llm_config, get_variables) are kept for discovery.
-
 	// Tool: get_llm_config — show current LLM configuration (read-only)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_llm_config",
@@ -4327,6 +4379,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_llm_config tool: %v", err))
 	}
+
+	} // end if fullMode — builder-only tools (run_background_task, get_llm_config)
 
 	// Tool: get_variables — read-only view of current variables (no management)
 	if err := mcpAgent.RegisterCustomTool(
@@ -4540,6 +4594,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_workflow_config tool: %v", err))
 	}
 
+	// === Builder-only tool: update_workflow_config ===
+	if fullMode {
 	// Tool: update_workflow_config — add/remove MCP servers, skills, and secrets
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
@@ -4772,6 +4828,265 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_workflow_config tool: %v", err))
 	}
+	} // end if fullMode — update_workflow_config
+
+	// === Builder-only schedule management tools ===
+	if fullMode {
+
+	// Tool: list_schedules — List all cron schedules for this workflow
+	if err := mcpAgent.RegisterCustomTool(
+		"list_schedules",
+		"List all cron schedules for this workflow.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			if iwm.presetQueryID == "" {
+				return "No preset associated with this workflow session.", nil
+			}
+			return iwm.schedulerFuncs.ListSchedules(ctx, iwm.presetQueryID)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_schedules tool: %v", err))
+	}
+
+	// Tool: create_schedule — Create a new cron schedule
+	if err := mcpAgent.RegisterCustomTool(
+		"create_schedule",
+		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Display name for the schedule (e.g., 'Daily morning run').",
+				},
+				"cron_expression": map[string]interface{}{
+					"type":        "string",
+					"description": "5-field cron expression (minute hour day-of-month month day-of-week). Examples: '0 9 * * *' (daily 9 AM), '*/30 * * * *' (every 30 min), '0 0 * * 1' (weekly Monday midnight).",
+				},
+				"timezone": map[string]interface{}{
+					"type":        "string",
+					"description": "IANA timezone (e.g., 'America/New_York', 'Asia/Kolkata'). Defaults to 'UTC'.",
+				},
+				"group_ids": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Variable group IDs to run. Empty = run all groups.",
+				},
+			},
+			"required": []string{"name", "cron_expression"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			if iwm.presetQueryID == "" {
+				return "No preset associated with this workflow session.", nil
+			}
+			name, _ := args["name"].(string)
+			cronExpr, _ := args["cron_expression"].(string)
+			timezone, _ := args["timezone"].(string)
+			var groupIDs []string
+			if raw, ok := args["group_ids"]; ok && raw != nil {
+				if arr, ok := raw.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							groupIDs = append(groupIDs, s)
+						}
+					}
+				}
+			}
+			if name == "" {
+				return "name is required.", nil
+			}
+			if cronExpr == "" {
+				return "cron_expression is required.", nil
+			}
+			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.presetQueryID, name, cronExpr, timezone, groupIDs)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register create_schedule tool: %v", err))
+	}
+
+	// Tool: update_schedule — Update a schedule
+	if err := mcpAgent.RegisterCustomTool(
+		"update_schedule",
+		"Update an existing schedule. Only provided fields are changed; omitted fields keep their current values.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"job_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The schedule ID to update (from list_schedules).",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "New display name.",
+				},
+				"cron_expression": map[string]interface{}{
+					"type":        "string",
+					"description": "New 5-field cron expression.",
+				},
+				"timezone": map[string]interface{}{
+					"type":        "string",
+					"description": "New IANA timezone.",
+				},
+				"group_ids": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "New variable group IDs. Pass empty array to clear (run all groups).",
+				},
+				"enabled": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable or disable the schedule.",
+				},
+			},
+			"required": []string{"job_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			jobID, _ := args["job_id"].(string)
+			if jobID == "" {
+				return "job_id is required.", nil
+			}
+			name, _ := args["name"].(string)
+			cronExpr, _ := args["cron_expression"].(string)
+			timezone, _ := args["timezone"].(string)
+			var groupIDs []string
+			setGroupIDs := false
+			if raw, ok := args["group_ids"]; ok && raw != nil {
+				setGroupIDs = true
+				if arr, ok := raw.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							groupIDs = append(groupIDs, s)
+						}
+					}
+				}
+			}
+			var enabled *bool
+			if raw, ok := args["enabled"]; ok && raw != nil {
+				if b, ok := raw.(bool); ok {
+					enabled = &b
+				}
+			}
+			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupIDs, setGroupIDs, enabled)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_schedule tool: %v", err))
+	}
+
+	// Tool: delete_schedule — Delete a schedule
+	if err := mcpAgent.RegisterCustomTool(
+		"delete_schedule",
+		"Permanently delete a schedule. This cannot be undone.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"job_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The schedule ID to delete (from list_schedules).",
+				},
+			},
+			"required": []string{"job_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			jobID, _ := args["job_id"].(string)
+			if jobID == "" {
+				return "job_id is required.", nil
+			}
+			if err := iwm.schedulerFuncs.DeleteSchedule(ctx, jobID); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Schedule `%s` deleted.", jobID), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register delete_schedule tool: %v", err))
+	}
+
+	// Tool: trigger_schedule — Manually trigger a schedule run
+	if err := mcpAgent.RegisterCustomTool(
+		"trigger_schedule",
+		"Manually trigger a schedule to run immediately, outside its normal cron timing.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"job_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The schedule ID to trigger (from list_schedules).",
+				},
+			},
+			"required": []string{"job_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			jobID, _ := args["job_id"].(string)
+			if jobID == "" {
+				return "job_id is required.", nil
+			}
+			return iwm.schedulerFuncs.TriggerSchedule(ctx, jobID)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register trigger_schedule tool: %v", err))
+	}
+
+	// Tool: get_schedule_runs — Get run history for a schedule
+	if err := mcpAgent.RegisterCustomTool(
+		"get_schedule_runs",
+		"View the execution history for a specific schedule, including status, duration, and errors.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"job_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The schedule ID to get runs for (from list_schedules).",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of runs to return. Defaults to 10.",
+				},
+			},
+			"required": []string{"job_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.schedulerFuncs == nil {
+				return "Schedule management not available in this session.", nil
+			}
+			jobID, _ := args["job_id"].(string)
+			if jobID == "" {
+				return "job_id is required.", nil
+			}
+			limit := 10
+			if raw, ok := args["limit"]; ok && raw != nil {
+				if f, ok := raw.(float64); ok {
+					limit = int(f)
+				}
+			}
+			return iwm.schedulerFuncs.GetScheduleRuns(ctx, jobID, limit)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_schedule_runs tool: %v", err))
+	}
+
+	} // end if fullMode — schedule management tools
 
 }
 
@@ -5073,7 +5388,7 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 		return "", fmt.Errorf("no valid LLM configuration found for optimization agent")
 	}
 
-	config := iwm.controller.CreateStandardAgentConfigWithLLM("optimization-agent", 20, agents.OutputFormatStructured, llmConfigToUse)
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("optimization-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
 	config.UseToolSearchMode = false
 	config.ServerNames = []string{mcpclient.NoServers}

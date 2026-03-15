@@ -1163,9 +1163,9 @@ export const useChatStore = create<ChatState>()(
       },
 
       isAtBottom: (element) => {
-        const threshold = 50 // Increased threshold for more lenient detection
+        const threshold = 150 // Generous threshold so scrolling back down re-enables auto-scroll easily
         const isAtBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - threshold
-        
+
         return isAtBottom;
       },
 

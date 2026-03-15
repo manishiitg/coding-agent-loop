@@ -704,7 +704,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     lastScrollTopRef.current = element.scrollTop;
 
     const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) setAutoScroll(false); // user scrolling up → disable auto-scroll
+      if (e.deltaY < 0 && element.scrollTop > 0) {
+        // Only disable if user is scrolling up AND there's room to scroll up
+        // (i.e., not already at the very top or at the bottom with no overflow)
+        const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 150;
+        if (!atBottom) setAutoScroll(false);
+      }
     };
 
     element.addEventListener('scroll', handleScroll);

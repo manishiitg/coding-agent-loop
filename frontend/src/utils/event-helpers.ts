@@ -61,3 +61,30 @@ export const safeParseJSON = (jsonString: string): unknown => {
     return null
   }
 }
+
+/**
+ * Extracts the logical tool name from an MCP-prefixed tool name.
+ * MCP tools are named as mcp__<server-name>__<tool-name>.
+ * Regular tools are returned as-is.
+ * Example: mcp__api-bridge__get_api_spec → get_api_spec
+ */
+export const getLogicalToolName = (toolName: string): string => {
+  const parts = toolName.split('__')
+  if (parts.length >= 3 && parts[0] === 'mcp') {
+    return parts.slice(2).join('__')
+  }
+  return toolName
+}
+
+/**
+ * Extracts the MCP server name from an MCP-prefixed tool name.
+ * Returns null for non-MCP tools.
+ * Example: mcp__api-bridge__get_api_spec → api-bridge
+ */
+export const getMCPServerName = (toolName: string): string | null => {
+  const parts = toolName.split('__')
+  if (parts.length >= 3 && parts[0] === 'mcp') {
+    return parts[1]
+  }
+  return null
+}

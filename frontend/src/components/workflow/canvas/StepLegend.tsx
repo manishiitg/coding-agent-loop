@@ -374,7 +374,7 @@ export const StepLegend: React.FC<StepLegendProps> = ({
   }
 
   return (
-    <div className="absolute bottom-4 left-4 z-10 w-72">
+    <div className={`absolute bottom-4 left-4 z-10 transition-all duration-200 ${isCollapsed ? 'w-44' : 'w-72'}`}>
       <div className="bg-background/98 dark:bg-gray-900/98 backdrop-blur-md rounded-lg border border-border shadow-xl">
         {/* Header */}
         <div className="w-full flex items-center justify-between rounded-t-lg border-b border-border transition-colors">

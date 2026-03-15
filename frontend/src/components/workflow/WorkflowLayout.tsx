@@ -146,6 +146,19 @@ async function restoreWorkflowStateFromEvents(sessionId: string): Promise<void> 
         }
       }
 
+      // Extract from todo_task_step_completed
+      if (event.type === 'todo_task_step_completed') {
+        const eventData = event.data as Record<string, unknown>
+        const data = (eventData?.data as Record<string, unknown>) || eventData
+        const stepId = data?.step_id as string
+        if (stepId) {
+          stepStatuses.set(stepId, 'completed')
+          if (latestRunningStepId === stepId) {
+            latestRunningStepId = null
+          }
+        }
+      }
+
       // Extract from batch_group_start
       if (event.type === 'batch_group_start') {
         const eventData = event.data as Record<string, unknown>

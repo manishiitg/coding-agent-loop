@@ -6,6 +6,7 @@ import { useExpandable } from '../../useExpandable'
 import { Plus, Minus } from 'lucide-react'
 import { MarkdownRenderer } from '../../../ui/MarkdownRenderer'
 import { CsvRenderer } from '../../../ui/CsvRenderer'
+import { getLogicalToolName, getMCPServerName } from '../../../../utils/event-helpers'
 
 type OutputFormat = 'markdown' | 'json' | 'csv' | null
 
@@ -102,6 +103,8 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
   )
 
   const toolName = event.tool_name || ''
+  const logicalToolName = getLogicalToolName(toolName)
+  const mcpServerName = getMCPServerName(toolName)
 
   let parsedResult: Record<string, unknown> = {}
   let resultText = event.result || ''
@@ -123,10 +126,10 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
     }
   }
 
-  // Handle get_api_spec tool response
-  if (toolName === 'get_api_spec') {
+  // Handle get_api_spec tool response (also handles mcp__*__get_api_spec)
+  if (logicalToolName === 'get_api_spec') {
     // The result is an OpenAPI spec (YAML/JSON)
-    let serverName = ''
+    let serverName = mcpServerName || ''
     let endpointCount = 0
 
     // Try to extract server name and count endpoints from the spec
@@ -135,7 +138,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
       // Count endpoint paths (lines like "  /tools/mcp/..." or paths in OpenAPI)
       const pathMatches = specText.match(/^\s+\/tools\//gm)
       endpointCount = pathMatches ? pathMatches.length : 0
-      // Try to extract server name from the spec title or info
+      // Try to extract server name from the spec title or info (overrides MCP server name if found)
       const titleMatch = specText.match(/title:\s*(.+?)(?:\s+API|\s*$)/m)
       if (titleMatch) {
         serverName = titleMatch[1].trim()
@@ -197,7 +200,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
   }
 
   // Handle execute_shell_command tool response
-  if (toolName === 'execute_shell_command') {
+  if (logicalToolName === 'execute_shell_command') {
     const rawOutput = resultText || event.result || ''
 
     // Extract stdout/stderr from parsed JSON if available
@@ -328,7 +331,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
   }
 
   // Handle discover_code_structure tool response
-  if (toolName === 'discover_code_structure') {
+  if (logicalToolName === 'discover_code_structure') {
     // This tool always returns JSON with server/tool structure
     let serverListData: unknown = null
 
@@ -492,7 +495,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
   }
 
   // Handle discover_code_files tool response
-  if (toolName === 'discover_code_files') {
+  if (logicalToolName === 'discover_code_files') {
     // Check if result is JSON (server list) or Go code
     let isGoCode = false
     let isServerList = false
@@ -697,7 +700,7 @@ export const CodeExecutionToolCallEndDisplay: React.FC<CodeExecutionToolCallEndD
   }
 
   // Handle write_code tool response
-  if (toolName === 'write_code') {
+  if (logicalToolName === 'write_code') {
     // Check if result contains an error - use more precise pattern matching
     // Only check for error patterns at the start or in structured error messages
     const errorPatterns = [

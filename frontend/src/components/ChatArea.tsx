@@ -1286,6 +1286,24 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             workflowStore.handleBatchGroupStart(groupId, runFolder || '', undefined, groupIndex, totalGroups)
           }
         }
+        if (event.type === 'todo_task_step_completed') {
+          const eventData = event.data as Record<string, unknown> | undefined
+          const todoStepData = (eventData?.data as Record<string, unknown>) || eventData
+          const stepId = todoStepData?.step_id as string | undefined
+          const stepTitle = todoStepData?.step_title as string | undefined
+          if (stepId) {
+            workflowStore.setStepStatus(stepId, 'completed')
+          }
+          if (tab && stepTitle) {
+            const dedupeKey = `${stepTitle}::todo-step`
+            if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
+              notifiedWorkshopAgentsRef.current.add(dedupeKey)
+              const notification = `[AUTO-NOTIFICATION] [STEP COMPLETED] ${stepTitle} finished successfully.`
+              const currentQueue = chatStore.getTabConfig(tab.tabId)?.queuedMessages || []
+              chatStore.setTabConfig(tab.tabId, { queuedMessages: [...currentQueue, notification] })
+            }
+          }
+        }
       }
     }
 

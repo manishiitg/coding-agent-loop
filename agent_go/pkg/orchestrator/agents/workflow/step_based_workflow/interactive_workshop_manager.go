@@ -667,6 +667,8 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **get_workflow_config** — **Use this to see which MCP servers are available and which are selected.** Shows all discoverable MCP servers from the system config plus which ones are currently active in this workflow. Always use this tool when asked about MCP servers — do NOT explore the filesystem.
 - **get_llm_config** — Show current LLM configuration: workflow defaults (execution, learning), tiered config, and per-step overrides
 - **get_variables** — Read current variable definitions and group configurations
+- **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
+- **extract_variables(text)** — Analyze text to identify hard-coded values that should become variables
 
 ### Workflow Config
 - **update_workflow_config(add_servers?, remove_servers?)** — Add or remove MCP servers from the workflow. Use get_workflow_config first to see available server names. Changes take effect immediately for subsequent step executions.
@@ -1135,6 +1137,11 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		"workflow-builder",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register plan modification tools: %v", err))
+	}
+
+	// Register variable management tools (extract_variables, update_variable)
+	if err := registerVariableExtractionTools(mcpAgentRef, workspacePath, logger, iwm.controller.ReadWorkspaceFile, iwm.controller.WriteWorkspaceFile, "workflow-builder"); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register variable extraction tools: %v", err))
 	}
 
 	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
@@ -3631,10 +3638,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_cost_summary tool: %v", err))
 	}
-
-	// NOTE: update_variable and manage_variable_group tools have been removed.
-	// Variable/group management is now handled via the workspace UI.
-	// The read-only tools below (get_llm_config, get_variables) are kept for discovery.
 
 	// Tool: get_llm_config — show current LLM configuration (read-only)
 	if err := mcpAgent.RegisterCustomTool(

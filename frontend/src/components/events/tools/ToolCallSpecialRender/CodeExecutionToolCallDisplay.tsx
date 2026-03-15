@@ -2,6 +2,7 @@ import React from 'react'
 import type { ToolCallStartEvent } from '../../../../generated/event-types'
 import { useExpandable } from '../../useExpandable'
 import { Plus, Minus } from 'lucide-react'
+import { getLogicalToolName, getMCPServerName } from '../../../../utils/event-helpers'
 
 interface CodeExecutionToolCallDisplayProps {
   event: ToolCallStartEvent
@@ -11,6 +12,8 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   const { isExpanded, toggle } = useExpandable(false)
   
   const toolName = event.tool_name || ''
+  const logicalToolName = getLogicalToolName(toolName)
+  const mcpServerName = getMCPServerName(toolName)
 
   const parallelBadge = event.is_parallel ? (
     <span className="ml-1.5 text-[10px] text-gray-500 dark:text-gray-400 font-normal opacity-75">
@@ -18,13 +21,13 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
     </span>
   ) : null
 
-  // Handle get_api_spec tool
-  if (toolName === 'get_api_spec') {
-    let serverName = ''
+  // Handle get_api_spec tool (also handles mcp__*__get_api_spec)
+  if (logicalToolName === 'get_api_spec') {
+    let serverName = mcpServerName || ''
     let specificToolName = ''
     try {
       const args = event.tool_params?.arguments ? JSON.parse(event.tool_params.arguments) : {}
-      serverName = args.server_name || ''
+      serverName = args.server_name || serverName
       specificToolName = args.tool_name || ''
     } catch { /* ignore */ }
 
@@ -63,7 +66,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   }
 
   // Handle execute_shell_command tool
-  if (toolName === 'execute_shell_command') {
+  if (logicalToolName === 'execute_shell_command') {
     let command = ''
     try {
       const args = event.tool_params?.arguments ? JSON.parse(event.tool_params.arguments) : {}
@@ -132,7 +135,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   }
 
   // Handle discover_code_structure tool (no parameters)
-  if (toolName === 'discover_code_structure') {
+  if (logicalToolName === 'discover_code_structure') {
     return (
       <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded p-2">
         <div className="flex items-center justify-between gap-3">
@@ -179,7 +182,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   }
 
   // Handle discover_code_files tool
-  if (toolName === 'discover_code_files') {
+  if (logicalToolName === 'discover_code_files') {
     const serverName = (parsedArgs.server_name as string) || null
     const toolNames = (parsedArgs.tool_names as string[]) || null
 
@@ -253,7 +256,7 @@ export const CodeExecutionToolCallDisplay: React.FC<CodeExecutionToolCallDisplay
   }
 
   // Handle write_code tool
-  if (toolName === 'write_code') {
+  if (logicalToolName === 'write_code') {
     const filename = (parsedArgs.filename as string) || null
     const code = (parsedArgs.code as string) || ''
     const lineCount = code.split('\n').length

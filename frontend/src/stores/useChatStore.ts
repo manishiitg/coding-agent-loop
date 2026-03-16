@@ -381,7 +381,7 @@ interface ChatState extends StoreActions {
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
   getTabsByMode: (mode: 'chat' | 'workflow') => ChatTab[]
-  getTabsByPhaseId: (phaseId: string) => ChatTab[]  // Find workflow tabs by phaseId
+  getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => ChatTab[]  // Find workflow tabs by phaseId (optionally scoped to preset)
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
@@ -1347,12 +1347,13 @@ export const useChatStore = create<ChatState>()(
         }
 
         // Dismiss session so it won't be auto-restored on page refresh (fire-and-forget)
-        if (tab.sessionId) {
+        // Skip dismiss for workflow tabs — their sessions should remain restorable via DB
+        if (tab.sessionId && tab.metadata?.mode !== 'workflow') {
           logger.info('SessionStore', `Dismissing session ${tab.sessionId} (stopSession=${stopSession})`)
           agentApi.dismissSession(tab.sessionId).catch(error => {
             logger.error('SessionStore', `Failed to dismiss session ${tab.sessionId}:`, error)
           })
-        } else {
+        } else if (!tab.sessionId) {
           logger.info('SessionStore', `Tab ${tabId} has no sessionId, skipping dismiss`)
         }
 
@@ -1441,10 +1442,12 @@ export const useChatStore = create<ChatState>()(
         return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
       },
       
-      getTabsByPhaseId: (phaseId: string) => {
+      getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => {
         const state = get()
         return Object.values(state.chatTabs).filter(
-          tab => tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === phaseId
+          tab => tab.metadata?.mode === 'workflow' &&
+            tab.metadata?.phaseId === phaseId &&
+            (!presetQueryId || tab.metadata?.presetQueryId === presetQueryId)
         )
       },
       

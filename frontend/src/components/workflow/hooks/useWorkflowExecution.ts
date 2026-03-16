@@ -296,11 +296,13 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     const chatStore = useChatStore.getState()
     const getTabStreamingStatus = chatStore.getTabStreamingStatus
     
-    // Find execution phase tab (preferred) or use active tab
-    // Filter workflow tabs by phase ID
+    // Find execution phase tab for the CURRENT preset (preferred) or use active tab
+    const activePreset = getActivePreset('workflow')
     const allTabs = Object.values(chatStore.chatTabs)
-    const executionTabs = allTabs.filter(tab => 
-      tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === EXECUTION_PHASE_ID
+    const executionTabs = allTabs.filter(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      tab.metadata?.phaseId === EXECUTION_PHASE_ID &&
+      tab.metadata?.presetQueryId === activePreset?.id
     )
     
     // Use computed streaming status (not stored property) to find running tab

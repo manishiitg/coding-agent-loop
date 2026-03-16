@@ -40,6 +40,18 @@ var planningChatSystemTemplate = MustRegisterTemplate("planningChatSystem", `## 
 - **Human Input**: Asks a question to the user and blocks until they respond. Supports response types: 'text' (free-form), 'yesno' (approve/reject), 'multiple_choice' (pick from options). Can store response in a variable via 'variable_name'. Routes based on response: 'if_yes_next_step_id'/'if_no_next_step_id' for yesno, 'option_routes' for multiple choice, 'next_step_id' as fallback.
 - **Human + Routing Pattern**: When the user needs to provide input that determines the workflow path, place a 'human_input' step BEFORE a 'routing' step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do NOT use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
 
+### 🎯 PREFER TODO TASK FOR MULTI-STEP WORK
+**Default to todo_task** when a step involves multiple distinct sub-tasks (e.g., "process 3 reports", "handle login + extraction + validation"). Benefits:
+- Each sub-agent has **independent learnings** — patterns accumulate separately, so each task improves independently over runs.
+- Sub-agents can have **different tools, servers, skills, and LLM configs** — a login sub-agent can use browser tools while a data processing sub-agent uses code execution.
+- **Parallel execution** — todo_task supports running sub-agents in parallel (configurable per step).
+- **Individual debugging** — each sub-agent can be re-run, analyzed, and optimized independently via the workshop.
+- **Granular validation** — each sub-agent has its own validation schema and success criteria.
+
+**When NOT to use todo_task**: Simple steps with a single focused task (one tool call, one output file). These are better as regular steps.
+
+**Rule of thumb**: If you're writing a step description with 3+ distinct actions (e.g., "First do X, then do Y, then do Z"), it should probably be a todo_task with sub-agents for X, Y, and Z instead.
+
 {{if eq .UseKnowledgebase "true"}}### 📁 Persistent Storage (Knowledgebase)
 - **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
 - **How to Use**: Use for global templates, reference data, or configurations shared across ALL runs. Design steps to read from here for persistent context. Use 'knowledgebase/file.ext' in descriptions.
@@ -327,6 +339,8 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["GroupInfo"] = templateVars["GroupInfo"]
 		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
+		templateData["EvaluationPlanJSON"] = templateVars["EvaluationPlanJSON"]
+		templateData["EvaluationReportJSON"] = templateVars["EvaluationReportJSON"]
 		tmpl = interactiveWorkshopSystemTemplate
 	case "human-assisted-execution":
 		// Execution-only template — same tools but no optimization/plan-modification guidance
@@ -355,6 +369,13 @@ type SchedulerCallbacks struct {
 	GetScheduleRuns func(ctx context.Context, jobID string, limit int) (string, error)
 }
 
+// SkillCallbacks provides skill management operations via callbacks from server.go.
+type SkillCallbacks struct {
+	ListSkills  func(ctx context.Context) (string, error)
+	ImportSkill func(ctx context.Context, githubURL, token string) (string, error)
+	DeleteSkill func(ctx context.Context, folderName string) error
+}
+
 // WorkshopChatSession holds the per-session controller and step registry for interactive
 // workshop in chat mode. Create with NewWorkshopChatSession; clean up with Close().
 type WorkshopChatSession struct {
@@ -365,8 +386,10 @@ type WorkshopChatSession struct {
 	toolCallQueryFunc ToolCallQueryFunc
 	mainSessionID     string
 	config            *WorkshopConfig // Original config for creating fresh controllers
-	presetQueryID     string
-	schedulerFuncs    *SchedulerCallbacks
+	presetQueryID          string
+	schedulerFuncs         *SchedulerCallbacks
+	skillFuncs             *SkillCallbacks
+	listAvailableSecrets   func(ctx context.Context) ([]string, error)
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -416,6 +439,12 @@ type WorkshopConfig struct {
 	// SchedulerFuncs provides callbacks for schedule CRUD operations.
 	// Set by server.go which has access to the database and scheduler service.
 	SchedulerFuncs       *SchedulerCallbacks
+	// SkillFuncs provides callbacks for skill import/delete operations.
+	// Set by server.go which has access to the workspace API.
+	SkillFuncs           *SkillCallbacks
+	// ListAvailableSecrets returns names of all available secrets (global + user-stored).
+	// Used by get_workflow_config to show which secrets can be added.
+	ListAvailableSecrets func(ctx context.Context) ([]string, error)
 }
 
 // NewWorkshopChatSession creates a WorkshopChatSession using the full tool/LLM config
@@ -596,8 +625,10 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		toolCallQueryFunc: cfg.ToolCallQueryFunc,
 		mainSessionID:     cfg.SessionID,
 		config:            cfg,
-		presetQueryID:     cfg.PresetQueryID,
-		schedulerFuncs:    cfg.SchedulerFuncs,
+		presetQueryID:          cfg.PresetQueryID,
+		schedulerFuncs:         cfg.SchedulerFuncs,
+		skillFuncs:             cfg.SkillFuncs,
+		listAvailableSecrets:   cfg.ListAvailableSecrets,
 	}, nil
 }
 
@@ -712,8 +743,10 @@ func RegisterWorkshopChatTools(
 		sessionCtx:        session.sessionCtx,
 		toolCallQueryFunc: session.toolCallQueryFunc,
 		mainSessionID:     session.mainSessionID,
-		presetQueryID:     session.presetQueryID,
-		schedulerFuncs:    session.schedulerFuncs,
+		presetQueryID:          session.presetQueryID,
+		schedulerFuncs:         session.schedulerFuncs,
+		skillFuncs:             session.skillFuncs,
+		listAvailableSecrets:   session.listAvailableSecrets,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger, fullMode)
 }

@@ -321,9 +321,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     const allTabs = Object.values(chatTabs)
 
     try {
-      // Filter for execution phase tabs
+      // Filter for execution phase tabs belonging to the current preset
       const executionTabs = allTabs.filter(tab =>
-        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === targetExecutionPhaseId
+        tab.metadata?.mode === 'workflow' &&
+        tab.metadata?.phaseId === targetExecutionPhaseId &&
+        tab.metadata?.presetQueryId === presetQueryId
       )
 
       // Check if any execution tab is streaming
@@ -1229,7 +1231,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     // Check if THIS SPECIFIC phase's tab is running (not just any tab)
     const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
-    const phaseTabs = getTabsByPhaseId(phaseId)
+    const phaseTabs = getTabsByPhaseId(phaseId, presetQueryId || undefined)
     const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
     const isPhaseRunning = phaseTabs.some(tab => getTabStreamingStatus(tab.tabId))
     
@@ -1418,7 +1420,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       const chatStore = useChatStore.getState()
       const allTabs = Object.values(chatStore.chatTabs)
       const executionTabs = allTabs.filter(tab =>
-        tab.metadata?.mode === 'workflow' && tab.metadata?.phaseId === targetExecutionPhaseId
+        tab.metadata?.mode === 'workflow' &&
+        tab.metadata?.phaseId === targetExecutionPhaseId &&
+        tab.metadata?.presetQueryId === presetQueryId
       )
       const existingExecutionTab = executionTabs.length > 0 ? executionTabs[0] : null
 
@@ -1567,7 +1571,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   // Check if current phase is running
                   const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
                   const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
-                  const currentPhaseTabs = currentPhase ? getTabsByPhaseId(currentPhase) : []
+                  const currentPhaseTabs = currentPhase ? getTabsByPhaseId(currentPhase, presetQueryId || undefined) : []
                   const isCurrentPhaseRunning = currentPhaseTabs.some(tab => getTabStreamingStatus(tab.tabId))
                   
                   if (isCurrentPhaseRunning && !isExecutionPhase) {
@@ -1619,7 +1623,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       // Check if THIS specific phase is running or completed
                       const getTabsByPhaseId = useChatStore.getState().getTabsByPhaseId
                       const getTabStreamingStatus = useChatStore.getState().getTabStreamingStatus
-                      const phaseTabs = getTabsByPhaseId(phase.id)
+                      const phaseTabs = getTabsByPhaseId(phase.id, presetQueryId || undefined)
                       // Find the most recent or active tab for this phase
                       const activePhaseTab = phaseTabs.length > 0 
                         ? phaseTabs.sort((a, b) => b.createdAt - a.createdAt)[0] // Most recent

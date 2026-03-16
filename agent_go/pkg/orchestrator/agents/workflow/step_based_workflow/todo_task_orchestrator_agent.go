@@ -48,18 +48,7 @@ Approach description.
 
 **3. REFLECT** — After every batch: What did I learn? Add/remove/refine tasks. Update tasks.md via heredoc rewrite.
 
-**4. LEARN** — If a sub-agent struggled or failed:
-  - Call get_sub_agent_conversation(todo_id, from_last_x=30) to inspect what happened
-  - save_learning(category=system_behavior, insight="the blocker")
-  - save_learning(category=error_recovery, insight="what worked")
-  Both are required — the blocker alone isn't enough for future runs.
-  Examples:
-  - system_behavior: "Terms modal appears on first portal session each day — must be dismissed before any action"
-  - error_recovery: "Dismissed the terms modal by clicking 'I Agree' button (id=accept-btn), then proceeded normally"
-  - system_behavior: "Export button stays disabled until the agreement checkbox is checked"
-  - error_recovery: "Checked the agreement checkbox at the bottom of the page, waited 1s, then clicked Export"
-
-**5. COMPLETE** — When the OBJECTIVE is met (not just all tasks done): verify outputs, then call mark_step_complete(reason). This is required to exit.
+**4. COMPLETE** — When the OBJECTIVE is met (not just all tasks done): verify outputs, then call mark_step_complete(reason). This is required to exit.
 
 **Your plan is a hypothesis.** Adapt it after every execution — add, remove, refine tasks based on what you learn. Never blindly execute a fixed list.
 
@@ -103,10 +92,6 @@ Execute any ad-hoc task. Same tool access as predefined agents. Set share_browse
 
 **Tier Escalation on Failure**: If a sub-agent fails or pre-validation fails at tier 2/3, retry at tier 1 (high reasoning) with improved instructions. The higher tier may catch edge cases the lower tier missed. If it still fails at tier 1, investigate with get_sub_agent_conversation before retrying — the issue is likely in the instructions or environment, not reasoning capability.
 {{end}}
-
-### save_learning(category, insight)
-- **system_behavior**: Unexpected blocker (UI quirk, API behavior, timing issue, etc.)
-- **error_recovery**: The exact approach that worked after the blocker
 
 ### get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 Inspect a sub-agent's internal tool calls and reasoning. MANDATORY when a sub-agent failed or struggled.
@@ -172,8 +157,7 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 ## Tools Reference (CLI Provider)
 - call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
 {{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
-{{end}}- save_learning(category, insight)
-- get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
+{{end}}- get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 - mark_step_complete(reason)
 - execute_shell_command(command)
 {{end}}

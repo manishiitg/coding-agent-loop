@@ -12,6 +12,7 @@ import (
 
 	"os"
 
+	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -392,8 +393,21 @@ type InteractiveWorkshopManager struct {
 	sessionCtx         context.Context    // long-lived ctx for background goroutines
 	toolCallQueryFunc  ToolCallQueryFunc  // optional: query live tool calls for running steps
 	mainSessionID      string             // event store session ID for tool call queries
-	presetQueryID      string             // preset ID for schedule management
-	schedulerFuncs     *SchedulerCallbacks // schedule CRUD callbacks from server.go
+	presetQueryID          string             // preset ID for schedule management
+	schedulerFuncs         *SchedulerCallbacks // schedule CRUD callbacks from server.go
+	skillFuncs             *SkillCallbacks     // skill import/delete callbacks from server.go
+	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
+}
+
+// refreshVariablesManifest reloads the variables manifest from file into the controller.
+// Call this before using iwm.controller.variablesManifest to avoid stale data.
+func (iwm *InteractiveWorkshopManager) refreshVariablesManifest(ctx context.Context) {
+	manifest, err := readVariablesFromFile(ctx, iwm.controller.GetWorkspacePath(), func(ctx context.Context, path string) (string, error) {
+		return iwm.controller.ReadWorkspaceFile(ctx, path)
+	})
+	if err == nil && manifest != nil {
+		iwm.controller.variablesManifest = manifest
+	}
 }
 
 // NewInteractiveWorkshopManager creates a new InteractiveWorkshopManager
@@ -619,11 +633,15 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 You are a workflow builder agent. You help users build, run, optimize, and debug workflow steps — all in a single free-flow conversation.
 
 ## 🤖 ROLE
-- Execute workflow steps in the background and report results
+- **Your base workflow folder is: {{.WorkspacePath}}** — all workflow files (plan.json, step configs, learnings, runs, knowledgebase) live here.
+- **You have access to a higher-reasoning model** than the step execution agents (which use smaller models). Use this to your advantage — you can run tasks yourself when needed, investigate issues deeply, and share learnings/instructions with step agents to guide them effectively.
+- **You have access to all the same MCP servers, tools, secrets, and skills** that step execution agents have. You can directly use any tool a step agent would use — browser, APIs, file operations, etc.
+- When a step agent struggles or fails, consider running the task yourself first to understand it, then encode what you learned into the step's instructions so the execution agent can succeed next time.
+- Execute workflow steps in the background via **execute_step** and report results
 - Update the plan (add, remove, edit steps) using plan modification tools
 - Update step configs (servers, tools, disable_learning, etc.)
-- Delegate debugging and analysis to background agents (optimize_step, generate_learnings) — do NOT read execution logs or conversation history yourself
-- Run shell commands only for quick checks (ls, cat output files) — NOT for investigating execution logs
+- Delegate debugging and analysis to background agents (optimize_step, generate_learnings) when appropriate
+- Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (get_step_details, debug_step, get_workflow_config, etc.).
 
@@ -726,7 +744,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **stop_step(execution_id)** — Cancel a running step
 
 ### Step Config & Analysis
-- **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
+- **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, enabled_skills, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
 - **analyze_step(step_id)** — Analyze a step's config and execution history; returns optimization suggestions
 - **generate_learnings(step_id, guidance?, execution_history?)** — Start the learning agent in the background. You will be automatically notified when it completes. Optionally provide human guidance to focus on specific patterns (e.g., "focus on the API pagination pattern"). If you ran the test yourself (not via execute_step), pass your recent tool calls as execution_history — the learning agent will use that directly instead of reading execution logs.
 - **optimize_step(step_id, focus?)** — Start a background optimization agent. Analyzes logs, output, learnings, and config for a step. You will be automatically notified when it completes. Optionally provide focus guidance (e.g., "learnings quality", "tool usage", "output correctness").
@@ -737,19 +755,35 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **get_workflow_config** — **Use this to see the full workflow configuration.** Shows: MCP servers (selected + all available with descriptions), skills, secrets (names only), and LLM config (tiered allocation with fallbacks, preset defaults). Always use this tool when asked about MCP servers, skills, secrets, or LLM config — do NOT explore the filesystem.
 - **get_llm_config** — Show per-step LLM overrides from step_config.json (for workflow-level LLM config, use get_workflow_config instead)
 - **get_variables** — Read current variable definitions and group configurations
+
+### Variable Management
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
 - **extract_variables(text)** — Analyze text to identify hard-coded values that should become variables
+- **add_group(display_name?, values?)** — Create a new variable group with optional name and initial values
+- **update_group(group_id, display_name?, values?, enabled?)** — Update a group's name, values, or enabled status
+- **delete_group(group_id)** — Delete a variable group (cannot delete the last group)
 
 ### Workflow Config
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow config: add/remove MCP servers, skills, or secrets. Use get_workflow_config first to see available options. Changes take effect immediately for subsequent step executions.
 
 ### Schedule Management
 - **list_schedules** — List all cron schedules for this workflow
-- **create_schedule(name, cron_expression, timezone?, group_ids?)** — Create a new cron schedule
-- **update_schedule(job_id, name?, cron_expression?, timezone?, group_ids?, enabled?)** — Update a schedule
+- **create_schedule(name, cron_expression, timezone?, group_ids?)** — Create a new cron schedule. Use get_variables first to look up group IDs if the user wants specific groups.
+- **update_schedule(job_id, name?, cron_expression?, timezone?, group_ids?, enabled?)** — Update a schedule. Use get_variables to look up group IDs.
 - **delete_schedule(job_id)** — Delete a schedule
 - **trigger_schedule(job_id)** — Manually trigger a schedule run now
 - **get_schedule_runs(job_id, limit?)** — View run history for a schedule
+
+### Skill Management
+- **list_skills** — List all available skills (selected + discovered) in the workspace
+- **import_skill(github_url, token?)** — Import a skill from GitHub into the workspace
+- **delete_skill(folder_name)** — Delete a skill from the workspace
+
+### Evaluation
+- **add_evaluation_step(id, title, description, success_criteria)** — Add a new evaluation step
+- **update_evaluation_step(existing_step_id, title?, description?, success_criteria?)** — Update an evaluation step
+- **delete_evaluation_steps** — Delete evaluation steps
+- **run_full_evaluation(target_run_folder)** — Run ALL eval steps + scoring against a target execution run (e.g., 'iteration-1'). Generates evaluation_report.json. Runs in background.
 
 ### Plan Modification
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
@@ -757,7 +791,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
 - **Validation & criteria**: update_validation_schema, update_success_criteria
-- **Variables**: extract_variables, update_variable
+- **Variables**: extract_variables, update_variable, add_group, update_group, delete_group
 
 ### Shell & Human
 - **execute_shell_command** — Run shell commands for investigation
@@ -906,25 +940,30 @@ When the user asks to enable code execution for a step, use: update_step_config(
 - **Already-optimized steps** (optimized=true in step_config) skip the optimization prompt on completion — the notification just says "proceed to next step".
 - **Reset optimization** (optimized=false) only if you make major changes to the step description, tools, or validation schema — then re-run and re-optimize once.
 
-### 9. Todo Task Sub-Agent Design
-When creating a **todo_task** step, prefer breaking known, predictable tasks into **predefined sub-agents** (routes) rather than leaving them as inline orchestrator instructions. Sub-agents accumulate their own learnings and run more predictably over time.
+### 9. Todo Task — The Preferred Multi-Step Pattern
+**Default to todo_task** when a step involves multiple distinct sub-tasks. This is the most powerful step type — it gives each sub-task independent learnings, tools, skills, and debugging.
 
-**When to use sub-agents:**
-- The task is **known in advance** and will run every time the step executes (e.g., "login to portal", "extract table data", "generate report")
-- The task is **repeatable** — it follows the same pattern across runs, even if inputs vary
-- The task is **self-contained** — it has clear inputs, outputs, and can be validated independently
+**When to use todo_task (prefer this over a single large regular step):**
+- The step has **3+ distinct actions** (e.g., "login, extract data, generate report") — each becomes a sub-agent
+- Sub-tasks need **different tools/skills/servers** (e.g., browser for login, code-exec for processing)
+- Sub-tasks should **learn independently** — a login pattern shouldn't be mixed with data extraction learnings
+- You want **parallel execution** — todo_task supports running sub-agents in parallel
+- You need **granular debugging** — each sub-agent can be individually re-run and optimized
 
-**When NOT to use sub-agents:**
-- The task is **dynamic/unpredictable** — it depends entirely on runtime context and can't be anticipated
+**When NOT to use todo_task:**
+- Simple steps with a **single focused task** (one tool call, one output file) — use regular step
+- The task is **dynamic/unpredictable** — depends entirely on runtime context that can't be anticipated
 - The task is **trivial** — a one-line action that doesn't benefit from learning
 
-**Why this matters:**
-- Each sub-agent has its own **learning files** — patterns, error handling, and optimizations accumulate over runs
+**Sub-agent design:**
+- Break known, predictable tasks into **predefined sub-agents** (routes) rather than leaving them as inline orchestrator instructions
+- Each sub-agent has its own **learning files**, **server/tool scoping**, **skills (via enabled_skills in step_config)**, and **validation schemas**
 - Sub-agents can be **individually debugged, re-run, and optimized** via the workshop tools
-- Sub-agents can have their own **server/tool scoping** and **validation schemas**, making them more reliable
 - The orchestrator stays lean — it manages task flow, while sub-agents handle execution details
 
-**Design principle:** If you find yourself writing a detailed description for a specific task inside a todo_task step, that task should probably be a sub-agent instead.
+**Design principle:** If you find yourself writing a step description with "First do X, then do Y, then do Z", convert it to a todo_task with sub-agents for X, Y, and Z. Each sub-agent gets its own learnings, tools, and optimization lifecycle.
+
+**Rule of thumb:** When planning a new workflow, start by identifying the distinct tasks, then group related tasks into todo_task steps with sub-agents. Only use regular steps for truly simple, single-purpose tasks.
 
 ## 📂 WORKSPACE FILE LAYOUT
 
@@ -965,7 +1004,46 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 ### Current Plan
 {{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}No plan available.{{end}}
 
+{{if .EvaluationPlanJSON}}### Evaluation Plan
+` + "```json\n{{.EvaluationPlanJSON}}\n```" + `
+{{end}}{{if .EvaluationReportJSON}}### Latest Evaluation Report
+` + "```json\n{{.EvaluationReportJSON}}\n```" + `
+{{end}}
+## 📊 EVALUATION
+
+Evaluation plans test execution quality. Each eval step checks one execution step's output.
+
+**Evaluation files:**
+- **Plan**: 'evaluation/evaluation_plan.json'
+- **Reports**: 'evaluation/runs/{runFolder}/evaluation_report.json'
+- **Learnings**: 'evaluation/learnings/{stepID}/'
+
+**Workflow:**
+1. Create eval steps with **add_evaluation_step** — each targets an execution step and defines scoring criteria
+2. Run **run_full_evaluation(target_run_folder)** to score all eval steps against an execution run
+3. Review the evaluation report — low scores (< 5) need tighter criteria or better step descriptions
+4. Iterate: fix execution steps or refine eval criteria, then re-run
+
+**Eval step design tips:**
+- Be specific — reference exact file names, expected fields, formats
+- Use 0-10 scoring scale with clear rubric for each range
+- If all scores are 8-10 but outputs look mediocre, tighten the criteria
+
 ## 📖 STEP EXECUTION WORKFLOW
+
+### Understanding Iterations
+
+**Iterations are just output folders** — they organize run results, NOT plan snapshots. There is NO caching or snapshotting of plan.json. Every time you call execute_step, the system re-reads the **latest** plan.json from the workspace. You do NOT need a new iteration after modifying the plan, step descriptions, validation schemas, or learnings. You can keep re-running on the same iteration.
+
+**When to use a new iteration:**
+- When the user explicitly asks for one
+- When you want a clean output folder to compare results before/after a change
+- When running a fresh batch of all steps from scratch
+
+**When NOT to create a new iteration:**
+- After editing plan.json, step configs, or learnings — just re-run on the same iteration
+- After changing validation schemas — same iteration works fine
+- After optimizing a step — re-run on the same iteration to verify
 
 ### Before Running Any Step — Always Determine Iteration and Group First
 
@@ -1066,11 +1144,15 @@ var humanAssistedExecutionSystemTemplate = MustRegisterTemplate("humanAssistedEx
 You are a workflow execution assistant. You help users run workflow steps interactively — choosing which steps to run, monitoring progress, and reporting results.
 
 ## 🤖 ROLE
-- Execute workflow steps in the background and report results
+- **Your base workflow folder is: {{.WorkspacePath}}** — all workflow files (plan.json, step configs, learnings, runs, knowledgebase) live here.
+- **You have access to a higher-reasoning model** than the step execution agents (which use smaller models). Use this to your advantage — you can run tasks yourself when needed, investigate issues deeply, and share learnings/instructions with step agents to guide them effectively.
+- **You have access to all the same MCP servers, tools, secrets, and skills** that step execution agents have. You can directly use any tool a step agent would use — browser, APIs, file operations, etc.
+- When a step agent struggles or fails, consider running the task yourself first to understand it, then encode what you learned into the step's instructions so the execution agent can succeed next time.
+- Execute workflow steps in the background via **execute_step** and report results
 - Help the user choose which steps to run and in what order
 - Report step results clearly and concisely
 - Debug execution failures and help the user understand what went wrong
-- Run shell commands only for quick checks (ls, cat output files) — NOT for investigating execution logs
+- Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the tools (get_step_details, debug_step, get_workflow_config, etc.).
 
@@ -1097,6 +1179,13 @@ You are a workflow execution assistant. You help users run workflow steps intera
 - **get_workflow_config** — See full workflow config: MCP servers (selected + available with descriptions), skills, secrets (names only), LLM config (tiered + defaults with fallbacks)
 - **get_llm_config** — Show per-step LLM overrides from step_config.json
 - **get_variables** — Read variable definitions and group configurations
+
+### Variable Management
+- **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
+- **extract_variables(text)** — Analyze text to identify hard-coded values that should become variables
+- **add_group(display_name?, values?)** — Create a new variable group with optional name and initial values
+- **update_group(group_id, display_name?, values?, enabled?)** — Update a group's name, values, or enabled status
+- **delete_group(group_id)** — Delete a variable group (cannot delete the last group)
 
 ### Shell & Human
 - **execute_shell_command** — Run shell commands for investigation
@@ -1152,6 +1241,13 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 {{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}No plan available.{{end}}
 
 ## 📖 STEP EXECUTION WORKFLOW
+
+### Understanding Iterations
+
+**Iterations are just output folders** — they organize run results, NOT plan snapshots. There is NO caching or snapshotting of plan.json. Every time you call execute_step, the system re-reads the **latest** plan.json from the workspace. You do NOT need a new iteration after modifying the plan, step descriptions, validation schemas, or learnings.
+
+**When to use a new iteration:** only when the user asks, or for a clean comparison.
+**When NOT to:** after editing plan/configs/learnings — just re-run on the same iteration.
 
 ### Before Running Any Step — Always Determine Iteration and Group First
 
@@ -1244,10 +1340,8 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register plan modification tools: %v", err))
 	}
 
-	// Register variable management tools (extract_variables, update_variable)
-	if err := registerVariableExtractionTools(mcpAgentRef, workspacePath, logger, iwm.controller.ReadWorkspaceFile, iwm.controller.WriteWorkspaceFile, "workflow-builder"); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register variable extraction tools: %v", err))
-	}
+	// Variable management tools (update_variable, extract_variables, group CRUD)
+	// are registered inside registerInteractiveWorkshopTools for both full and HAE modes.
 
 	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
 	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger, true)
@@ -1268,6 +1362,45 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	}
 	if err := interactiveWorkshopUserTemplate.Execute(&userMessage, templateVars); err != nil {
 		return "", nil, err
+	}
+
+	// Append browser instructions if browser tools are available in this workflow
+	hasBrowser := false
+	for _, sk := range iwm.controller.GetSelectedSkills() {
+		if sk == "agent-browser" {
+			hasBrowser = true
+			break
+		}
+	}
+	if !hasBrowser {
+		for _, s := range iwm.controller.GetSelectedServers() {
+			if s == "playwright" || s == "camofox" {
+				hasBrowser = true
+				break
+			}
+		}
+	}
+	if hasBrowser {
+		systemPrompt.WriteString("\n\n")
+		systemPrompt.WriteString(instructions.GetAgentBrowserQuickStartInstructions())
+		systemPrompt.WriteString(instructions.GetBrowserUploadInstructions())
+		if iwm.controller.GetCdpPort() > 0 {
+			systemPrompt.WriteString(instructions.GetCdpModeInstructions())
+		} else {
+			systemPrompt.WriteString(instructions.GetHeadlessModeInstructions())
+		}
+		logger.Info("🌐 Added browser instructions to workflow builder system prompt")
+	}
+
+	// Append secrets to system prompt so the workshop agent knows what's available
+	effectiveSecrets := GetEffectiveSecrets(iwm.controller.BaseOrchestrator)
+	if len(effectiveSecrets) > 0 {
+		secretPrompt := BuildWorkflowSecretPrompt(effectiveSecrets)
+		if secretPrompt != "" {
+			systemPrompt.WriteString("\n\n")
+			systemPrompt.WriteString(secretPrompt)
+			logger.Info(fmt.Sprintf("🔐 Added secret prompt to workflow builder (%d secrets)", len(effectiveSecrets)))
+		}
 	}
 
 	sessionID := templateVars["SessionID"]
@@ -1614,6 +1747,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "No runs found. This workflow has not been executed yet. A new iteration-1 will be created on first execute_step.", nil
 			}
 
+			// Refresh manifest from file to avoid stale group data
+			iwm.refreshVariablesManifest(ctx)
+
 			// Build folder-name → group_id lookup from manifest
 			folderToGroupID := map[string]string{}
 			if iwm.controller.variablesManifest != nil {
@@ -1672,6 +1808,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			"properties": map[string]interface{}{},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			// Refresh manifest from file to avoid stale group data
+			iwm.refreshVariablesManifest(ctx)
 			manifest := iwm.controller.variablesManifest
 			if manifest == nil || !manifest.HasGroups() {
 				if manifest != nil && len(manifest.Variables) > 0 {
@@ -1797,6 +1935,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// Build run_folder from iteration + group folder name
+			// Refresh manifest from file to avoid stale group data
+			iwm.refreshVariablesManifest(ctx)
 			// Resolve group folder name from group_id (uses sanitized display name or group_id)
 			groupFolderName := groupID
 			if iwm.controller.variablesManifest != nil && groupID != "" {
@@ -2170,6 +2310,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "group_id is required (e.g., 'group-1'). Use list_groups to see available groups.", nil
 			}
 
+			// Refresh manifest from file to avoid stale group data
+			iwm.refreshVariablesManifest(ctx)
 			// Resolve group folder name and build run folder
 			groupFolderName := groupID
 			if iwm.controller.variablesManifest != nil {
@@ -2442,6 +2584,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Tool names always available in Tool Search mode without calling search_tools. Use raw tool names (e.g., 'read_sheet', 'list_files'), not server:tool format.",
 				},
+				"enabled_skills": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Skill folder names to enable for this step (overrides workflow-level skills). Use list_skills or get_workflow_config to see available skills. Set to empty array to use workflow defaults.",
+				},
 				"disable_knowledgebase": map[string]interface{}{
 					"type":        "boolean",
 					"description": "If true, disable knowledgebase access for this step (removes knowledgebase read/write paths from folder guard). Useful for steps that don't need persistent storage.",
@@ -2626,6 +2773,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 					}
 					targetConfig.AgentConfigs.PreDiscoveredTools = pdTools
+				}
+			}
+			if val, ok := args["enabled_skills"]; ok && val != nil {
+				if arr, ok := val.([]interface{}); ok {
+					enabledSkills := make([]string, 0, len(arr))
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							enabledSkills = append(enabledSkills, s)
+						}
+					}
+					targetConfig.AgentConfigs.EnabledSkills = enabledSkills
 				}
 			}
 			if val, ok := args["disable_knowledgebase"]; ok && val != nil {
@@ -4382,10 +4540,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	} // end if fullMode — builder-only tools (run_background_task, get_llm_config)
 
-	// Tool: get_variables — read-only view of current variables (no management)
+	// Tool: get_variables — read current variable definitions and group configurations
 	if err := mcpAgent.RegisterCustomTool(
 		"get_variables",
-		"Read current variable definitions and their values. Shows the base variable definitions and group configurations. For managing variables, use the workspace UI.",
+		"Read current variable definitions and their values. Shows the base variable definitions and group configurations.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -4431,6 +4589,272 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_variables tool: %v", err))
+	}
+
+	// Tool: update_variable — add, update, or delete variables
+	updateVariableSchema := getUpdateVariableSchema()
+	updateVariableParams, parseErr := parseSchemaForToolParameters(updateVariableSchema)
+	if parseErr != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to parse update_variable schema: %v", parseErr))
+	} else if err := mcpAgent.RegisterCustomTool(
+		"update_variable",
+		"Update, add, or delete variables in variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update (name, value, description). The variables.json file is updated immediately.",
+		updateVariableParams,
+		createUpdateVariableExecutor(iwm.controller.GetWorkspacePath(), logger,
+			func(ctx context.Context, path string) (string, error) {
+				return iwm.controller.ReadWorkspaceFile(ctx, path)
+			},
+			func(ctx context.Context, path string, content string) error {
+				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
+			}),
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_variable tool: %v", err))
+	}
+
+	// Tool: extract_variables — analyze text and identify hard-coded values that should become variables
+	extractVariablesSchema := getExtractVariablesSchema()
+	extractVariablesParams, parseErr2 := parseSchemaForToolParameters(extractVariablesSchema)
+	if parseErr2 != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to parse extract_variables schema: %v", parseErr2))
+	} else if err := mcpAgent.RegisterCustomTool(
+		"extract_variables",
+		"Extract variables from text or objective. Provide the text to analyze, and the tool will guide you to extract hard-coded values (URLs, account IDs, ports, credentials, resource names, etc.) as variables. After extraction, use update_variable tool to add each variable.",
+		extractVariablesParams,
+		createExtractVariablesExecutor(iwm.controller.GetWorkspacePath(), logger,
+			func(ctx context.Context, path string) (string, error) {
+				return iwm.controller.ReadWorkspaceFile(ctx, path)
+			},
+			func(ctx context.Context, path string, content string) error {
+				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
+			}),
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register extract_variables tool: %v", err))
+	}
+
+	// Tool: add_group — create a new variable group
+	if err := mcpAgent.RegisterCustomTool(
+		"add_group",
+		"Create a new variable group. Optionally provide a display_name and initial values. The new group will have all defined variables with empty values by default.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"display_name": map[string]interface{}{
+					"type":        "string",
+					"description": "User-friendly name for the group (e.g., 'Production', 'Staging'). If not provided, defaults to the group_id.",
+				},
+				"values": map[string]interface{}{
+					"type":        "object",
+					"description": "Optional initial variable values as key-value pairs (e.g., {\"API_URL\": \"https://prod.example.com\"}). Variables not specified will have empty values.",
+					"additionalProperties": map[string]interface{}{
+						"type": "string",
+					},
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			readFile := func(ctx context.Context, path string) (string, error) {
+				return iwm.controller.ReadWorkspaceFile(ctx, path)
+			}
+			writeFile := func(ctx context.Context, path string, content string) error {
+				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
+			}
+			workspacePath := iwm.controller.GetWorkspacePath()
+
+			manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+			if err != nil {
+				// Create new manifest if none exists
+				manifest = &VariablesManifest{
+					Variables:      []Variable{},
+					Groups:         []VariableGroup{},
+					ExtractionDate: time.Now().Format(time.RFC3339),
+				}
+			}
+
+			newGroup := manifest.AddGroup()
+
+			// Set display name if provided
+			if displayName, ok := args["display_name"].(string); ok && displayName != "" {
+				newGroup.DisplayName = displayName
+			}
+
+			// Set initial values if provided
+			if values, ok := args["values"].(map[string]interface{}); ok {
+				for k, v := range values {
+					if strVal, ok := v.(string); ok {
+						newGroup.Values[k] = strVal
+					}
+				}
+			}
+
+			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+				return "", fmt.Errorf("failed to write variables: %w", err)
+			}
+
+			displayName := newGroup.DisplayName
+			if displayName == "" {
+				displayName = newGroup.GroupID
+			}
+			return fmt.Sprintf("Created new group: %s (group_id: %s) with %d variables", displayName, newGroup.GroupID, len(newGroup.Values)), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register add_group tool: %v", err))
+	}
+
+	// Tool: update_group — update an existing variable group's display_name, values, or enabled status
+	if err := mcpAgent.RegisterCustomTool(
+		"update_group",
+		"Update a variable group. Provide group_id (required) and fields to change: display_name, values (key-value map), enabled (true/false). Only provided fields are updated.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The group_id of the group to update (e.g., 'group-1')",
+				},
+				"display_name": map[string]interface{}{
+					"type":        "string",
+					"description": "New display name for the group",
+				},
+				"values": map[string]interface{}{
+					"type":        "object",
+					"description": "Variable values to set or update as key-value pairs. Only specified variables are updated; others remain unchanged.",
+					"additionalProperties": map[string]interface{}{
+						"type": "string",
+					},
+				},
+				"enabled": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Enable or disable the group for execution",
+				},
+			},
+			"required": []interface{}{"group_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			groupID, ok := args["group_id"].(string)
+			if !ok || groupID == "" {
+				return "", fmt.Errorf("group_id is required")
+			}
+
+			readFile := func(ctx context.Context, path string) (string, error) {
+				return iwm.controller.ReadWorkspaceFile(ctx, path)
+			}
+			writeFile := func(ctx context.Context, path string, content string) error {
+				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
+			}
+			workspacePath := iwm.controller.GetWorkspacePath()
+
+			manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", fmt.Errorf("failed to read variables: %w", err)
+			}
+
+			// Find the group
+			groupIdx := -1
+			for i := range manifest.Groups {
+				if manifest.Groups[i].GroupID == groupID {
+					groupIdx = i
+					break
+				}
+			}
+			if groupIdx == -1 {
+				return "", fmt.Errorf("group %s not found", groupID)
+			}
+
+			changes := []string{}
+
+			// Update display_name
+			if displayName, ok := args["display_name"].(string); ok {
+				manifest.Groups[groupIdx].DisplayName = displayName
+				changes = append(changes, fmt.Sprintf("display_name=%s", displayName))
+			}
+
+			// Update enabled
+			if enabled, ok := args["enabled"].(bool); ok {
+				manifest.Groups[groupIdx].Enabled = enabled
+				changes = append(changes, fmt.Sprintf("enabled=%v", enabled))
+			}
+
+			// Update values (merge, don't replace)
+			if values, ok := args["values"].(map[string]interface{}); ok {
+				if manifest.Groups[groupIdx].Values == nil {
+					manifest.Groups[groupIdx].Values = make(map[string]string)
+				}
+				for k, v := range values {
+					if strVal, ok := v.(string); ok {
+						manifest.Groups[groupIdx].Values[k] = strVal
+						changes = append(changes, fmt.Sprintf("%s=%s", k, strVal))
+					}
+				}
+			}
+
+			if len(changes) == 0 {
+				return "No changes specified", nil
+			}
+
+			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+				return "", fmt.Errorf("failed to write variables: %w", err)
+			}
+
+			return fmt.Sprintf("Updated group %s: %s", groupID, strings.Join(changes, ", ")), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_group tool: %v", err))
+	}
+
+	// Tool: delete_group — remove a variable group
+	if err := mcpAgent.RegisterCustomTool(
+		"delete_group",
+		"Delete a variable group by group_id. Cannot delete the last remaining group.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The group_id of the group to delete (e.g., 'group-2')",
+				},
+			},
+			"required": []interface{}{"group_id"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			groupID, ok := args["group_id"].(string)
+			if !ok || groupID == "" {
+				return "", fmt.Errorf("group_id is required")
+			}
+
+			readFile := func(ctx context.Context, path string) (string, error) {
+				return iwm.controller.ReadWorkspaceFile(ctx, path)
+			}
+			writeFile := func(ctx context.Context, path string, content string) error {
+				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
+			}
+			workspacePath := iwm.controller.GetWorkspacePath()
+
+			manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", fmt.Errorf("failed to read variables: %w", err)
+			}
+
+			if len(manifest.Groups) <= 1 {
+				return "", fmt.Errorf("cannot delete the last remaining group")
+			}
+
+			if !manifest.DeleteGroup(groupID) {
+				return "", fmt.Errorf("group %s not found", groupID)
+			}
+
+			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
+				return "", fmt.Errorf("failed to write variables: %w", err)
+			}
+
+			return fmt.Sprintf("Deleted group %s. Remaining groups: %d", groupID, len(manifest.Groups)), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register delete_group tool: %v", err))
 	}
 
 	// Tool: get_workflow_config — read-only view of workflow-level settings (MCP servers, skills, secrets, LLM config)
@@ -4531,9 +4955,32 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if len(secrets) == 0 {
 				sb.WriteString("No secrets configured for this workflow.\n")
 			} else {
-				sb.WriteString("The following named credentials are configured (values hidden):\n")
+				sb.WriteString("**Selected** (values hidden):\n")
 				for _, s := range secrets {
 					sb.WriteString(fmt.Sprintf("- **%s**\n", s.Name))
+				}
+			}
+
+			// Show available secrets that can be added
+			if iwm.listAvailableSecrets != nil {
+				allSecretNames, listErr := iwm.listAvailableSecrets(ctx)
+				if listErr == nil && len(allSecretNames) > 0 {
+					selectedSet := make(map[string]bool, len(secrets))
+					for _, s := range secrets {
+						selectedSet[s.Name] = true
+					}
+					var available []string
+					for _, name := range allSecretNames {
+						if !selectedSet[name] {
+							available = append(available, name)
+						}
+					}
+					if len(available) > 0 {
+						sb.WriteString("\n**Available to add** (use update_workflow_config with add_secrets):\n")
+						for _, name := range available {
+							sb.WriteString(fmt.Sprintf("- %s\n", name))
+						}
+					}
 				}
 			}
 
@@ -4877,7 +5324,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Variable group IDs to run. Empty = run all groups.",
+					"description": "Variable group IDs to run (e.g., 'group-1', 'group-2'). Use get_variables to see available groups. Empty = run all groups.",
 				},
 			},
 			"required": []string{"name", "cron_expression"},
@@ -4941,7 +5388,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "New variable group IDs. Pass empty array to clear (run all groups).",
+					"description": "New variable group IDs (e.g., 'group-1', 'group-2'). Use get_variables to see available groups. Pass empty array to clear (run all groups).",
 				},
 				"enabled": map[string]interface{}{
 					"type":        "boolean",
@@ -5087,6 +5534,96 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 
 	} // end if fullMode — schedule management tools
+
+	// === Builder-only skill management tools ===
+	if fullMode {
+
+	// Tool: list_skills — List all available skills in the workspace
+	if err := mcpAgent.RegisterCustomTool(
+		"list_skills",
+		"List all available skills in the workspace. Shows both selected skills (used by this workflow) and all discovered skills.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.skillFuncs == nil {
+				return "Skill management not available in this session.", nil
+			}
+			return iwm.skillFuncs.ListSkills(ctx)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_skills tool: %v", err))
+	}
+
+	// Tool: import_skill — Import a skill from GitHub
+	if err := mcpAgent.RegisterCustomTool(
+		"import_skill",
+		"Import a skill from GitHub into the workspace. The skill will be downloaded and available for use in workflows. Use list_skills first to see what's already available.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"github_url": map[string]interface{}{
+					"type":        "string",
+					"description": "GitHub URL of the skill to import. Can be a repository URL or a path to a specific skill folder (e.g., 'https://github.com/org/repo/tree/main/skills/my-skill').",
+				},
+				"token": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional GitHub personal access token for private repositories.",
+				},
+			},
+			"required": []string{"github_url"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.skillFuncs == nil {
+				return "Skill management not available in this session.", nil
+			}
+			githubURL, _ := args["github_url"].(string)
+			if githubURL == "" {
+				return "github_url is required.", nil
+			}
+			token, _ := args["token"].(string)
+			return iwm.skillFuncs.ImportSkill(ctx, githubURL, token)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register import_skill tool: %v", err))
+	}
+
+	// Tool: delete_skill — Delete a skill from the workspace
+	if err := mcpAgent.RegisterCustomTool(
+		"delete_skill",
+		"Delete a skill from the workspace. Use list_skills first to see available skills and their folder names.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_name": map[string]interface{}{
+					"type":        "string",
+					"description": "The folder name of the skill to delete (from list_skills).",
+				},
+			},
+			"required": []string{"folder_name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.skillFuncs == nil {
+				return "Skill management not available in this session.", nil
+			}
+			folderName, _ := args["folder_name"].(string)
+			if folderName == "" {
+				return "folder_name is required.", nil
+			}
+			if err := iwm.skillFuncs.DeleteSkill(ctx, folderName); err != nil {
+				return fmt.Sprintf("Failed to delete skill %q: %v", folderName, err), nil
+			}
+			return fmt.Sprintf("Successfully deleted skill %q from workspace.", folderName), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register delete_skill tool: %v", err))
+	}
+
+	} // end if fullMode — skill management tools
 
 }
 

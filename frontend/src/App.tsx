@@ -23,6 +23,7 @@ import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
 import { ModePresetBar } from "./components/ModePresetBar";
+import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
 import { useAppStore, useMCPStore, useGlobalPresetStore, useWorkspaceStore, useWorkflowStore, useChatStore } from "./stores";
 import { restoreSession } from "./utils/sessionRestore";
@@ -177,6 +178,7 @@ function App() {
   const [shareCopied, setShareCopied] = useState(false)
   const [contentCopied, setContentCopied] = useState(false)
   const [slackCopied, setSlackCopied] = useState(false)
+  const [showQuickSwitcher, setShowQuickSwitcher] = useState(false)
   const markdownContentRef = useRef<HTMLDivElement>(null)
   
   // Ref to prevent duplicate default tab creation (React StrictMode runs effects twice)
@@ -730,8 +732,8 @@ function App() {
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('workflow')
       }
-      // Ctrl/Cmd + 4 for Chat mode
-      if ((event.metaKey || event.ctrlKey) && event.key === '4') {
+      // Ctrl/Cmd + 3 for Chat mode
+      if ((event.metaKey || event.ctrlKey) && event.key === '3') {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('chat')
@@ -746,6 +748,11 @@ function App() {
       if ((event.ctrlKey || event.metaKey) && event.key === '6') {
         event.preventDefault()
         toggleWorkspaceMinimize()
+      }
+      // Ctrl/Cmd + K for workflow quick switcher
+      if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+        event.preventDefault()
+        setShowQuickSwitcher(prev => !prev)
       }
       // Ctrl/Cmd + N for new chat
       if ((event.ctrlKey || event.metaKey) && event.key === 'n') {
@@ -770,6 +777,12 @@ function App() {
         <ModeSelectionModal
           isOpen={showModeSelection}
           onClose={() => {}} // Modal handles its own closing
+        />
+
+        {/* Quick Switcher (Ctrl+K) - workflows in workflow mode, chats in chat/multi-agent */}
+        <QuickSwitcher
+          isOpen={showQuickSwitcher}
+          onClose={() => setShowQuickSwitcher(false)}
         />
 
         <div className="h-screen bg-background flex">

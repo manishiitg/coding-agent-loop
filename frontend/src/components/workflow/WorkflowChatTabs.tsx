@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { X, ArrowDown, Square, Maximize2, Minimize2 } from 'lucide-react'
 import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { agentApi } from '../../services/api'
@@ -167,16 +168,19 @@ export const WorkflowChatTabs: React.FC = () => {
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   const chatAreaExpanded = useWorkflowStore(state => state.chatAreaExpanded)
   const setChatAreaExpanded = useWorkflowStore(state => state.setChatAreaExpanded)
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
 
-  // Filter to only show active workflow tabs (have sessionId or isStreaming)
+  // Filter to only show workflow tabs for the active preset (have sessionId or isStreaming)
   const activeWorkflowTabs = useMemo(() => {
     return Object.values(chatTabs)
       .filter(tab =>
         tab.metadata?.mode === 'workflow' &&
-        (tab.sessionId || tab.isStreaming)
+        (tab.sessionId || tab.isStreaming) &&
+        // Strict preset match — only show tabs explicitly tagged with the current preset
+        tab.metadata?.presetQueryId === activePresetId
       )
       .sort((a, b) => a.createdAt - b.createdAt)
-  }, [chatTabs])
+  }, [chatTabs, activePresetId])
 
   // Skip auto-close on initial mount
   const hasRenderedRef = useRef(false)

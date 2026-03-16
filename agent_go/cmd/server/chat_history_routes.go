@@ -169,6 +169,19 @@ func updateChatSession(db database.Database) gin.HandlerFunc {
 			return
 		}
 
+		// Auto-populate preset_query_id from config.workflow_metadata.preset_id
+		// This ensures the top-level column stays in sync for efficient DB queries
+		if req.PresetQueryID == "" && len(req.Config) > 0 {
+			var config struct {
+				WorkflowMetadata *struct {
+					PresetID string `json:"preset_id"`
+				} `json:"workflow_metadata"`
+			}
+			if json.Unmarshal(req.Config, &config) == nil && config.WorkflowMetadata != nil && config.WorkflowMetadata.PresetID != "" {
+				req.PresetQueryID = config.WorkflowMetadata.PresetID
+			}
+		}
+
 		session, err := db.UpdateChatSession(c.Request.Context(), sessionID, &req)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"io"
 	"log"
 	"net"
@@ -52,6 +53,7 @@ import (
 	eventbridge "mcp-agent-builder-go/agent_go/cmd/server/event_bridge"
 	slackservice "mcp-agent-builder-go/agent_go/cmd/server/services"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 	"strconv"
 
@@ -1668,7 +1670,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Build typed config from request
 		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != ""
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != "" || req.AgentMode == "workflow" || req.AgentMode == "workflow_phase"
 		if hasConfig {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
@@ -1715,6 +1717,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Populate workflow metadata for workflow sessions (enables restore after refresh)
+			if (req.AgentMode == "workflow" || req.AgentMode == "workflow_phase") && req.PresetQueryID != "" {
+				// Look up preset label/folder for metadata
+				presetCtx, presetCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				presetForMeta, presetErr := api.chatDB.GetPresetQuery(presetCtx, req.PresetQueryID)
+				presetCancel()
+				wfMeta := &database.WorkflowMetadata{
+					PresetID: req.PresetQueryID,
+				}
+				if presetErr == nil && presetForMeta != nil {
+					wfMeta.PresetName = presetForMeta.Label
+					if presetForMeta.SelectedFolder.Valid {
+						wfMeta.WorkspacePath = presetForMeta.SelectedFolder.String
+					}
+				}
+				if req.PhaseID != "" {
+					wfMeta.PhaseID = req.PhaseID
+					wfMeta.PhaseName = req.PhaseID // Will be updated by frontend later
+				}
+				config.WorkflowMetadata = wfMeta
+			}
+
 			// If LLM config is locked and not provided by frontend, use server defaults from env
 			if config.LLMConfig == nil && isGlobalLLMConfigLocked() {
 				provider, modelID := getPrimaryProviderAndModelFromDefaults()
@@ -1735,11 +1759,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// Ensure preset_query_id is set for workflow sessions
+		presetQueryID := req.PresetQueryID
+		if presetQueryID == "" && (req.AgentMode == "workflow" || req.AgentMode == "workflow_phase") {
+			log.Printf("[SESSION CREATE] WARNING: No preset_query_id for workflow session %s (mode=%s, query=%s)", sessionID, req.AgentMode, title)
+		}
+
 		chatSession, err = api.chatDB.CreateChatSessionWithUser(r.Context(), &database.CreateChatSessionRequest{
 			SessionID:     sessionID,
 			Title:         title,
 			AgentMode:     req.AgentMode,
-			PresetQueryID: req.PresetQueryID,
+			PresetQueryID: presetQueryID,
 			Config:        configJSON,
 		}, currentUserID)
 		if err != nil {
@@ -2324,6 +2354,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Track HTTP session ID on the orchestrator so MCP sessions can be closed on stop
 		workflowOrchestrator.SetHTTPSessionID(sessionID)
+
+		// Propagate CDP port for browser mode detection in execution agents
+		if cdpPort := getCdpPort(req); cdpPort > 0 {
+			workflowOrchestrator.SetCdpPort(cdpPort)
+			log.Printf("[WORKFLOW] Set CDP port on orchestrator: %d", cdpPort)
+		}
 
 		// Wire up live tool call query for workshop query_step_tools
 		workflowOrchestrator.SetToolCallQueryFunc(formatToolCallSummaries(api))
@@ -3324,6 +3360,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
+		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
@@ -3425,7 +3462,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
 				workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 				var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
-				workspaceExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
+				workspaceExecutors, workspaceEnv = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(currentUserID, sessionID)
 				log.Printf("[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
 				// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
@@ -4018,7 +4055,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add inline quick-start instructions for browser access
 			if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
 				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
-				log.Printf("[BROWSER] Added browser quick-start instructions to system prompt")
+				// Add mode-specific instructions (CDP vs headless)
+				if getCdpPort(req) > 0 {
+					underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
+					log.Printf("[BROWSER] Added CDP mode instructions to system prompt (port=%d)", getCdpPort(req))
+				} else {
+					underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
+					log.Printf("[BROWSER] Added headless mode instructions to system prompt")
+				}
 			}
 
 			// Add inline quick-start instructions for GWS access
@@ -4237,7 +4281,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Load evaluation context for evaluation-builder phase
-				if workflowPhaseID == "evaluation-builder" {
+				if workflowPhaseID == "evaluation-builder" || workflowPhaseID == "workflow-builder" {
 					// Read evaluation plan
 					evalPlanContent, evalPlanErr := phaseReadFile(r.Context(), phaseWorkspacePath+"/evaluation/evaluation_plan.json")
 					if evalPlanErr == nil && evalPlanContent != "" {
@@ -4261,6 +4305,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				underlyingAgent.SystemPrompt = phaseSystemPrompt
 				underlyingAgent.AppendedSystemPrompts = nil
 				log.Printf("[WORKFLOW_PHASE] Overrode system prompt (%d chars) for phase=%s", len(phaseSystemPrompt), workflowPhaseID)
+
+				// Append secrets to the phase agent's system prompt so it knows what's available
+				if workflowPhaseID == "workflow-builder" || workflowPhaseID == "human-assisted-execution" {
+					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
+					if len(phaseSecrets) > 0 {
+						entries := make([]orchestrator.SecretEntry, len(phaseSecrets))
+						for i, s := range phaseSecrets {
+							entries[i] = orchestrator.SecretEntry{Name: s.Name, Value: s.Value}
+						}
+						secretPrompt := todo_creation_human.BuildWorkflowSecretPrompt(entries)
+						if secretPrompt != "" {
+							underlyingAgent.AppendSystemPrompt(secretPrompt)
+							log.Printf("[WORKFLOW_PHASE] Appended %d secrets to %s system prompt", len(entries), workflowPhaseID)
+						}
+					}
+				}
 
 				// Register phase-appropriate tools
 				switch workflowPhaseID {
@@ -4507,6 +4567,43 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger, true)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools (execute_step, query_step, stop_step, list_steps, etc.)")
 					}
+
+					// Register evaluation tools in workflow builder (eval plan modification + run_full_evaluation)
+					if err := todo_creation_human.RegisterEvaluationModificationTools(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+						phaseWriteFile,
+						phaseMoveFile,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools in workflow-builder: %v", err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools in workflow-builder")
+					}
+
+					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)
+					evalSessionKey := "eval-" + sessionID
+					var evalSession *todo_creation_human.WorkshopChatSession
+					if cached, ok := api.workshopChatSessions.Load(evalSessionKey); ok {
+						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
+						log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in workflow-builder %s", sessionID)
+					} else {
+						evalCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						evalCfg.IsEvaluationMode = true
+						newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
+						if evalSessionErr != nil {
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in workflow-builder: %v", evalSessionErr)
+						} else {
+							evalSession = newEvalSession
+							api.workshopChatSessions.Store(evalSessionKey, evalSession)
+							log.Printf("[WORKFLOW_PHASE] Created eval session in workflow-builder for %s", sessionID)
+						}
+					}
+					if evalSession != nil {
+						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in workflow-builder")
+					}
 				default:
 					// planning: plan modification tools
 					if err := todo_creation_human.RegisterPlanModificationTools(
@@ -4673,10 +4770,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			for _, s := range allChatSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. Use them as needed:\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command (e.g., os.environ[\"SECRET_NAME\"] in Python or $SECRET_NAME in bash).\n\n" + strings.Join(secretParts, "\n")
 			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 				underlyingAgent.AppendSystemPrompt(secretPrompt)
 				log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into system prompt", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
+			}
+			// Inject secrets as environment variables for shell execution
+			if workspaceEnv != nil {
+				for _, s := range allChatSecrets {
+					workspaceEnv[s.Name] = s.Value
+				}
+				log.Printf("[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
 			}
 		}
 
@@ -6950,7 +7054,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			for _, s := range allDelegationSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. Use them as needed:\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command (e.g., os.environ[\"SECRET_NAME\"] in Python or $SECRET_NAME in bash).\n\n" + strings.Join(secretParts, "\n")
 			underlyingAgent.AppendSystemPrompt(secretPrompt)
 			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
 		}
@@ -6992,6 +7096,14 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			if hasCamofox {
 				underlyingAgent.AppendSystemPrompt(GetCamofoxInstructions())
 				log.Printf("[CAMOFOX] Added camofox-specific instructions to sub-agent")
+			}
+			// Add mode-specific instructions for sub-agents too
+			if hasBrowserAccess {
+				if getCdpPort(parentReq) > 0 {
+					underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
+				} else {
+					underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
+				}
 			}
 			log.Printf("[BROWSER_UPLOAD] Added browser upload instructions to sub-agent (browser=%v, playwright=%v, camofox=%v)", hasBrowserAccess, hasPlaywright, hasCamofox)
 
@@ -7040,9 +7152,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		if enableWorkspaceAccess {
 			// Sub-agents get advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
-			var workspaceExecutors map[string]func(ctx context.Context, args map[string]interface{}) (string, error)
-			workspaceExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
+			workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
 			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
+			// Inject secrets as environment variables for sub-agent shell execution
+			delegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
+			if subAgentEnv != nil && len(delegationSecrets) > 0 {
+				for _, s := range delegationSecrets {
+					subAgentEnv[s.Name] = s.Value
+				}
+				log.Printf("[SECRETS] Injected %d secrets as env vars for sub-agent shell execution", len(delegationSecrets))
+			}
 			// Inject LLM config fallback for read_image HTTP calls (e.g., from claude CLI subprocess)
 			if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
 				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
@@ -8615,6 +8734,27 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	// Wire up schedule management callbacks
 	cfg.PresetQueryID = req.PresetQueryID
 	cfg.SchedulerFuncs = api.buildSchedulerCallbacks()
+	cfg.SkillFuncs = api.buildSkillCallbacks()
+	cfg.ListAvailableSecrets = func(ctx context.Context) ([]string, error) {
+		nameSet := make(map[string]bool)
+		// Global secrets from env vars
+		for _, gs := range getGlobalSecrets() {
+			nameSet[gs.Name] = true
+		}
+		// User-stored secrets from DB
+		userSecrets, err := api.chatDB.ListUserSecrets(ctx, currentUserID)
+		if err == nil {
+			for _, us := range userSecrets {
+				nameSet[us.Name] = true
+			}
+		}
+		names := make([]string, 0, len(nameSet))
+		for name := range nameSet {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return names, nil
+	}
 
 	return cfg
 }
@@ -8775,6 +8915,49 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				sb.WriteString("\n")
 			}
 			return sb.String(), nil
+		},
+	}
+}
+
+// buildSkillCallbacks creates SkillCallbacks that bridge the workshop tools
+// to the workspace skills API. Returns nil-safe callbacks.
+func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbacks {
+	return &todo_creation_human.SkillCallbacks{
+		ListSkills: func(ctx context.Context) (string, error) {
+			workspaceAPIURL := api.GetAPIURL()
+			allSkills, err := skills.DiscoverSkills(workspaceAPIURL)
+			if err != nil {
+				return "", fmt.Errorf("failed to discover skills: %w", err)
+			}
+			if len(allSkills) == 0 {
+				return "No skills found in the workspace. Use import_skill to add skills from GitHub.", nil
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## Skills (%d found)\n\n", len(allSkills)))
+			for _, sk := range allSkills {
+				sb.WriteString(fmt.Sprintf("### %s\n", sk.Frontmatter.Name))
+				sb.WriteString(fmt.Sprintf("- **Folder**: `%s`\n", sk.FolderName))
+				if sk.Frontmatter.Description != "" {
+					sb.WriteString(fmt.Sprintf("- **Description**: %s\n", sk.Frontmatter.Description))
+				}
+				sb.WriteString("\n")
+			}
+			return sb.String(), nil
+		},
+		ImportSkill: func(ctx context.Context, githubURL, token string) (string, error) {
+			workspaceAPIURL := api.GetAPIURL()
+			resp, err := skills.ImportGitHubSkill(workspaceAPIURL, githubURL, token)
+			if err != nil {
+				return "", fmt.Errorf("failed to import skill: %w", err)
+			}
+			if !resp.Success {
+				return fmt.Sprintf("Failed to import skill: %s", resp.Error), nil
+			}
+			return fmt.Sprintf("Successfully imported skill **%s**. Use update_workflow_config to add it to the workflow's selected skills.", resp.SkillName), nil
+		},
+		DeleteSkill: func(ctx context.Context, folderName string) error {
+			workspaceAPIURL := api.GetAPIURL()
+			return skills.DeleteSkill(workspaceAPIURL, folderName)
 		},
 	}
 }

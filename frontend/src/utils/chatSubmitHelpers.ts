@@ -301,25 +301,25 @@ export async function findOrCreateWorkflowTab(params: {
   const chatStore = useChatStore.getState()
   const { getTabsByPhaseId, getTabStreamingStatus, switchTab, getActiveTab, createChatTab: createTab } = chatStore
 
-  // Single pass: get all tabs for this phase
-  const existingPhaseTabs = getTabsByPhaseId(phaseId)
+  // Single pass: get all tabs for this phase scoped to the active preset
+  const existingPhaseTabs = getTabsByPhaseId(phaseId, activePresetId)
 
-  // Prefer streaming tab, then newest, then any matching preset tab
+  // Prefer streaming tab, then newest
   const runningTab = existingPhaseTabs.find(t => getTabStreamingStatus(t.tabId))
   const newestTab = existingPhaseTabs.length > 0
     ? existingPhaseTabs.sort((a, b) => b.createdAt - a.createdAt)[0]
     : null
 
-  // Also check for matching preset if no direct phase match
-  const matchingPresetTab = !runningTab && !newestTab
+  // Fallback: legacy tabs without presetQueryId that match the phase
+  const legacyTab = !runningTab && !newestTab
     ? Object.values(chatStore.chatTabs).find(t =>
         t.metadata?.mode === 'workflow' &&
         t.metadata?.phaseId === phaseId &&
-        (t.metadata?.presetQueryId === activePresetId || (!t.metadata?.presetQueryId && activePresetId))
+        !t.metadata?.presetQueryId
       )
     : null
 
-  const existingTab = runningTab || newestTab || matchingPresetTab
+  const existingTab = runningTab || newestTab || legacyTab
 
   if (existingTab) {
     logger.debug('WorkflowLayout', `Reusing tab ${existingTab.tabId} for phase ${phaseId}`)

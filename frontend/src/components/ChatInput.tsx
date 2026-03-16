@@ -2504,9 +2504,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </Tooltip>
                 )}
 
-                {/* Agent Mode Selector */}
-                {(
-                  (effectiveDelegationMode === 'plan' || isWorkflowPhaseChat) ? null : isClaudeCode ? (
+                {/* Agent Mode Selector — hidden in workflow phase chat, show LLM label instead */}
+                {isWorkflowPhaseChat ? (
+                  <div className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs">
+                    {primaryLLM?.provider && primaryLLM?.model ? `${primaryLLM.provider}/${primaryLLM.model.split('/').pop()}` : 'LLM'}
+                  </div>
+                ) : (
+                  (effectiveDelegationMode === 'plan') ? null : isClaudeCode ? (
                     /* Claude Code always uses code execution mode */
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -2584,8 +2588,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </div>
                   )
                 )}
-                
-                {/* Server and LLM Selection */}
+
+                {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}
                 {(
                   <div className="flex items-center gap-2">
 
@@ -2623,7 +2627,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         )}
                       </>
 
-                    {(isWorkflowPhaseChat || effectiveDelegationMode !== 'plan') && (
+                    {!isWorkflowPhaseChat && (effectiveDelegationMode !== 'plan') && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -2633,19 +2637,19 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 selectedLLM={primaryLLM}
                                 onLLMSelect={onPrimaryLLMSelect}
                                 onRefresh={onRefreshAvailableLLMs}
-                                disabled={isStreaming || isSummarizing || isWorkflowPhaseChat}
+                                disabled={isStreaming || isSummarizing}
                                 openDirection="up"
                               />
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top">
-                            <p>{isWorkflowPhaseChat ? 'Phase LLM is set in the preset settings' : llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
+                            <p>{llmConfigLocked ? 'Select from admin-configured LLMs' : 'Select Primary LLM'}</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
                     )}
                     {/* Workspace Access Toggle - hidden for phase chat, always on in multi-agent, toggleable in chat */}
-                    {isWorkflowPhaseChat ? null : isMultiAgentMode ? (
+                    {!isWorkflowPhaseChat && (isMultiAgentMode ? (
                       <div className="flex items-center gap-1 p-1.5 rounded-md border bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400">
                         <FolderOpen className="w-4 h-4 flex-shrink-0" />
                       </div>
@@ -2665,8 +2669,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           Workspace
                         </span>
                       </button>
-                    )}
-                    {/* Browser Access Toggle */}
+                    ))}
+                    {/* Browser Access Toggle — hidden in workflow phase chat */}
                     {!isWorkflowPhaseChat && <button
                       type="button"
                       onClick={() => {
@@ -2732,7 +2736,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       )}
                     </button>}
 
-                    {/* Google Workspace Toggle */}
+                    {/* Google Workspace Toggle — hidden in workflow phase chat */}
                     {!isWorkflowPhaseChat && (
                     <button
                       type="button"
@@ -3145,7 +3149,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         {/* Auth gate hint */}
                         {gwsChatAuthStatus?.token_valid === false ? (
                           <p className="text-xs text-amber-400">
-                            Token invalid — run <code className="text-amber-300">gws auth login</code> to re-authenticate
+                            Token invalid — run <code className="text-amber-300">gws auth login</code>, then <code className="text-amber-300">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code> and restart docker compose
                           </p>
                         ) : !gwsEnabled && !gwsChatAuthStatus?.configured && (
                           <p className="text-xs text-amber-400">
@@ -3191,7 +3195,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             )}
                           </div>
                           {!gwsChatAuthStatus && (
-                            <p className="text-xs text-gray-500">Run <code className="text-gray-400">gws auth login</code> to authenticate</p>
+                            <p className="text-xs text-gray-500">Run <code className="text-gray-400">gws auth login</code>, then <code className="text-gray-400">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code> and restart docker compose</p>
                           )}
                         </div>
 

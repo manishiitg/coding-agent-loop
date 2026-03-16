@@ -1281,6 +1281,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	if hasPlaywrightServer || hasCamofoxServer || hasAgentBrowserSkill {
 		mcpAgent.AppendSystemPrompt(browserinstructions.GetBrowserUploadInstructions())
 		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser upload instructions to execution agent (playwright=%v, camofox=%v, agent-browser=%v)", hasPlaywrightServer, hasCamofoxServer, hasAgentBrowserSkill))
+		// Add CDP/headless mode-specific instructions
+		if hcpo.GetCdpPort() > 0 {
+			mcpAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
+			hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added CDP mode instructions to execution agent (port=%d)", hcpo.GetCdpPort()))
+		} else {
+			mcpAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
+			hcpo.GetLogger().Info("🌐 Added headless mode instructions to execution agent")
+		}
 	}
 	if hasCamofoxServer {
 		mcpAgent.AppendSystemPrompt(browserinstructions.GetCamofoxInstructions())
@@ -1820,31 +1828,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info("🔧 Sub-agent execution context not provided - sub-agent tools will not be available")
 	}
 
-	// IMPORTANT: Inject learning tools for orchestrator self-learning
-	// These tools allow the orchestrator to save insights that persist across runs
-	{
-		learningTools := virtualtools.CreateLearningTools()
-		learningExecutors := virtualtools.CreateLearningToolExecutors()
-		learningCategory := virtualtools.GetLearningToolCategory()
-
-		// Add learning tools to the tools list and register their category
-		for _, tool := range learningTools {
-			toolsToRegister = append(toolsToRegister, tool)
-			if hcpo.ToolCategories != nil {
-				hcpo.ToolCategories[tool.Function.Name] = learningCategory
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added learning tool '%s' to todo task orchestrator (category: %s)", tool.Function.Name, learningCategory))
-		}
-
-		// Wrap learning executors with context injection
-		saveLearningFunc := hcpo.createSaveLearningFunc(stepID, stepPath)
-		for toolName, executor := range learningExecutors {
-			wrappedExecutor := hcpo.wrapLearningToolExecutor(executor, saveLearningFunc)
-			executorsToUse[toolName] = wrappedExecutor
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped learning tool '%s' with save function injection", toolName))
-		}
-	}
-
 	// IMPORTANT: Inject completion tools for step completion signaling
 	// The mark_step_complete tool writes completed.txt so the controller loop can detect completion
 	{
@@ -1996,17 +1979,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 	}
 }
 
-// wrapLearningToolExecutor wraps a learning tool executor to inject the save learning function into context
-func (hcpo *StepBasedWorkflowOrchestrator) wrapLearningToolExecutor(
-	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
-	saveLearningFunc virtualtools.SaveLearningFunc,
-) func(ctx context.Context, args map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx = context.WithValue(ctx, virtualtools.SaveLearningKey, saveLearningFunc)
-		return originalExecutor(ctx, args)
-	}
-}
-
 // wrapCompletionToolExecutor wraps a completion tool executor to inject the mark step complete function into context
 func (hcpo *StepBasedWorkflowOrchestrator) wrapCompletionToolExecutor(
 	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
@@ -2039,50 +2011,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) createMarkStepCompleteFunc(stepPath s
 
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Step marked as complete via mark_step_complete tool: %s (reason: %s)", completedFilePath, reason))
 		return fmt.Sprintf("Step marked as complete. Reason recorded: %s", reason), nil
-	}
-}
-
-// createSaveLearningFunc creates a function that saves orchestrator learnings to workspace
-// Learnings are appended to learnings/{stepID}/orchestrator_learning.md
-func (hcpo *StepBasedWorkflowOrchestrator) createSaveLearningFunc(stepID string, stepPath string) virtualtools.SaveLearningFunc {
-	return func(ctx context.Context, category, insight string) (string, error) {
-		// Build the learning file path (relative to workspace)
-		learningFolderPath := getLearningFolderPathByStepID("", stepID, stepPath, false)
-		learningFilePath := fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
-
-		// Ensure the learnings folder exists
-		if err := hcpo.ensureStepLearningsFolderExists(ctx, learningFolderPath); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to ensure learnings folder exists: %s: %v", learningFolderPath, err))
-			return "", fmt.Errorf("failed to create learnings folder: %w", err)
-		}
-
-		// Read existing content
-		existingContent, err := hcpo.ReadWorkspaceFile(ctx, learningFilePath)
-		if err != nil || existingContent == "" {
-			// File doesn't exist yet - create with header
-			existingContent = "# Orchestrator Learnings\n\nInsights captured during todo task orchestration.\n\n"
-		}
-
-		// Dedup: skip if the exact insight text already exists in the file
-		if strings.Contains(existingContent, insight) {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Duplicate orchestrator learning skipped [%s]: already exists in %s", category, learningFilePath))
-			return "Learning already exists - skipped duplicate.", nil
-		}
-
-		// Append the new learning entry
-		timestamp := time.Now().Format("2006-01-02 15:04:05")
-		upperCategory := strings.ToUpper(category)
-		newEntry := fmt.Sprintf("### [%s] %s\n%s\n\n", timestamp, upperCategory, insight)
-		updatedContent := existingContent + newEntry
-
-		// Write back to file
-		if err := hcpo.WriteWorkspaceFile(ctx, learningFilePath, updatedContent); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write orchestrator learning: %s: %v", learningFilePath, err))
-			return "", fmt.Errorf("failed to save learning: %w", err)
-		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Saved orchestrator learning [%s] to: %s", category, learningFilePath))
-		return fmt.Sprintf("Learning saved successfully. Category: %s, File: %s", category, learningFilePath), nil
 	}
 }
 

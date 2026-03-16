@@ -319,13 +319,13 @@ export default function SkillImportDialog({ onClose, onSuccess }: SkillImportDia
           {/* Actions */}
           <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700">
             <a
-              href="https://smithery.ai/skills"
+              href="https://skills.sh"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-purple-600 dark:text-purple-400 hover:underline flex items-center gap-1"
             >
               <ExternalLink className="w-3 h-3" />
-              Browse skills on Smithery
+              Browse skills on skills.sh
             </a>
 
             <div className="flex items-center gap-2">

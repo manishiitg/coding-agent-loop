@@ -30,6 +30,7 @@ type StepBasedWorkflowOrchestrator struct {
 	sessionID     string // For human feedback tracking
 	workflowID    string // For human feedback tracking
 	httpSessionID string // HTTP session ID for MCP cleanup scoping
+	cdpPort       int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
 
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables
@@ -216,6 +217,16 @@ func NewStepBasedWorkflowOrchestrator(
 // This allows CloseHTTPSession to close all group sessions when the workflow stops.
 func (hcpo *StepBasedWorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
 	hcpo.httpSessionID = httpSessionID
+}
+
+// SetCdpPort sets the CDP port for browser mode detection.
+func (hcpo *StepBasedWorkflowOrchestrator) SetCdpPort(port int) {
+	hcpo.cdpPort = port
+}
+
+// GetCdpPort returns the CDP port (0 = headless, >0 = CDP mode).
+func (hcpo *StepBasedWorkflowOrchestrator) GetCdpPort() int {
+	return hcpo.cdpPort
 }
 
 // getConditionalAgentForStep returns the conditional agent to use for a specific step

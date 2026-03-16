@@ -29,8 +29,48 @@ When a website has a file upload input (e.g. file picker, drag-and-drop zone), u
 `
 }
 
-// GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.
-// Only appended when the camofox MCP server is in the enabled servers list.
+// GetCdpModeInstructions returns instructions specific to CDP mode (connected to user's real Chrome).
+func GetCdpModeInstructions() string {
+	return `
+## Browser Mode: CDP (Connected to User's Chrome)
+
+You are controlling the **user's real Chrome browser** via Chrome DevTools Protocol (CDP).
+
+**Key behaviors:**
+- The user can **see everything you do** in their browser — actions are visible in real-time
+- The browser may have **existing cookies, login sessions, and tabs** — you can leverage authenticated sessions without re-logging in
+- **Do NOT call close** unless the user asks — it will close their browser tab
+- **Take screenshots** to show the user what you see, since they can also verify visually
+- Sessions **persist across tool calls** — you don't need to re-open pages between interactions
+- If a site requires login and the user is already logged in, just navigate directly to the target page
+
+**Best practices:**
+- Start with a **snapshot** to see the current page state before taking any action
+- Use **session="default"** unless you need multiple isolated sessions
+- Be careful with form submissions and purchases — this is the user's real browser with real accounts
+`
+}
+
+// GetHeadlessModeInstructions returns instructions specific to headless browser mode.
+func GetHeadlessModeInstructions() string {
+	return `
+## Browser Mode: Headless (Container Browser)
+
+You are controlling a **headless Chromium browser** running inside a container.
+
+**Key behaviors:**
+- The browser is **fresh** — no existing cookies, sessions, or tabs. You must login from scratch if needed.
+- The user **cannot see** the browser — take **screenshots** to show them what's happening
+- You can freely **open and close** tabs/sessions without affecting the user
+- Browser state is **ephemeral** — it resets between sessions
+
+**Best practices:**
+- Take screenshots at key moments so the user can verify progress
+- Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
+- Use **session="default"** unless you need parallel browser instances
+`
+}
+
 // GetAgentBrowserQuickStartInstructions returns inline instructions for using the agent-browser tool.
 // Appended to the agent's system prompt when browser access (agent-browser skill) is enabled.
 func GetAgentBrowserQuickStartInstructions() string {

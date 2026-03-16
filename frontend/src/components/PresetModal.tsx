@@ -1089,6 +1089,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <li>Create a Google Cloud project, enable Workspace APIs, and download your OAuth2 client secret JSON</li>
                           <li>Authenticate: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">gws auth login --client-secret /path/to/client_secret.json</code></li>
                           <li>Authorize in the browser when prompted</li>
+                          <li>Export credentials: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code></li>
+                          <li>Restart the backend: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded font-mono text-[11px]">docker compose down &amp;&amp; docker compose up -d</code></li>
                           <li>Verify below with &quot;Check Auth Status&quot;</li>
                         </ol>
                         <p className="text-amber-600 dark:text-amber-400 mt-1">
@@ -1127,7 +1129,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                           <div className="flex items-center gap-1.5">
                             <div className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
                             <span className="text-xs text-amber-600 dark:text-amber-400">
-                              Token invalid — run <code className="font-mono">gws auth login</code> to re-authenticate
+                              Token invalid — run <code className="font-mono">gws auth login</code>, then <code className="font-mono">gws auth export --unmasked &gt; agent_go/gws-credentials.json</code> and restart docker compose
                             </span>
                           </div>
                         ) : (

@@ -104,7 +104,7 @@ const PHASE_CHAT_INFO: Record<string, {
   },
   'workflow-builder': {
     title: 'Workflow Builder',
-    description: 'Execute steps in the background, debug results, update the plan, generate learnings, and tweak configs — all in one free-flow session.',
+    description: 'Execute steps, update the plan, debug, generate learnings, tweak configs, manage schedules, and run evaluations — all in one conversation.',
     capabilities: [
       'Run any plan step in the background and poll for results',
       'Cancel a running step mid-execution',
@@ -113,11 +113,13 @@ const PHASE_CHAT_INFO: Record<string, {
       'Generate/update learnings with optional human guidance',
       'View the system prompt and conversation from a past run',
       'Run shell commands for investigation',
+      'Create, update, delete, and trigger cron schedules',
+      'Import skills from GitHub and manage workspace skills',
+      'Create, edit, and run evaluation plans against execution runs',
     ],
     limitations: [
       'Steps run one at a time per execute_step call',
       'System prompts only available for runs after this feature was added',
-      'Cannot modify evaluation plans',
     ],
   },
   'human-assisted-execution': {
@@ -1009,13 +1011,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const chatStore = useChatStore.getState()
     const actualSessionId = response.session_id || sessionId
 
+    // Check if this tab belongs to the currently active workflow preset.
+    // Background preset tabs still store events but skip UI side effects
+    // (workspace refresh, canvas updates, step progress) to avoid polluting the visible workflow.
+    const isActivePresetTab = !tab?.metadata?.presetQueryId ||
+      tab.metadata.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
 
     // --- Session status handling ---
     const sessionStatus = response.session_status
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
-        console.log(`[QUEUE_DEBUG] SESSION tabId=${tab.tabId} status=${sessionStatus} hasBgAgents=${hasBgAgents} isCompleted=${tab.isCompleted} isStreaming=${tab.isStreaming} queueLen=${tab.config?.queuedMessages?.length ?? 0}`)
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
           chatStore.setTabStreaming(tab.tabId, false)
@@ -1246,7 +1252,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // PERF FIX: Only call processWorkspaceEvent for workspace_file_operation events.
       // Previously called for ALL events (tool_execution, streaming_text, delegation_start, etc.),
       // each incurring function call + event type check + dedup lookup overhead.
-      if (event.type === 'workspace_file_operation') {
+      // Also skip if this tab belongs to a background preset (avoid polluting visible workspace)
+      if (event.type === 'workspace_file_operation' && isActivePresetTab !== false) {
         useWorkspaceStore.getState().processWorkspaceEvent(event)
       }
 
@@ -1263,7 +1270,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // banner with a manual "Refresh" button. New files during execution are still added
     // incrementally via addFileToTree (from workspace_file_operation events, no network).
     const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
-    if (isCompletionLike && hadWorkspaceActivityRef.current) {
+    if (isCompletionLike && hadWorkspaceActivityRef.current && isActivePresetTab !== false) {
       hadWorkspaceActivityRef.current = false
       const isChatLikeMode = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
       if (isChatLikeMode) {
@@ -1289,8 +1296,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       })
     }
 
-    // Process workflow events
-    if (selectedModeCategory === 'workflow') {
+    // Process workflow events — only for the ACTIVE preset's tabs
+    // Background workflow tabs (different preset) still receive and store events via SSE,
+    // but we skip side effects (canvas updates, step progress, workspace refresh) to avoid
+    // polluting the currently visible workflow's UI state
+    if (selectedModeCategory === 'workflow' && isActivePresetTab) {
       const workflowStore = useWorkflowStore.getState()
       for (const event of response.events as PollingEvent[]) {
         if (event.type === 'batch_group_start') {
@@ -1346,7 +1356,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           if (stepId) {
             workflowStore.setStepStatus(stepId, 'completed')
           }
-          if (tab && stepTitle) {
+          if (tab && stepTitle && isChatCompatiblePhase(tab.metadata?.phaseId)) {
             const dedupeKey = `${stepTitle}::todo-step`
             if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
               notifiedWorkshopAgentsRef.current.add(dedupeKey)
@@ -2253,8 +2263,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // multiple ChatArea instances from double-processing the same queue.
     const freshConfig = activeTab ? useChatStore.getState().getTabConfig(activeTab.tabId) : undefined
     const isProcessing = freshConfig?.isQueueProcessing ?? false
-
-    console.log(`[QUEUE_DEBUG] tabId=${activeTab?.tabId} isStreaming=${currentIsStreaming} queueLength=${queuedMessages.length} isProcessing=${isProcessing}`)
 
     // Process queued messages when agent is idle (not streaming).
     // Uses !isStreaming instead of isCompleted because workshop step goroutines

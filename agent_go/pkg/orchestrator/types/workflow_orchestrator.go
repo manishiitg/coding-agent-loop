@@ -55,7 +55,7 @@ func GetWorkflowConstants() WorkflowConstants {
 			{
 				ID:          "workflow-builder",
 				Title:       "Workflow Builder",
-				Description: "Execute steps in background, update the plan, tweak step configs, generate learnings, and debug — all in one free-flow conversation. Steps run asynchronously and can be cancelled mid-run.",
+				Description: "Execute steps, update the plan, tweak configs, generate learnings, debug, manage schedules, and run evaluations — all in one conversation.",
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
@@ -157,6 +157,9 @@ type WorkflowOrchestrator struct {
 
 	// HTTP session ID (from the frontend/API layer) for scoped MCP cleanup
 	httpSessionID string
+
+	// CDP port for browser mode detection (0 = headless, >0 = CDP mode)
+	cdpPort int
 
 	// toolCallQueryFunc provides live tool call query capability for workshop sessions.
 	// Set by the server layer which has access to the EventStore.
@@ -542,6 +545,11 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 		controller.SetExecutionOptions(wo.executionOptions)
 	}
 
+	// Propagate CDP port for browser mode detection
+	if wo.cdpPort > 0 {
+		controller.SetCdpPort(wo.cdpPort)
+	}
+
 	// Build workshop manager using presetPhaseLLM (same as other phase agents)
 	workshopManager := step_based_workflow.NewInteractiveWorkshopManager(
 		controller,
@@ -708,6 +716,11 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		todoPlannerAgent.SetSecrets(secrets)
 	}
 
+	// Propagate CDP port for browser mode detection
+	if wo.cdpPort > 0 {
+		todoPlannerAgent.SetCdpPort(wo.cdpPort)
+	}
+
 	// Pass execution options if set
 	// CRITICAL: Execution options are required for evaluation execution
 	if wo.executionOptions == nil {
@@ -817,6 +830,11 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		todoPlannerAgent.SetSecrets(secrets)
 	}
 
+	// Propagate CDP port for browser mode detection
+	if wo.cdpPort > 0 {
+		todoPlannerAgent.SetCdpPort(wo.cdpPort)
+	}
+
 	// Pass execution options from WorkflowOrchestrator to the todo planner if set
 	if wo.executionOptions != nil {
 		todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
@@ -865,6 +883,12 @@ func (wo *WorkflowOrchestrator) GetMCPSessionID() string {
 // and closed via mcpagent.CloseHTTPSession when the workflow stops.
 func (wo *WorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
 	wo.httpSessionID = httpSessionID
+}
+
+// SetCdpPort sets the CDP port for browser mode detection.
+// 0 = headless mode, >0 = CDP mode (connected to user's Chrome).
+func (wo *WorkflowOrchestrator) SetCdpPort(port int) {
+	wo.cdpPort = port
 }
 
 // getWorkflowID returns the workflow ID for this workflow

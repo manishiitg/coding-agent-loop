@@ -33,7 +33,10 @@ interface GlobalPresetState {
   currentPresetTools: string[] // Array of "server:tool" strings
   selectedPresetFolder: string | null
   currentQuery: string
-  
+
+  // Recently accessed preset IDs (most recent first) for quick switcher ordering
+  recentPresetOrder: string[]
+
   // Actions for database management
   refreshPresets: () => Promise<void>
   addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
@@ -81,7 +84,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       currentPresetTools: [],
       selectedPresetFolder: null,
       currentQuery: '',
-      
+      recentPresetOrder: [],
+
       // Database management actions
       refreshPresets: async () => {
         set({ loading: true, error: null })
@@ -1092,14 +1096,18 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             useWorkspaceStore.getState().setSelectedFile(null)
           }
           
-          // Set active preset ID
+          // Set active preset ID and update recent access order
           set(state => ({
             activePresetIds: {
               ...state.activePresetIds,
               [modeCategory]: preset.id
-            }
+            },
+            recentPresetOrder: [
+              preset.id,
+              ...state.recentPresetOrder.filter(id => id !== preset.id)
+            ].slice(0, 20)
           }))
-          
+
           return {
             success: true,
             preset
@@ -1209,7 +1217,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         currentPresetServers: state.currentPresetServers,
         currentPresetTools: state.currentPresetTools,
         selectedPresetFolder: state.selectedPresetFolder,
-        currentQuery: state.currentQuery
+        currentQuery: state.currentQuery,
+        recentPresetOrder: state.recentPresetOrder
       })
     }
   )

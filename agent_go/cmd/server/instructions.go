@@ -277,6 +277,14 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	parts = append(parts, fmt.Sprintf("### Workflow: %s\n", workflowName))
 	parts = append(parts, fmt.Sprintf("**Workspace Path:** `%s/`\n", wsPath))
 
+	// 0. Custom instructions (instructions.md) — user-saved instructions for this workflow
+	customInstructions := readFileContent(client, path.Join(wsPath, "instructions.md"))
+	if customInstructions != "" {
+		parts = append(parts, "**Custom Instructions (saved by user):**")
+		parts = append(parts, customInstructions)
+		parts = append(parts, "")
+	}
+
 	// 1. Full plan.json content (not a summary — the agent needs the real data)
 	planContent := readFileContent(client, path.Join(wsPath, "planning", "plan.json"))
 	if planContent != "" {

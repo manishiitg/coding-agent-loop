@@ -50,6 +50,10 @@ const CHAT_HISTORY_CACHE_TTL = 300000
 // Event memory management constants - use shared constants
 const MAX_EVENTS = MAX_EVENTS_TO_PROCESS
 
+// Persistent event ID index — avoids O(n) Set rebuild on every addTabEvents call.
+// Lives outside zustand state so mutating it doesn't trigger re-renders.
+const tabEventIdSets = new Map<string, Set<string>>()
+
 // Helper function to identify important events that should always be retained
 // These events provide critical context and should not be removed during cleanup
 const shouldRetainEvent = (event: PollingEvent): boolean => {
@@ -596,31 +600,33 @@ export const useChatStore = create<ChatState>()(
       
       addTabEvents: (sessionId: string, events: PollingEvent[]) => {
         set((state) => {
+          console.time(`[PERF] addTabEvents-inner (${events.length} incoming, ${(state.tabEvents[sessionId] || []).length} existing)`)
           const currentEvents = state.tabEvents[sessionId] || []
 
-          // Deduplicate events by ID to prevent React key warnings and performance issues
-          // Create a Set of existing event IDs for fast lookup
-          const existingEventIds = new Set(currentEvents.map(e => e.id))
+          // Use persistent event ID index (O(1) lookup instead of rebuilding Set each call)
+          let idSet = tabEventIdSets.get(sessionId)
+          if (!idSet) {
+            // First call for this session — build from existing events
+            idSet = new Set(currentEvents.map(e => e.id).filter(Boolean) as string[])
+            tabEventIdSets.set(sessionId, idSet)
+          }
 
           // Filter out events that already exist
           const uniqueNewEvents = events.filter(event => {
             if (!event.id) {
-              // If event has no ID, allow it (shouldn't happen, but be safe)
               logger.warn('EventStore', 'Event without ID detected:', event)
               return true
             }
-            if (existingEventIds.has(event.id)) {
-              // Event already exists, skip it
+            if (idSet!.has(event.id)) {
               return false
             }
-            // New event, add its ID to the set and include it
-            existingEventIds.add(event.id)
+            idSet!.add(event.id)
             return true
           })
 
           // Log dedup stats — helps identify if dedup is doing heavy work
           const dupCount = events.length - uniqueNewEvents.length
-          console.log(`[Events] addTabEvents: incoming=${events.length} new=${uniqueNewEvents.length} dupes=${dupCount} existing=${currentEvents.length} setSize=${existingEventIds.size} session=${sessionId.slice(0, 8)}`)
+          console.log(`[Events] addTabEvents: incoming=${events.length} new=${uniqueNewEvents.length} dupes=${dupCount} existing=${currentEvents.length} idSetSize=${idSet.size} session=${sessionId.slice(0, 8)}`)
 
           // PERF: Skip state update entirely when no new events — avoids creating a new
           // array reference which would cascade re-renders through ChatArea → EventHierarchy.
@@ -637,6 +643,8 @@ export const useChatStore = create<ChatState>()(
             logger.debug('Memory', `Cleaning up events for session ${sessionId}: ${newEvents.length} -> ${MAX_EVENTS}`)
             finalEvents = cleanupOldEvents(newEvents)
             didCleanup = true
+            // Rebuild ID index after cleanup discards events
+            tabEventIdSets.set(sessionId, new Set(finalEvents.map(e => e.id).filter(Boolean) as string[]))
           }
 
           // Update lastViewedEventCounts for the ACTIVE tab if it owns this session.
@@ -666,11 +674,15 @@ export const useChatStore = create<ChatState>()(
             }
           }
 
+          console.timeEnd(`[PERF] addTabEvents-inner (${events.length} incoming, ${currentEvents.length} existing)`)
           return updates
         })
       },
-      
+
       setTabEvents: (sessionId: string, events: PollingEvent[]) => {
+        // Rebuild the persistent ID index for this session
+        tabEventIdSets.set(sessionId, new Set(events.map(e => e.id).filter(Boolean) as string[]))
+
         set((state) => {
           // Trigger cleanup if threshold exceeded
           let finalEvents = events
@@ -703,6 +715,7 @@ export const useChatStore = create<ChatState>()(
       },
       
       clearTabEvents: (sessionId: string) => {
+        tabEventIdSets.delete(sessionId)
         set((state) => {
           const newTabEvents = { ...state.tabEvents }
           delete newTabEvents[sessionId]
@@ -761,6 +774,7 @@ export const useChatStore = create<ChatState>()(
             delete newTabEvents[sessionId]
             delete newTabEventIndices[sessionId]
             delete newTabHasMore[sessionId]
+            tabEventIdSets.delete(sessionId)
             orphanCount++
           }
         }
@@ -2062,6 +2076,8 @@ export const useChatStore = create<ChatState>()(
         }),
         onRehydrateStorage: () => (state) => {
           if (!state) return
+          // Signal that localStorage rehydration is complete
+          useChatStore._hasHydrated = true
 
           // Clean up stale tabs that survived partialize (edge case: clock skew, etc.)
           const MAX_TAB_AGE = 24 * 60 * 60 * 1000
@@ -2106,3 +2122,29 @@ export const useChatStore = create<ChatState>()(
       }
     )
 )
+
+// Hydration flag — set to true once zustand rehydrates persisted tabs from localStorage.
+// Components that need persisted tabs (e.g. workflow reconnect) should await this before
+// checking chatTabs to avoid race conditions that create duplicate tabs.
+// eslint-disable-next-line @typescript-eslint/no-namespace
+declare module 'zustand' {
+  // Augment the store type to allow the static property
+}
+;(useChatStore as unknown as { _hasHydrated: boolean })._hasHydrated = false
+
+/** Returns a promise that resolves once useChatStore has rehydrated from localStorage. */
+export function waitForChatStoreHydration(): Promise<void> {
+  if ((useChatStore as unknown as { _hasHydrated: boolean })._hasHydrated) {
+    return Promise.resolve()
+  }
+  return new Promise(resolve => {
+    const check = () => {
+      if ((useChatStore as unknown as { _hasHydrated: boolean })._hasHydrated) {
+        resolve()
+      } else {
+        setTimeout(check, 10)
+      }
+    }
+    check()
+  })
+}

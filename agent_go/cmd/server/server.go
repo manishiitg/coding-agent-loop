@@ -1975,20 +1975,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// This runs BEFORE the workflow orchestrator branch to intercept and redirect
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
 	workflowPhaseID := req.PhaseID
+	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
 	if isWorkflowPhase {
 		log.Printf("[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
-		// Override LLM with phase-specific LLM from preset
-		if req.PresetQueryID != "" {
-			phaseCtx, phaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			phaseLLMPreset, phaseLLMErr := api.chatDB.GetPresetQuery(phaseCtx, req.PresetQueryID)
-			phaseCancel()
-			if phaseLLMErr == nil && phaseLLMPreset != nil && len(phaseLLMPreset.LLMConfig) > 0 {
+		if req.PresetQueryID == "" {
+			log.Printf("[WORKFLOW_PHASE] ERROR: workflow_phase mode requires a preset_query_id")
+			http.Error(w, `{"error":"workflow_phase mode requires a preset_query_id (workflow preset)"}`, http.StatusBadRequest)
+			return
+		}
+		phaseCtx, phaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		phasePreset, phasePresetErr := api.chatDB.GetPresetQuery(phaseCtx, req.PresetQueryID)
+		phaseCancel()
+		if phasePresetErr == nil && phasePreset != nil {
+			// Override LLM with phase-specific LLM from preset
+			if len(phasePreset.LLMConfig) > 0 {
 				var phaseLLMConfig database.PresetLLMConfig
-				if err := json.Unmarshal(phaseLLMPreset.LLMConfig, &phaseLLMConfig); err == nil && phaseLLMConfig.PhaseLLM != nil {
+				if err := json.Unmarshal(phasePreset.LLMConfig, &phaseLLMConfig); err == nil && phaseLLMConfig.PhaseLLM != nil {
 					finalProvider = phaseLLMConfig.PhaseLLM.Provider
 					finalModelID = phaseLLMConfig.PhaseLLM.ModelID
 					log.Printf("[WORKFLOW_PHASE] Using phase LLM from preset: %s/%s", finalProvider, finalModelID)
 				}
+			}
+			// Resolve workflow folder for FolderGuard — ensures workflow-builder
+			// always has write access to its own Workflow/X folder
+			if phasePreset.SelectedFolder.Valid && phasePreset.SelectedFolder.String != "" {
+				workflowPhaseFolder = phasePreset.SelectedFolder.String
+				log.Printf("[WORKFLOW_PHASE] Resolved workflow folder for FolderGuard: %s", workflowPhaseFolder)
 			}
 		}
 		// Convert to simple agent mode so it falls through to the standard agent path
@@ -3476,6 +3488,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[FILE CONTEXT] Extracted write paths from @context: %v", fileContextFolders)
 				}
 
+				// Workflow phase: auto-grant write access to the preset's own workflow folder
+				// This ensures the workflow-builder can always write to its own Workflow/X folder
+				// even without explicit @context references
+				if isWorkflowPhase && workflowPhaseFolder != "" {
+					fileContextFolders = append(fileContextFolders, workflowPhaseFolder+"/")
+					log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Auto-added workflow folder write access: %s/", workflowPhaseFolder)
+				}
+
 				// Apply folder guard to restrict writes based on mode
 				// Multi-agent (plan) mode: primary write folder is Plans/, Chats/ also writable
 				// Chat mode: writes go to Chats/
@@ -4209,6 +4229,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if phaseWorkspacePath == "" {
+					// Fallback: try to extract workspace path from the query's file context marker
+					phaseWorkspacePath = extractWorkspacePathFromObjective(req.Query)
+				}
+				if phaseWorkspacePath == "" {
+					log.Printf("[WORKFLOW_PHASE] WARNING: No workspace path found for phase=%s preset=%s - using default_workspace", workflowPhaseID, req.PresetQueryID)
 					phaseWorkspacePath = "default_workspace"
 				}
 
@@ -5026,6 +5051,21 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	if r.URL.Query().Get("cancelAgents") == "true" {
 		api.bgAgentRegistry.CancelAll(sessionID)
 		log.Printf("[SESSION DEBUG] Canceled all background agents for session %s", sessionID)
+	}
+
+	// Close workshop chat sessions for this session — cancels all running step executions.
+	// Workshop sessions use context.Background() so they survive agent context cancellation above;
+	// we must explicitly call Close() to cancel their step goroutines.
+	// Multiple keys may exist per session: sessionID, "eval-" + sessionID.
+	workshopKeys := []string{sessionID, "eval-" + sessionID}
+	for _, wsKey := range workshopKeys {
+		if cached, ok := api.workshopChatSessions.Load(wsKey); ok {
+			if ws, ok := cached.(interface{ Close() }); ok {
+				ws.Close()
+				log.Printf("[SESSION DEBUG] Closed workshop session %q (all step executions cancelled)", wsKey)
+			}
+			api.workshopChatSessions.Delete(wsKey)
+		}
 	}
 
 	// Cancel all workflow orchestrator contexts for this session

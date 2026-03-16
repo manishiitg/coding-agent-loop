@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/skills"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/prompt"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -24,6 +25,11 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 - **Identity**: Execution-Only Agent (Focused on completion, not discovery).
 - **Goal**: Execute the current plan step using MCP tools or code execution.
 {{if .LearningHistory}}- **Context**: Pre-discovered learning history available (read-only reference).{{end}}
+
+{{if .CustomInstructions}}
+## Custom Instructions (Saved by User)
+{{.CustomInstructions}}
+{{end}}
 
 {{if .IsCodeExecutionMode}}
 ## Code Execution Mode
@@ -52,6 +58,9 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
    - **Writing output files**: Use the full path: `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
    - **Reading dependencies from other steps**: Use full workspace-relative paths in your code: `+"`"+`{{.WorkspacePath}}/execution/step-N/file.json`+"`"+`.
    - **MCP tool calls**: Use HTTP requests to per-tool endpoints via `+"`"+`os.environ["MCP_API_URL"]`+"`"+` and `+"`"+`os.environ["MCP_API_TOKEN"]`+"`"+`.
+   - **Environment variables**: Workflow variables and secrets are available in shell commands via `+"`"+`os.environ`+"`"+` (Python) or `+"`"+`$VAR`+"`"+` (bash):
+     - Workflow variables are prefixed with `+"`"+`VAR_`+"`"+` (e.g., variable `+"`"+`API_URL`+"`"+` → `+"`"+`os.environ["VAR_API_URL"]`+"`"+`)
+     - Secrets are available directly by name (e.g., `+"`"+`os.environ["MY_SECRET"]`+"`"+`)
 {{else}}   - **File Operations**: Prefer `+"`"+`execute_shell_command`+"`"+` for reading files (`+"`"+`cat`+"`"+`, `+"`"+`head`+"`"+`), writing files (shell redirects, `+"`"+`python3 -c`+"`"+`), and data processing. Use `+"`"+`diff_patch_workspace_file`+"`"+` for targeted edits to existing files.
    - **execute_shell_command paths**: Always use full workspace-relative paths in commands (e.g., `+"`"+`echo '...' > '{{.StepExecutionPath}}/output.json'`+"`"+`). To run in a specific directory, use `+"`"+`cd '{{.StepExecutionPath}}' && <command>`+"`"+`.
    - **MCP tools**: Use MCP tools directly for external service calls.
@@ -284,10 +293,20 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
 	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
 
+	// Read custom instructions from instructions.md (user-saved per-workflow instructions)
+	customInstructions := ""
+	if workspacePath != "" {
+		instructionsPath := workspacePath + "/instructions.md"
+		if content, err := skills.ReadFile(instructionsPath); err == nil && strings.TrimSpace(content) != "" {
+			customInstructions = strings.TrimSpace(content)
+		}
+	}
+
 	// Execute the pre-parsed template
 	var result strings.Builder
 	err := executionOnlySystemTemplate.Execute(&result, map[string]interface{}{
 		"WorkspacePath":              workspacePath,
+		"CustomInstructions":         customInstructions,
 		"IsCodeExecutionMode":        isCodeExecutionMode,
 		"CodeExecutionInstructions":  codeExecutionInstructions,
 		"UseToolSearchMode":          useToolSearchMode,

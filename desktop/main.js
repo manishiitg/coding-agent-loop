@@ -607,6 +607,13 @@ function createWindow(initialUrl) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
+  // Always allow DevTools via Cmd+Shift+I / Ctrl+Shift+I
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if ((input.meta || input.control) && input.shift && input.key === 'I') {
+      mainWindow.webContents.toggleDevTools();
+    }
+  });
+
   mainWindow.loadURL(initialUrl || `http://127.0.0.1:${dynamicAgentPort}`);
   
   mainWindow.on('closed', () => {

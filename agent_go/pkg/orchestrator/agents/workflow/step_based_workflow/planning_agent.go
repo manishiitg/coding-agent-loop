@@ -6257,74 +6257,6 @@ func registerPlanModificationTools(
 	return nil
 }
 
-// getExtractVariablesSchema returns the JSON schema for extract_variables tool
-func getExtractVariablesSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"text": {
-				"type": "string",
-				"description": "Text or objective to extract variables from. Look for hard-coded values like URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, and configurations."
-			}
-		},
-		"required": ["text"]
-	}`
-}
-
-// createExtractVariablesExecutor creates an executor function for extract_variables tool
-func createExtractVariablesExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Extract text to analyze
-		textRaw, ok := args["text"].(string)
-		if !ok || textRaw == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid text argument"), nil)
-		}
-		text := textRaw
-
-		// Check if variables.json already exists, create if it doesn't
-		manifest, err := readVariablesFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			// Variables file doesn't exist - create new manifest
-			manifest = &VariablesManifest{
-				Variables:      []Variable{},
-				Groups:         []VariableGroup{},
-				ExtractionDate: time.Now().Format(time.RFC3339),
-			}
-			// Write the new manifest
-			if err := writeVariablesToFile(ctx, workspacePath, manifest, readFile, writeFile, logger); err != nil {
-				return "", fmt.Errorf("failed to create variables.json: %w", err)
-			}
-		}
-
-		// Log the extraction request
-		textPreview := text
-		if len(text) > 100 {
-			textPreview = text[:100] + "..."
-		}
-		logger.Info(fmt.Sprintf("📝 Extract variables tool called with text: %s", textPreview))
-
-		// Write changelog entry for extraction initiation
-		detailsJSON, _ := json.Marshal(map[string]interface{}{
-			"text_preview":             textPreview,
-			"existing_variables_count": len(manifest.Variables),
-		})
-		changelogEntry := VariableChangeLogEntry{
-			Timestamp:   time.Now().Format(time.RFC3339),
-			ChangeType:  "extraction",
-			Description: fmt.Sprintf("Variable extraction initiated from text (existing variables: %d)", len(manifest.Variables)),
-			Details:     string(detailsJSON),
-			Changes:     []VariableFieldChange{},
-		}
-		if err := writeVariableChangelogEntry(ctx, workspacePath, changelogEntry, readFile, writeFile, logger); err != nil {
-			logger.Warn(fmt.Sprintf("⚠️ Failed to write variable changelog entry: %v", err))
-		}
-
-		// Return guidance for the LLM to extract variables
-		// The LLM should analyze the text and use update_variable tool to add each variable
-		return fmt.Sprintf("Variables file ready. Analyze the provided text and extract hard-coded values as variables. Use update_variable tool with action='add' to add each extracted variable. Look for: URLs, account IDs, ports, credentials, resource names, environment values, hosts/endpoints, specific identifiers, paths, and configurations. For each value found, create a variable with UPPER_SNAKE_CASE name, the original value, and a clear description. Current variables file has %d variables.", len(manifest.Variables)), nil
-	}
-}
-
 // registerVariableExtractionTools registers variable extraction and management tools
 // This allows the planning agent to extract and manage variables based on human input
 func registerVariableExtractionTools(
@@ -6335,22 +6267,6 @@ func registerVariableExtractionTools(
 	writeFile func(context.Context, string, string) error,
 	agentName string, // e.g., "planning agent"
 ) error {
-	// Register extract_variables tool
-	extractSchema := getExtractVariablesSchema()
-	extractParams, err := parseSchemaForToolParameters(extractSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse extract_variables schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"extract_variables",
-		"Extract variables from text or objective. Provide the text to analyze, and the tool will guide you to extract hard-coded values (URLs, account IDs, ports, credentials, resource names, etc.) as variables. After extraction, use update_variable tool to add each variable.",
-		extractParams,
-		createExtractVariablesExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register extract_variables tool: %w", err)
-	}
-
 	// Register update_variable tool (reuse from variable_extraction_agent.go)
 	updateVariableSchema := getUpdateVariableSchema()
 	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)

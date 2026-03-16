@@ -170,7 +170,10 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
 
       if (!newPreset) throw new Error('Failed to create preset')
 
-      // 4. Build the prompt the user can paste into planning
+      // 4. Auto-activate the new workflow preset so the workflow path is immediately available
+      useGlobalPresetStore.getState().setActivePreset('workflow', newPreset.id)
+
+      // 5. Build the prompt the user can paste into planning
       const planRefs = planNames.map(n => `- planning/reference-plans/${n}/`).join('\n')
       const prompt = `I've placed reference plans in the workspace for you to study:\n${planRefs}\n\nEach folder has a plan.md with the task breakdown and outputs from previous executions. Analyze these plans — understand what was done, the steps involved, and the results produced. Then design a structured workflow that reproduces this work reliably. Use orchestrator and task agent node types so the workflow can be re-run consistently across different inputs.`
 

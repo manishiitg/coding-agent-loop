@@ -630,20 +630,23 @@ func newWorkflowInteractiveWorkshopAgent(
 // interactiveWorkshopSystemTemplate is the system prompt for the workshop agent
 var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorkshopSystem", `# Workflow Builder Agent
 
-You are a workflow builder agent. You help users build, run, optimize, and debug workflow steps — all in a single free-flow conversation.
+You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
 ## 🤖 ROLE
 - **Your base workflow folder is: {{.WorkspacePath}}** — all workflow files (plan.json, step configs, learnings, runs, knowledgebase) live here.
 - **You have access to a higher-reasoning model** than the step execution agents (which use smaller models). Use this to your advantage — you can run tasks yourself when needed, investigate issues deeply, and share learnings/instructions with step agents to guide them effectively.
 - **You have access to all the same MCP servers, tools, secrets, and skills** that step execution agents have. You can directly use any tool a step agent would use — browser, APIs, file operations, etc.
-- When a step agent struggles or fails, consider running the task yourself first to understand it, then encode what you learned into the step's instructions so the execution agent can succeed next time.
+- **When a step is stuck or repeatedly failing, DO NOT just keep re-running it.** You have a smarter model — use it. Run the task yourself using the same tools the step agent would use, figure out what works, then update the step's learnings and instructions with the correct approach so the execution agent succeeds on the next run. This is one of your most important responsibilities.
 - Execute workflow steps in the background via **execute_step** and report results
 - Update the plan (add, remove, edit steps) using plan modification tools
 - Update step configs (servers, tools, disable_learning, etc.)
 - Delegate debugging and analysis to background agents (optimize_step, generate_learnings) when appropriate
 - Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
+- **Auto-notifications may be delayed.** Messages prefixed with [AUTO-NOTIFICATION] report step completions/failures, but they can arrive late — sometimes after you've already moved on to different work or the user has changed the plan. Always check whether a notification is still relevant to the **current** plan and context before acting on it. Do not assume a notification reflects the latest state.
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (get_step_details, debug_step, get_workflow_config, etc.).
+
+**Saving custom instructions:** When the user asks you to save or remember specific instructions, tips, or guidelines for this workflow, write them to ` + "`{{.WorkspacePath}}/instructions.md`" + ` using shell_command (e.g. ` + "`cat >> instructions.md`" + `) or diff_patch_workspace_file. These instructions are automatically loaded into the system prompt on every future session. Append to the file rather than overwriting existing instructions.
 
 ## 📐 PLAN DESIGN — From Requirements to Steps
 
@@ -735,12 +738,10 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
 
 ### Background Step Execution
-- **execute_step(step_id, iteration, group_id?, instructions?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
-- **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
-- **query_step_tools(execution_id)** — Show which tools a running step is calling in real time. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, prefer debug_step for richer insights.
+- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **human_input** provides text input/instructions for the step agent. **For human input steps**: pass **human_input** to automatically answer the step's question instead of blocking for user input — this lets you provide answers based on your conversation context. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
+- **query_step(execution_id, tool_call_id?)** — Status check + live tool calls. When running: shows status and which tools the step is calling in real time. When done: shows result. Pass tool_call_id to drill into a specific tool call's full input/output.
 - **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
-- **run_background_task(task, task_name, max_turns?)** — Run a generic background sub-agent with full tool access. Use to offload complex work like bulk analysis, data transformation, file cleanup, or any task that doesn't fit the other tools.
 - **stop_step(execution_id)** — Cancel a running step
 
 ### Step Config & Analysis
@@ -758,7 +759,6 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 ### Variable Management
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
-- **extract_variables(text)** — Analyze text to identify hard-coded values that should become variables
 - **add_group(display_name?, values?)** — Create a new variable group with optional name and initial values
 - **update_group(group_id, display_name?, values?, enabled?)** — Update a group's name, values, or enabled status
 - **delete_group(group_id)** — Delete a variable group (cannot delete the last group)
@@ -791,7 +791,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
 - **Validation & criteria**: update_validation_schema, update_success_criteria
-- **Variables**: extract_variables, update_variable, add_group, update_group, delete_group
+- **Variables**: update_variable, add_group, update_group, delete_group
 
 ### Shell & Human
 - **execute_shell_command** — Run shell commands for investigation
@@ -1061,15 +1061,16 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 ### Running Steps
 1. User says "run step-X" → determine iteration + group first (see above) → call **execute_step("step-id", iteration, group_id)** → get execution_id
 2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. Pass skip_learning=false to generate learnings. When learning is enabled, **success learnings run in background** (the next step starts immediately without waiting), while **failure learnings run sequentially** (needed before retry attempts).
-3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop. Move on to other work or wait.
-4. When the auto-notification arrives with the result — **always review the output**:
+3. **Human input steps**: When you execute a step of type "human_input", you **MUST** pass the **human_input** parameter with the appropriate answer. You know the workflow context from the conversation — use it to provide the right response (text, "yes"/"no" for yesno, or the option text/index for multiple_choice). This prevents the step from blocking and waiting for manual UI input. If you don't know the answer, ask the user first, then pass their response via human_input.
+4. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop. Move on to other work or wait.
+5. When the auto-notification arrives with the result — **always review the output**:
    - ✅ If success: briefly tell user the result, then call **optimize_step(step_id)** to analyze the output in the background. Continue to run the next step while optimization runs.
    - ❌ If failed or incorrect output: call **optimize_step(step_id)** to analyze the failure in the background. When its auto-notification arrives, apply the suggested fixes and re-run.
-5. **ALWAYS follow up** after execution. Never fire-and-forget — the value of the workshop is in the iterative review loop.
-6. **Delegate analysis to background agents**: Use **optimize_step** for debugging and analysis, **generate_learnings** for learning generation. Do NOT read execution logs, conversation history, or prompts yourself — the background agents do this more thoroughly and without blocking you.
+6. **ALWAYS follow up** after execution. Never fire-and-forget — the value of the workshop is in the iterative review loop.
+7. **Delegate analysis to background agents**: Use **optimize_step** for debugging and analysis, **generate_learnings** for learning generation. Do NOT read execution logs, conversation history, or prompts yourself — the background agents do this more thoroughly and without blocking you.
 
 ### Auto-Notification System
-All background agents (execute_step, optimize_step, generate_learnings) **automatically notify you** when they complete. These arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated messages, NOT from the user**. Do not treat them as user requests. Do NOT ask the user to tell you when something finishes — the system handles this automatically. Use query_step for a status check or query_step_tools to see which tools the step is currently calling (e.g., user asks "how's step X doing?" or "what's it doing right now?").
+All background agents (execute_step, optimize_step, generate_learnings) **automatically notify you** when they complete. These arrive as messages prefixed with **[AUTO-NOTIFICATION]** — they are **system-generated messages, NOT from the user**. Do not treat them as user requests. Do NOT ask the user to tell you when something finishes — the system handles this automatically. Use query_step for a status check — it automatically shows live tool calls when the step is running (e.g., user asks "how's step X doing?" or "what's it doing right now?").
 
 ### Debugging Failed or Incorrect Steps
 
@@ -1126,7 +1127,7 @@ When debugging a failing workflow, use **list_steps** to see ALL steps including
 
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
-2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. Use query_step_tools if you need to see what tools a running step is calling.
+2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. query_step automatically shows live tool calls when checking a running step.
 3. **Report results**: Always show the user the step result after completion
 4. **Update before re-run**: Apply plan/config changes before re-running a failed step
 5. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report")
@@ -1141,20 +1142,23 @@ var interactiveWorkshopUserTemplate = MustRegisterTemplate("interactiveWorkshopU
 // Same execution capabilities as the workshop but without optimization/plan-modification guidance.
 var humanAssistedExecutionSystemTemplate = MustRegisterTemplate("humanAssistedExecutionSystem", `# Human In The Loop Execution Agent
 
-You are a workflow execution assistant. You help users run workflow steps interactively — choosing which steps to run, monitoring progress, and reporting results.
+You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
 ## 🤖 ROLE
 - **Your base workflow folder is: {{.WorkspacePath}}** — all workflow files (plan.json, step configs, learnings, runs, knowledgebase) live here.
 - **You have access to a higher-reasoning model** than the step execution agents (which use smaller models). Use this to your advantage — you can run tasks yourself when needed, investigate issues deeply, and share learnings/instructions with step agents to guide them effectively.
 - **You have access to all the same MCP servers, tools, secrets, and skills** that step execution agents have. You can directly use any tool a step agent would use — browser, APIs, file operations, etc.
-- When a step agent struggles or fails, consider running the task yourself first to understand it, then encode what you learned into the step's instructions so the execution agent can succeed next time.
+- **When a step is stuck or repeatedly failing, DO NOT just keep re-running it.** You have a smarter model — use it. Run the task yourself using the same tools the step agent would use, figure out what works, then update the step's learnings and instructions with the correct approach so the execution agent succeeds on the next run. This is one of your most important responsibilities.
 - Execute workflow steps in the background via **execute_step** and report results
 - Help the user choose which steps to run and in what order
 - Report step results clearly and concisely
 - Debug execution failures and help the user understand what went wrong
 - Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
+- **Auto-notifications may be delayed.** Messages prefixed with [AUTO-NOTIFICATION] report step completions/failures, but they can arrive late — sometimes after you've already moved on to different work or the user has changed the plan. Always check whether a notification is still relevant to the **current** plan and context before acting on it. Do not assume a notification reflects the latest state.
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the tools (get_step_details, debug_step, get_workflow_config, etc.).
+
+**Saving custom instructions:** When the user asks you to save or remember specific instructions, tips, or guidelines for this workflow, write them to ` + "`{{.WorkspacePath}}/instructions.md`" + ` using shell_command (e.g. ` + "`cat >> instructions.md`" + `) or diff_patch_workspace_file. These instructions are automatically loaded into the system prompt on every future session. Append to the file rather than overwriting existing instructions.
 
 ## ⚙️ TOOLS
 
@@ -1165,12 +1169,10 @@ You are a workflow execution assistant. You help users run workflow steps intera
 - **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
 
 ### Background Step Execution
-- **execute_step(step_id, iteration, group_id?, instructions?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
-- **query_step(execution_id)** — Lightweight status check: running/done/failed/cancelled + result. No file I/O overhead.
-- **query_step_tools(execution_id)** — Show which tools a running step is calling in real time. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, prefer debug_step for richer insights.
+- **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **human_input** provides text input/instructions for the step agent. **For human input steps**: pass **human_input** to automatically answer the step's question instead of blocking for user input — this lets you provide answers based on your conversation context. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
+- **query_step(execution_id, tool_call_id?)** — Status check + live tool calls. When running: shows status and which tools the step is calling in real time. When done: shows result. Pass tool_call_id to drill into a specific tool call's full input/output.
 - **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
-- **run_background_task(task, task_name, max_turns?)** — Run a generic background sub-agent with full tool access. Use to offload complex work like bulk analysis, data transformation, file cleanup, or any task that doesn't fit the other tools.
 - **stop_step(execution_id)** — Cancel a running step
 - **get_cost_summary** — Show token usage and cost breakdown (per-step, per-model, per-phase) for the current run
 
@@ -1182,7 +1184,6 @@ You are a workflow execution assistant. You help users run workflow steps intera
 
 ### Variable Management
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
-- **extract_variables(text)** — Analyze text to identify hard-coded values that should become variables
 - **add_group(display_name?, values?)** — Create a new variable group with optional name and initial values
 - **update_group(group_id, display_name?, values?, enabled?)** — Update a group's name, values, or enabled status
 - **delete_group(group_id)** — Delete a variable group (cannot delete the last group)
@@ -1265,11 +1266,12 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 ### Running Steps
 1. User says "run step-X" (or "run all") → determine iteration + group first (see above) → call **execute_step("step-id", iteration, group_id)** → get execution_id
 2. **Note**: By default, execute_step runs with **skip_learning=true** — no learnings are generated after execution, for faster iteration. If the user wants learnings generated, pass skip_learning=false explicitly. When learning is enabled, **success learnings run in background** (the next step starts immediately without waiting), while **failure learnings run sequentially** (needed before retry attempts).
-3. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop.
-4. When the auto-notification arrives with the result — report it to the user clearly
+3. **Human input steps**: When you execute a step of type "human_input", you **MUST** pass the **human_input** parameter with the appropriate answer. You know the workflow context from the conversation — use it to provide the right response (text, "yes"/"no" for yesno, or the option text/index for multiple_choice). This prevents the step from blocking and waiting for manual UI input. If you don't know the answer, ask the user first, then pass their response via human_input.
+4. Tell user step is running. **You will be automatically notified** when it completes — do NOT poll with query_step in a loop.
+5. When the auto-notification arrives with the result — report it to the user clearly
    - ✅ If success: show the key output/result and ask what to do next
    - ❌ If failed: show the error and explain to the user what went wrong. Use **debug_step** for deeper analysis if needed.
-5. Let the user decide the next step — they may want to re-run, skip to another step, or stop
+6. Let the user decide the next step — they may want to re-run, skip to another step, or stop
 
 ### Running All Steps
 When the user asks to "run all" or "run the workflow":
@@ -1300,7 +1302,7 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
-2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. Use query_step_tools if you need to see what tools a running step is calling.
+2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. query_step automatically shows live tool calls when checking a running step.
 3. **Report results**: Always show the user the step result after completion
 4. **User decides**: Let the user choose what to run and when — don't force a sequence
 5. **Use step IDs**: Step IDs come from plan.json (e.g., "step-create-report")
@@ -1340,7 +1342,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register plan modification tools: %v", err))
 	}
 
-	// Variable management tools (update_variable, extract_variables, group CRUD)
+	// Variable management tools (update_variable, group CRUD)
 	// are registered inside registerInteractiveWorkshopTools for both full and HAE modes.
 
 	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
@@ -2028,11 +2030,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					execCtx = context.WithValue(execCtx, WorkshopTierOverrideKey, execOpts.Tier)
 				}
 
-				// Resolve step title for the wrapper event (use plan step title if available)
+				// Resolve step title and type for the wrapper event (use plan step if available)
 				stepDisplayName := stepID
+				stepType := ""
 				if iwm.controller.approvedPlan != nil {
 					if stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID); stepInfo != nil {
 						stepDisplayName = stepInfo.Step.GetTitle()
+						stepType = string(stepInfo.Step.StepType())
 					}
 				}
 
@@ -2065,39 +2069,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 
-				// Emit orchestrator_agent_end to close the grouping card
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-step-execution",
-						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
-						Success:       err == nil,
-					}
-					if isOptimized {
-						endEvent.InputData = map[string]string{"step_optimized": "true"}
-					}
-					if err != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", err)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
+				// Update status BEFORE emitting event so query_step sees the final state
 				exec.mu.Lock()
-				defer exec.mu.Unlock()
 				// Don't overwrite "cancelled" status — stop_step may have already set it
 				if exec.Status == WorkshopStepCancelled {
+					exec.mu.Unlock()
 					return
 				}
 				if err != nil {
@@ -2114,6 +2090,44 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				} else {
 					exec.Status = WorkshopStepDone
 					exec.Result = result
+				}
+				exec.mu.Unlock()
+
+				// Emit orchestrator_agent_end to close the grouping card
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-step-execution",
+						AgentName:     fmt.Sprintf("Step: %s", stepDisplayName),
+						Success:       err == nil,
+						InputData:     map[string]string{},
+					}
+					if execOpts != nil && execOpts.RunFolder != "" {
+						endEvent.InputData["run_folder"] = execOpts.RunFolder
+					}
+					if isOptimized {
+						endEvent.InputData["step_optimized"] = "true"
+					}
+					// Include step type so frontend can skip notifications for human_input steps
+					if stepType != "" {
+						endEvent.InputData["step_type"] = stepType
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
 				}
 			}()
 
@@ -2133,60 +2147,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register execute_step tool: %v", err))
 	}
 
-	// Tool 2: query_step — lightweight status check (no file I/O for running steps)
+	// Tool 2: query_step — unified status + real-time tool call visibility
+	// When running: shows status + live tool calls (auto-enriched)
+	// When done/failed/cancelled: shows result
 	if err := mcpAgent.RegisterCustomTool(
 		"query_step",
-		"Check the status of a background step execution. Returns status (running/done/failed/cancelled) and the result. Lightweight — use debug_step for detailed insights.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"execution_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The execution_id returned by execute_step",
-				},
-			},
-			"required": []string{"execution_id"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			execIDRaw, ok := args["execution_id"]
-			if !ok || execIDRaw == nil {
-				return "execution_id is required", nil
-			}
-			execID, ok := execIDRaw.(string)
-			if !ok || execID == "" {
-				return "execution_id must be a non-empty string", nil
-			}
-
-			exec := iwm.stepRegistry.Get(execID)
-			if exec == nil {
-				return fmt.Sprintf("execution %q not found", execID), nil
-			}
-
-			exec.mu.RLock()
-			defer exec.mu.RUnlock()
-
-			switch exec.Status {
-			case WorkshopStepRunning:
-				return fmt.Sprintf("Step %q is still running. Use query_step again later or debug_step for live progress on complex steps.", exec.StepID), nil
-			case WorkshopStepDone:
-				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read learnings: 'cat learnings/%s/*.md' — are they specific and actionable? Edit or delete noisy ones.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", exec.StepID, exec.Result, exec.StepID, exec.StepID, exec.StepID, exec.StepID), nil
-			case WorkshopStepFailed:
-				return fmt.Sprintf("Step %q failed: %v\n\n**Next**: Investigate the failure. Call debug_step(%q) for detailed execution insights, then fix the root cause (description, validation, context deps) before re-running.", exec.StepID, exec.Err, exec.StepID), nil
-			case WorkshopStepCancelled:
-				return fmt.Sprintf("Step %q was cancelled.", exec.StepID), nil
-			default:
-				return fmt.Sprintf("Step %q has unknown status: %s", exec.StepID, exec.Status), nil
-			}
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register query_step tool: %v", err))
-	}
-
-	// Tool 2a: query_step_tools — real-time tool call visibility for running steps
-	if err := mcpAgent.RegisterCustomTool(
-		"query_step_tools",
-		"Show which tools a running step is currently calling in real time. By default returns a summary with truncated args/results. Pass tool_call_id to get full input/output for a specific call. Most useful for execute_step (shows MCP tool calls). For learning/optimization agents, use debug_step instead for richer insights.",
+		"Check the status of a background step execution. When running, also shows which tools the step is currently calling in real time. When done, shows the result. Pass tool_call_id to get full input/output for a specific tool call. Use debug_step for file-based insights (learnings, validation, logs).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2196,7 +2162,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"tool_call_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional: a specific tool_call_id from the summary to get full input/output details",
+					"description": "Optional: a specific tool_call_id from a previous query_step summary to get full input/output details for that call",
 				},
 			},
 			"required": []string{"execution_id"},
@@ -2227,44 +2193,54 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			exec.mu.RLock()
 			status := exec.Status
 			stepID := exec.StepID
+			result := exec.Result
+			execErr := exec.Err
 			agentSessID := exec.AgentSessionID
 			exec.mu.RUnlock()
 
-			if status != WorkshopStepRunning {
-				return fmt.Sprintf("Step %q is not running (status: %s). Use query_step for the final result.", stepID, status), nil
+			switch status {
+			case WorkshopStepRunning:
+				// Auto-enrich with live tool calls when running
+				var toolCallInfo string
+				if iwm.toolCallQueryFunc != nil {
+					mainSessID := iwm.mainSessionID
+					if mainSessID == "" {
+						mainSessID = iwm.sessionID
+					}
+					summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, toolCallID)
+					if toolCallID != "" && summary != "" {
+						return fmt.Sprintf("Step %q — tool call detail:\n%s", stepID, summary), nil
+					}
+					if summary != "" {
+						toolCallInfo = fmt.Sprintf("\n\n**Live tool calls:**\n%s", summary)
+					}
+				}
+
+				// Detect execution type from ID prefix and add context
+				isAnalysisAgent := strings.HasPrefix(execID, "learn-") || strings.HasPrefix(execID, "debug-")
+				var hint string
+				if isAnalysisAgent {
+					hint = "\n\nNote: This is a learning/optimization agent — it only uses workspace tools (execute_shell_command, diff_patch_workspace_file). For richer insights, use debug_step(step_id) instead."
+				}
+
+				if toolCallInfo == "" {
+					return fmt.Sprintf("Step %q is still running. No tool calls observed yet.%s", stepID, hint), nil
+				}
+				return fmt.Sprintf("Step %q is still running.%s%s", stepID, toolCallInfo, hint), nil
+
+			case WorkshopStepDone:
+				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read learnings: 'cat learnings/%s/*.md' — are they specific and actionable? Edit or delete noisy ones.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
+			case WorkshopStepFailed:
+				return fmt.Sprintf("Step %q failed: %v\n\n**Next**: Investigate the failure. Call debug_step(%q) for detailed execution insights, then fix the root cause (description, validation, context deps) before re-running.", stepID, execErr, stepID), nil
+			case WorkshopStepCancelled:
+				return fmt.Sprintf("Step %q was cancelled.", stepID), nil
+			default:
+				return fmt.Sprintf("Step %q has unknown status: %s", stepID, status), nil
 			}
-
-			if iwm.toolCallQueryFunc == nil {
-				return fmt.Sprintf("Step %q is running but real-time tool call tracking is not available in this session.", stepID), nil
-			}
-
-			mainSessID := iwm.mainSessionID
-			if mainSessID == "" {
-				mainSessID = iwm.sessionID
-			}
-
-			summary := iwm.toolCallQueryFunc(mainSessID, agentSessID, toolCallID)
-
-			// Detect execution type from ID prefix and add context
-			isAnalysisAgent := strings.HasPrefix(execID, "learn-") || strings.HasPrefix(execID, "debug-")
-			var hint string
-			if isAnalysisAgent {
-				hint = "\n\nNote: This is a learning/optimization agent — it only uses workspace tools (execute_shell_command, diff_patch_workspace_file). For richer insights, use debug_step(step_id) instead."
-			}
-
-			if summary == "" {
-				return fmt.Sprintf("Step %q is running. No tool calls observed yet.%s", stepID, hint), nil
-			}
-
-			if toolCallID != "" {
-				return fmt.Sprintf("Step %q — tool call detail:\n%s", stepID, summary), nil
-			}
-
-			return fmt.Sprintf("Step %q is running. Tool calls:\n%s%s", stepID, summary, hint), nil
 		},
 		"workflow",
 	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register query_step_tools tool: %v", err))
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register query_step tool: %v", err))
 	}
 
 	// Tool 2b: debug_step — rich insights about a step's execution
@@ -3652,6 +3628,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
 				},
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "The iteration folder (e.g., 'iteration-1'). Use list_runs to see available iterations.",
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "The variable group ID (e.g., 'group1').",
+				},
 				"guidance": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional human guidance for what the learning agent should focus on. E.g., 'focus on the API pagination pattern' or 'capture the retry logic for rate limits'. Appended to step description for the learning agent.",
@@ -3661,7 +3645,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Optional execution history from your own tool calls. Pass this when you ran the test yourself (not via execute_step). Format: describe the tool calls you made, their arguments, and results. The learning agent will use this directly instead of reading execution log files.",
 				},
 			},
-			"required": []string{"step_id"},
+			"required": []string{"step_id", "iteration", "group_id"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepIDRaw, ok := args["step_id"]
@@ -3671,6 +3655,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			stepID, ok := stepIDRaw.(string)
 			if !ok || stepID == "" {
 				return "step_id must be a non-empty string", nil
+			}
+
+			iteration, _ := args["iteration"].(string)
+			if iteration == "" {
+				return "iteration is required (e.g., 'iteration-1'). Use list_runs to see available iterations.", nil
+			}
+			groupID, _ := args["group_id"].(string)
+			if groupID == "" {
+				return "group_id is required (e.g., 'group1')", nil
 			}
 
 			guidance := ""
@@ -3704,10 +3697,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			targetStep := stepInfo.Step
 			stepNum := stepInfo.TopIndex
 
-			runFolder := iwm.controller.selectedRunFolder
-			if runFolder == "" {
-				return "no run folder selected", nil
+			// Resolve group folder name from group_id
+			iwm.refreshVariablesManifest(ctx)
+			groupFolderName := groupID
+			if iwm.controller.variablesManifest != nil {
+				for _, g := range iwm.controller.variablesManifest.Groups {
+					if g.GroupID == groupID || iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName) == groupID {
+						if g.DisplayName != "" {
+							sanitized := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName)
+							if sanitized != "" {
+								groupFolderName = sanitized
+							}
+						}
+						break
+					}
+				}
 			}
+			runFolder := fmt.Sprintf("%s/%s", iteration, groupFolderName)
+			iwm.controller.SetSelectedRunFolder(runFolder)
 
 			// Determine log path and stepPath based on whether this is an inner or top-level step.
 			// Inner steps use resolveInnerStepPath to get the correct log folder (e.g., step-3-sub-icici-login).
@@ -3978,6 +3985,26 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					result = sb.String()
 				}
 
+				// Update status BEFORE emitting event so query_step sees the final state
+				exec.mu.Lock()
+				if exec.Status == WorkshopStepCancelled {
+					exec.mu.Unlock()
+					return
+				}
+				if execErr != nil {
+					if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
+						exec.Status = WorkshopStepCancelled
+						exec.Err = execErr
+					} else {
+						exec.Status = WorkshopStepFailed
+						exec.Err = execErr
+					}
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = result
+				}
+				exec.mu.Unlock()
+
 				// Emit orchestrator_agent_end to close the grouping card
 				if eventBridge != nil {
 					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
@@ -4002,24 +4029,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
-				}
-
-				exec.mu.Lock()
-				defer exec.mu.Unlock()
-				if exec.Status == WorkshopStepCancelled {
-					return
-				}
-				if execErr != nil {
-					if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = execErr
-					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = execErr
-					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
 				}
 			}()
 
@@ -4125,6 +4134,26 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				result, err := iwm.runOptimizeStepAgent(execCtx, stepID, focus)
 
+				// Update status BEFORE emitting event so query_step sees the final state
+				exec.mu.Lock()
+				if exec.Status == WorkshopStepCancelled {
+					exec.mu.Unlock()
+					return
+				}
+				if err != nil {
+					if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						exec.Status = WorkshopStepCancelled
+						exec.Err = err
+					} else {
+						exec.Status = WorkshopStepFailed
+						exec.Err = err
+					}
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = result
+				}
+				exec.mu.Unlock()
+
 				// Emit orchestrator_agent_end to close the grouping card
 				if eventBridge != nil {
 					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
@@ -4149,24 +4178,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
-				}
-
-				exec.mu.Lock()
-				defer exec.mu.Unlock()
-				if exec.Status == WorkshopStepCancelled {
-					return
-				}
-				if err != nil {
-					if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = err
-					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = err
-					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
 				}
 			}()
 
@@ -4328,133 +4339,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// === Builder-only tools: background tasks, LLM config, workflow config ===
 	if fullMode {
 
-	// Tool 9: run_background_task — generic background sub-agent for offloading work
-	if err := mcpAgent.RegisterCustomTool(
-		"run_background_task",
-		"Run a generic background task with a sub-agent that has full tool access (workspace tools + all MCP servers). Use this to offload complex or time-consuming work that doesn't fit execute_step/generate_learnings/optimize_step. Examples: bulk file analysis, data transformation, research across multiple files, generating reports, cleanup tasks. The sub-agent runs independently and you will be notified when it completes.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"task": map[string]interface{}{
-					"type":        "string",
-					"description": "Detailed description of the task for the sub-agent. Be specific about what to do, what files/paths to work with, and what output is expected.",
-				},
-				"task_name": map[string]interface{}{
-					"type":        "string",
-					"description": "Short label for the task (shown in UI and list_executions). E.g., 'analyze-logs', 'cleanup-outputs', 'compare-results'.",
-				},
-				"max_turns": map[string]interface{}{
-					"type":        "integer",
-					"description": "Maximum LLM turns for the sub-agent (default: 50). Use higher values for complex multi-step tasks.",
-				},
-			},
-			"required": []string{"task", "task_name"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			task, _ := args["task"].(string)
-			if task == "" {
-				return "task is required and must be non-empty", nil
-			}
-			taskName, _ := args["task_name"].(string)
-			if taskName == "" {
-				return "task_name is required and must be non-empty", nil
-			}
-
-			maxTurns := 50
-			if v, ok := args["max_turns"]; ok && v != nil {
-				if f, ok := v.(float64); ok && f > 0 {
-					maxTurns = int(f)
-				}
-			}
-
-			execID := fmt.Sprintf("task-%s-%05d", taskName, time.Now().UnixNano()%100000)
-			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
-
-			agentSessionID := fmt.Sprintf("workshop-task-%s-%d", taskName, time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         taskName,
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			go func() {
-				eventBridge := iwm.controller.GetContextAwareBridge()
-				if eventBridge != nil {
-					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-background-task",
-						AgentName:     fmt.Sprintf("Task: %s", taskName),
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentStart,
-						Timestamp:     time.Now(),
-						Data:          startEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				// Create agent with same tools/servers as the workshop agent
-				result, execErr := iwm.runGenericBackgroundTask(execCtx, task, taskName, maxTurns)
-
-				// Emit end event
-				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
-					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
-						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
-						AgentType:     "workshop-background-task",
-						AgentName:     fmt.Sprintf("Task: %s", taskName),
-						Success:       execErr == nil,
-					}
-					if execErr != nil {
-						if isCancelled {
-							endEvent.Result = fmt.Sprintf("Cancelled: %v", execErr)
-						} else {
-							endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
-						}
-					} else {
-						endEvent.Result = result
-					}
-					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
-						Type:          orchestrator_events.OrchestratorAgentEnd,
-						Timestamp:     time.Now(),
-						Data:          endEvent,
-						CorrelationID: agentSessionID,
-					})
-				}
-
-				exec.mu.Lock()
-				defer exec.mu.Unlock()
-				if exec.Status == WorkshopStepCancelled {
-					return
-				}
-				if execErr != nil {
-					if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = execErr
-					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = execErr
-					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
-				}
-			}()
-
-			return fmt.Sprintf("Background task %q started.\nexecution_id: %q\nmax_turns: %d\nYou will be automatically notified when it completes.", taskName, execID, maxTurns), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_background_task tool: %v", err))
-	}
-
 	// Tool: get_llm_config — show current LLM configuration (read-only)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_llm_config",
@@ -4610,27 +4494,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_variable tool: %v", err))
-	}
-
-	// Tool: extract_variables — analyze text and identify hard-coded values that should become variables
-	extractVariablesSchema := getExtractVariablesSchema()
-	extractVariablesParams, parseErr2 := parseSchemaForToolParameters(extractVariablesSchema)
-	if parseErr2 != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to parse extract_variables schema: %v", parseErr2))
-	} else if err := mcpAgent.RegisterCustomTool(
-		"extract_variables",
-		"Extract variables from text or objective. Provide the text to analyze, and the tool will guide you to extract hard-coded values (URLs, account IDs, ports, credentials, resource names, etc.) as variables. After extraction, use update_variable tool to add each variable.",
-		extractVariablesParams,
-		createExtractVariablesExecutor(iwm.controller.GetWorkspacePath(), logger,
-			func(ctx context.Context, path string) (string, error) {
-				return iwm.controller.ReadWorkspaceFile(ctx, path)
-			},
-			func(ctx context.Context, path string, content string) error {
-				return iwm.controller.WriteWorkspaceFile(ctx, path, content)
-			}),
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register extract_variables tool: %v", err))
 	}
 
 	// Tool: add_group — create a new variable group
@@ -5984,143 +5847,6 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 	}
 
 	return result, nil
-}
-
-// runGenericBackgroundTask creates and runs a generic sub-agent with full tool access.
-func (iwm *InteractiveWorkshopManager) runGenericBackgroundTask(ctx context.Context, task string, taskName string, maxTurns int) (string, error) {
-	logger := iwm.controller.GetLogger()
-	workspacePath := iwm.controller.GetWorkspacePath()
-
-	// Folder guard: read everything, write to runs/ and learnings/
-	readPaths := []string{workspacePath}
-	runsPath := fmt.Sprintf("%s/runs", workspacePath)
-	learningsPath := fmt.Sprintf("%s/learnings", workspacePath)
-	writePaths := []string{runsPath, learningsPath}
-
-	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-
-	// Use the workshop agent's LLM, fall back to preset execution LLM
-	effectiveLLM := iwm.presetLLM
-	if effectiveLLM == nil || effectiveLLM.Provider == "" || effectiveLLM.ModelID == "" {
-		effectiveLLM = iwm.controller.presetExecutionLLM
-	}
-	if effectiveLLM == nil || effectiveLLM.Provider == "" || effectiveLLM.ModelID == "" {
-		return "", fmt.Errorf("no valid LLM configuration for background task — neither presetPhaseLLM nor presetExecutionLLM is configured")
-	}
-	llmConfig := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{
-			Provider: effectiveLLM.Provider,
-			ModelID:  effectiveLLM.ModelID,
-		},
-		Fallbacks: iwm.controller.GetFallbacks(),
-		APIKeys:   iwm.controller.GetAPIKeys(),
-	}
-
-	agentName := fmt.Sprintf("background-task-%s", taskName)
-	config := iwm.controller.CreateStandardAgentConfigWithLLM(agentName, maxTurns, agents.OutputFormatStructured, llmConfig)
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(effectiveLLM)
-	config.UseToolSearchMode = false
-
-	// MCP Servers — same as workshop agent
-	selectedServers := iwm.controller.GetSelectedServers()
-	selectedTools := iwm.controller.GetSelectedTools()
-	mcpConfigPath := iwm.controller.GetMCPConfigPath()
-
-	if len(selectedServers) > 0 && mcpConfigPath != "" {
-		config.ServerNames = selectedServers
-		config.SelectedTools = selectedTools
-		config.MCPConfigPath = mcpConfigPath
-		config.MCPSessionID = iwm.controller.GetMCPSessionID()
-	} else {
-		config.ServerNames = []string{mcpclient.NoServers}
-	}
-
-	// Phase tools: shell_command etc.
-	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
-
-	systemPrompt := fmt.Sprintf(`# Background Task Agent
-
-## Context: %s
-
-## Role
-You are a background task agent with full tool access (workspace tools + all MCP servers).
-Execute the task described below thoroughly and return a clear summary of what was done.
-
-## Workspace
-- **Path**: %s
-- **Run Folder**: %s
-
-## Task
-%s`, time.Now().Format("2006-01-02 15:04:05"), workspacePath, iwm.controller.selectedRunFolder, task)
-
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return newGenericBackgroundAgent(cfg, log, tracer, eventBridge, systemPrompt, task)
-	}
-
-	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
-		ctx,
-		config,
-		"background-task",
-		0, 0,
-		"background-task",
-		createAgentFunc,
-		phaseTools,
-		phaseExecutors,
-		true,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create background task agent: %w", err)
-	}
-
-	logger.Info(fmt.Sprintf("🔧 Running background task %q (max_turns: %d)", taskName, maxTurns))
-	result, _, err := agent.Execute(ctx, map[string]string{}, nil)
-	if err != nil {
-		return "", err
-	}
-
-	return result, nil
-}
-
-// GenericBackgroundAgent is a simple agent that executes a task with a provided system prompt.
-type GenericBackgroundAgent struct {
-	*agents.BaseOrchestratorAgent
-	systemPrompt string
-	userMessage  string
-}
-
-func newGenericBackgroundAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener, systemPrompt string, userMessage string) *GenericBackgroundAgent {
-	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
-		config,
-		logger,
-		tracer,
-		agents.TodoPlannerExecutionQAAgentType,
-		eventBridge,
-	)
-	return &GenericBackgroundAgent{
-		BaseOrchestratorAgent: baseAgent,
-		systemPrompt:          systemPrompt,
-		userMessage:           userMessage,
-	}
-}
-
-func (agent *GenericBackgroundAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	baseAgent := agent.BaseOrchestratorAgent.BaseAgent()
-	if baseAgent == nil || baseAgent.Agent() == nil {
-		return "", nil, fmt.Errorf("agent not initialized")
-	}
-
-	inputProcessor := func(map[string]string) string { return agent.userMessage }
-
-	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(
-		ctx, templateVars, inputProcessor,
-		conversationHistory, struct{}{},
-		agent.systemPrompt, true,
-	)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return result, updatedHistory, nil
 }
 
 // updateWorkshopLearningMetadata updates .learning_metadata.json after workshop generate_learnings completes.

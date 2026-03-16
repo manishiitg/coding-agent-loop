@@ -185,6 +185,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return isChatCompatiblePhase(tab.metadata.phaseId) ? tab.metadata.phaseId : undefined
   })
   const isWorkflowPhaseChat = !!workflowPhaseId
+  const isWorkflowMode = selectedModeCategory === 'workflow'
+  // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
+  const hideExtras = isWorkflowMode
   // For plan features, treat multi-agent as always 'plan'
   const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
 
@@ -2504,13 +2507,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </Tooltip>
                 )}
 
-                {/* Agent Mode Selector — hidden in workflow phase chat, show LLM label instead */}
-                {isWorkflowPhaseChat ? (
-                  <div className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs">
-                    {primaryLLM?.provider && primaryLLM?.model ? `${primaryLLM.provider}/${primaryLLM.model.split('/').pop()}` : 'LLM'}
-                  </div>
+                {/* Agent Mode Selector — hidden in workflow mode, show LLM label instead */}
+                {hideExtras ? (
+                  isWorkflowPhaseChat ? (
+                    <div className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs">
+                      {primaryLLM?.provider && primaryLLM?.model ? `${primaryLLM.provider}/${primaryLLM.model.split('/').pop()}` : 'LLM'}
+                    </div>
+                  ) : null
                 ) : (
-                  (effectiveDelegationMode === 'plan') ? null : isClaudeCode ? (
+                  (effectiveDelegationMode === 'plan' && !isMultiAgentMode) ? null : isClaudeCode ? (
                     /* Claude Code always uses code execution mode */
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -2594,7 +2599,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   <div className="flex items-center gap-2">
 
                       <>
-                        {!isWorkflowPhaseChat && (
+                        {!hideExtras && (
                         <ServerSelectionDropdown
                           availableServers={availableServers}
                           selectedServers={manualSelectedServers}
@@ -2605,7 +2610,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           agentMode={agentMode}
                         />
                         )}
-                        {!isWorkflowPhaseChat && (
+                        {!hideExtras && (
                           <SkillSelectionDropdown
                             selectedSkills={selectedSkills}
                             onSkillToggle={onSkillToggle}
@@ -2615,7 +2620,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             onImportClick={() => openDialog('skillImport')}
                           />
                         )}
-                        {!isWorkflowPhaseChat && (effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
+                        {!hideExtras && (effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
                           <SubAgentSelectionDropdown
                             selectedSubAgents={selectedSubAgents}
                             onSubAgentToggle={onSubAgentToggle}
@@ -2627,7 +2632,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         )}
                       </>
 
-                    {!isWorkflowPhaseChat && (effectiveDelegationMode !== 'plan') && (
+                    {!hideExtras && (effectiveDelegationMode !== 'plan' || isMultiAgentMode) && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -2649,7 +2654,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </TooltipProvider>
                     )}
                     {/* Workspace Access Toggle - hidden for phase chat, always on in multi-agent, toggleable in chat */}
-                    {!isWorkflowPhaseChat && (isMultiAgentMode ? (
+                    {!hideExtras && (isMultiAgentMode ? (
                       <div className="flex items-center gap-1 p-1.5 rounded-md border bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400">
                         <FolderOpen className="w-4 h-4 flex-shrink-0" />
                       </div>
@@ -2670,8 +2675,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </span>
                       </button>
                     ))}
-                    {/* Browser Access Toggle — hidden in workflow phase chat */}
-                    {!isWorkflowPhaseChat && <button
+                    {/* Browser Access Toggle — hidden in workflow mode */}
+                    {!hideExtras && <button
                       type="button"
                       onClick={() => {
                         if (browserMode === 'none') {
@@ -2736,8 +2741,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       )}
                     </button>}
 
-                    {/* Google Workspace Toggle — hidden in workflow phase chat */}
-                    {!isWorkflowPhaseChat && (
+                    {/* Google Workspace Toggle — hidden in workflow mode */}
+                    {!hideExtras && (
                     <button
                       type="button"
                       onClick={() => setShowGWSPopup(true)}
@@ -2764,8 +2769,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </button>
                     )}
 
-                    {/* Image Generation Toggle — opens config modal directly */}
-                    {!isWorkflowPhaseChat && <button
+                    {/* Image Generation Toggle — hidden in workflow mode */}
+                    {!hideExtras && <button
                       type="button"
                       onClick={() => {
                         if (!enableImageGeneration) {
@@ -3316,8 +3321,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   </div>
                 )}
 
-                {/* Secrets dropdown - hidden for workflow phase chat */}
-                {!isWorkflowPhaseChat && (
+                {/* Secrets dropdown - hidden for workflow mode */}
+                {!hideExtras && (
                 <SecretSelectionDropdown
                   selectedSecrets={selectedSecrets}
                   onSecretToggle={onSecretToggle}

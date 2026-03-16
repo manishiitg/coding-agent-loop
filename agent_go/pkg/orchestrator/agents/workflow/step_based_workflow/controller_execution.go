@@ -887,6 +887,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),  // Evaluation mode flag for eval-specific prompt guidance
 		}
 
+		// Inject workflow variables as environment variables for code execution mode.
+		// Available via os.environ["VAR_NAME"] in Python or $VAR_NAME in bash.
+		if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
+			for k, v := range hcpo.variableValues {
+				envRef["VAR_"+k] = v
+			}
+		}
+
 		// Add context dependencies with full execution paths (so agent knows exact file locations)
 		contextDeps := step.GetContextDependencies()
 		if len(contextDeps) > 0 {

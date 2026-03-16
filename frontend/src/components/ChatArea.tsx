@@ -958,20 +958,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Observer initialization removed - no longer needed
 
-  // SSE event batching: accumulate non-streaming events per session and flush once per animation frame
-  // Streaming events (streaming_start/chunk/end) bypass batching for real-time text display
-  interface PendingSSEBatch {
-    events: PollingEvent[]
-    sessionStatus?: string
-    lastProcessedIndex: number
-    hasMore?: boolean
-    hasRunningBgAgents?: boolean
-    sessionId: string // actualSessionId (may differ from map key)
-  }
-  const pendingSSEEventsRef = useRef<Map<string, PendingSSEBatch>>(new Map())
-  // Throttle flush to max every 200ms (was requestAnimationFrame = up to 60x/sec).
-  // Streaming text is handled immediately outside this path, so user-visible latency is unaffected.
-  const flushRAFRef = useRef<ReturnType<typeof setTimeout> | 0>(0)
+  // (Batching removed — events are now processed immediately as they arrive)
 
   // Removed extractUserMessageContent - no longer needed since we removed duplicate detection
 
@@ -1074,11 +1061,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     if (response.events.length === 0) return
 
+    console.time(`[PERF] processEventsResponse (${response.events.length} events, session=${actualSessionId.slice(0, 8)})`)
+
     // --- Event filtering & processing ---
     const eventsBeforeFilter = response.events as PollingEvent[]
     const newEvents: PollingEvent[] = []
     let hasCompletionEvent = false
 
+    console.time(`[PERF] event-filter-loop (${eventsBeforeFilter.length} events)`)
     for (const event of eventsBeforeFilter) {
       const agentEvent = event.data as Record<string, unknown> | undefined
       const innerData = agentEvent?.data as Record<string, unknown> | undefined
@@ -1175,13 +1165,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
       }
 
-      // Clear dedup tracker when a new workshop step execution or debug starts
-      if (event.type === 'orchestrator_agent_start') {
-        const startAgentType = innerData?.agent_type ?? agentEvent?.agent_type
-        if (startAgentType === 'workshop-step-execution' || startAgentType === 'workshop-step-debug' || startAgentType === 'workshop-step-learning') {
-          notifiedWorkshopAgentsRef.current.clear()
-        }
-      }
+      // Dedup keys now include correlation_id (unique per execution), so clearing is not needed
 
       // Auto-notify chat agent when a workshop step completes (the wrapper event only).
       // Sub-agent events (execution, learning) are ignored — only the final step-level event triggers a notification.
@@ -1192,40 +1176,47 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const success = (innerData?.success ?? agentEvent?.success) as boolean
           const result = (innerData?.result ?? agentEvent?.result ?? '') as string
 
-          // Skip notification for cancelled steps — only real failures (validation, execution errors)
-          // should be reported to the agent for debugging
+          const inputData = (innerData?.input_data ?? agentEvent?.input_data) as Record<string, string> | undefined
+          const stepType = inputData?.step_type ?? ''
+
+          // Skip notification for human_input steps — they complete instantly and don't need notifications
+          // Skip notification for cancelled steps — only real failures should be reported
           const isCancelled = result.startsWith('Cancelled:')
-          if (isCancelled) {
-            console.log('[WORKSHOP] Skipping notification for cancelled step', { agentName, result })
+          if (stepType === 'human_input' || isCancelled) {
+            console.log('[WORKSHOP] Skipping notification for step', { agentName, stepType, isCancelled })
           } else {
             const truncated = result.length > 5000 ? result.substring(0, 5000) + '...' : result
+            const timestamp = new Date().toLocaleTimeString()
+            const runFolder = inputData?.run_folder ?? ''
+            const runInfo = runFolder ? ` [run: ${runFolder}]` : ''
 
             // Prefix all notifications so the LLM knows these are automated, not user messages
             const AUTO_PREFIX = '[AUTO-NOTIFICATION] '
             let notification: string
             if (agentType === 'workshop-step-learning') {
               notification = success
-                ? `${AUTO_PREFIX}[LEARNING COMPLETE] ${agentName} — ${truncated}`
-                : `${AUTO_PREFIX}[LEARNING FAILED] ${agentName} failed.\nError: ${truncated}`
+                ? `${AUTO_PREFIX}[LEARNING COMPLETE] [${timestamp}] ${agentName} — ${truncated}`
+                : `${AUTO_PREFIX}[LEARNING FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
             } else if (agentType === 'workshop-step-debug') {
               notification = success
-                ? `${AUTO_PREFIX}[OPTIMIZATION COMPLETE] ${agentName} — ${truncated}`
-                : `${AUTO_PREFIX}[OPTIMIZATION FAILED] ${agentName} failed.\nError: ${truncated}`
+                ? `${AUTO_PREFIX}[OPTIMIZATION COMPLETE] [${timestamp}] ${agentName} — ${truncated}`
+                : `${AUTO_PREFIX}[OPTIMIZATION FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
             } else {
-              // Check if step is marked as optimized in step config (passed via input_data)
-              const inputData = innerData?.input_data ?? agentEvent?.input_data
-              const isOptimized = inputData?.step_optimized === 'true'
+              // Check if the result content indicates failure even when success=true (no execution error)
+              // A step can complete without throwing an error but still report STATUS: FAILED in the result
+              const resultIndicatesFailure = success && result && /STATUS:\s*FAILED|FAILED:|FAILURE:/i.test(result)
 
-              if (success && isOptimized) {
-                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.\nResult: ${truncated}`
+              if (resultIndicatesFailure) {
+                notification = `${AUTO_PREFIX}[STEP FAILED] [${timestamp}]${runInfo} ${agentName} completed but result indicates failure.\nResult: ${truncated}`
               } else if (success) {
-                notification = `${AUTO_PREFIX}[STEP COMPLETED] ${agentName} finished successfully.\nResult: ${truncated}`
+                notification = `${AUTO_PREFIX}[STEP COMPLETED] [${timestamp}]${runInfo} ${agentName} finished successfully.\nResult: ${truncated}`
               } else {
-                notification = `${AUTO_PREFIX}[STEP FAILED] ${agentName} failed.\nError: ${truncated}`
+                notification = `${AUTO_PREFIX}[STEP FAILED] [${timestamp}]${runInfo} ${agentName} failed.\nError: ${truncated}`
               }
             }
 
-            const dedupeKey = `${agentName}::${agentType}`
+            const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+            const dedupeKey = `${agentName}::${agentType}::${corrId}`
             if (notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
               console.log('[WORKSHOP] Skipping duplicate notification for', dedupeKey)
             } else {
@@ -1259,6 +1250,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       newEvents.push(event)
     }
+    console.timeEnd(`[PERF] event-filter-loop (${eventsBeforeFilter.length} events)`)
 
     // PERF FIX: Mark workspace as stale instead of auto-fetching.
     //
@@ -1301,6 +1293,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // but we skip side effects (canvas updates, step progress, workspace refresh) to avoid
     // polluting the currently visible workflow's UI state
     if (selectedModeCategory === 'workflow' && isActivePresetTab) {
+      console.time(`[PERF] workflow-event-loop (${response.events.length} events)`)
       const workflowStore = useWorkflowStore.getState()
       for (const event of response.events as PollingEvent[]) {
         if (event.type === 'batch_group_start') {
@@ -1360,58 +1353,30 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             const dedupeKey = `${stepTitle}::todo-step`
             if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
               notifiedWorkshopAgentsRef.current.add(dedupeKey)
-              const notification = `[AUTO-NOTIFICATION] [STEP COMPLETED] ${stepTitle} finished successfully.`
+              const notification = `[AUTO-NOTIFICATION] [STEP COMPLETED] [${new Date().toLocaleTimeString()}] ${stepTitle} finished successfully.`
               const currentQueue = chatStore.getTabConfig(tab.tabId)?.queuedMessages || []
               chatStore.setTabConfig(tab.tabId, { queuedMessages: [...currentQueue, notification] })
             }
           }
         }
       }
+      console.timeEnd(`[PERF] workflow-event-loop (${response.events.length} events)`)
     }
 
-    // Store events
-    if (tab) {
+    // Store events — skip for non-active preset tabs to reduce zustand updates
+    // Background preset events are dropped (SSE will backfill when switching back)
+    if (tab && isActivePresetTab && newEvents.length > 0) {
       const finalTab = chatStore.getTab(tab.tabId)
       if (!finalTab) return
+      console.time(`[PERF] addTabEvents (${newEvents.length} events)`)
       addTabEvents(actualSessionId, newEvents)
+      console.timeEnd(`[PERF] addTabEvents (${newEvents.length} events)`)
     }
+    console.timeEnd(`[PERF] processEventsResponse (${response.events.length} events, session=${actualSessionId.slice(0, 8)})`)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getTabEvents, setTabLastEventIndex, setLastEventIndex, addTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, selectedModeCategory])
 
-  // Flush all pending SSE events: merges accumulated events per session into a single processEventsResponse call
-  const flushPendingSSEEvents = useCallback(() => {
-    flushRAFRef.current = 0
-    const pending = pendingSSEEventsRef.current
-    if (pending.size === 0) return
-
-    // Log flush stats for perf debugging
-    let totalEvents = 0
-    for (const batch of pending.values()) totalEvents += batch.events.length
-    console.debug(`[SSE Flush] ${pending.size} sessions, ${totalEvents} events`)
-
-    // Take snapshot and clear
-    const batches = new Map(pending)
-    pending.clear()
-
-    for (const [sid, batch] of batches) {
-      const store = useChatStore.getState()
-      const matchingTab = Object.values(store.chatTabs).find(t => t.sessionId === sid) || null
-      processEventsResponse(
-        {
-          events: batch.events,
-          session_status: batch.sessionStatus,
-          last_processed_index: batch.lastProcessedIndex,
-          has_more: batch.hasMore,
-          has_running_background_agents: batch.hasRunningBgAgents,
-          session_id: batch.sessionId !== sid ? batch.sessionId : undefined,
-        },
-        sid,
-        matchingTab
-      )
-    }
-  }, [processEventsResponse])
-
-  // Handle an incoming SSE event message: process streaming events immediately, batch the rest
+  // Handle an incoming SSE event message: process streaming events immediately, non-streaming processed inline
   const handleSSEMessage = useCallback((msg: SSEEventMessage, sid: string) => {
     const chatStore = useChatStore.getState()
     const actualSessionId = (msg as unknown as Record<string, unknown>).session_id as string || sid
@@ -1469,37 +1434,25 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
-    // Accumulate non-streaming events and metadata into the pending batch
-    const pending = pendingSSEEventsRef.current
-    const existing = pending.get(sid)
-    if (existing) {
-      if (nonStreamingEvents.length > 0) existing.events.push(...nonStreamingEvents)
-      if (msg.session_status) existing.sessionStatus = msg.session_status
-      if (msg.last_processed_index > existing.lastProcessedIndex) {
-        existing.lastProcessedIndex = msg.last_processed_index
-      }
+    // Process non-streaming events immediately (no batching delay)
+    if (nonStreamingEvents.length > 0 || msg.session_status) {
       const msgAny = msg as unknown as Record<string, unknown>
-      if (msgAny.has_more !== undefined) existing.hasMore = msgAny.has_more as boolean
-      if (msg.has_running_background_agents !== undefined) existing.hasRunningBgAgents = msg.has_running_background_agents
-      if (actualSessionId !== sid) existing.sessionId = actualSessionId
-    } else {
-      const msgAny = msg as unknown as Record<string, unknown>
-      pending.set(sid, {
-        events: nonStreamingEvents,
-        sessionStatus: msg.session_status,
-        lastProcessedIndex: msg.last_processed_index,
-        hasMore: msgAny.has_more as boolean | undefined,
-        hasRunningBgAgents: msg.has_running_background_agents,
-        sessionId: actualSessionId,
-      })
+      const store = useChatStore.getState()
+      const matchingTab = Object.values(store.chatTabs).find(t => t.sessionId === actualSessionId) || null
+      processEventsResponse(
+        {
+          events: nonStreamingEvents,
+          session_status: msg.session_status,
+          last_processed_index: msg.last_processed_index,
+          has_more: msgAny.has_more as boolean | undefined,
+          has_running_background_agents: msg.has_running_background_agents,
+          session_id: actualSessionId !== sid ? actualSessionId : undefined,
+        },
+        sid,
+        matchingTab
+      )
     }
-
-    // Throttle flush to max every 200ms (batches all events arriving within the window).
-    // Streaming text events are handled immediately above, so user-visible latency is unaffected.
-    if (!flushRAFRef.current) {
-      flushRAFRef.current = setTimeout(flushPendingSSEEvents, 200)
-    }
-  }, [flushPendingSSEEvents])
+  }, [processEventsResponse])
 
   // Handle SSE status-only messages (no events, just session status updates)
   const handleSSEStatus = useCallback((msg: SSEStatusMessage, sid: string) => {
@@ -1508,16 +1461,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       sid
     )
   }, [handleSSEMessage])
-
-  // Cancel pending SSE flush on unmount
-  useEffect(() => {
-    return () => {
-      if (flushRAFRef.current) {
-        clearTimeout(flushRAFRef.current)
-        flushRAFRef.current = 0
-      }
-    }
-  }, [])
 
   // Polling function to get events for ALL active sessions (fallback when SSE unavailable)
   const pollEvents = useCallback(async () => {
@@ -1794,13 +1737,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
       
-      // Workflow tabs: keep SSE alive as long as the tab exists.
-      // Workshop steps run in background goroutines after the main agent turn completes.
-      // Their events (orchestrator_agent_end for sub-agents, learning, etc.) must still
-      // reach the frontend so it can auto-send notifications to the main chat agent.
-      // SSE is cleaned up when the tab is closed.
+      // Workflow tabs: only keep SSE alive for the active preset's tabs.
+      // Background preset tabs don't need SSE — their events aren't rendered and
+      // each connection + state update adds overhead that slows the UI.
+      // When switching back, SSE reconnects and backfills from EventStore.
       if (tab.metadata?.mode === 'workflow') {
-        return true
+        const activeWfPreset = useGlobalPresetStore.getState().activePresetIds.workflow
+        const isActivePreset = !tab.metadata?.presetQueryId || tab.metadata.presetQueryId === activeWfPreset
+        return isActivePreset
       }
 
       // Skip completed sessions (definitely done) — unless bg agents are still running
@@ -2335,12 +2279,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Reset frontend state
     resetChatState()
     
-    // Clear queued messages if any
+    // Clear queued messages and reset notification dedup tracker
     if (activeTab) {
       const chatStore = useChatStore.getState()
       chatStore.setTabConfig(activeTab.tabId, { queuedMessages: [] })
       isProcessingQueueRef.current = false
     }
+    notifiedWorkshopAgentsRef.current.clear()
     
     // Explicitly reset events and tracking for new chat
     // Note: Using tabEvents now, not global events

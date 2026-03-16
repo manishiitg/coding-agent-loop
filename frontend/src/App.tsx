@@ -38,6 +38,7 @@ declare global {
   interface Window {
     highlightFile?: (filepath: string) => void;
     toggleAutoScroll?: () => void;
+    perfDiag?: () => void;
   }
 }
 
@@ -167,6 +168,102 @@ function App() {
     binaryFileData
   } = useWorkspaceStore()
   
+  // Expose performance diagnostics on window for DevTools console
+  useEffect(() => {
+    window.perfDiag = () => {
+      const chatState = useChatStore.getState()
+      const tabs = Object.values(chatState.chatTabs)
+      const workflowTabs = tabs.filter(t => t.metadata?.mode === 'workflow')
+      const streamingTabs = tabs.filter(t => t.isStreaming)
+      const sseCount = Object.keys(chatState.sseConnections).length
+
+      let totalEvents = 0
+      const eventDetails: Array<{ session: string; tab: string; events: number; mode: string; preset: string }> = []
+      for (const tab of tabs) {
+        if (tab.sessionId) {
+          const count = (chatState.tabEvents[tab.sessionId] || []).length
+          totalEvents += count
+          if (count > 0) {
+            eventDetails.push({
+              session: tab.sessionId.slice(0, 8),
+              tab: tab.name.slice(0, 25),
+              events: count,
+              mode: tab.metadata?.mode || '?',
+              preset: (tab.metadata?.presetQueryId || '').slice(0, 8)
+            })
+          }
+        }
+      }
+
+      const lsSize = Math.round((localStorage.getItem('chat-store') || '').length / 1024)
+
+      // Measure React render pressure — count renders over 3 seconds
+      const renderKey = '__perfRenderCount'
+      if (!(window as any)[renderKey]) {
+        (window as any)[renderKey] = 0
+        const origCreateElement = (window as any).__origCE || null
+        if (!origCreateElement) {
+          // Can't patch React.createElement in production — skip render counting
+        }
+      }
+
+      // Measure zustand subscription count
+      const storeKeys = ['chat-store', 'workflow-store', 'global-preset-storage', 'mode-store', 'mcp-store']
+      const storageSizes: Record<string, number> = {}
+      for (const key of storeKeys) {
+        const val = localStorage.getItem(key)
+        if (val) storageSizes[key] = Math.round(val.length / 1024)
+      }
+
+      // Memory usage (if available)
+      const mem = (performance as any).memory
+      const memInfo = mem ? {
+        usedHeap: `${Math.round(mem.usedJSHeapSize / 1024 / 1024)} MB`,
+        totalHeap: `${Math.round(mem.totalJSHeapSize / 1024 / 1024)} MB`,
+        limit: `${Math.round(mem.jsHeapSizeLimit / 1024 / 1024)} MB`
+      } : 'N/A (use Chrome-based browser)'
+
+      // DOM node count
+      const domNodes = document.querySelectorAll('*').length
+
+      // Long task detection — start monitoring
+      if (!(window as any).__longTaskObserver) {
+        try {
+          const longTasks: Array<{ duration: number; time: string }> = [];
+          (window as any).__longTasks = longTasks
+          const observer = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+              longTasks.push({ duration: Math.round(entry.duration), time: new Date().toLocaleTimeString() })
+              if (longTasks.length > 50) longTasks.shift()
+            }
+          })
+          observer.observe({ entryTypes: ['longtask'] })
+          ;(window as any).__longTaskObserver = observer
+        } catch { /* longtask not supported */ }
+      }
+      const longTasks = ((window as any).__longTasks || []) as Array<{ duration: number; time: string }>
+      const recentLongTasks = longTasks.slice(-10)
+
+      console.table(eventDetails)
+      if (recentLongTasks.length > 0) {
+        console.log('%c Long Tasks (>50ms):', 'color: red; font-weight: bold')
+        console.table(recentLongTasks)
+      }
+      console.log(`
+=== PERF DIAGNOSTICS ===
+Tabs: ${tabs.length} total (${workflowTabs.length} workflow, ${streamingTabs.length} streaming)
+SSE connections: ${sseCount}
+Events in memory: ${totalEvents} across ${eventDetails.length} sessions
+DOM nodes: ${domNodes}
+Memory: ${typeof memInfo === 'string' ? memInfo : `${memInfo.usedHeap} / ${memInfo.totalHeap} (limit: ${memInfo.limit})`}
+Long tasks (>50ms): ${longTasks.length} total, ${recentLongTasks.length} recent
+localStorage sizes: ${Object.entries(storageSizes).map(([k, v]) => `${k}: ${v}KB`).join(', ')}
+========================`)
+      console.log('%c Tip: Run perfDiag() again after interacting to see new long tasks', 'color: gray; font-style: italic')
+    }
+    return () => { delete window.perfDiag }
+  }, [])
+
   const [commitMessage, setCommitMessage] = useState('')
   const [showCommitDialog, setShowCommitDialog] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -531,22 +628,31 @@ function App() {
       const chatStore = useChatStore.getState()
       const activeTabId = chatStore.activeTabId
       const activeTab = activeTabId ? chatStore.getTab(activeTabId) : null
-      const hasValidActiveTab = activeTab && activeTab.metadata?.mode === 'workflow'
+      const activePresetId = useGlobalPresetStore.getState().activePresetIds.workflow
+
+      // Tab must match workflow mode AND the active preset
+      const hasValidActiveTab = activeTab &&
+        activeTab.metadata?.mode === 'workflow' &&
+        activeTab.metadata?.presetQueryId === activePresetId
 
       if (!hasValidActiveTab) {
-        // Find the most recent workflow execution tab (prefer tabs with sessionId)
-        const workflowTabs = Object.values(chatStore.chatTabs)
+        // Find the most recent workflow tab for the active preset
+        let workflowTabs = Object.values(chatStore.chatTabs)
           .filter(tab => tab.metadata?.mode === 'workflow' && (tab.sessionId || tab.isStreaming))
           .sort((a, b) => b.createdAt - a.createdAt)
 
+        // Prefer tabs matching the active preset
+        if (activePresetId) {
+          const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
+          if (presetTabs.length > 0) workflowTabs = presetTabs
+        }
+
         if (workflowTabs.length > 0) {
-          console.log(`[App] Switching to workflow tab on mode restore: ${workflowTabs[0].tabId}`)
           chatStore.switchTab(workflowTabs[0].tabId)
-          // Ensure the chat panel inside WorkflowLayout is visible
           useWorkflowStore.getState().setShowChatArea(true)
         } else {
           // No active workflow tabs - clear activeTabId so WorkflowLayout's ChatArea
-          // doesn't display content from another mode (e.g. multi-agent chat)
+          // doesn't display content from another mode
           useChatStore.setState({ activeTabId: null })
         }
       }
@@ -567,14 +673,11 @@ function App() {
     const hasValidActiveTab = activeTab && activeTab.metadata?.mode === selectedModeCategory
 
     if (!hasValidActiveTab) {
-      // Find the first tab for the current mode
       const modeTabs = Object.values(chatStore.chatTabs).filter(tab =>
         tab.metadata?.mode === selectedModeCategory
-      ).sort((a, b) => a.createdAt - b.createdAt)
+      ).sort((a, b) => b.createdAt - a.createdAt)
 
       if (modeTabs.length > 0) {
-        // Select the first tab
-        console.log(`[App] No valid active tab found for mode ${selectedModeCategory}, selecting first tab: ${modeTabs[0].tabId}`)
         chatStore.switchTab(modeTabs[0].tabId)
       }
     }

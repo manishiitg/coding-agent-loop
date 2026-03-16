@@ -24,7 +24,7 @@
 
 47. human controlled workflows... - PROGRESS
 
-48. add minimax coding plan and explore alibaba plan also
+48. add minimax coding plan and explore alibaba plan also also glm5
 
 49. should we have - multile workflows inside a single workflow.. or like some other design.. like step which has a default workflow, but in human assistted flows we can have other flows or something like that?
 
@@ -32,12 +32,18 @@
 
 51. deploy on railway? with low config see if it works?
 
-52. the openapi sepc, has too many extra tokens
+52. the openapi sepc, has too many extra tokens - DONE
 
 53. right now when using mcpbriget, we keep aing mcp_api_url and token.. some smart way to auto inject that to skip that maybe?
 
-54. minmax coding plan mcp integration
+54. minmax coding plan mcp integration- DONE
 
 55. look at playwrite headless also
 
 56. we have routing / conditional / branch... is branch step relevent anymore?
+
+57. workspace github sync on top
+
+58. workflow view page.. to see crons/ runs / etc and manage them as a team / company
+
+59. simply the query tools tu automatically query real time logs vs file system depending on if the agent is running or not

@@ -135,6 +135,10 @@ interface WorkspaceState {
   needsRefresh: boolean
   setNeedsRefresh: (needsRefresh: boolean) => void
 
+  // Auto-refresh: when enabled, automatically fetches files instead of showing the stale banner
+  autoRefresh: boolean
+  setAutoRefresh: (autoRefresh: boolean) => void
+
   // Reset all state
   resetWorkspaceState: () => void
 }
@@ -338,7 +342,8 @@ const initialState = {
   highlightedFile: null,
   highlightTimeout: null,
   expandedFolders: new Set<string>(),
-  needsRefresh: false
+  needsRefresh: false,
+  autoRefresh: false
 }
 
 // Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder
@@ -530,7 +535,23 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Stale indicator
       setNeedsRefresh: (needsRefresh: boolean) => {
         if (get().needsRefresh === needsRefresh) return
+        // When auto-refresh is enabled, fetch immediately instead of showing the banner
+        if (needsRefresh && get().autoRefresh) {
+          console.log('[Workspace] Auto-refresh enabled — fetching files automatically')
+          get().fetchFiles()
+          return // fetchFiles sets needsRefresh=false on completion
+        }
         set({ needsRefresh })
+      },
+
+      // Auto-refresh toggle
+      setAutoRefresh: (autoRefresh: boolean) => {
+        set({ autoRefresh })
+        // If enabling auto-refresh while stale, refresh immediately
+        if (autoRefresh && get().needsRefresh) {
+          console.log('[Workspace] Auto-refresh enabled while stale — fetching files')
+          get().fetchFiles()
+        }
       },
 
       // File Operations
@@ -692,7 +713,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const promise = (async () => {
           try {
             set({ loading: true, error: null })
+            console.time(`[PERF] fetchFiles (folder=${effectiveFolder || 'root'})`)
+            console.trace(`[PERF] fetchFiles called (folder=${effectiveFolder || 'root'})`)
+            console.time(`[PERF] fetchFiles-network (folder=${effectiveFolder || 'root'})`)
             const response = await agentApi.getPlannerFiles(effectiveFolder, -1, options?.maxDepth)
+            console.timeEnd(`[PERF] fetchFiles-network (folder=${effectiveFolder || 'root'})`)
             if (response.success && response.data) {
               // Guard against mount race condition: if this fetch was unscoped (effectiveFolder
               // was undefined) but by the time the response arrived, activeFolder has been set,
@@ -706,7 +731,9 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               const allFiles = response.data
 
               // Process hierarchical structure from API
+              console.time(`[PERF] processHierarchicalFiles (${allFiles.length} files)`)
               const processedFiles = processHierarchicalFiles(allFiles)
+              console.timeEnd(`[PERF] processHierarchicalFiles (${allFiles.length} files)`)
 
               // If fetching a subfolder of activeFolder, merge into the existing tree
               // instead of replacing — used for lazy-loading iteration contents
@@ -735,6 +762,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             console.error('Failed to fetch Planner files:', err)
             set({ error: err instanceof Error ? err.message : 'Failed to fetch files' })
           } finally {
+            console.timeEnd(`[PERF] fetchFiles (folder=${effectiveFolder || 'root'})`)
             set({ loading: false })
             inflightFetch = null
           }

@@ -81,93 +81,131 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 	var response string
 	var selectedOptionIndex int = -1 // For multiple_choice tracking
 	var err error
-	requestID := fmt.Sprintf("human_input_step_%d_%d", stepIndex+1, time.Now().UnixNano())
 
-	switch responseType {
-	case "yesno":
-		// Yes/No feedback
-		approved, err := hcpo.RequestYesNoFeedback(
-			ctx,
-			requestID,
-			resolvedQuestion,
-			"Approve",
-			"Reject",
-			"", // No additional context
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get yes/no feedback: %w", err)
-		}
-		if approved {
-			response = "yes"
-		} else {
-			response = "no"
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Received yes/no response: %s", response))
+	// Workshop mode: if the builder agent provided human_input via execute_step,
+	// use it as the response instead of blocking for user input.
+	// This allows the workshop agent to answer human input steps based on conversation context.
+	if hcpo.interactiveWorkflowHumanInput != "" {
+		response = hcpo.interactiveWorkflowHumanInput
+		hcpo.GetLogger().Info(fmt.Sprintf("🤖 Workshop mode: using pre-filled response for human input step (response_type=%s, length=%d chars)", responseType, len(response)))
 
-	case "multiple_choice":
-		// Multiple choice feedback
-		if len(humanInputStep.Options) == 0 {
-			return nil, fmt.Errorf("human input step %d (%s) has response_type=multiple_choice but no options provided", stepIndex+1, step.GetTitle())
-		}
-		// Resolve variables in options
-		resolvedOptions := make([]string, len(humanInputStep.Options))
-		for i, option := range humanInputStep.Options {
-			resolvedOptions[i] = ResolveVariables(option, hcpo.variableValues)
-		}
-		choice, err := hcpo.RequestMultipleChoiceFeedback(
-			ctx,
-			requestID,
-			resolvedQuestion,
-			resolvedOptions,
-			"", // No additional context
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get multiple choice feedback: %w", err)
-		}
-		// Parse choice index from "option0", "option1", etc.
-		if strings.HasPrefix(choice, "option") {
-			indexStr := strings.TrimPrefix(choice, "option")
-			var index int
-			if _, err := fmt.Sscanf(indexStr, "%d", &index); err == nil && index >= 0 && index < len(resolvedOptions) {
-				selectedOptionIndex = index
-				response = resolvedOptions[index]
+		// For yesno, normalize the response
+		if responseType == "yesno" {
+			normalized := strings.ToLower(strings.TrimSpace(response))
+			if normalized == "yes" || normalized == "approve" || normalized == "true" || normalized == "y" {
+				response = "yes"
 			} else {
-				response = choice // Fallback to raw choice
+				response = "no"
 			}
-		} else {
-			response = choice
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Workshop yesno response normalized to: %s", response))
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Received multiple choice response: %s (index: %d)", response, selectedOptionIndex))
 
-	default:
-		// Text feedback (default)
-		approved, feedback, err := hcpo.RequestHumanFeedback(
-			ctx,
-			requestID,
-			resolvedQuestion,
-			"", // No additional context
-			hcpo.getSessionID(),
-			hcpo.getWorkflowID(),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get human feedback: %w", err)
+		// For multiple_choice, try to match the response to an option
+		if responseType == "multiple_choice" && len(humanInputStep.Options) > 0 {
+			resolvedOptions := make([]string, len(humanInputStep.Options))
+			for i, option := range humanInputStep.Options {
+				resolvedOptions[i] = ResolveVariables(option, hcpo.variableValues)
+			}
+			normalizedResponse := strings.ToLower(strings.TrimSpace(response))
+			for i, opt := range resolvedOptions {
+				if strings.ToLower(opt) == normalizedResponse || fmt.Sprintf("%d", i) == normalizedResponse {
+					selectedOptionIndex = i
+					response = opt
+					break
+				}
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Workshop multiple_choice response: %s (index: %d)", response, selectedOptionIndex))
 		}
-		if approved {
-			// User approved - use feedback text if provided, otherwise "approved"
-			if feedback != "" {
+	} else {
+		// Normal mode: block and wait for user input via UI
+		requestID := fmt.Sprintf("human_input_step_%d_%d", stepIndex+1, time.Now().UnixNano())
+
+		switch responseType {
+		case "yesno":
+			// Yes/No feedback
+			approved, err := hcpo.RequestYesNoFeedback(
+				ctx,
+				requestID,
+				resolvedQuestion,
+				"Approve",
+				"Reject",
+				"", // No additional context
+				hcpo.getSessionID(),
+				hcpo.getWorkflowID(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get yes/no feedback: %w", err)
+			}
+			if approved {
+				response = "yes"
+			} else {
+				response = "no"
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Received yes/no response: %s", response))
+
+		case "multiple_choice":
+			// Multiple choice feedback
+			if len(humanInputStep.Options) == 0 {
+				return nil, fmt.Errorf("human input step %d (%s) has response_type=multiple_choice but no options provided", stepIndex+1, step.GetTitle())
+			}
+			// Resolve variables in options
+			resolvedOptions := make([]string, len(humanInputStep.Options))
+			for i, option := range humanInputStep.Options {
+				resolvedOptions[i] = ResolveVariables(option, hcpo.variableValues)
+			}
+			choice, err := hcpo.RequestMultipleChoiceFeedback(
+				ctx,
+				requestID,
+				resolvedQuestion,
+				resolvedOptions,
+				"", // No additional context
+				hcpo.getSessionID(),
+				hcpo.getWorkflowID(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get multiple choice feedback: %w", err)
+			}
+			// Parse choice index from "option0", "option1", etc.
+			if strings.HasPrefix(choice, "option") {
+				indexStr := strings.TrimPrefix(choice, "option")
+				var index int
+				if _, err := fmt.Sscanf(indexStr, "%d", &index); err == nil && index >= 0 && index < len(resolvedOptions) {
+					selectedOptionIndex = index
+					response = resolvedOptions[index]
+				} else {
+					response = choice // Fallback to raw choice
+				}
+			} else {
+				response = choice
+			}
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Received multiple choice response: %s (index: %d)", response, selectedOptionIndex))
+
+		default:
+			// Text feedback (default)
+			approved, feedback, err := hcpo.RequestHumanFeedback(
+				ctx,
+				requestID,
+				resolvedQuestion,
+				"", // No additional context
+				hcpo.getSessionID(),
+				hcpo.getWorkflowID(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get human feedback: %w", err)
+			}
+			if approved {
+				// User approved - use feedback text if provided, otherwise "approved"
+				if feedback != "" {
+					response = feedback
+				} else {
+					response = "approved"
+				}
+			} else {
+				// User provided feedback (rejection or revision)
 				response = feedback
-			} else {
-				response = "approved"
 			}
-		} else {
-			// User provided feedback (rejection or revision)
-			response = feedback
+			hcpo.GetLogger().Info(fmt.Sprintf("✅ Received text response (length: %d chars)", len(response)))
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Received text response (length: %d chars)", len(response)))
 	}
 
 	// Determine next step ID based on response and routing configuration

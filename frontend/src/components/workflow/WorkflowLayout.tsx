@@ -2,7 +2,7 @@ import React, { useMemo, useCallback, useRef, useEffect, forwardRef } from 'reac
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
-import { useChatStore } from '../../stores/useChatStore'
+import { useChatStore, waitForChatStoreHydration } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
@@ -20,18 +20,23 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   hideInput?: boolean
   compact?: boolean
 }>(({ onNewChat, hideHeader, hideInput, compact }, ref) => {
-  // Only pass tabId if the active tab belongs to workflow mode,
-  // so we never bleed multi-agent / chat content into WorkflowLayout.
-  // Use separate primitive selectors to avoid object-identity infinite loops.
+  // Only pass tabId if the active tab belongs to workflow mode AND the current preset,
+  // so we never bleed another preset's or mode's content into WorkflowLayout.
+  const currentPresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowTabId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
-    return tab?.metadata?.mode === 'workflow' ? tabId : undefined
+    if (tab?.metadata?.mode !== 'workflow') return undefined
+    // Only show tab if it belongs to the active preset (prevents cross-preset bleed on Ctrl+K switch)
+    if (tab.metadata?.presetQueryId && tab.metadata.presetQueryId !== currentPresetId) return undefined
+    return tabId
   })
   const activePhaseId = useChatStore(state => {
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : null
-    return tab?.metadata?.mode === 'workflow' ? tab?.metadata?.phaseId : undefined
+    if (tab?.metadata?.mode !== 'workflow') return undefined
+    if (tab.metadata?.presetQueryId && tab.metadata.presetQueryId !== currentPresetId) return undefined
+    return tab?.metadata?.phaseId
   })
 
   // Show chat input for chat-compatible phases
@@ -347,8 +352,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         useWorkspaceStore.getState().setNeedsRefresh(true)
         return
       }
-      // Fetch files first to ensure folder exists, then expand
-      fetchFiles(workspacePath || undefined).then(() => {
+      // Expand folders in workspace sidebar — skip redundant fetch if Workspace.tsx already loaded files.
+      // Workspace.tsx:718 fetches activeFolder on mount/change, so files should already be present.
+      const ensureFiles = useWorkspaceStore.getState().files.length > 0
+        ? Promise.resolve()
+        : fetchFiles(workspacePath || undefined)
+      ensureFiles.then(() => {
         // Collapse all other iteration folders first
         const workspaceStore = useWorkspaceStore.getState()
         const expandedFolders = workspaceStore.expandedFolders
@@ -606,6 +615,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     const reconnectWorkflowTabs = async () => {
       hasReconnectedRef.current = true
+      // Wait for zustand to rehydrate persisted tabs from localStorage.
+      // Without this, chatTabs is empty and dedup fails → duplicate tabs.
+      await waitForChatStoreHydration()
       console.log('[WorkflowReconnect] Starting for preset:', activePresetId)
       try {
         const { createChatTab, switchTab, getTabEvents, setTabStreaming } = useChatStore.getState()
@@ -820,6 +832,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         chatStore.switchTab(newPresetTabs[0].tabId)
         setShowChatArea(true)
       } else {
+        // Clear activeTabId so the old preset's tab events don't bleed into the new preset's view
+        useChatStore.setState({ activeTabId: null })
         setShowChatArea(false)
       }
     }

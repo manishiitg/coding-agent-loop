@@ -169,7 +169,9 @@ export default function Workspace({
     setActiveFolder,
     setBinaryFileData,
     needsRefresh,
-    setNeedsRefresh
+    setNeedsRefresh,
+    autoRefresh,
+    setAutoRefresh
   } = useWorkspaceStore()
 
   const isSemanticSearchEnabled = useCapabilitiesStore(s => s.capabilities?.workspace?.semantic_search_enabled ?? false)
@@ -2084,10 +2086,7 @@ export default function Workspace({
       {/* Content */}
       {!minimized && (
         <div className="flex-1 overflow-hidden">
-          {/* PERF FIX: Stale workspace banner — replaces automatic fetchFiles() calls.
-              Instead of fetching the full workspace tree (~2-3MB) on every step_progress_updated
-              and completion event, we show this banner and let the user refresh manually.
-              New files are still added incrementally via addFileToTree (no network). */}
+          {/* Stale workspace banner + auto-refresh toggle */}
           {needsRefresh && (
             <div className="flex items-center justify-between px-3 py-1.5 bg-yellow-500/10 border-b border-yellow-500/20 text-xs">
               <span className="text-yellow-600 dark:text-yellow-500">Files may be out of date</span>
@@ -2104,6 +2103,18 @@ export default function Workspace({
               </button>
             </div>
           )}
+          {/* Auto-refresh toggle — always visible so user can enable/disable anytime */}
+          <div className="flex items-center px-3 py-1 border-b border-gray-200 dark:border-gray-700 text-xs">
+            <label className="flex items-center gap-1.5 cursor-pointer text-gray-500 dark:text-gray-400 select-none">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="w-3 h-3 rounded accent-blue-500 cursor-pointer"
+              />
+              Auto-refresh
+            </label>
+          </div>
           {/* Iteration filter badge — shown in workflow mode when iterations exist */}
           {selectedModeCategory === 'workflow' && availableIterations.length > 0 && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/5 border-b border-blue-500/20 text-xs">

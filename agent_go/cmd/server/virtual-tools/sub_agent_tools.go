@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -55,9 +56,14 @@ type SubAgentResult struct {
 	AgentType     string    `json:"agent_type"` // "predefined" or "generic"
 	Result        string    `json:"result"`
 	Error         string    `json:"error,omitempty"`
+	Hint          string    `json:"hint,omitempty"`
+	RetryAttempts int       `json:"retry_attempts"` // Number of attempts the sub-agent made (including retries)
 	ExecutionTime string    `json:"execution_time"`
 	CompletedAt   time.Time `json:"completed_at"`
 }
+
+// maxSubAgentRetryAttempts is the number of retry attempts a sub-agent makes internally before returning failure
+const maxSubAgentRetryAttempts = 3
 
 // ExecutePredefinedSubAgentFunc is the function signature for executing predefined sub-agents
 // Injected via context by the controller
@@ -246,18 +252,28 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 	executionTime := time.Since(startTime)
 
 	// Build result
+	// Determine success: err must be nil AND result must not contain failure indicators
+	// (execution failures can be auto-approved by sub-agent flow, returning nil error with empty/failed result)
+	isSuccess := err == nil && !isSubAgentResultFailure(result)
+
 	subAgentResult := SubAgentResult{
-		Success:       err == nil,
+		Success:       isSuccess,
 		TodoID:        todoID,
 		RouteID:       routeID,
 		AgentType:     "predefined",
 		Result:        result,
+		RetryAttempts: maxSubAgentRetryAttempts,
 		ExecutionTime: executionTime.String(),
 		CompletedAt:   time.Now(),
 	}
 
-	if err != nil {
-		subAgentResult.Error = err.Error()
+	if !isSuccess {
+		if err != nil {
+			subAgentResult.Error = err.Error()
+		} else {
+			subAgentResult.Error = "Sub-agent execution did not produce a successful result"
+		}
+		subAgentResult.Hint = fmt.Sprintf("Sub-agent failed after %d internal retry attempts. Consider using get_sub_agent_conversation to inspect what went wrong, review LEARNING HISTORY, and execute the task yourself — you have a higher-reasoning LLM and the same tool access.", maxSubAgentRetryAttempts)
 	}
 
 	resultJSON, _ := json.MarshalIndent(subAgentResult, "", "  ")
@@ -306,21 +322,43 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	executionTime := time.Since(startTime)
 
 	// Build result
+	// Determine success: err must be nil AND result must not contain failure indicators
+	isSuccess := err == nil && !isSubAgentResultFailure(result)
+
 	subAgentResult := SubAgentResult{
-		Success:       err == nil,
+		Success:       isSuccess,
 		TodoID:        todoID,
 		AgentType:     "generic",
 		Result:        result,
+		RetryAttempts: maxSubAgentRetryAttempts,
 		ExecutionTime: executionTime.String(),
 		CompletedAt:   time.Now(),
 	}
 
-	if err != nil {
-		subAgentResult.Error = err.Error()
+	if !isSuccess {
+		if err != nil {
+			subAgentResult.Error = err.Error()
+		} else {
+			subAgentResult.Error = "Sub-agent execution did not produce a successful result"
+		}
+		subAgentResult.Hint = fmt.Sprintf("Sub-agent failed after %d internal retry attempts. Consider using get_sub_agent_conversation to inspect what went wrong, review LEARNING HISTORY, and execute the task yourself — you have a higher-reasoning LLM and the same tool access.", maxSubAgentRetryAttempts)
 	}
 
 	resultJSON, _ := json.MarshalIndent(subAgentResult, "", "  ")
 	return string(resultJSON), nil
+}
+
+// isSubAgentResultFailure checks if a sub-agent result string indicates failure
+// This catches cases where execution failed but was auto-approved (nil error with empty/failed result)
+func isSubAgentResultFailure(result string) bool {
+	if strings.TrimSpace(result) == "" {
+		return true
+	}
+	lower := strings.ToLower(result)
+	return strings.Contains(lower, "failed:") ||
+		strings.Contains(lower, "failed validation after") ||
+		strings.Contains(lower, "execution failed") ||
+		strings.Contains(lower, "error:")
 }
 
 // handleGetSubAgentConversation retrieves the internal conversation of a previous sub-agent call

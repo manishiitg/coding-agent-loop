@@ -44,6 +44,7 @@ Approach description.
   - **Before delegating**: Mark task(s) as In Progress ([~]) in tasks.md
   - **After success**: Mark as Completed ([x]) and move to Completed section
   - **After failure**: Keep as In Progress or revert to Pending with a note. Use get_sub_agent_conversation to inspect what happened before retrying.
+  - **Self-execution fallback**: If a sub-agent fails twice on the same task, do it yourself instead of delegating again. You have a higher-reasoning LLM and full tool access — use get_sub_agent_conversation to understand what went wrong, review the LEARNING HISTORY for relevant patterns, then execute the task directly using your own tools. This avoids wasting iterations on repeated delegation failures.
   - tasks.md must ALWAYS reflect the true current state — never leave completed work marked as pending
 
 **3. REFLECT** — After every batch: What did I learn? Add/remove/refine tasks. Update tasks.md via heredoc rewrite.

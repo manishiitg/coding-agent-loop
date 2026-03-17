@@ -4528,16 +4528,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 										if presetLLMConfig.TieredConfig != nil {
 											refreshedTiered := &todo_creation_human.TieredLLMConfig{
 												Tier1: &todo_creation_human.AgentLLMConfig{
-													Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
-													ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+													Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
+													ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
+													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
 												},
 												Tier2: &todo_creation_human.AgentLLMConfig{
-													Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
-													ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+													Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
+													ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
+													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
 												},
 												Tier3: &todo_creation_human.AgentLLMConfig{
-													Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
-													ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+													Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
+													ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
+													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
 												},
 											}
 											workshopSession.UpdateTieredConfig(refreshedTiered)
@@ -8672,16 +8675,19 @@ func (api *StreamingAPI) buildWorkshopConfig(
 						cfg.LLMAllocationMode = "tiered"
 						cfg.TieredConfig = &todo_creation_human.TieredLLMConfig{
 							Tier1: &todo_creation_human.AgentLLMConfig{
-								Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
-								ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+								Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
+								ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
+								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
 							},
 							Tier2: &todo_creation_human.AgentLLMConfig{
-								Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
-								ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+								Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
+								ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
+								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
 							},
 							Tier3: &todo_creation_human.AgentLLMConfig{
-								Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
-								ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+								Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
+								ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
+								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
 							},
 						}
 						log.Printf("[WORKSHOP] Tiered mode: T1=%s/%s T2=%s/%s T3=%s/%s",
@@ -9072,8 +9078,9 @@ func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQuer
 func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
 	if specific != nil && specific.Provider != "" && specific.ModelID != "" {
 		return &todo_creation_human.AgentLLMConfig{
-			Provider: specific.Provider,
-			ModelID:  specific.ModelID,
+			Provider:  specific.Provider,
+			ModelID:   specific.ModelID,
+			Fallbacks: workshopConvertFallbacks(specific.Fallbacks),
 		}
 	}
 	if legacyProvider != "" && legacyModelID != "" {
@@ -9083,4 +9090,19 @@ func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legac
 		}
 	}
 	return nil
+}
+
+// workshopConvertFallbacks converts database fallbacks to step_based_workflow fallbacks.
+func workshopConvertFallbacks(fallbacks []database.AgentLLMFallback) []todo_creation_human.AgentLLMFallback {
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	result := make([]todo_creation_human.AgentLLMFallback, len(fallbacks))
+	for i, fb := range fallbacks {
+		result[i] = todo_creation_human.AgentLLMFallback{
+			Provider: fb.Provider,
+			ModelID:  fb.ModelID,
+		}
+	}
+	return result
 }

@@ -194,7 +194,17 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 
 // writeSSEEvent writes a single SSE message to the writer.
 // If id >= 0, an "id:" line is included (allows EventSource auto-reconnect).
-func writeSSEEvent(w http.ResponseWriter, eventType string, id int, data interface{}) error {
+func writeSSEEvent(w http.ResponseWriter, eventType string, id int, data interface{}) (writeErr error) {
+	// Recover from concurrent map access panics during JSON marshaling.
+	// The primary fix is in ContextAwareBridge (new map per event), but this
+	// acts as a safety net to prevent the whole server from crashing.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[SSE] WARNING: recovered from panic during event serialization: %v", r)
+			writeErr = fmt.Errorf("serialization panic: %v", r)
+		}
+	}()
+
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return err

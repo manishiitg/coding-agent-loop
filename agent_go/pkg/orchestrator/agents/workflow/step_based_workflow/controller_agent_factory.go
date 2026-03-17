@@ -488,7 +488,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 					Provider: subAgentLLM.Provider,
 					ModelID:  subAgentLLM.ModelID,
 				},
-				APIKeys: hcpo.GetAPIKeys(),
+				Fallbacks: convertAgentFallbacks(subAgentLLM.Fallbacks),
+				APIKeys:   hcpo.GetAPIKeys(),
 			}
 		}
 	}
@@ -1029,7 +1030,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 				Provider: stepConfig.LearningLLM.Provider,
 				ModelID:  stepConfig.LearningLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
+			Fallbacks: convertAgentFallbacks(stepConfig.LearningLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 	}
 
@@ -1057,7 +1059,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 				Provider: hcpo.presetLearningLLM.Provider,
 				ModelID:  hcpo.presetLearningLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
+			Fallbacks: convertAgentFallbacks(hcpo.presetLearningLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}
 	}
 
@@ -1676,7 +1679,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 				Provider: todoTaskLLMConfig.Primary.Provider,
 				ModelID:  todoTaskLLMConfig.Primary.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Fallbacks: todoTaskLLMConfig.Fallbacks,
+			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator LLM: %s/%s", todoTaskLLMConfig.Primary.Provider, todoTaskLLMConfig.Primary.ModelID))
 	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
@@ -1685,7 +1689,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 				Provider: hcpo.presetExecutionLLM.Provider,
 				ModelID:  hcpo.presetExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			Fallbacks: convertAgentFallbacks(hcpo.presetExecutionLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for todo task orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
 	} else {
@@ -2250,7 +2255,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orches
 				Provider: hcpo.presetExecutionLLM.Provider,
 				ModelID:  hcpo.presetExecutionLLM.ModelID,
 			},
-			APIKeys: orchestratorLLMConfig.APIKeys,
+			Fallbacks: convertAgentFallbacks(hcpo.presetExecutionLLM.Fallbacks),
+			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}, nil
 	}
 

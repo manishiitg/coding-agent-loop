@@ -308,7 +308,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 					Provider: conditionalLLMConfig.Provider,
 					ModelID:  conditionalLLMConfig.ModelID,
 				},
-				APIKeys: orchestratorLLMConfig.APIKeys,
+				Fallbacks: convertAgentFallbacks(conditionalLLMConfig.Fallbacks),
+				APIKeys:   orchestratorLLMConfig.APIKeys,
 			}
 		} else {
 			// Use selectExecutionLLM helper for standard fallback (step ExecutionLLM > preset > orchestrator)

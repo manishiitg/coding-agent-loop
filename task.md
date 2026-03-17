@@ -8,7 +8,7 @@
 
 38. should plan debugger etc bhi multichat agent... how make that more integrate with workflows?
 
-39. add termporal to agents / workflows
+39. add termporal to agents / workflows or something simpler
 
 41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp  - PROGRESS
 
@@ -32,8 +32,6 @@
 
 51. deploy on railway? with low config see if it works?
 
-52. the openapi sepc, has too many extra tokens - DONE
-
 53. right now when using mcpbriget, we keep aing mcp_api_url and token.. some smart way to auto inject that to skip that maybe?
 
 54. minmax coding plan mcp integration- DONE
@@ -45,5 +43,3 @@
 57. workspace github sync on top
 
 58. workflow view page.. to see crons/ runs / etc and manage them as a team / company
-
-59. simply the query tools tu automatically query real time logs vs file system depending on if the agent is running or not

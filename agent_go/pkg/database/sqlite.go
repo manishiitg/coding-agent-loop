@@ -270,9 +270,9 @@ func (s *SQLiteDB) UpdateChatSession(ctx context.Context, sessionID string, req 
 		        ELSE ? 
 		    END,
 		    agent_mode = COALESCE(NULLIF(?, ''), agent_mode),
-		    preset_query_id = CASE 
-		        WHEN ? = '' THEN NULL 
-		        ELSE COALESCE(NULLIF(?, ''), preset_query_id) 
+		    preset_query_id = CASE
+		        WHEN ? = '' THEN preset_query_id
+		        ELSE COALESCE(NULLIF(?, ''), preset_query_id)
 		    END,
 		    config = CASE
 		        WHEN ? IS NULL THEN config

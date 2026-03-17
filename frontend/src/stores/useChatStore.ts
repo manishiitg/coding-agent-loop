@@ -2078,7 +2078,7 @@ export const useChatStore = create<ChatState>()(
         onRehydrateStorage: () => (state) => {
           if (!state) return
           // Signal that localStorage rehydration is complete
-          useChatStore._hasHydrated = true
+          markChatStoreHydrated()
 
           // Clean up stale tabs that survived partialize (edge case: clock skew, etc.)
           const MAX_TAB_AGE = 24 * 60 * 60 * 1000
@@ -2125,27 +2125,34 @@ export const useChatStore = create<ChatState>()(
 )
 
 // Hydration flag — set to true once zustand rehydrates persisted tabs from localStorage.
-// Components that need persisted tabs (e.g. workflow reconnect) should await this before
-// checking chatTabs to avoid race conditions that create duplicate tabs.
-// eslint-disable-next-line @typescript-eslint/no-namespace
-declare module 'zustand' {
-  // Augment the store type to allow the static property
-}
-;(useChatStore as unknown as { _hasHydrated: boolean })._hasHydrated = false
+// Uses a module-level variable (NOT a property on useChatStore) to survive Vite HMR,
+// which re-executes the module and would reset a store property to false after rehydration already fired.
+let chatStoreHydrated = false
 
 /** Returns a promise that resolves once useChatStore has rehydrated from localStorage. */
 export function waitForChatStoreHydration(): Promise<void> {
-  if ((useChatStore as unknown as { _hasHydrated: boolean })._hasHydrated) {
+  if (chatStoreHydrated) {
     return Promise.resolve()
   }
   return new Promise(resolve => {
+    let elapsed = 0
     const check = () => {
-      if ((useChatStore as unknown as { _hasHydrated: boolean })._hasHydrated) {
+      if (chatStoreHydrated) {
+        resolve()
+      } else if (elapsed >= 3000) {
+        // Safety timeout: don't hang forever if hydration never fires
+        console.warn('[waitForChatStoreHydration] Timeout after 3s, proceeding anyway')
         resolve()
       } else {
-        setTimeout(check, 10)
+        elapsed += 50
+        setTimeout(check, 50)
       }
     }
     check()
   })
+}
+
+/** Called by onRehydrateStorage to signal hydration is complete */
+export function markChatStoreHydrated() {
+  chatStoreHydrated = true
 }

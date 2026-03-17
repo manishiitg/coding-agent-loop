@@ -1661,7 +1661,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     const restoreAll = async () => {
       globalHasRestored = true
-      setIsRestoringChatSessions(true)
 
       try {
         // Wait for active-sessions polling to start and return initial data
@@ -1673,7 +1672,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
         if (activeSessions.length > 0) {
           const runningSessions = activeSessions.filter(s => {
-            if (s.agent_mode?.toLowerCase() === 'workflow') return false
+            if (s.agent_mode?.toLowerCase() === 'workflow' || s.agent_mode?.toLowerCase() === 'workflow_phase') return false
             if (s.status === 'running') return true
             if (s.status === 'completed' && s.last_activity) {
               if (new Date(s.last_activity).getTime() > Date.now() - 30 * 60 * 1000) return true
@@ -1691,6 +1690,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const sessionsToRestore = runningSessions.filter(s =>
             persistedSessionIds.has(s.session_id) || s.status === 'running'
           )
+
+          if (sessionsToRestore.length > 0) {
+            setIsRestoringChatSessions(true)
+          }
 
           for (const activeSession of sessionsToRestore) {
             try {
@@ -1712,13 +1715,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // (completed sessions from history that are in localStorage but have no events)
         const chatStore = useChatStore.getState()
         const tabs = Object.values(chatStore.chatTabs)
-        for (const tab of tabs) {
-          if (!tab.sessionId || tab.metadata?.mode === 'workflow') continue
-          if (restoredSessionIds.has(tab.sessionId)) continue // already handled above
-          const events = chatStore.getTabEvents(tab.sessionId)
-          if (events.length > 0) continue
+        const tabsToHydrate = tabs.filter(tab => {
+          if (!tab.sessionId || tab.metadata?.mode === 'workflow') return false
+          if (restoredSessionIds.has(tab.sessionId)) return false
+          return chatStore.getTabEvents(tab.sessionId).length === 0
+        })
+        if (tabsToHydrate.length > 0) {
+          setIsRestoringChatSessions(true)
+        }
+        for (const tab of tabsToHydrate) {
           try {
-            await restoreSession(tab.sessionId, { source: 'page-refresh', skipConfigRestore: true })
+            await restoreSession(tab.sessionId!, { source: 'page-refresh', skipConfigRestore: true })
           } catch (err) {
             console.error(`[SessionRestore] page-refresh hydrate failed for tab ${tab.tabId}:`, err)
           }
@@ -2045,7 +2052,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Get active presets for the current mode
       const presetStore = useGlobalPresetStore.getState()
       const chatPreset = correctAgentMode === 'simple' ? presetStore.getActivePreset('chat') : null
-      const workflowPreset = correctAgentMode === 'workflow' ? (selectedWorkflowPreset ? presetStore.getActivePreset('workflow') : null) : null
+      // Read workflow preset fresh from store (not from stale closure)
+      // For workflow mode, always try to get the active preset regardless of selectedWorkflowPreset closure value
+      const workflowPreset = (correctAgentMode === 'workflow' || selectedModeCategory === 'workflow')
+        ? presetStore.getActivePreset('workflow')
+        : null
       const activePreset = workflowPreset || chatPreset
 
       const presetTools = activePreset?.selectedTools || []
@@ -2053,6 +2064,21 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       const chatPresetId = chatPreset?.id || null
       const workflowPresetId = workflowPreset?.id || null
+
+      // DEBUG: trace preset_query_id resolution
+      console.log('[DEBUG preset_query_id]', {
+        correctAgentMode,
+        selectedModeCategory,
+        selectedWorkflowPreset,
+        workflowPresetId,
+        chatPresetId,
+        isWorkflowPhaseChat: selectedModeCategory === 'workflow'
+          && currentTab?.metadata?.phaseId
+          && isChatCompatiblePhase(currentTab?.metadata?.phaseId),
+        tabMetadata: currentTab?.metadata,
+        activeWorkflowPresetFromStore: presetStore.getActivePreset('workflow')?.id,
+        activePresetIds: useGlobalPresetStore.getState().activePresetIds,
+      })
 
       // Determine mode flags using helper
       const useCodeExecutionMode = determineModeFlag({
@@ -2150,6 +2176,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           return
         }
       }
+
+      // DEBUG: log final request payload preset_query_id
+      console.log('[DEBUG request payload]', {
+        agent_mode: requestPayload.agent_mode,
+        preset_query_id: requestPayload.preset_query_id,
+        phase_id: (requestPayload as any).phase_id,
+      })
 
       // Set session ID and submit
       chatStore.setSessionId(tabSessionId)

@@ -187,9 +187,9 @@ func (s *SupabaseDB) UpdateChatSession(ctx context.Context, sessionID string, re
 		        ELSE $2 
 		    END,
 		    agent_mode = COALESCE(NULLIF($3, ''), agent_mode),
-		    preset_query_id = CASE 
-		        WHEN $4 = '' THEN NULL 
-		        ELSE COALESCE(NULLIF($5, ''), preset_query_id) 
+		    preset_query_id = CASE
+		        WHEN $4 = '' THEN preset_query_id
+		        ELSE COALESCE(NULLIF($5, ''), preset_query_id)
 		    END,
 		    config = CASE
 		        WHEN $6::text IS NULL THEN config

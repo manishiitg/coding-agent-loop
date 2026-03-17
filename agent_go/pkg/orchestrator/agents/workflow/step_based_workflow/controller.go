@@ -70,7 +70,6 @@ type StepBasedWorkflowOrchestrator struct {
 	executionOptions *ExecutionOptions
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetExecutionLLM       *AgentLLMConfig // Default for execution agents
 	presetValidationLLM      *AgentLLMConfig // Default for validation agents
 	presetLearningLLM        *AgentLLMConfig // Default for learning agents
 	presetPhaseLLM           *AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
@@ -124,7 +123,6 @@ func NewStepBasedWorkflowOrchestrator(
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	toolCategories map[string]string, // NEW: tool category map
-	presetExecutionLLM *AgentLLMConfig, // Optional preset default for execution agents
 	presetValidationLLM *AgentLLMConfig, // Optional preset default for validation agents
 	presetLearningLLM *AgentLLMConfig, // Optional preset default for learning agents
 	presetPhaseLLM *AgentLLMConfig, // Optional preset default for all phase agents
@@ -176,7 +174,6 @@ func NewStepBasedWorkflowOrchestrator(
 		BaseOrchestrator:         baseOrchestrator,
 		sessionID:                workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
 		workflowID:               fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
-		presetExecutionLLM:       presetExecutionLLM,
 		presetValidationLLM:      presetValidationLLM,
 		presetLearningLLM:        presetLearningLLM,
 		presetPhaseLLM:           presetPhaseLLM,

@@ -2034,14 +2034,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Create workflow event bridge for event emission
-		// Note: ChatDB is set to nil - workflow events are stored in memory only (for polling API)
-		// Chat history database storage is disabled for workflows to reduce database load
+		// Note: ChatDB is set to nil - workflow execution events are stored in memory only (for polling API)
+		// Chat history database storage is disabled for workflow execution to reduce database load
+		// (workflow_phase / builder sessions use the standard chat path which already persists to DB)
 		workflowEventBridge := &eventbridge.WorkflowEventBridge{
 			BaseEventBridge: &eventbridge.BaseEventBridge{
 				EventStore: api.eventStore,
 				SessionID:  sessionID,
 				Logger:     api.logger,
-				ChatDB:     nil, // Disable database storage for workflows
+				ChatDB:     nil, // Workflow execution only — builder sessions already persist via "simple" agent path
 				BridgeName: "workflow",
 			},
 		}
@@ -2088,9 +2089,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// Debug: log what was loaded
 						if presetLLMConfig != nil {
 							log.Printf("[PRESET LLM DEBUG] Legacy: provider=%s, model=%s", presetLLMConfig.Provider, presetLLMConfig.ModelID)
-							if presetLLMConfig.ExecutionLLM != nil {
-								log.Printf("[PRESET LLM DEBUG] ExecutionLLM: provider=%s, model=%s", presetLLMConfig.ExecutionLLM.Provider, presetLLMConfig.ExecutionLLM.ModelID)
-							}
 							if presetLLMConfig.LearningLLM != nil {
 								log.Printf("[PRESET LLM DEBUG] LearningLLM: provider=%s, model=%s", presetLLMConfig.LearningLLM.Provider, presetLLMConfig.LearningLLM.ModelID)
 							}
@@ -4514,15 +4512,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									var presetLLMConfig database.PresetLLMConfig
 									if jsonErr := json.Unmarshal(refreshPreset.LLMConfig, &presetLLMConfig); jsonErr == nil {
 										// Refresh LLM configs
-										execLLM := workshopExtractLLM(presetLLMConfig.ExecutionLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-										learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+														learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 										phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-										workshopSession.UpdatePresetLLMConfigs(execLLM, nil, learnLLM, phaseLLM, nil)
-										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: exec=%v learn=%v phase=%v",
-											execLLM != nil, learnLLM != nil, phaseLLM != nil)
-										if execLLM != nil {
-											log.Printf("[WORKFLOW_PHASE] Refreshed execution LLM: %s/%s", execLLM.Provider, execLLM.ModelID)
-										}
+										workshopSession.UpdatePresetLLMConfigs(learnLLM, phaseLLM, nil)
+										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: learn=%v phase=%v",
+											learnLLM != nil, phaseLLM != nil)
 
 										// Refresh tiered LLM allocation config
 										if presetLLMConfig.TieredConfig != nil {
@@ -8653,13 +8647,11 @@ func (api *StreamingAPI) buildWorkshopConfig(
 					log.Printf("[WORKSHOP] Failed to parse preset LLM config: %v", jsonErr)
 				} else {
 					// Extract all preset LLMs (same extraction as workflow_orchestrator.go)
-					cfg.PresetExecutionLLM = workshopExtractLLM(presetLLMConfig.ExecutionLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 					cfg.PresetLearningLLM = workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 					cfg.PresetPhaseLLM = workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 					// Plan improvement uses phase LLM (not a separate config)
 
-					log.Printf("[WORKSHOP] LLM configs: exec=%v learn=%v phase=%v",
-						cfg.PresetExecutionLLM != nil,
+					log.Printf("[WORKSHOP] LLM configs: learn=%v phase=%v",
 						cfg.PresetLearningLLM != nil, cfg.PresetPhaseLLM != nil)
 
 					// Knowledgebase toggle

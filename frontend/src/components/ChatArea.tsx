@@ -563,6 +563,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const [showPresetSelection, setShowPresetSelection] = useState(false)
   const [pendingModeCategory, setPendingModeCategory] = useState<Exclude<ModeCategory, 'chat' | null> | null>(null)
   
+  // State for session restoration loading
+  const [isRestoringChatSessions, setIsRestoringChatSessions] = useState(false)
+
   // State for mode switch dialog
   const [showModeSwitchDialog, setShowModeSwitchDialog] = useState(false)
   const [pendingModeSwitch, setPendingModeSwitch] = useState<Exclude<ModeCategory, null> | null>(null)
@@ -1171,7 +1174,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Sub-agent events (execution, learning) are ignored — only the final step-level event triggers a notification.
       if (event.type === 'orchestrator_agent_end' && tab) {
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
-        if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning') {
+        if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task') {
           const agentName = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'unknown') as string
           const success = (innerData?.success ?? agentEvent?.success) as boolean
           const result = (innerData?.result ?? agentEvent?.result ?? '') as string
@@ -1201,6 +1204,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               notification = success
                 ? `${AUTO_PREFIX}[OPTIMIZATION COMPLETE] [${timestamp}] ${agentName} — ${truncated}`
                 : `${AUTO_PREFIX}[OPTIMIZATION FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
+            } else if (agentType === 'workshop-background-task') {
+              notification = success
+                ? `${AUTO_PREFIX}[BACKGROUND TASK COMPLETE] [${timestamp}] ${agentName} finished.\nResult: ${truncated}`
+                : `${AUTO_PREFIX}[BACKGROUND TASK FAILED] [${timestamp}] ${agentName} failed.\nError: ${truncated}`
             } else {
               // Check if the result content indicates failure even when success=true (no execution error)
               // A step can complete without throwing an error but still report STATUS: FAILED in the result
@@ -1654,6 +1661,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     const restoreAll = async () => {
       globalHasRestored = true
+      setIsRestoringChatSessions(true)
 
       try {
         // Wait for active-sessions polling to start and return initial data
@@ -1717,6 +1725,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
       } catch (error) {
         console.error('[SessionRestore] page-load restore failed:', error)
+      } finally {
+        setIsRestoringChatSessions(false)
       }
     }
 
@@ -2222,9 +2232,31 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // All ChatArea instances share this lock via the store.
     chatStore.setTabConfig(tabId, { isQueueProcessing: true })
 
-    // Combine ALL queued messages into a single message so the agent
-    // receives everything at once instead of one-at-a-time round-trips.
-    const combinedMessage = queuedMessages.map(m => m.trim()).join('\n\n')
+    // Separate human messages from auto-notifications
+    const AUTO_PREFIX = '[AUTO-NOTIFICATION]'
+    const humanMessages = queuedMessages.filter(m => !m.startsWith(AUTO_PREFIX))
+    const autoMessages = queuedMessages.filter(m => m.startsWith(AUTO_PREFIX))
+
+    // Human messages: combine all as-is
+    // Auto-notifications: if multiple, condense to first line of each to avoid overwhelming the agent
+    let combinedMessage: string
+    const parts: string[] = []
+    if (humanMessages.length > 0) {
+      parts.push(humanMessages.map(m => m.trim()).join('\n\n'))
+    }
+    if (autoMessages.length > 0) {
+      if (autoMessages.length === 1) {
+        parts.push(autoMessages[0].trim())
+      } else {
+        // Multiple auto-notifications: take first line of each and combine into a compact summary
+        const summaryLines = autoMessages.map(m => {
+          const firstLine = m.trim().split('\n')[0]
+          return firstLine
+        })
+        parts.push(`[AUTO-NOTIFICATION] Multiple step completions:\n${summaryLines.map(l => l.replace(AUTO_PREFIX, '').trim()).map(l => `- ${l}`).join('\n')}`)
+      }
+    }
+    combinedMessage = parts.join('\n\n')
 
     // Clear the entire queue
     chatStore.setTabConfig(tabId, { queuedMessages: [] })
@@ -2423,8 +2455,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           </WorkflowModeHandler>
         ) : (
           <>
+            {/* Restoring Sessions Loading Indicator */}
+            {isRestoringChatSessions && displayEvents.length === 0 && !isStreaming && (
+              <div className="flex flex-col items-center justify-center py-12 gap-3">
+                <div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
+              </div>
+            )}
             {/* Empty State - Show when no events and not in historical session */}
-            {displayEvents.length === 0 && !isStreaming && (
+            {displayEvents.length === 0 && !isStreaming && !isRestoringChatSessions && (
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
 

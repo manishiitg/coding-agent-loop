@@ -40,9 +40,9 @@
 
 55. look at playwrite headless also
 
-56. we have routing / conditional / branch... is branch step relevent anymore?
+56. we have routing / conditional / branch... is branch step relevent anymore? depricate loop also -- done
 
-57. workspace github sync on top
+57. workspace github sync on top automatic?
 
 58. workflow view page.. to see crons/ runs / etc and manage them as a team / company
 

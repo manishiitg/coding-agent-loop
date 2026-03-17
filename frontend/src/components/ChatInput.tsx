@@ -1733,7 +1733,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // Handle /add-skill command — open the import dialog
-      if (trimmedQuery.indexOf('/add-skill') >= 0) {
+      if (trimmedQuery.startsWith('/add-skill')) {
         // Clear input
         setLocalInputText('')
         if (syncToStoreTimeoutRef.current) {
@@ -1750,7 +1750,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // Handle /mcp-add command — open MCP config editor (must be before /mcp check)
-      if (trimmedQuery.indexOf('/mcp-add') >= 0) {
+      if (trimmedQuery.startsWith('/mcp-add')) {
         setLocalInputText('')
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)
@@ -1765,7 +1765,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // Handle /mcp command — open MCP server details list
-      if (trimmedQuery.indexOf('/mcp') >= 0) {
+      if (trimmedQuery.startsWith('/mcp')) {
         setLocalInputText('')
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)
@@ -1780,7 +1780,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // Handle /models command — open LLM model config
-      if (trimmedQuery.indexOf('/models') >= 0) {
+      if (trimmedQuery.startsWith('/models')) {
         setLocalInputText('')
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)
@@ -1795,7 +1795,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
 
       // Handle /resume command — show previous conversations
-      if (trimmedQuery.indexOf('/resume') >= 0) {
+      if (trimmedQuery.startsWith('/resume')) {
         setLocalInputText('')
         if (syncToStoreTimeoutRef.current) {
           clearTimeout(syncToStoreTimeoutRef.current)

@@ -5,25 +5,24 @@ import { Card } from './ui/Card'
 import { useLLMStore } from '../stores'
 import { llmConfigService } from '../services/llm-config-api'
 
-interface ClaudeCodeSectionProps {
+interface CodexCLISectionProps {
   onPublished?: () => void
 }
 
-const CLAUDE_CODE_MODELS = [
-  { id: 'claude-code', label: 'Auto (default)', description: 'Uses the CLI default model' },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6 — High Reasoning', description: 'Most capable, best for complex tasks' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 — Medium', description: 'Balanced speed and capability' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 — Fast', description: 'Fastest, best for simple tasks' },
+const CODEX_CLI_MODELS = [
+  { id: 'codex-cli', label: 'Auto (default)', description: 'Uses the CLI default model' },
+  { id: 'gpt-5.4', label: 'GPT-5.4 — Flagship', description: '1M context, strongest reasoning' },
+  { id: 'gpt-5.3-codex', label: 'GPT-5.3-Codex — Coding', description: '400K context, industry-leading code' },
 ]
 
-export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
+export function CodexCLISection({ onPublished }: CodexCLISectionProps) {
   const [isPublishing, setIsPublishing] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [publishName, setPublishName] = useState('')
   const [publishStatus, setPublishStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [publishError, setPublishError] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState('claude-code')
-  const [effortLevel, setEffortLevel] = useState('high')
+  const [selectedModel, setSelectedModel] = useState('codex-cli')
+  const [reasoningEffort, setReasoningEffort] = useState('medium')
   const { saveLLM, savedLLMs } = useLLMStore()
 
   // Test connection state
@@ -31,7 +30,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
   const [testMessage, setTestMessage] = useState<string | null>(null)
 
   const alreadyPublished = savedLLMs.some(
-    llm => llm.provider === 'claude-code' && llm.model_id === selectedModel
+    llm => llm.provider === 'codex-cli' && llm.model_id === selectedModel
   )
 
   const handleTestConnection = async () => {
@@ -40,12 +39,12 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
 
     try {
       const response = await llmConfigService.validateAPIKey({
-        provider: 'claude-code',
+        provider: 'codex-cli',
       })
 
       if (response.valid) {
         setTestStatus('valid')
-        setTestMessage(response.message || 'Claude Code CLI is working.')
+        setTestMessage(response.message || 'Codex CLI is working.')
       } else {
         setTestStatus('invalid')
         setTestMessage(response.message || response.error || 'Validation failed.')
@@ -64,12 +63,12 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
 
     try {
       const llmModel = {
-        provider: 'claude-code' as const,
+        provider: 'codex-cli' as const,
         model_id: selectedModel,
-        options: { reasoning_effort: effortLevel },
+        options: { reasoning_effort: reasoningEffort },
       }
 
-      saveLLM(llmModel, publishName.trim(), 'Claude Code CLI', 'none')
+      saveLLM(llmModel, publishName.trim(), 'OpenAI Codex CLI', 'none')
       setPublishName('')
       setIsPublishing(false)
       setPublishStatus('success')
@@ -86,7 +85,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-foreground">Claude Code Configuration</h3>
+        <h3 className="text-lg font-semibold text-foreground">Codex CLI Configuration</h3>
       </div>
 
       <Card className="p-4">
@@ -95,8 +94,8 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
           <div className="space-y-2">
             <h4 className="font-medium text-foreground">Local CLI Provider</h4>
             <p className="text-sm text-muted-foreground">
-              Claude Code uses the locally installed <code className="text-xs bg-secondary px-1 py-0.5 rounded">claude</code> CLI for inference.
-              It handles its own authentication, model selection, and tool execution — no API key, model picker, or temperature setting is needed.
+              OpenAI Codex uses the locally installed <code className="text-xs bg-secondary px-1 py-0.5 rounded">codex</code> CLI for inference.
+              Authentication is handled via <code className="text-xs bg-secondary px-1 py-0.5 rounded">CODEX_API_KEY</code> or <code className="text-xs bg-secondary px-1 py-0.5 rounded">OPENAI_API_KEY</code> environment variable, or via <code className="text-xs bg-secondary px-1 py-0.5 rounded">codex login</code>.
             </p>
             <p className="text-sm text-muted-foreground">
               Some agent features (context summarization, tool search, code execution mode, context editing) are automatically disabled when using this provider.
@@ -112,11 +111,11 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
           onChange={e => setSelectedModel(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {CLAUDE_CODE_MODELS.map(m => (
+          {CODEX_CLI_MODELS.map(m => (
             <option key={m.id} value={m.id}>{m.label}</option>
           ))}
         </select>
-        {selectedModel !== 'claude-code' && (
+        {selectedModel !== 'codex-cli' && (
           <p className="mt-1.5 text-xs text-muted-foreground">
             Passes <code className="bg-secondary px-1 py-0.5 rounded">--model {selectedModel}</code> to the CLI.
           </p>
@@ -124,20 +123,23 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
       </Card>
 
       <Card className="p-4">
-        <h4 className="font-medium text-foreground mb-3">Effort Level</h4>
+        <h4 className="font-medium text-foreground mb-3">Reasoning Effort</h4>
         <select
-          value={effortLevel}
-          onChange={e => setEffortLevel(e.target.value)}
+          value={reasoningEffort}
+          onChange={e => setReasoningEffort(e.target.value)}
           className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
-          {['low', 'medium', 'high', 'max'].map(level => (
+          {(selectedModel === 'gpt-5.4'
+            ? ['none', 'low', 'medium', 'high', 'xhigh']
+            : ['low', 'medium', 'high', 'xhigh']
+          ).map(level => (
             <option key={level} value={level}>
               {level.charAt(0).toUpperCase() + level.slice(1)}
             </option>
           ))}
         </select>
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Controls how deeply Claude reasons. Passes <code className="bg-secondary px-1 py-0.5 rounded">--effort {effortLevel}</code> to the CLI.
+          Controls how deeply the model reasons before responding. Higher = slower but more thorough.
         </p>
       </Card>
 
@@ -145,7 +147,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
       <Card className="p-4">
         <h4 className="font-medium text-foreground mb-3">Test Connection</h4>
         <p className="text-sm text-muted-foreground mb-3">
-          Sends a test prompt to the Claude Code CLI to verify it is installed and authenticated.
+          Sends a test prompt to the Codex CLI to verify it is installed and authenticated.
         </p>
         <div className="space-y-3">
           <Button
@@ -197,7 +199,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
         {alreadyPublished && !isPublishing && (
           <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400 mb-3">
             <CheckCircle className="w-4 h-4" />
-            Claude Code is already published in your library.
+            Codex CLI is already published in your library.
           </div>
         )}
 
@@ -214,8 +216,8 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
             size="sm"
             onClick={() => {
               setIsPublishing(true)
-              const modelEntry = CLAUDE_CODE_MODELS.find(m => m.id === selectedModel)
-              setPublishName(modelEntry ? `Claude Code (${modelEntry.label.split(' —')[0]}, ${effortLevel} effort)` : 'Claude Code')
+              const modelEntry = CODEX_CLI_MODELS.find(m => m.id === selectedModel)
+              setPublishName(modelEntry ? `Codex CLI (${modelEntry.label.split(' —')[0]}, ${reasoningEffort} effort)` : 'Codex CLI')
               setPublishError(null)
             }}
           >
@@ -233,7 +235,7 @@ export function ClaudeCodeSection({ onPublished }: ClaudeCodeSectionProps) {
                   setPublishError(null)
                 }}
                 className="w-full px-3 py-2 text-sm bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="e.g., Claude Code"
+                placeholder="e.g., Codex CLI"
               />
             </div>
             {publishError && (

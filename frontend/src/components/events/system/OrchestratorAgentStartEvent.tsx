@@ -15,6 +15,15 @@ function getModelDisplayName(modelId?: string, provider?: string): string {
   if (provider === 'minimax-coding-plan') {
     return MINIMAX_CODING_PLAN_NAMES[modelId] ?? modelId
   }
+  if (provider === 'codex-cli') {
+    return `Codex CLI ${modelId === 'codex-cli' ? '(Auto)' : modelId}`
+  }
+  if (provider === 'claude-code') {
+    return `Claude Code ${modelId === 'claude-code' ? '(Auto)' : modelId}`
+  }
+  if (provider === 'gemini-cli') {
+    return `Gemini CLI ${modelId === 'gemini-cli' || modelId === 'auto' ? '(Auto)' : modelId}`
+  }
   return modelId
 }
 

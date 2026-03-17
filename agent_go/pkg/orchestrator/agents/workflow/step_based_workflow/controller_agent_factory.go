@@ -453,8 +453,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveStepID(stepPath, stepIDOverrid
 //  1. tempLLM2 / tempLLM1        — highest; requires learnings exist and disable_temp_llm=false
 //  2. step config ExecutionLLM   — explicit per-step override; used when tempLLM is off/unavailable
 //  3. tiered mode                — maturity-based tier resolution (preferred_tier ctx > maturity)
-//  4. presetExecutionLLM         — workflow-level default
-//  5. orchestrator main LLM      — final fallback
+//  4. orchestrator main LLM      — final fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
@@ -655,21 +654,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		return llmConfig
 	}
 
-	// ── 5. PRESET ────────────────────────────────────────────────────────────
-	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default execution LLM: %s/%s",
-			hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
-			},
-			Fallbacks: convertAgentFallbacks(hcpo.presetExecutionLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys,
-		}
-	}
-
-	// ── 6. ORCHESTRATOR MAIN LLM ─────────────────────────────────────────────
+	// ── 5. ORCHESTRATOR MAIN LLM ─────────────────────────────────────────────
 	if orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback: %s/%s",
 			orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
@@ -1683,18 +1668,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator LLM: %s/%s", todoTaskLLMConfig.Primary.Provider, todoTaskLLMConfig.Primary.ModelID))
-	} else if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
+	} else if hcpo.tierResolver != nil {
+		// Use tiered allocation (high tier for orchestration)
+		tieredLLM := hcpo.tierResolver.ResolveTier(TierHigh)
+		if tieredLLM != nil {
+			llmConfig = tieredLLM
+			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ Using Tier 1 (High) for todo task orchestrator: %s/%s", tieredLLM.Primary.Provider, tieredLLM.Primary.ModelID))
+		}
+	}
+	if llmConfig == nil && hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
+				Provider: hcpo.presetPhaseLLM.Provider,
+				ModelID:  hcpo.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: convertAgentFallbacks(hcpo.presetExecutionLLM.Fallbacks),
+			Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default ExecutionLLM for todo task orchestrator: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	} else {
-		return nil, fmt.Errorf("no valid LLM configuration found for todo task orchestrator agent: step config and preset execution LLM are both empty or invalid")
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for todo task orchestrator: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
+	}
+	if llmConfig == nil {
+		return nil, fmt.Errorf("no valid LLM configuration found for todo task orchestrator agent: step config, tiered, and preset phase LLM are all empty or invalid")
 	}
 
 	// Create agent config with custom LLM if needed
@@ -2235,7 +2229,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 }
 
 // selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents
-// Priority: tiered medium > presetExecutionLLM > orchestrator fallback
+// Priority: tiered medium > presetPhaseLLM > orchestrator fallback
 func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
 	// Prefer tiered medium — scoring is analysis, not generation
 	if hcpo.tierResolver != nil {
@@ -2248,14 +2242,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orches
 
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 
-	if hcpo.presetExecutionLLM != nil && hcpo.presetExecutionLLM.Provider != "" && hcpo.presetExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset execution LLM for evaluation scoring: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
+	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for evaluation scoring: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetExecutionLLM.Provider,
-				ModelID:  hcpo.presetExecutionLLM.ModelID,
+				Provider: hcpo.presetPhaseLLM.Provider,
+				ModelID:  hcpo.presetPhaseLLM.ModelID,
 			},
-			Fallbacks: convertAgentFallbacks(hcpo.presetExecutionLLM.Fallbacks),
+			Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
 			APIKeys:   orchestratorLLMConfig.APIKeys,
 		}, nil
 	}

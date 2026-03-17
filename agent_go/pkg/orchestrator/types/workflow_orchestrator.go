@@ -133,7 +133,6 @@ type WorkflowOrchestrator struct {
 	*orchestrator.BaseOrchestrator
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetExecutionLLM            *step_based_workflow.AgentLLMConfig // Default for execution agents
 	presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
 	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
 	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
@@ -316,22 +315,8 @@ func NewWorkflowOrchestrator(
 	}
 
 	// Extract agent-specific defaults from preset LLM config
-	var presetExecutionLLM, presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
+	var presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
 	if presetLLMConfig != nil {
-		// Use agent-specific defaults if available, otherwise fall back to legacy single default
-		if presetLLMConfig.ExecutionLLM != nil && presetLLMConfig.ExecutionLLM.Provider != "" && presetLLMConfig.ExecutionLLM.ModelID != "" {
-			presetExecutionLLM = convertDBAgentLLMConfig(presetLLMConfig.ExecutionLLM)
-			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from ExecutionLLM: %s/%s (fallbacks: %d)", presetExecutionLLM.Provider, presetExecutionLLM.ModelID, len(presetExecutionLLM.Fallbacks))
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for execution
-			presetExecutionLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] Extracted presetExecutionLLM from legacy Provider/ModelID: %s/%s", presetExecutionLLM.Provider, presetExecutionLLM.ModelID)
-		} else {
-			log.Printf("[PRESET_EXECUTION_LLM_DEBUG] No presetExecutionLLM found - presetLLMConfig.ExecutionLLM is nil and legacy Provider/ModelID are empty")
-		}
 		if presetLLMConfig.LearningLLM != nil && presetLLMConfig.LearningLLM.Provider != "" && presetLLMConfig.LearningLLM.ModelID != "" {
 			presetLearningLLM = convertDBAgentLLMConfig(presetLLMConfig.LearningLLM)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
@@ -354,8 +339,6 @@ func NewWorkflowOrchestrator(
 		// Note: Plan improvement and plan tool optimization are phase agents - they use presetPhaseLLM
 		// (not learning LLM). The presetPlanImprovementLLM and presetPlanToolOptimizationLLM fields
 		// are kept for backward compatibility but should NOT be populated from learning LLM.
-	} else {
-		log.Printf("[PRESET_EXECUTION_LLM_DEBUG] presetLLMConfig is nil - no preset LLM config provided")
 	}
 
 	// Extract tiered LLM allocation config
@@ -411,7 +394,6 @@ func NewWorkflowOrchestrator(
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
 		BaseOrchestrator:              baseOrchestrator,
-		presetExecutionLLM:            presetExecutionLLM,
 		presetLearningLLM:             presetLearningLLM,
 		presetPhaseLLM:                presetPhaseLLM,
 		presetPlanImprovementLLM:      presetPlanImprovementLLM,
@@ -529,7 +511,6 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
-		wo.presetExecutionLLM,
 		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
@@ -703,7 +684,6 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
-		wo.presetExecutionLLM,
 		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
@@ -793,11 +773,6 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 
 	// Create human controlled planner orchestrator directly
 	llmConfig := wo.GetLLMConfig()
-	if wo.presetExecutionLLM != nil {
-		wo.GetLogger().Info(fmt.Sprintf("[PRESET_EXECUTION_LLM_DEBUG] [runHumanControlledPlanning] presetExecutionLLM: %s/%s", wo.presetExecutionLLM.Provider, wo.presetExecutionLLM.ModelID))
-	} else {
-		wo.GetLogger().Info("[PRESET_EXECUTION_LLM_DEBUG] [runHumanControlledPlanning] presetExecutionLLM is nil")
-	}
 	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
 		ctx,
 		"", // provider (not used - LLM comes from temp override/step config/preset)
@@ -818,7 +793,6 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,     // NEW: Pass category map
-		wo.presetExecutionLLM, // Pass preset defaults
 		nil, // presetValidationLLM (LLM validation removed)
 		wo.presetLearningLLM,
 		wo.presetPhaseLLM,

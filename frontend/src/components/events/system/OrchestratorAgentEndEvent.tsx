@@ -11,7 +11,7 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
   // Hide workshop wrapper end events — these are signal-only events for auto-notification,
   // the actual agent completion is already shown by the inner agent's end event
   const agentType = (event as unknown as { agent_type?: string })?.agent_type
-  if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning') {
+  if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task') {
     return null
   }
 

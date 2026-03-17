@@ -459,9 +459,11 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 	}
 
 	// If no in-memory sessions, check database for recent sessions (handles backend restart case)
-	// Query for sessions with status 'active' or 'running', or recently completed (within 30 minutes)
+	// Query for sessions with status 'active' or 'running', or recently completed
+	// Chat sessions: 30 minute window; Workflow sessions: 7 day window (for long-lived builder sessions)
 	if len(activeSessions) == 0 && api.chatDB != nil {
 		thirtyMinutesAgo := time.Now().Add(-30 * time.Minute)
+		sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
 
 		// Get recent sessions from database - filter by user for isolation
 		dbSessions, _, err := api.chatDB.ListChatSessionsWithUser(r.Context(), 20, 0, nil, nil, currentUserID)
@@ -470,8 +472,14 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 		} else {
 			for _, dbSession := range dbSessions {
 				// Include sessions that are active/running or recently completed
+				// Workflow/workshop sessions get a 7-day window; chat sessions get 30 minutes
 				isActive := dbSession.Status == "active" || dbSession.Status == "running"
-				isRecentlyCompleted := dbSession.Status == "completed" && dbSession.LastActivity != nil && dbSession.LastActivity.After(thirtyMinutesAgo)
+				isWorkflow := dbSession.AgentMode == "workflow" || dbSession.AgentMode == "workflow_phase" || dbSession.AgentMode == "workshop"
+				cutoff := thirtyMinutesAgo
+				if isWorkflow {
+					cutoff = sevenDaysAgo
+				}
+				isRecentlyCompleted := dbSession.Status == "completed" && dbSession.LastActivity != nil && dbSession.LastActivity.After(cutoff)
 
 				if isActive || isRecentlyCompleted {
 					// Convert to ActiveSessionInfo

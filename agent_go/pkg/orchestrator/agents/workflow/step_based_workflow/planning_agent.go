@@ -5893,20 +5893,7 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register update_regular_step tool: %w", err)
 	}
 
-	conditionalUpdateSchema := getUpdateConditionalStepSchema()
-	conditionalUpdateParams, err := parseSchemaForToolParameters(conditionalUpdateSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update conditional step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_conditional_step",
-		"Update a conditional step in the plan. Provide existing_step_id (required) to identify which conditional step to update, and only include the fields you want to change (condition_question, condition_context, if_true_steps, if_false_steps, next_step_ids). The plan.json file is updated immediately when this tool is called.",
-		conditionalUpdateParams,
-		createUpdateConditionalStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_conditional_step tool: %w", err)
-	}
+	// NOTE: update_conditional_step tool removed (deprecated in favor of decision/routing).
 
 	decisionUpdateSchema := getUpdateDecisionStepSchema()
 	decisionUpdateParams, err := parseSchemaForToolParameters(decisionUpdateSchema)
@@ -5971,20 +5958,8 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register add_regular_step tool: %w", err)
 	}
 
-	conditionalSchema := getAddConditionalStepSchema()
-	conditionalParams, err := parseSchemaForToolParameters(conditionalSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse conditional step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"add_conditional_step",
-		"Add a conditional step to the plan. Use this for if/else logic based on runtime conditions. Conditional steps evaluate a question and execute different branch steps based on the result. They do NOT execute the step itself - only evaluate the condition. Provide: id, title, condition_question, if_true_steps, if_false_steps, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
-		conditionalParams,
-		createAddConditionalStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_conditional_step tool: %w", err)
-	}
+	// NOTE: add_conditional_step tool removed (deprecated in favor of decision/routing).
+	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
 	decisionSchema := getAddDecisionStepSchema()
 	decisionParams, err := parseSchemaForToolParameters(decisionSchema)
@@ -6004,20 +5979,8 @@ func registerPlanModificationTools(
 	// NOTE: add_orchestration_step tool removed (deprecated in favor of todo_task).
 	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
-	loopSchema := getAddLoopStepSchema()
-	loopParams, err := parseSchemaForToolParameters(loopSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse loop step schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"add_loop_step",
-		"Add a loop step to the plan. Use this for steps that need to repeat until a condition is met (polling, retrying, waiting). Provide: id, title, description, success_criteria, context_output, loop_condition, loop_description, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
-		loopParams,
-		createAddLoopStepExecutor(workspacePath, logger, readFile, writeFile, moveFile, unlockLearningsFunc),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_loop_step tool: %w", err)
-	}
+	// NOTE: add_loop_step tool removed (deprecated — regular steps with has_loop cover this).
+	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
 	humanInputSchema := getAddHumanInputStepSchema()
 	humanInputParams, err := parseSchemaForToolParameters(humanInputSchema)
@@ -6079,81 +6042,10 @@ func registerPlanModificationTools(
 		return fmt.Errorf("failed to register update_routing_step tool: %w", err)
 	}
 
-	// Register conditional step tools
-	convertToConditionalSchema := getConvertStepToConditionalSchema()
-	convertToConditionalParams, err := parseSchemaForToolParameters(convertToConditionalSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse convert_step_to_conditional schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"convert_step_to_conditional",
-		"Convert a regular step to a conditional step with if/else branches. Provide step_id, condition_question, condition_context (optional), if_true_steps, and if_false_steps. The step will become a conditional decision point that executes one branch based on the condition evaluation.",
-		convertToConditionalParams,
-		createConvertStepToConditionalExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register convert_step_to_conditional tool: %w", err)
-	}
-
-	addBranchStepsSchema := getAddBranchStepsSchema()
-	addBranchStepsParams, err := parseSchemaForToolParameters(addBranchStepsSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse add_branch_steps schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"add_branch_steps",
-		"Add new steps to a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type ('if_true' or 'if_false'), and new_steps array. The steps will be appended to the specified branch.",
-		addBranchStepsParams,
-		createAddBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_branch_steps tool: %w", err)
-	}
-
-	updateBranchStepsSchema := getUpdateBranchStepsSchema()
-	updateBranchStepsParams, err := parseSchemaForToolParameters(updateBranchStepsSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update_branch_steps schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_branch_steps",
-		"Update existing steps within a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type, and updated_steps array. For each step, provide existing_step_id (required) and only include fields you want to change.",
-		updateBranchStepsParams,
-		createUpdateBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_branch_steps tool: %w", err)
-	}
-
-	deleteBranchStepsSchema := getDeleteBranchStepsSchema()
-	deleteBranchStepsParams, err := parseSchemaForToolParameters(deleteBranchStepsSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse delete_branch_steps schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"delete_branch_steps",
-		"Delete steps from a specific branch (if_true or if_false) of a conditional step. Provide parent_step_id, branch_type, and deleted_step_ids array. Use the step's id field from the plan.",
-		deleteBranchStepsParams,
-		createDeleteBranchStepsExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register delete_branch_steps tool: %w", err)
-	}
-
-	convertToRegularSchema := getConvertConditionalToRegularSchema()
-	convertToRegularParams, err := parseSchemaForToolParameters(convertToRegularSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse convert_conditional_to_regular schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"convert_conditional_to_regular",
-		"Convert a conditional step back to a regular step. This removes all conditional properties and branch steps. Provide step_id of the conditional step to convert.",
-		convertToRegularParams,
-		createConvertConditionalToRegularExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register convert_conditional_to_regular tool: %w", err)
-	}
+	// NOTE: conditional branch tools removed (deprecated in favor of decision/routing).
+	// Tools removed: convert_step_to_conditional, add_branch_steps, update_branch_steps,
+	// delete_branch_steps, convert_conditional_to_regular.
+	// Schema, executor, and execution code kept for backward compatibility with existing workflows.
 
 	// NOTE: add/update/delete_orchestration_route tools removed (deprecated in favor of todo_task).
 

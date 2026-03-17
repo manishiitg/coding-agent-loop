@@ -529,11 +529,11 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 		"Chats",  // Allow reading chat history for context
 		"Plans",  // Allow reading plans for reference
 	}
-	// Write only to learnings and knowledgebase — plan tools write to planning/ via workspace API (bypass guard)
-	// Execution sub-agent handles runs/ writes via its own folder guard
+	// Write to full workspace — the workshop agent and its background agents need to write
+	// to learnings, knowledgebase, execution, instructions.md, and other workspace files.
+	// Plan tools also write to planning/ via workspace API (bypass guard).
 	writePaths := []string{
-		learningsPath,
-		knowledgebasePath,
+		workspacePath,
 	}
 
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
@@ -743,6 +743,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
 - **stop_step(execution_id)** — Cancel a running step
+- **run_in_background(name, instruction)** — Spawn an independent background agent with the same tools as the workflow. Use this to offload context-heavy tasks or run multiple things in parallel. The agent gets its own context and tools — it does NOT execute a workflow step. Returns execution_id (use query_step to check status, stop_step to cancel).
 
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, enabled_skills, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
@@ -1051,10 +1052,12 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 
 1. Call **list_runs** to see existing iterations and their group subfolders (with group_ids)
 2. Call **list_groups** to see available groups and their group_ids
-3. **Confirm with the user** which iteration and which group to use — do NOT assume or guess
-   - Default suggestion: latest iteration + the group matching the user's request
-   - Only use a different iteration if the user explicitly asks
-4. Once confirmed, pass both **iteration** and **group_id** explicitly to every execute_step call
+3. **ALWAYS reuse the latest existing iteration** unless the user explicitly asks for a new one. Do NOT create iteration-2, iteration-3, etc. on your own — just keep using the latest iteration. Creating unnecessary iterations clutters the workspace with redundant output folders.
+   - If no iterations exist yet, create **iteration-1**
+   - If iterations exist, **reuse the highest-numbered one** (e.g., if iteration-3 exists, use iteration-3)
+   - Only create a new iteration if the user explicitly says "new iteration", "fresh run", etc.
+4. For the group: suggest the toolbar-selected group or the one matching the user's request. Only confirm if ambiguous.
+5. Once determined, pass both **iteration** and **group_id** explicitly to every execute_step call
 
 **Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
 
@@ -1256,10 +1259,12 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 
 1. Call **list_runs** to see existing iterations and their group subfolders (with group_ids)
 2. Call **list_groups** to see available groups and their group_ids
-3. **Confirm with the user** which iteration and which group to use — do NOT assume or guess
-   - Default suggestion: latest iteration + the group matching the user's request
-   - Only use a different iteration if the user explicitly asks
-4. Once confirmed, pass both **iteration** and **group_id** explicitly to every execute_step call
+3. **ALWAYS reuse the latest existing iteration** unless the user explicitly asks for a new one. Do NOT create iteration-2, iteration-3, etc. on your own — just keep using the latest iteration. Creating unnecessary iterations clutters the workspace with redundant output folders.
+   - If no iterations exist yet, create **iteration-1**
+   - If iterations exist, **reuse the highest-numbered one** (e.g., if iteration-3 exists, use iteration-3)
+   - Only create a new iteration if the user explicitly says "new iteration", "fresh run", etc.
+4. For the group: suggest the toolbar-selected group or the one matching the user's request. Only confirm if ambiguous.
+5. Once determined, pass both **iteration** and **group_id** explicitly to every execute_step call
 
 **Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
 
@@ -1769,21 +1774,38 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("## Existing Runs (%d iterations)\n\n", len(iterations)))
 
+			// Non-group folders that may appear inside iteration folders
+			nonGroupFolders := map[string]bool{
+				"execution": true, "logs": true, "progress": true,
+			}
+
 			for _, iterFolder := range iterations {
 				iterPath := fmt.Sprintf("%s/%s", runsPath, iterFolder)
 				subFolders, err := iwm.controller.listRunFolders(ctx, iterPath)
-				if err != nil || len(subFolders) == 0 {
+				if err != nil {
 					sb.WriteString(fmt.Sprintf("- **%s** (no group subfolders)\n", iterFolder))
 				} else {
-					var groupDescs []string
+					// Filter out non-group folders (execution/, logs/, etc.)
+					var groupFolders []string
 					for _, sf := range subFolders {
-						if gid, ok := folderToGroupID[sf]; ok {
-							groupDescs = append(groupDescs, fmt.Sprintf("%s (group_id: %s)", sf, gid))
-						} else {
-							groupDescs = append(groupDescs, sf)
+						if !nonGroupFolders[sf] {
+							groupFolders = append(groupFolders, sf)
 						}
 					}
-					sb.WriteString(fmt.Sprintf("- **%s** (%d groups: %s)\n", iterFolder, len(subFolders), strings.Join(groupDescs, ", ")))
+
+					if len(groupFolders) == 0 {
+						sb.WriteString(fmt.Sprintf("- **%s** (no group subfolders)\n", iterFolder))
+					} else {
+						var groupDescs []string
+						for _, sf := range groupFolders {
+							if gid, ok := folderToGroupID[sf]; ok {
+								groupDescs = append(groupDescs, fmt.Sprintf("%s (group_id: %s)", sf, gid))
+							} else {
+								groupDescs = append(groupDescs, sf)
+							}
+						}
+						sb.WriteString(fmt.Sprintf("- **%s** (%d groups: %s)\n", iterFolder, len(groupFolders), strings.Join(groupDescs, ", ")))
+					}
 				}
 			}
 
@@ -1929,6 +1951,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Fallback to session-level group from toolbar selection
 			if groupID == "" && len(iwm.controller.enabledGroupIDs) > 0 {
 				groupID = iwm.controller.enabledGroupIDs[0]
+			}
+
+			// Validate a group is available — cannot run steps without one
+			if groupID == "" {
+				iwm.refreshVariablesManifest(ctx)
+				if iwm.controller.variablesManifest == nil || len(iwm.controller.variablesManifest.Groups) == 0 {
+					return "No variable groups exist. Create a group first using add_group before running steps.", nil
+				}
+				// Auto-select the first available group
+				groupID = iwm.controller.variablesManifest.Groups[0].GroupID
 			}
 
 			// Validate iteration is provided
@@ -2147,6 +2179,142 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register execute_step tool: %v", err))
 	}
 
+	// Tool: run_in_background — spawn independent background agent (not tied to a workflow step)
+	if err := mcpAgent.RegisterCustomTool(
+		"run_in_background",
+		"Spawn an independent background agent to run a task with the same tools as the workflow. Returns an execution_id immediately. You will be notified when it completes. Use this to offload context-heavy work or run tasks in parallel.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Short descriptive name (e.g., 'Research APIs', 'Validate data')",
+				},
+				"instruction": map[string]interface{}{
+					"type":        "string",
+					"description": "Comprehensive instructions for the background agent. This is the agent's task — be specific about what it should do, inputs, expected outputs.",
+				},
+			},
+			"required": []string{"name", "instruction"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			nameRaw, ok := args["name"]
+			if !ok || nameRaw == nil {
+				return "name is required", nil
+			}
+			name, ok := nameRaw.(string)
+			if !ok || name == "" {
+				return "name must be a non-empty string", nil
+			}
+
+			instructionRaw, ok := args["instruction"]
+			if !ok || instructionRaw == nil {
+				return "instruction is required", nil
+			}
+			instruction, ok := instructionRaw.(string)
+			if !ok || instruction == "" {
+				return "instruction must be a non-empty string", nil
+			}
+
+			// Create slug from name for execution ID
+			nameSlug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+			// Trim to reasonable length
+			if len(nameSlug) > 30 {
+				nameSlug = nameSlug[:30]
+			}
+
+			execID := fmt.Sprintf("bg-%s-%05d", nameSlug, time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
+			agentSessionID := fmt.Sprintf("workshop-bg-%s-%d", nameSlug, time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         name, // Use name as the "step" identifier for display
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			go func() {
+				// Emit orchestrator_agent_start so the frontend creates a grouping card
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-background-task",
+						AgentName:     fmt.Sprintf("Background: %s", name),
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				result, err := iwm.runBackgroundTaskAgent(execCtx, name, instruction)
+
+				// Update status BEFORE emitting event so query_step sees the final state
+				exec.mu.Lock()
+				if exec.Status == WorkshopStepCancelled {
+					exec.mu.Unlock()
+					return
+				}
+				if err != nil {
+					if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						exec.Status = WorkshopStepCancelled
+						exec.Err = err
+					} else {
+						exec.Status = WorkshopStepFailed
+						exec.Err = err
+					}
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = result
+				}
+				exec.mu.Unlock()
+
+				// Emit orchestrator_agent_end to close the grouping card
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-background-task",
+						AgentName:     fmt.Sprintf("Background: %s", name),
+						Success:       err == nil,
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+			}()
+
+			logger.Info(fmt.Sprintf("🚀 Workshop: background task %q started, execution_id=%q", name, execID))
+			return fmt.Sprintf("Background task %q started.\nexecution_id: %q\nYou will be automatically notified when it completes.", name, execID), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_in_background tool: %v", err))
+	}
+
 	// Tool 2: query_step — unified status + real-time tool call visibility
 	// When running: shows status + live tool calls (auto-enriched)
 	// When done/failed/cancelled: shows result
@@ -2229,8 +2397,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return fmt.Sprintf("Step %q is still running.%s%s", stepID, toolCallInfo, hint), nil
 
 			case WorkshopStepDone:
+				// Background tasks get a generic completion response (no step-specific hints)
+				if strings.HasPrefix(execID, "bg-") {
+					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
+				}
 				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read learnings: 'cat learnings/%s/*.md' — are they specific and actionable? Edit or delete noisy ones.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
+				if strings.HasPrefix(execID, "bg-") {
+					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil
+				}
 				return fmt.Sprintf("Step %q failed: %v\n\n**Next**: Investigate the failure. Call debug_step(%q) for detailed execution insights, then fix the root cause (description, validation, context deps) before re-running.", stepID, execErr, stepID), nil
 			case WorkshopStepCancelled:
 				return fmt.Sprintf("Step %q was cancelled.", stepID), nil
@@ -4360,7 +4535,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
 				}
 			}
-			writeLLMEntry("Execution LLM", iwm.controller.presetExecutionLLM)
 			writeLLMEntry("Learning LLM", iwm.controller.presetLearningLLM)
 
 			// Show tiered config if enabled
@@ -4890,7 +5064,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
 				}
 			}
-			writeLLMDefault("Execution LLM", ctrl.presetExecutionLLM)
 			writeLLMDefault("Learning LLM", ctrl.presetLearningLLM)
 			writeLLMDefault("Phase LLM", ctrl.presetPhaseLLM)
 			if ctrl.presetPlanImprovementLLM != nil {
@@ -5775,11 +5948,11 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 			Fallbacks: iwm.controller.GetFallbacks(),
 			APIKeys:   iwm.controller.GetAPIKeys(),
 		}
-	} else if iwm.controller.presetExecutionLLM != nil && iwm.controller.presetExecutionLLM.Provider != "" && iwm.controller.presetExecutionLLM.ModelID != "" {
+	} else if iwm.controller.presetPhaseLLM != nil && iwm.controller.presetPhaseLLM.Provider != "" && iwm.controller.presetPhaseLLM.ModelID != "" {
 		llmConfigToUse = &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: iwm.controller.presetExecutionLLM.Provider,
-				ModelID:  iwm.controller.presetExecutionLLM.ModelID,
+				Provider: iwm.controller.presetPhaseLLM.Provider,
+				ModelID:  iwm.controller.presetPhaseLLM.ModelID,
 			},
 			Fallbacks: iwm.controller.GetFallbacks(),
 			APIKeys:   iwm.controller.GetAPIKeys(),
@@ -5899,4 +6072,218 @@ func (iwm *InteractiveWorkshopManager) updateWorkshopLearningMetadata(
 	} else {
 		logger.Info(fmt.Sprintf("📝 Updated learning metadata for %s (iterations: %d)", stepID, metadata.TotalIterations))
 	}
+}
+
+// ============================================================================
+// Background Task Agent — standalone agent for run_in_background tool
+// ============================================================================
+
+var backgroundTaskAgentSystemTemplate = MustRegisterTemplate("backgroundTaskAgentSystem", `# Background Task Agent
+
+You are a background agent spawned by the workflow builder to perform a specific task. You have access to the same workspace tools as the workflow execution agents.
+
+**Workspace folder:** {{.WorkspacePath}}
+
+## Instructions
+Complete the task described in the user message below. Be thorough and specific in your output.
+When you finish, summarize what you did and any important findings.
+
+{{.SkillPrompt}}
+{{.SecretPrompt}}
+{{.BrowserPrompt}}
+{{.CustomInstructions}}
+`)
+
+var backgroundTaskAgentUserTemplate = MustRegisterTemplate("backgroundTaskAgentUser", `{{.Instruction}}`)
+
+// WorkflowBackgroundTaskAgent is a standalone agent spawned by run_in_background
+type WorkflowBackgroundTaskAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowBackgroundTaskAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowBackgroundTaskAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
+		config,
+		logger,
+		tracer,
+		agents.TodoPlannerExecutionAgentType,
+		eventBridge,
+	)
+	return &WorkflowBackgroundTaskAgent{
+		BaseOrchestratorAgent: baseAgent,
+	}
+}
+
+// Execute implements OrchestratorAgent interface for the background task agent
+func (agent *WorkflowBackgroundTaskAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	baseAgent := agent.BaseOrchestratorAgent.BaseAgent()
+	if baseAgent == nil || baseAgent.Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+
+	// Templates
+	var systemPrompt, userMessage strings.Builder
+	if err := backgroundTaskAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := backgroundTaskAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+
+	// Single-pass execution
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(
+		ctx, templateVars, inputProcessor,
+		conversationHistory, struct{}{},
+		systemPrompt.String(), true,
+	)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return result, updatedHistory, nil
+}
+
+// runBackgroundTaskAgent creates and runs a standalone background agent
+func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Context, name string, instruction string) (string, error) {
+	logger := iwm.controller.GetLogger()
+
+	// --- Folder guard: same as workshop agent ---
+	workspacePath := iwm.controller.GetWorkspacePath()
+	knowledgebasePath := getKnowledgebasePath(workspacePath)
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		knowledgebasePath,
+		"Chats",
+		"Plans",
+	}
+	writePaths := []string{
+		workspacePath,
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
+
+	// --- LLM: use phase LLM (same tier as planning/analysis agents) ---
+	var llmConfigToUse *orchestrator.LLMConfig
+	if iwm.controller.presetPhaseLLM != nil && iwm.controller.presetPhaseLLM.Provider != "" && iwm.controller.presetPhaseLLM.ModelID != "" {
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: iwm.controller.presetPhaseLLM.Provider,
+				ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+			},
+			Fallbacks: iwm.controller.GetFallbacks(),
+			APIKeys:   iwm.controller.GetAPIKeys(),
+		}
+	} else if iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
+		// Fallback to workshop builder LLM
+		llmConfigToUse = &orchestrator.LLMConfig{
+			Primary: orchestrator.LLMModel{
+				Provider: iwm.presetLLM.Provider,
+				ModelID:  iwm.presetLLM.ModelID,
+			},
+			Fallbacks: iwm.controller.GetFallbacks(),
+			APIKeys:   iwm.controller.GetAPIKeys(),
+		}
+	} else {
+		return "", fmt.Errorf("no valid LLM configuration found for background task agent")
+	}
+
+	// --- Agent config ---
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("background-task-agent", 80, agents.OutputFormatStructured, llmConfigToUse)
+	isCodeExecMode := iwm.controller.GetUseCodeExecutionMode()
+	config.UseCodeExecutionMode = isCodeExecMode
+	config.UseToolSearchMode = iwm.controller.GetUseToolSearchMode()
+	config.EnableParallelToolExecution = true
+
+	// --- Tools: same as default execution agent (all workspace tools) ---
+	toolsToRegister, executorsToUse := iwm.controller.prepareCustomTools(nil) // nil = default tools
+
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowBackgroundTaskAgent(cfg, log, tracer, eventBridge)
+	}
+
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx,
+		config,
+		"background-task",
+		0, 0,
+		"background-task",
+		createAgentFunc,
+		toolsToRegister,
+		executorsToUse,
+		true, // overwriteSystemPrompt — we provide our own
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create background task agent: %w", err)
+	}
+
+	// --- Post-setup: add skill/secret/browser prompts ---
+	baseAgent := agent.GetBaseAgent()
+	if baseAgent == nil {
+		return "", fmt.Errorf("base agent is nil after creation")
+	}
+	mcpAgent := baseAgent.Agent()
+	if mcpAgent == nil {
+		return "", fmt.Errorf("mcp agent is nil after creation")
+	}
+
+	// Build supplementary prompts
+	skillPrompt := ""
+	effectiveSkills := GetEffectiveSkills(nil, iwm.controller.BaseOrchestrator)
+	if len(effectiveSkills) > 0 {
+		skillPrompt = BuildWorkflowSkillPrompt(ctx, effectiveSkills, iwm.controller.BaseOrchestrator)
+	}
+
+	secretPrompt := ""
+	effectiveSecrets := GetEffectiveSecrets(iwm.controller.BaseOrchestrator)
+	if len(effectiveSecrets) > 0 {
+		secretPrompt = BuildWorkflowSecretPrompt(effectiveSecrets)
+	}
+
+	browserPrompt := ""
+	for _, s := range config.ServerNames {
+		if s == "playwright" || s == "camofox" {
+			browserPrompt = "You have access to browser automation tools."
+			break
+		}
+	}
+	for _, skill := range effectiveSkills {
+		if skill == "agent-browser" {
+			browserPrompt = "You have access to browser automation tools via the agent_browser tool."
+			break
+		}
+	}
+
+	// Load custom instructions from workspace
+	customInstructions := ""
+	if content, err := iwm.controller.ReadWorkspaceFile(ctx, "instructions.md"); err == nil && content != "" {
+		customInstructions = fmt.Sprintf("\n## Custom Instructions\n%s", content)
+	}
+
+	// Apply post-setup configuration (folder guard + registry for code execution mode)
+	if err := iwm.controller.applyPostSetupToAgent(agent, "background-task-agent", isCodeExecMode); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for background-task-agent: %v", err))
+	}
+
+	// --- Template vars ---
+	templateVars := map[string]string{
+		"WorkspacePath":      workspacePath,
+		"Instruction":        instruction,
+		"SkillPrompt":        skillPrompt,
+		"SecretPrompt":       secretPrompt,
+		"BrowserPrompt":      browserPrompt,
+		"CustomInstructions": customInstructions,
+	}
+
+	// --- Execute ---
+	logger.Info(fmt.Sprintf("🚀 Running background task agent: %q", name))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("background task agent failed: %w", err)
+	}
+
+	return result, nil
 }

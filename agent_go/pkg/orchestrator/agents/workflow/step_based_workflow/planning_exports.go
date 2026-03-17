@@ -33,9 +33,7 @@ var planningChatSystemTemplate = MustRegisterTemplate("planningChatSystem", `## 
 ## 🏗️ STEP DESIGN
 - **Regular**: Standard task. 'context_output' is the result file.
 - **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
-- **Conditional**: Inspection-only branch (no execution).
 - **Todo Task**: Manages a dynamic todo list with trackable tasks. Main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning) or generic agent (no learning). Use when: work can be broken into trackable tasks, multiple specialized agents needed, or detailed progress tracking required.
-- **Loop**: Repeat until criteria met (polled progress).
 - **Routing**: N-way LLM-based routing. Evaluates a routing_question and selects one of N routes (each with route_id + next_step_id). Two modes: (1) Execute-then-route: has description/success_criteria, executes first then routes; (2) Pure routing: no description, evaluates prior context to pick a route.
 - **Human Input**: Asks a question to the user and blocks until they respond. Supports response types: 'text' (free-form), 'yesno' (approve/reject), 'multiple_choice' (pick from options). Can store response in a variable via 'variable_name'. Routes based on response: 'if_yes_next_step_id'/'if_no_next_step_id' for yesno, 'option_routes' for multiple choice, 'next_step_id' as fallback.
 - **Human + Routing Pattern**: When the user needs to provide input that determines the workflow path, place a 'human_input' step BEFORE a 'routing' step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do NOT use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
@@ -124,16 +122,13 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 
 #### Add Steps
 - 'add_regular_step' — Add a standard execution step
-- 'add_conditional_step' — Add an if/else branch step (evaluation only, no execution)
 - 'add_decision_step' — Add an execute-then-route step
-- 'add_loop_step' — Add a step that repeats until a condition is met
 - 'add_human_input_step' — Add a step that asks the user a question and blocks for input
 - 'add_routing_step' — Add an N-way LLM routing step
 - 'add_todo_task_step' — Add a todo-task orchestration step with sub-agents
 
 #### Update Steps
 - 'update_regular_step(existing_step_id, ...)' — Update fields of a regular step
-- 'update_conditional_step(existing_step_id, ...)' — Update a conditional step
 - 'update_decision_step(existing_step_id, ...)' — Update a decision step
 - 'update_routing_step(existing_step_id, ...)' — Update a routing step
 - 'update_human_input_step(existing_step_id, ...)' — Update a human input step
@@ -143,13 +138,6 @@ Every step MUST have a 'validation_schema' to enable fast code-based pre-validat
 
 #### Delete Steps
 - 'delete_plan_steps(step_ids[])' — Delete steps by their IDs
-
-#### Conditional Branch Tools
-- 'convert_step_to_conditional(step_id, condition_question, if_true_steps, if_false_steps)' — Convert a regular step to conditional
-- 'convert_conditional_to_regular(step_id)' — Convert a conditional step back to regular
-- 'add_branch_steps(parent_step_id, branch_type, new_steps[])' — Add steps to a branch
-- 'update_branch_steps(parent_step_id, branch_type, updated_steps[])' — Update steps in a branch
-- 'delete_branch_steps(parent_step_id, branch_type, deleted_step_ids[])' — Delete steps from a branch
 
 #### Todo Task Route Tools
 - 'add_todo_task_route(parent_step_id, new_route)' — Add a sub-agent route to a todo task step
@@ -408,7 +396,6 @@ type WorkshopConfig struct {
 	CustomToolExecutors  map[string]interface{}
 	ToolCategories       map[string]string
 	LLMConfig            *orchestrator.LLMConfig
-	PresetExecutionLLM   *AgentLLMConfig
 	PresetLearningLLM    *AgentLLMConfig
 	PresetPhaseLLM       *AgentLLMConfig
 	PresetPlanImprovementLLM *AgentLLMConfig
@@ -456,9 +443,6 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	logger.Info(fmt.Sprintf("[WORKSHOP] Config: tools=%d, executors=%d, categories=%d, codeExec=%v, toolSearch=%v, knowledgebase=%v, llmMode=%s",
 		len(cfg.CustomTools), len(cfg.CustomToolExecutors), len(cfg.ToolCategories),
 		cfg.UseCodeExecutionMode, cfg.UseToolSearchMode, cfg.UseKnowledgebase, cfg.LLMAllocationMode))
-	if cfg.PresetExecutionLLM != nil {
-		logger.Info(fmt.Sprintf("[WORKSHOP] presetExecutionLLM=%s/%s", cfg.PresetExecutionLLM.Provider, cfg.PresetExecutionLLM.ModelID))
-	}
 	if cfg.PresetPhaseLLM != nil {
 		logger.Info(fmt.Sprintf("[WORKSHOP] presetPhaseLLM=%s/%s", cfg.PresetPhaseLLM.Provider, cfg.PresetPhaseLLM.ModelID))
 	}
@@ -499,7 +483,6 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		cfg.CustomTools,
 		cfg.CustomToolExecutors,
 		cfg.ToolCategories,
-		cfg.PresetExecutionLLM,
 		nil, // presetValidationLLM (LLM validation removed)
 		cfg.PresetLearningLLM,
 		cfg.PresetPhaseLLM,
@@ -636,11 +619,8 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 // Called when reusing a cached workshop session to pick up any LLM config changes
 // the user made in the workflow editor since the session was first created.
 func (s *WorkshopChatSession) UpdatePresetLLMConfigs(
-	executionLLM, validationLLM, learningLLM, phaseLLM, planImprovementLLM *AgentLLMConfig,
+	learningLLM, phaseLLM, planImprovementLLM *AgentLLMConfig,
 ) {
-	s.controller.presetExecutionLLM = executionLLM
-	// validationLLM parameter kept for API compatibility but no longer used (LLM validation removed)
-	_ = validationLLM
 	s.controller.presetLearningLLM = learningLLM
 	s.controller.presetPhaseLLM = phaseLLM
 	s.controller.presetPlanImprovementLLM = planImprovementLLM
@@ -828,7 +808,6 @@ func RegisterRunFullEvaluationTool(
 					cfg.CustomTools,
 					cfg.CustomToolExecutors,
 					cfg.ToolCategories,
-					cfg.PresetExecutionLLM,
 					nil, // presetValidationLLM
 					cfg.PresetLearningLLM,
 					cfg.PresetPhaseLLM,

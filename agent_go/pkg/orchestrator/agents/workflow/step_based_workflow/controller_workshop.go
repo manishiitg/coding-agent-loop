@@ -79,10 +79,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 ) (string, error) {
 	hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] ExecuteStepForWorkshop: stepID=%s, runFolder=%s, codeExec=%v",
 		stepID, hcpo.selectedRunFolder, hcpo.GetUseCodeExecutionMode()))
-	if hcpo.presetExecutionLLM != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] presetExecutionLLM: %s/%s", hcpo.presetExecutionLLM.Provider, hcpo.presetExecutionLLM.ModelID))
-	}
-
 	// 1. Apply per-call overrides (group_id, run_folder, human_input)
 	if opts != nil {
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Per-call options: groupID=%s, runFolder=%s, humanInput=%d chars", opts.GroupID, opts.RunFolder, len(opts.HumanInput)))

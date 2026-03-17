@@ -71,7 +71,7 @@ interface LLMState extends StoreActions {
   defaultsLoaded: boolean
 
   // Supported providers (from backend, not persisted)
-  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan')[]
+  supportedProviders: ('openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan')[]
   isProviderSupported: (provider: string) => boolean
 
   // Delegation tier configuration
@@ -274,7 +274,7 @@ export const useLLMStore = create<LLMState>()(
         delegationTierConfig: null,
 
         // Supported providers (always load fresh from backend, default to all)
-        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'minimax', 'minimax-coding-plan'],
+        supportedProviders: ['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'claude-code', 'gemini-cli', 'codex-cli', 'minimax', 'minimax-coding-plan'],
         llmConfigLocked: false,
         lockedProviders: [],
         defaultPublishedLLMsLocked: false,

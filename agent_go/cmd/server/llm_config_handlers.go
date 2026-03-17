@@ -20,7 +20,7 @@ import (
 
 // getSupportedProviders returns the list of supported LLM providers based on environment configuration
 func getSupportedProviders() []string {
-	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "minimax", "minimax-coding-plan", "claude-code", "gemini-cli"}
+	allProviders := []string{"openrouter", "bedrock", "openai", "vertex", "anthropic", "azure", "minimax", "minimax-coding-plan", "claude-code", "gemini-cli", "codex-cli"}
 	envValue := os.Getenv("SUPPORTED_LLM_PROVIDERS")
 	if envValue == "" {
 		return allProviders
@@ -173,6 +173,12 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	}
 	if s := os.Getenv("GEMINI_API_KEY"); s != "" {
 		keys.GeminiCLI = &s
+	}
+	// Codex CLI: CODEX_API_KEY takes priority, falls back to OPENAI_API_KEY
+	if s := os.Getenv("CODEX_API_KEY"); s != "" {
+		keys.CodexCLI = &s
+	} else if s := os.Getenv("OPENAI_API_KEY"); s != "" {
+		keys.CodexCLI = &s
 	}
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
 		keys.MiniMax = &s
@@ -440,6 +446,14 @@ func (api *StreamingAPI) handleValidateAPIKey(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Codex CLI uses the local CLI — validate by running a test prompt
+	if req.Provider == "codex-cli" {
+		response := validateCodexCLI(req.APIKey)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	response := llm.ValidateAPIKey(req)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -556,6 +570,69 @@ func validateGeminiCLI(apiKey string) llm.APIKeyValidationResponse {
 	return llm.APIKeyValidationResponse{
 		Valid:   true,
 		Message: fmt.Sprintf("Gemini CLI is working. Response: %s", responseText),
+	}
+}
+
+// validateCodexCLI validates the OpenAI Codex CLI by checking it exists and sending a test prompt
+func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
+	log.Printf("[CODEX-CLI VALIDATION] Starting CLI validation")
+
+	// Step 1: Check if codex CLI is on PATH
+	codexPath, err := exec.LookPath("codex")
+	if err != nil {
+		log.Printf("[CODEX-CLI VALIDATION] CLI not found on PATH: %v", err)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Codex CLI not found. Install it with: npm install -g @openai/codex",
+		}
+	}
+	log.Printf("[CODEX-CLI VALIDATION] CLI found at: %s", codexPath)
+
+	// Step 2: Send a test prompt via the CLI and check for a response
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "codex", "exec", "--full-auto", "--skip-git-repo-check", "-c", `model_reasoning_effort="medium"`, "Say hello in one short sentence.")
+	// Pass API key as env var if provided (from frontend or server .env)
+	if apiKey == "" {
+		apiKey = os.Getenv("CODEX_API_KEY")
+	}
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+	if apiKey != "" {
+		cmd.Env = append(os.Environ(), "CODEX_API_KEY="+apiKey)
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := string(output)
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[CODEX-CLI VALIDATION] CLI test timed out")
+			return llm.APIKeyValidationResponse{
+				Valid:   false,
+				Message: "Codex CLI timed out after 60s. Check that you are authenticated (run 'codex login').",
+			}
+		}
+		log.Printf("[CODEX-CLI VALIDATION] CLI test failed: %v — output: %s", err, errMsg)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: fmt.Sprintf("Codex CLI error: %s", strings.TrimSpace(errMsg)),
+		}
+	}
+
+	responseText := strings.TrimSpace(string(output))
+	if responseText == "" {
+		log.Printf("[CODEX-CLI VALIDATION] CLI returned empty response")
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: "Codex CLI returned an empty response. Check authentication with 'codex login'.",
+		}
+	}
+
+	log.Printf("[CODEX-CLI VALIDATION SUCCESS] Got response: %s", responseText)
+	return llm.APIKeyValidationResponse{
+		Valid:   true,
+		Message: fmt.Sprintf("Codex CLI is working. Response: %s", responseText),
 	}
 }
 

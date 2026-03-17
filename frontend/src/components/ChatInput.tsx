@@ -373,10 +373,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   // Use ?? instead of || to preserve false values (user's selection)
   // Only default to false if the value is undefined/null (not explicitly set)
+  const isCLIProvider = useMemo(() => tabConfig?.llmConfig?.provider === 'claude-code' || tabConfig?.llmConfig?.provider === 'gemini-cli' || tabConfig?.llmConfig?.provider === 'codex-cli', [tabConfig?.llmConfig?.provider])
   const isClaudeCode = useMemo(() => tabConfig?.llmConfig?.provider === 'claude-code', [tabConfig?.llmConfig?.provider])
-  // Claude Code always requires code execution mode
-  const useCodeExecutionMode = useMemo(() => isClaudeCode ? true : (tabConfig?.useCodeExecutionMode ?? false), [isClaudeCode, tabConfig?.useCodeExecutionMode])
-  const useToolSearchMode = useMemo(() => isClaudeCode ? false : (tabConfig?.useToolSearchMode ?? false), [isClaudeCode, tabConfig?.useToolSearchMode])
+  // CLI providers always require code execution mode
+  const useCodeExecutionMode = useMemo(() => isCLIProvider ? true : (tabConfig?.useCodeExecutionMode ?? false), [isCLIProvider, tabConfig?.useCodeExecutionMode])
+  const useToolSearchMode = useMemo(() => isCLIProvider ? false : (tabConfig?.useToolSearchMode ?? false), [isCLIProvider, tabConfig?.useToolSearchMode])
   const enableWorkspaceAccess = useMemo(() => tabConfig?.enableWorkspaceAccess ?? true, [tabConfig?.enableWorkspaceAccess])
   const enableImageGeneration = useMemo(() => tabConfig?.enableImageGeneration ?? false, [tabConfig?.enableImageGeneration])
   const browserMode = useMemo(() => tabConfig?.browserMode ?? 'none', [tabConfig?.browserMode])
@@ -889,12 +890,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       const newConfig = {
         ...currentConfig, // ✅ Preserve all existing configuration
-        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli',
+        provider: llm.provider as 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli',
         model_id: llm.model
       }
 
-      // Claude Code always requires code execution mode
-      if (llm.provider === 'claude-code') {
+      // CLI providers always require code execution mode
+      if (llm.provider === 'claude-code' || llm.provider === 'gemini-cli' || llm.provider === 'codex-cli') {
         setTabConfig(activeTabId, { llmConfig: newConfig, useCodeExecutionMode: true, useToolSearchMode: false })
       } else {
         setTabConfig(activeTabId, { llmConfig: newConfig })

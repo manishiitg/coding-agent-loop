@@ -12,6 +12,7 @@ import { VertexSection } from './VertexSection'
 import { AzureSection } from './AzureSection'
 import { ClaudeCodeSection } from './ClaudeCodeSection'
 import { GeminiCLISection } from './GeminiCLISection'
+import { CodexCLISection } from './CodexCLISection'
 import { MiniMaxSection } from './MiniMaxSection'
 import { MiniMaxCodingPlanSection } from './MiniMaxCodingPlanSection'
 import { llmConfigService, type ModelMetadata } from '../services/llm-config-api'
@@ -24,7 +25,7 @@ interface LLMConfigurationModalProps {
 }
 
 // Provider type for reuse
-type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'minimax' | 'minimax-coding-plan'
+type ProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
 
 // Providers that use API keys (excludes claude-code which uses local CLI)
 type APIKeyProviderType = 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'minimax' | 'minimax-coding-plan'
@@ -342,7 +343,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     const provider = llm.provider
 
     // CLI-based providers don't use provider config map — set primary directly
-    if (provider === 'claude-code' || provider === 'gemini-cli') {
+    if (provider === 'claude-code' || provider === 'gemini-cli' || provider === 'codex-cli') {
       const newPrimaryConfig: LLMConfiguration = {
         provider,
         model_id: llm.model_id,
@@ -457,7 +458,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                 </button>
 
                 <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">Providers</h3>
-                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'minimax-coding-plan', 'claude-code', 'gemini-cli'] as const)
+                {(['openrouter', 'bedrock', 'openai', 'vertex', 'anthropic', 'azure', 'minimax', 'minimax-coding-plan', 'claude-code', 'gemini-cli', 'codex-cli'] as const)
                   .filter(provider => {
                     const supported = isProviderSupported(provider)
                     console.log('[LLMModal] provider', provider, 'supported:', supported)
@@ -472,9 +473,9 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }`}
                   >
                     <div className="flex-1">
-                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider === 'gemini-cli' ? 'Gemini CLI' : provider === 'minimax' ? 'MiniMax' : provider === 'minimax-coding-plan' ? 'MiniMax Coding Plan' : provider}</div>
+                      <div className="font-medium capitalize">{provider === 'openrouter' ? 'OpenRouter' : provider === 'openai' ? 'OpenAI' : provider === 'azure' ? 'Azure AI' : provider === 'claude-code' ? 'Claude Code' : provider === 'gemini-cli' ? 'Gemini CLI' : provider === 'codex-cli' ? 'Codex CLI' : provider === 'minimax' ? 'MiniMax' : provider === 'minimax-coding-plan' ? 'MiniMax Coding Plan' : provider}</div>
                       <div className="text-xs opacity-75">
-                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : provider === 'gemini-cli' ? 'Local CLI (no API key)' : provider === 'minimax-coding-plan' ? 'Coding Plan Key (sk-cp-)' : 'API Key'}
+                        {isProviderLocked(provider) ? 'Configured by admin' : provider === 'bedrock' ? 'AWS IAM' : provider === 'azure' ? 'Endpoint + API Key' : provider === 'claude-code' ? 'Local CLI (no API key)' : provider === 'gemini-cli' ? 'Local CLI (no API key)' : provider === 'codex-cli' ? 'Local CLI (API key optional)' : provider === 'minimax-coding-plan' ? 'Coding Plan Key (sk-cp-)' : 'API Key'}
                       </div>
                     </div>
                     {isProviderLocked(provider) && <Lock className="w-4 h-4 opacity-60" />}
@@ -499,7 +500,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {/* Locked provider read-only banner */}
-              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && (activeTab as string) in providerConfigMap && isProviderLocked(activeTab) && (
+              {activeTab !== 'fallbacks' && activeTab !== 'library' && activeTab !== 'claude-code' && activeTab !== 'gemini-cli' && activeTab !== 'codex-cli' && (activeTab as string) in providerConfigMap && isProviderLocked(activeTab) && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
                   <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
                   <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
@@ -608,7 +609,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               )}
 
               {activeTab === 'gemini-cli' && (
-                <GeminiCLISection 
+                <GeminiCLISection
                   onModelChange={(modelId) => {
                     if (modePrimaryConfig.provider === 'gemini-cli') {
                       const newPrimaryConfig: LLMConfiguration = {
@@ -627,6 +628,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                     }
                   }}
                 />
+              )}
+
+              {activeTab === 'codex-cli' && (
+                <CodexCLISection />
               )}
             </div>
           </div>

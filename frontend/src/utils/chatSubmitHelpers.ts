@@ -17,7 +17,6 @@ import { logger } from './logger'
 // Workflow phases that support conversational chat mode instead of blocking human_feedback
 const CHAT_COMPATIBLE_PHASES = new Set([
   'planning',
-  'execution-qa',
   'evaluation-builder',
   'workflow-builder',
   'human-assisted-execution',

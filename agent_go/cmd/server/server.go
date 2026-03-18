@@ -2866,7 +2866,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// The deduplication logic in the frontend will handle any duplicates
 
 	// Store last query request for synthetic turns and set session busy
-	if req.DelegationMode == "plan" {
+	if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 		req.userID = currentUserID
 		api.lastQueryMu.Lock()
 		api.lastQueryRequests[sessionID] = req
@@ -2877,7 +2877,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Process the query in the background
 	go func() {
 		// Clear session busy when the agent turn completes
-		if req.DelegationMode == "plan" {
+		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			defer func() {
 				api.setSessionBusy(sessionID, false)
 				// Drain pending completions after turn ends
@@ -3046,7 +3046,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
 		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
 		// so the orchestrator can efficiently discover tools for research.
-		if req.DelegationMode == "plan" {
+		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
@@ -3082,7 +3082,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
-		if req.DelegationMode == "plan" {
+		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
 			if tierConfig != nil {
 				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
@@ -3141,7 +3141,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					virtualtools.CreateWorkspaceAdvancedTools(),
 					virtualtools.CreateHumanTools(),
 				)
-				if req.DelegationMode == "plan" {
+				if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 					// In plan mode, only async tools are registered
 					preDiscovered = append(preDiscovered, "delegate", "query_agent", "terminate_agent", "list_agents")
 				} else if req.DelegationMode == "spawn" {
@@ -3478,7 +3478,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Auto-enable workspace access for plan delegation mode
 			// Plan mode requires workspace tools for shell commands with proper FolderGuard
-			if req.DelegationMode == "plan" {
+			if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 				enableWorkspaceAccess = true
 			}
 
@@ -3586,7 +3586,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Apply folder guard to restrict writes based on mode
 				// Multi-agent (plan) mode: primary write folder is Plans/, Chats/ also writable
 				// Chat mode: writes go to Chats/
-				if req.DelegationMode == "plan" {
+				if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 					additionalFolders := []string{"Chats/"}
 					if hasSkillCreator {
 						additionalFolders = append(additionalFolders, "skills/custom/")
@@ -3635,7 +3635,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if executor, exists := workspaceExecutors[toolName]; exists {
 						// Enhance tool description based on mode
 						var enhancedDescription string
-						if req.DelegationMode == "plan" {
+						if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 							enhancedDescription = enhanceToolDescriptionForPlanMode(toolName, tool.Function.Description)
 						} else {
 							enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
@@ -3687,7 +3687,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
-					if req.DelegationMode == "plan" {
+					if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 						additionalFolders := []string{"Chats/"}
 						if hasSkillCreator {
 							additionalFolders = append(additionalFolders, "skills/custom/")
@@ -3942,7 +3942,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
 			// createCustomTools(false) only returns workspace_advanced; human tools need to be added explicitly
-			if req.DelegationMode == "plan" {
+			if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 				humanCategory := virtualtools.GetHumanToolCategory()
 				for _, tool := range virtualtools.CreateHumanTools() {
 					allTools = append(allTools, tool)
@@ -4424,9 +4424,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Register phase-appropriate tools
 				switch workflowPhaseID {
-				case "execution-qa":
-					// Read-only phase — no modification tools
-					log.Printf("[WORKFLOW_PHASE] Read-only phase, no modification tools registered")
 				case "evaluation-builder":
 					// Evaluation modification tools (update/add/delete evaluation steps + update_eval_step_config)
 					if err := todo_creation_human.RegisterEvaluationModificationTools(
@@ -4663,6 +4660,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 
 					if workshopSession != nil {
+						// Wire bgAgentRegistry notifier so todo task sub-agents auto-notify the main agent.
+						// Called every request (safe: always rebuilds the chain, no duplicates).
+						workshopSession.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger, true)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools (execute_step, query_step, stop_step, list_steps, etc.)")
 					}
@@ -5043,7 +5043,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Store agent for reuse by synthetic turns (plan mode only)
 		// The stored agent retains all tools, prompts, observers, and conversation history
-		if req.DelegationMode == "plan" {
+		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			api.sessionAgentsMux.Lock()
 			api.sessionAgents[sessionID] = llmAgent
 			api.sessionAgentsMux.Unlock()
@@ -5056,7 +5056,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelMux.Unlock()
 
 		// --- BEGIN: Persist plan state for session resume ---
-		if req.DelegationMode == "plan" {
+		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			planState := api.getOrCreatePlanSessionState(sessionID)
 			if planState.PlanID != "" {
 				// Read existing config, merge plan state, and save

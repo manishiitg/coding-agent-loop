@@ -379,6 +379,20 @@ type WorkshopChatSession struct {
 	schedulerFuncs         *SchedulerCallbacks
 	skillFuncs             *SkillCallbacks
 	listAvailableSecrets   func(ctx context.Context) ([]string, error)
+	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
+	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
+	workshopNotifier SubAgentNotifier
+}
+
+// SetExtraSubAgentNotifier chains a server-supplied notifier (e.g. bgAgentRegistry)
+// with the workshop's own notifier. Safe to call on every request — always rebuilds
+// the chain so there are no duplicates.
+func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
+	if s.workshopNotifier != nil {
+		s.controller.SetSubAgentNotifier(ChainSubAgentNotifiers(s.workshopNotifier, n))
+	} else {
+		s.controller.SetSubAgentNotifier(n)
+	}
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -608,9 +622,13 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		logger.Warn(fmt.Sprintf("[WORKSHOP] Could not pre-load plan (%v) — will retry on first tool call", loadErr))
 	}
 
+	registry := NewWorkshopStepRegistry()
+	wsn := &workshopSubAgentNotifier{registry: registry}
+	controller.SetSubAgentNotifier(wsn)
+
 	return &WorkshopChatSession{
 		controller:        controller,
-		StepRegistry:      NewWorkshopStepRegistry(),
+		StepRegistry:      registry,
 		sessionCtx:        sessionCtx,
 		cancelFunc:        cancelFunc,
 		toolCallQueryFunc: cfg.ToolCallQueryFunc,
@@ -620,6 +638,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		schedulerFuncs:         cfg.SchedulerFuncs,
 		skillFuncs:             cfg.SkillFuncs,
 		listAvailableSecrets:   cfg.ListAvailableSecrets,
+		workshopNotifier:  wsn,
 	}, nil
 }
 

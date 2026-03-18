@@ -71,22 +71,6 @@ const PHASE_CHAT_INFO: Record<string, {
     ],
     showStepTypes: true,
   },
-  'execution-qa': {
-    title: 'Execution Q&A',
-    description: 'Ask questions about execution results, logs, and plan state. Read-only.',
-    capabilities: [
-      'Answer questions about what happened during execution',
-      'Read execution logs, validation reports, and outputs',
-      'Analyze step failures and identify root causes',
-      'Explain plan structure and step dependencies',
-    ],
-    limitations: [
-      'Read-only — cannot modify the plan, learnings, or any files',
-      'Cannot execute or re-run steps',
-      'Cannot modify evaluation plans',
-      'No plan modification tools available',
-    ],
-  },
   'evaluation-builder': {
     title: 'Evaluation Builder',
     description: 'Design and refine evaluation plans, analyze results.',
@@ -505,17 +489,25 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const name = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'Agent') as string
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
         if (corrId && !running.has(corrId)) {
-          // If a wrapper entry exists for this step ("Step: X" matches new agent "X"), replace it
-          let depth = running.size
+          // Check if this is the inner agent for a workshop step/background wrapper.
+          // Update the wrapper in-place (rename, update agentType) instead of delete+insert,
+          // so the wrapper entry STAYS in running. This preserves running.size for any
+          // sub-agents dispatched after the orchestrator turn completes (sequential agents
+          // within a step need the outer wrapper to anchor their depth).
+          let wrapperUpdated = false
           for (const [wrapperCorrId, wrapperAgent] of running.entries()) {
-            if (wrapperAgent.agentType === 'workshop-step-execution' &&
-                wrapperAgent.name === `Step: ${name}`) {
-              depth = wrapperAgent.depth
-              running.delete(wrapperCorrId)
+            const isStepWrapper = wrapperAgent.agentType === 'workshop-step-execution' && wrapperAgent.name === `Step: ${name}`
+            const isBgWrapper = wrapperAgent.agentType === 'workshop-background-task' && wrapperAgent.name === `Background: ${name}`
+            if (isStepWrapper || isBgWrapper) {
+              running.set(wrapperCorrId, { ...wrapperAgent, name, agentType })
+              wrapperUpdated = true
               break
             }
           }
-          running.set(corrId, { name, agentType, type: 'agent', depth })
+          if (!wrapperUpdated) {
+            const depth = running.size
+            running.set(corrId, { name, agentType, type: 'agent', depth })
+          }
         }
       } else if (event.type === 'orchestrator_agent_end') {
         const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string

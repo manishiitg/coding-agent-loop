@@ -82,12 +82,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
 				Options:     []WorkflowPhaseOption{},
 			},
-			{
-				ID:          "execution-qa",
-				Title:       "Execution Q&A",
-				Description: "Ask questions about execution results, logs, and validation reports. Read-only — does not modify the plan or workspace.",
-				Options:     []WorkflowPhaseOption{},
-			},
 		},
 	}
 }
@@ -449,10 +443,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	if workflowStatus == "evaluation-execution" {
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
-	}
-
-	if workflowStatus == "execution-qa" {
-		return wo.runExecutionDebugger(ctx, objective, selectedOptions)
 	}
 
 	// workflow-builder, human-assisted-execution, and evaluation-builder are chat-only phases —
@@ -937,7 +927,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
 					"evaluation-debugger",                  // Evaluation debugger phase
-					"execution-qa",                   // Execution debugger phase (read-only)
 					"workflow-builder",                 // Interactive workshop phase
 					"human-assisted-execution",             // Human assisted execution phase
 				}

@@ -545,6 +545,17 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'system_prompt')) {
     return <CompactWrapper compact={compact}><WithContext Component={SystemPromptEventDisplay} data={getEventData(event)} compact={compact} /></CompactWrapper>
   }
+  if (event.type === 'conversation_resumed') {
+    const agentEvent = event.data as { data?: { previous_event_count?: number } } | undefined
+    const count = agentEvent?.data?.previous_event_count ?? 0
+    return (
+      <div className={`flex items-center gap-2 ${compact ? 'py-1' : 'py-2'} ${compact ? 'text-[10px]' : 'text-xs'} text-gray-400 dark:text-gray-500`}>
+        <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
+        <span className="shrink-0 px-2">Previous conversation{count > 0 ? ` (${count} events)` : ''}</span>
+        <div className="flex-1 border-t border-gray-200 dark:border-gray-700" />
+      </div>
+    )
+  }
   if (isEventType(event, 'user_message')) {
     const data = getEventData(event)
     // Always render - UserMessageEventDisplay handles missing content gracefully

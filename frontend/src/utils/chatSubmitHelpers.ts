@@ -368,6 +368,24 @@ export function createUserMessageEvent(content: string): PollingEvent {
   }
 }
 
+// Synthetic separator injected when a follow-up is sent on a restored session.
+// EventHierarchy uses this to collapse all events above it.
+export function createConversationResumedEvent(previousEventCount: number): PollingEvent {
+  return {
+    id: `conversation-resumed-${Date.now()}`,
+    type: 'conversation_resumed',
+    timestamp: new Date().toISOString(),
+    data: {
+      type: 'conversation_resumed',
+      data: {
+        previous_event_count: previousEventCount,
+        timestamp: new Date().toISOString(),
+      }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // computeNewEventCount — pure function for WorkflowChatTabs badge count
 // ---------------------------------------------------------------------------

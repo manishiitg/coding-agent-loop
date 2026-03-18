@@ -888,10 +888,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Inject workflow variables as environment variables for code execution mode.
-		// Available via os.environ["VAR_NAME"] in Python or $VAR_NAME in bash.
+		// Uses SECRET_ prefix to pass through the workspace API whitelist (MCP_* and SECRET_*).
+		// Available via os.environ["SECRET_VAR_NAME"] in Python or $SECRET_VAR_NAME in bash.
 		if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
 			for k, v := range hcpo.variableValues {
-				envRef["VAR_"+k] = v
+				envRef["SECRET_"+k] = v
+			}
+			// Also inject the workspace path so scripts can reference it
+			if wp := hcpo.GetWorkspacePath(); wp != "" {
+				envRef["SECRET_WORKSPACE_PATH"] = wp
 			}
 		}
 

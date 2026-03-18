@@ -94,9 +94,18 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}
 	}
 
-	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN)
-	if len(c.ExtraEnv) > 0 && params.ExtraEnv == nil {
-		params.ExtraEnv = c.ExtraEnv
+	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN, SECRET_*)
+	if len(c.ExtraEnv) > 0 {
+		if params.ExtraEnv == nil {
+			params.ExtraEnv = c.ExtraEnv
+		} else {
+			// Merge client env into params (client vars don't override explicit params)
+			for k, v := range c.ExtraEnv {
+				if _, exists := params.ExtraEnv[k]; !exists {
+					params.ExtraEnv[k] = v
+				}
+			}
+		}
 	}
 
 	path := "/api/execute"

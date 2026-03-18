@@ -29,6 +29,7 @@ import {
   buildQueryRequestPayload,
   resolveOrCreateTab,
   createUserMessageEvent,
+  createConversationResumedEvent,
   validateExecutionGroups,
   isChatCompatiblePhase,
 } from '../utils/chatSubmitHelpers'
@@ -2012,8 +2013,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       useAppStore.getState().setCurrentQuery(queryWithContext)
     }
 
-    // Add user message event (without secrets for display safety)
-    chatStore.addTabEvents(tabSessionId, [createUserMessageEvent(query.trim())])
+    // If this is a follow-up on a restored session, inject a separator so old events get collapsed
+    const existingEvents = chatStore.getTabEvents(tabSessionId)
+    const hasRestoredEvents = existingEvents.length > 0 && (
+      currentTab?.metadata?.isRestored ||
+      existingEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end')
+    )
+    const eventsToAdd: PollingEvent[] = []
+    if (hasRestoredEvents && !existingEvents.some(e => e.type === 'conversation_resumed')) {
+      eventsToAdd.push(createConversationResumedEvent(existingEvents.length))
+    }
+    eventsToAdd.push(createUserMessageEvent(query.trim()))
+    chatStore.addTabEvents(tabSessionId, eventsToAdd)
 
     // Enable auto-scroll and scroll to bottom
     chatStore.setAutoScroll(true)

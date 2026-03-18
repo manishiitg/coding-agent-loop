@@ -6106,7 +6106,7 @@ func newWorkflowBackgroundTaskAgent(config *agents.OrchestratorAgentConfig, logg
 		config,
 		logger,
 		tracer,
-		agents.TodoPlannerExecutionAgentType,
+		"workshop-background-task", // Must match the manual start/end events in the goroutine for frontend dedup
 		eventBridge,
 	)
 	return &WorkflowBackgroundTaskAgent{
@@ -6192,7 +6192,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 	}
 
 	// --- Agent config ---
-	config := iwm.controller.CreateStandardAgentConfigWithLLM("background-task-agent", 80, agents.OutputFormatStructured, llmConfigToUse)
+	config := iwm.controller.CreateStandardAgentConfigWithLLM(fmt.Sprintf("Background: %s", name), 80, agents.OutputFormatStructured, llmConfigToUse)
 	isCodeExecMode := iwm.controller.GetUseCodeExecutionMode()
 	config.UseCodeExecutionMode = isCodeExecMode
 	config.UseToolSearchMode = iwm.controller.GetUseToolSearchMode()
@@ -6203,6 +6203,13 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 		return newWorkflowBackgroundTaskAgent(cfg, log, tracer, eventBridge)
+	}
+
+	// PushContext before setup so the shared bridge context is preserved for concurrent agents.
+	// setupStandardAgent calls SetOrchestratorContext which overwrites the bridge — without
+	// push/pop this corrupts the main agent's metadata when the bg task runs in a goroutine.
+	if cab, ok := iwm.controller.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PushContext("background-task", 0, "background-task", fmt.Sprintf("Background: %s", name))
 	}
 
 	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
@@ -6216,6 +6223,13 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		executorsToUse,
 		true, // overwriteSystemPrompt — we provide our own
 	)
+
+	// Immediately restore bridge context — bg task events use ForceCorrelationIDKey from ctx,
+	// not the bridge's current context, so restoring here is safe.
+	if cab, ok := iwm.controller.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
+		cab.PopContext()
+	}
+
 	if err != nil {
 		return "", fmt.Errorf("failed to create background task agent: %w", err)
 	}

@@ -459,11 +459,10 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 	}
 
 	// If no in-memory sessions, check database for recent sessions (handles backend restart case)
-	// Query for sessions with status 'active' or 'running', or recently completed
-	// Chat sessions: 30 minute window; Workflow sessions: 7 day window (for long-lived builder sessions)
+	// Query for sessions with status 'active' or 'running', or recently completed (within 30 minutes)
+	// Note: Workflow sessions are restored separately by WorkflowLayout (queries DB by preset_query_id)
 	if len(activeSessions) == 0 && api.chatDB != nil {
 		thirtyMinutesAgo := time.Now().Add(-30 * time.Minute)
-		sevenDaysAgo := time.Now().Add(-7 * 24 * time.Hour)
 
 		// Get recent sessions from database - filter by user for isolation
 		dbSessions, _, err := api.chatDB.ListChatSessionsWithUser(r.Context(), 20, 0, nil, nil, currentUserID)
@@ -471,15 +470,22 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 			log.Printf("[ACTIVE_SESSION] Failed to query database for recent sessions: %v", err)
 		} else {
 			for _, dbSession := range dbSessions {
-				// Include sessions that are active/running or recently completed
-				// Workflow/workshop sessions get a 7-day window; chat sessions get 30 minutes
-				isActive := dbSession.Status == "active" || dbSession.Status == "running"
-				isWorkflow := dbSession.AgentMode == "workflow" || dbSession.AgentMode == "workflow_phase" || dbSession.AgentMode == "workshop"
-				cutoff := thirtyMinutesAgo
-				if isWorkflow {
-					cutoff = sevenDaysAgo
+				// Skip workflow sessions — they are restored by WorkflowLayout independently
+				if dbSession.AgentMode == "workflow" || dbSession.AgentMode == "workflow_phase" || dbSession.AgentMode == "workshop" {
+					continue
 				}
-				isRecentlyCompleted := dbSession.Status == "completed" && dbSession.LastActivity != nil && dbSession.LastActivity.After(cutoff)
+				// Include sessions that are active/running or recently completed
+				isActive := dbSession.Status == "active" || dbSession.Status == "running"
+				// Use last_activity if available, otherwise fall back to completed_at or created_at
+				sessionTime := dbSession.LastActivity
+				if sessionTime == nil && dbSession.CompletedAt != nil {
+					sessionTime = dbSession.CompletedAt
+				}
+				if sessionTime == nil {
+					t := dbSession.CreatedAt
+					sessionTime = &t
+				}
+				isRecentlyCompleted := dbSession.Status == "completed" && sessionTime.After(thirtyMinutesAgo)
 
 				if isActive || isRecentlyCompleted {
 					// Convert to ActiveSessionInfo

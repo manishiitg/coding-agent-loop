@@ -234,8 +234,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setSelectedGlobalSecrets(editingPreset.selectedGlobalSecretNames ?? null);
       setInternalAgentMode(editingPreset.agentMode || 'workflow'); // Default to workflow
       setSelectedFolder(editingPreset.selectedFolder || null);
-      const presetLLM = editingPreset.llmConfig || {
-        provider: primaryConfig.provider,
+      const presetLLM: PresetLLMConfig = editingPreset.llmConfig || {
+        provider: primaryConfig.provider as PresetLLMConfig['provider'],
         model_id: primaryConfig.model_id
       };
       setLlmConfig(presetLLM);
@@ -283,8 +283,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setInternalAgentMode(defaultMode);
       setSelectedFolder(null);
       // Initialize LLM config from current primary config
-      const defaultLLM = {
-        provider: primaryConfig.provider,
+      const defaultLLM: PresetLLMConfig = {
+        provider: primaryConfig.provider as PresetLLMConfig['provider'],
         model_id: primaryConfig.model_id
       };
       setLlmConfig(defaultLLM);

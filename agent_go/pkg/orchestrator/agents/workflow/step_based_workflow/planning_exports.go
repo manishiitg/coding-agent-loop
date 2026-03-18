@@ -568,12 +568,14 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 			groupValues := existingManifest.GetVariableValues(groupID)
 			if groupValues != nil {
 				controller.variableValues = groupValues
+				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, groupValues)
 				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from toolbar-selected group %q (%d vars)", groupID, len(groupValues)))
 			} else {
 				logger.Warn(fmt.Sprintf("[WORKSHOP] Toolbar-selected group %q not found in manifest — falling back to base values", groupID))
 				vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
 				if loadErr == nil && vals != nil {
 					controller.variableValues = vals
+					SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
 				}
 			}
 			controller.enabledGroupIDs = cfg.EnabledGroupIDs
@@ -582,6 +584,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 			enabledGroups := existingManifest.GetEnabledGroups()
 			if len(enabledGroups) > 0 {
 				controller.variableValues = enabledGroups[0].Values
+				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, enabledGroups[0].Values)
 				controller.enabledGroupIDs = []string{enabledGroups[0].GroupID}
 				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from first enabled group %q (%d vars)", enabledGroups[0].GroupID, len(enabledGroups[0].Values)))
 			}
@@ -590,6 +593,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 			vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
 			if loadErr == nil && vals != nil {
 				controller.variableValues = vals
+				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
 				logger.Info(fmt.Sprintf("[WORKSHOP] Loaded %d base variable values (no groups)", len(vals)))
 			}
 		}

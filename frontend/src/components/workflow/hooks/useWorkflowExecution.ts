@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react'
 import { agentApi, getSessionId } from '../../../services/api'
-import type { PollingEvent } from '../../../services/api-types'
+import type { PollingEvent, AgentQueryRequest } from '../../../services/api-types'
 import { useLLMStore, useMCPStore, useChatStore } from '../../../stores'
 import { usePresetApplication } from '../../../stores/useGlobalPresetStore'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
@@ -175,13 +175,13 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         : undefined
 
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(llmConfig)
-      const requestPayload = {
+      const requestPayload: AgentQueryRequest = {
         query: `Execute workflow for preset: ${presetQueryId}`,
         agent_mode: 'workflow' as const,
         enabled_tools: enabledTools.map(tool => tool.name),
         enabled_servers: effectiveServers,
         selected_tools: filteredPresetTools.length > 0 ? filteredPresetTools : undefined,
-        provider: llmConfig.provider,
+        provider: llmConfig.provider as AgentQueryRequest['provider'],
         model_id: llmConfig.model_id,
         llm_config: llmConfigWithApiKeys,
         preset_query_id: presetQueryId,
@@ -262,14 +262,14 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         enabled_tools: enabledTools.map(tool => tool.name),
         enabled_servers: effectiveServers,
         selected_tools: filteredPresetTools.length > 0 ? filteredPresetTools : undefined,
-        provider: llmConfig.provider,
+        provider: llmConfig.provider as AgentQueryRequest['provider'],
         model_id: llmConfig.model_id,
         llm_config: llmConfigWithApiKeys,
         preset_query_id: presetQueryId,
         step_id: stepId,
         use_code_execution_mode: activePreset?.useCodeExecutionMode,
         cdp_port: stepCdpPort
-      }
+      } as AgentQueryRequest & { step_id: string }
 
       // Start the query
       const response = await agentApi.startQuery(requestPayload)

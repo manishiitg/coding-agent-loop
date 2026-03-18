@@ -22,6 +22,7 @@ import { convertToSlackMarkdown } from "./utils/slackMarkdown";
 import { Edit, Save, X, Loader2, Download, Link, Github } from "lucide-react";
 import { ModeSelectionModal } from "./components/ModeSelectionModal";
 import { WorkflowLayout } from "./components/workflow";
+import { WorkflowsOverviewPage } from "./components/WorkflowsOverviewPage";
 import { ModePresetBar } from "./components/ModePresetBar";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { ChatTabs } from "./components/ChatTabs";
@@ -145,7 +146,8 @@ function App() {
     setSelectedPresetId,
     sidebarMinimized,
     workspaceMinimized,
-    setWorkspaceMinimized
+    setWorkspaceMinimized,
+    showWorkflowsOverview
   } = useAppStore()
   
   const {
@@ -473,7 +475,7 @@ localStorage sizes: ${Object.entries(storageSizes).map(([k, v]) => `${k}: ${v}KB
           document.head.appendChild(style)
           document.body.appendChild(wrapper)
           await new Promise<void>((resolve) => {
-            window.addEventListener('afterprint', resolve, { once: true })
+            window.addEventListener('afterprint', () => resolve(), { once: true })
             window.print()
           })
           document.body.removeChild(wrapper)
@@ -916,10 +918,14 @@ localStorage sizes: ${Object.entries(storageSizes).map(([k, v]) => `${k}: ${v}KB
                 {/* Both layouts stay mounted to preserve running state across mode switches.
                     Only the active mode is visible; the other is hidden via CSS. */}
                 <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
-                  <WorkflowLayout
-                    className="h-full"
-                    onNewChat={startNewChat}
-                  />
+                  {showWorkflowsOverview ? (
+                    <WorkflowsOverviewPage />
+                  ) : (
+                    <WorkflowLayout
+                      className="h-full"
+                      onNewChat={startNewChat}
+                    />
+                  )}
                 </div>
                 <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
                   <ChatAreaWithObserverId

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays, GitBranch } from 'lucide-react'
+import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays, GitBranch, LayoutList } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -10,6 +10,7 @@ import DelegationLogsPopup from './DelegationLogsPopup'
 import SchedulePresetPopup from './SchedulePresetPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import PlansManagerModal from './PlansManagerModal'
+import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
@@ -118,6 +119,9 @@ export const ModePresetBar: React.FC = () => {
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
+  const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
+  const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
+  const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
 
   // Fetch workflow schedule count for badge (filtered to current workflow)
   useEffect(() => {
@@ -592,6 +596,25 @@ export const ModePresetBar: React.FC = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
+                        onClick={() => {
+                          const next = !showWorkflowsOverview
+                          setShowWorkflowsOverview(next)
+                          if (next) setWorkspaceMinimized(true)
+                        }}
+                        className={`p-1 rounded-md transition-colors ${
+                          showWorkflowsOverview
+                            ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20'
+                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
+                        }`}
+                      >
+                        <LayoutList className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">All workflows overview</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
                         onClick={() => setShowSchedulePopup(true)}
                         className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                       >
@@ -779,6 +802,12 @@ export const ModePresetBar: React.FC = () => {
           onClose={() => setShowSchedulePopup(false)}
         />
       )}
+
+      {/* Workflows Overview Popup */}
+      <WorkflowsOverviewPopup
+        isOpen={showWorkflowsPopup}
+        onClose={() => setShowWorkflowsPopup(false)}
+      />
 
       {/* Plans Manager Modal (Multi-agent mode) */}
       <PlansManagerModal

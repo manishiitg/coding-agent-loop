@@ -79,7 +79,7 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 // Agent streaming types
 export interface AgentQueryRequest {
   query: string
-  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli'
+  provider?: 'bedrock' | 'openai' | 'openrouter' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
   model_id?: string
   temperature?: number
   max_turns?: number
@@ -367,6 +367,7 @@ export interface ActiveSessionInfo {
   last_activity: string
   created_at: string
   query?: string
+  title?: string
 }
 
 export interface GetActiveSessionsResponse {
@@ -753,14 +754,14 @@ export interface AgentLLMFallback {
 }
 
 export interface AgentLLMConfig {
-  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli'
+  provider: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
   model_id: string
   fallbacks?: AgentLLMFallback[]
 }
 
 export interface PresetLLMConfig {
   // Legacy: Single default model (for backward compatibility)
-  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli'
+  provider?: 'openrouter' | 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure' | 'claude-code' | 'gemini-cli' | 'codex-cli' | 'minimax' | 'minimax-coding-plan'
   model_id?: string
 
   // New: Agent-specific default models (takes priority over legacy fields)
@@ -938,10 +939,7 @@ export interface WorkflowConstantsResponse {
 }
 
 // Workflow Run Folders API types
-export interface RunFolderInfo {
-  name: string;
-  progress?: StepProgress; // Progress info if available
-}
+// RunFolderInfo is defined below (near WorkspaceState) with metadata field
 
 export interface RunFoldersResponse {
   folders: RunFolderInfo[]; // Changed from string[] to RunFolderInfo[]
@@ -1371,11 +1369,57 @@ export interface WorkspaceState {
   selected_progress?: StepProgress;
   variables_manifest?: VariablesManifest;
   phases: WorkflowPhase[];
+  active_executions?: ActiveWorkflowExecution[];
+}
+
+export interface ActiveWorkflowExecution {
+  query_id: string;
+  session_id: string;
+  preset_query_id?: string;
+  workspace_path: string;
+  run_folder?: string;
+  triggered_by: string;
+  started_at: string;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  avatar_color: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RunMetadataLLM {
+  provider?: string;
+  model_id?: string;
+}
+
+export interface RunMetadataModels {
+  allocation_mode?: string; // "manual" or "tiered"
+  execution_llm?: RunMetadataLLM;
+  learning_llm?: RunMetadataLLM;
+  phase_llm?: RunMetadataLLM;
+  tier_1?: RunMetadataLLM;
+  tier_2?: RunMetadataLLM;
+  tier_3?: RunMetadataLLM;
+  temp_override?: RunMetadataLLM;
+  temp_override_2?: RunMetadataLLM;
+}
+
+export interface RunMetadata {
+  created_at: string;
+  completed_at?: string;
+  status: string; // "running", "completed"
+  triggered_by?: string; // "manual", "cron", "workflow_builder"
+  models?: RunMetadataModels;
 }
 
 export interface RunFolderInfo {
   name: string;
   progress?: StepProgress;
+  metadata?: RunMetadata;
 }
 
 export interface StepProgress {

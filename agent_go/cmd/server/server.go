@@ -125,6 +125,10 @@ type StreamingAPI struct {
 	workflowOrchestratorContexts   map[string]context.CancelFunc
 	workflowOrchestratorContextMux sync.RWMutex
 
+	// Active workflow executions registry (in-memory, source of truth for "currently running")
+	activeWorkflowExecutions    map[string]*ActiveWorkflowExecution // queryID -> execution info
+	activeWorkflowExecutionsMux sync.RWMutex
+
 	// Mapping of sessionID -> []queryID to track which executions belong to which session
 	// Used by handleStopSession to cancel all executions for a session
 	sessionQueryIDs   map[string][]string
@@ -310,6 +314,8 @@ type QueryRequest struct {
 	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
 	PhaseID string `json:"phase_id,omitempty"`
 
+	// Triggered by: "manual", "cron" — for tracking execution source
+	TriggeredBy string `json:"triggered_by,omitempty"`
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
 }
@@ -591,6 +597,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		config:                       config,
 		agentCancelFuncs:             make(map[string]context.CancelFunc),
 		workflowOrchestratorContexts: make(map[string]context.CancelFunc),
+		activeWorkflowExecutions:     make(map[string]*ActiveWorkflowExecution),
 		sessionQueryIDs:              make(map[string][]string),
 		workflowObjectives:           make(map[string]string),
 		conversationHistory:          make(map[string][]llmtypes.MessageContent),
@@ -952,6 +959,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/status", api.handleGetWorkflowStatus).Methods("GET")
 	apiRouter.HandleFunc("/workflow/update", api.handleUpdateWorkflow).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/constants", orchtypes.HandleWorkflowConstants).Methods("GET")
+	apiRouter.HandleFunc("/workflow/active-executions", api.handleGetActiveExecutions).Methods("GET", "OPTIONS")
+
+	// Employee API routes (in employee_routes.go)
+	EmployeeRoutes(router, chatDB)
 
 	// Consolidated workspace state endpoint (NEW - loads everything in one call)
 	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
@@ -2345,7 +2356,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// which means MCP_SESSION_ID won't be set and secrets won't be in the shell env.
 		secretEnvVars := make(map[string]string, len(allSecrets))
 		for _, s := range allSecrets {
-			secretEnvVars[s.Name] = s.Value
+			secretEnvVars["SECRET_"+s.Name] = s.Value
 		}
 		sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
 		for name, executor := range sessionAwareExecutors {
@@ -2412,6 +2423,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.workflowOrchestratorContextMux.Lock()
 				delete(api.workflowOrchestratorContexts, queryID)
 				api.workflowOrchestratorContextMux.Unlock()
+
+				// Remove from active executions registry
+				api.activeWorkflowExecutionsMux.Lock()
+				delete(api.activeWorkflowExecutions, queryID)
+				api.activeWorkflowExecutionsMux.Unlock()
 
 				// Remove queryID from session tracking
 				api.sessionQueryIDMux.Lock()
@@ -2533,6 +2549,25 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Register in active executions registry
+			activeExec := &ActiveWorkflowExecution{
+				QueryID:       queryID,
+				SessionID:     sessionID,
+				PresetQueryID: req.PresetQueryID,
+				WorkspacePath: workflowWorkspacePath,
+				TriggeredBy:   "manual",
+				StartedAt:     time.Now(),
+			}
+			if req.ExecutionOptions != nil && req.ExecutionOptions.SelectedRunFolder != "" {
+				activeExec.RunFolder = req.ExecutionOptions.SelectedRunFolder
+			}
+			if req.TriggeredBy != "" {
+				activeExec.TriggeredBy = req.TriggeredBy
+			}
+			api.activeWorkflowExecutionsMux.Lock()
+			api.activeWorkflowExecutions[queryID] = activeExec
+			api.activeWorkflowExecutionsMux.Unlock()
+
 			// Prepare options for the Execute method
 			workflowOptions := map[string]interface{}{
 				"workflowStatus":  workflowStatus,  // Current workflow status
@@ -2610,6 +2645,55 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options set on orchestrator successfully")
 			} else {
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] No execution options provided in request - req.ExecutionOptions is nil")
+			}
+
+			// Set default working directory for workflow shell commands
+			if workflowWorkspacePath != "" {
+				if envRef := workflowOrchestrator.GetWorkspaceEnvRef(); envRef != nil {
+					envRef["_DEFAULT_WORKING_DIR"] = workflowWorkspacePath
+				}
+			}
+
+			// Update run_metadata.json with LLM config before execution starts
+			if req.ExecutionOptions != nil && workflowWorkspacePath != "" {
+				runFolder := req.ExecutionOptions.SelectedRunFolder
+				if runFolder != "" {
+					metaPath := workflowWorkspacePath + "/runs/" + runFolder + "/run_metadata.json"
+					if existingMeta, err := readRunMetadata(workflowCtx, metaPath); err == nil && existingMeta != nil {
+						models := &RunMetadataModels{}
+						if presetLLMConfig != nil {
+							models.AllocationMode = presetLLMConfig.LLMAllocationMode
+							if presetLLMConfig.ExecutionLLM != nil {
+								models.ExecutionLLM = &RunMetadataLLM{Provider: presetLLMConfig.ExecutionLLM.Provider, ModelID: presetLLMConfig.ExecutionLLM.ModelID}
+							}
+							if presetLLMConfig.LearningLLM != nil {
+								models.LearningLLM = &RunMetadataLLM{Provider: presetLLMConfig.LearningLLM.Provider, ModelID: presetLLMConfig.LearningLLM.ModelID}
+							}
+							if presetLLMConfig.PhaseLLM != nil {
+								models.PhaseLLM = &RunMetadataLLM{Provider: presetLLMConfig.PhaseLLM.Provider, ModelID: presetLLMConfig.PhaseLLM.ModelID}
+							}
+							if presetLLMConfig.TieredConfig != nil {
+								if presetLLMConfig.TieredConfig.Tier1 != nil {
+									models.Tier1 = &RunMetadataLLM{Provider: presetLLMConfig.TieredConfig.Tier1.Provider, ModelID: presetLLMConfig.TieredConfig.Tier1.ModelID}
+								}
+								if presetLLMConfig.TieredConfig.Tier2 != nil {
+									models.Tier2 = &RunMetadataLLM{Provider: presetLLMConfig.TieredConfig.Tier2.Provider, ModelID: presetLLMConfig.TieredConfig.Tier2.ModelID}
+								}
+								if presetLLMConfig.TieredConfig.Tier3 != nil {
+									models.Tier3 = &RunMetadataLLM{Provider: presetLLMConfig.TieredConfig.Tier3.Provider, ModelID: presetLLMConfig.TieredConfig.Tier3.ModelID}
+								}
+							}
+						}
+						if req.ExecutionOptions.TempOverrideLLM != nil {
+							models.TempOverride = &RunMetadataLLM{Provider: req.ExecutionOptions.TempOverrideLLM.Provider, ModelID: req.ExecutionOptions.TempOverrideLLM.ModelID}
+						}
+						if req.ExecutionOptions.TempOverrideLLM2 != nil {
+							models.TempOverride2 = &RunMetadataLLM{Provider: req.ExecutionOptions.TempOverrideLLM2.Provider, ModelID: req.ExecutionOptions.TempOverrideLLM2.ModelID}
+						}
+						existingMeta.Models = models
+						_ = writeRunMetadata(workflowCtx, metaPath, existingMeta)
+					}
+				}
 			}
 
 			// Execute workflow with the preset objective (not the phase query)
@@ -3507,6 +3591,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					additionalFolders = append(additionalFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, "Plans", additionalFolders...)
+					// Set default working directory for plan mode shell commands
+					if workspaceEnv != nil {
+						workspaceEnv["_DEFAULT_WORKING_DIR"] = "Plans/"
+					}
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied Plans/ folder restriction (additional: %v)", additionalFolders)
 				} else {
 					extraFolders := []string{}
@@ -3518,6 +3606,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					extraFolders = append(extraFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
+					// Set default working directory for chat mode shell commands
+					if workspaceEnv != nil {
+						workspaceEnv["_DEFAULT_WORKING_DIR"] = "Chats/"
+					}
 					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
 				}
 
@@ -3714,7 +3806,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if delegationMode == "spawn" || delegationMode == "plan" {
 				// Build delegation tier config early so we can pass it to tool creation (for dynamic enum)
 				tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
-				delegationTools := virtualtools.CreateDelegationTools(tierConfig, delegationMode == "plan")
+				delegationTools := virtualtools.CreateDelegationTools(tierConfig, true)
 				delegationExecutors := virtualtools.CreateDelegationToolExecutors()
 				delegationCategory := virtualtools.GetDelegationToolCategory()
 
@@ -3757,41 +3849,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// Create background delegate function for plan mode (async delegation)
-					var bgDelegateFunc virtualtools.BackgroundDelegateFunc
-					var bgQuerier virtualtools.BGAgentQuerier
-					if delegationMode == "plan" {
-						bgDelegateFunc = func(bgCtx context.Context, name, instruction string) (string, error) {
-							return api.executeBackgroundDelegatedTask(bgCtx, req, sessionID, name, instruction)
-						}
-						memoryBgDelegate = bgDelegateFunc
-						bgQuerier = &bgAgentQuerierImpl{registry: api.bgAgentRegistry}
+					// Create background delegate function for async delegation (all modes)
+					bgDelegateFunc := func(bgCtx context.Context, name, instruction string) (string, error) {
+						return api.executeBackgroundDelegatedTask(bgCtx, req, sessionID, name, instruction)
 					}
+					memoryBgDelegate = bgDelegateFunc
+					bgQuerier := &bgAgentQuerierImpl{registry: api.bgAgentRegistry}
 
-					// Tools allowed in each mode
-					planModeTools := map[string]bool{
-						"create_delegation_plan": true,
-						"confirm_plan_execution": true,
-						"delegate":               true,
-						"query_agent":            true,
-						"terminate_agent":        true,
-						"list_agents":            true,
-					}
-
+					// Register all delegation tools (agent decides autonomously what to use)
 					for _, tool := range delegationTools {
 						if tool.Function == nil {
 							continue
 						}
 						toolName := tool.Function.Name
-
-						// In 'spawn' mode, only register 'delegate'
-						if delegationMode == "spawn" && toolName != "delegate" {
-							continue
-						}
-						// In 'plan' mode, only register async delegation tools
-						if delegationMode == "plan" && !planModeTools[toolName] {
-							continue
-						}
 
 						if executor, exists := delegationExecutors[toolName]; exists {
 							var params map[string]interface{}
@@ -4098,25 +4168,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Add delegation instructions based on mode
-			if req.DelegationMode == "plan" {
+			// Add delegation instructions — unified autonomous mode for all delegation modes
+			if req.DelegationMode == "plan" || req.DelegationMode == "spawn" {
 				if req.PlanPhase == "execution" {
-					// Execution-only mode: skip planning, use spawn-style delegation with exec override
+					// Execution-only mode: skip planning, delegate directly
 					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
-					log.Printf("[DELEGATION] Added execution-only instructions to system prompt (mode: plan, phase: execution)")
+					log.Printf("[DELEGATION] Added execution-only instructions to system prompt")
 				} else {
-					// Plan mode: plan→approve→execute with async background agents
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetPlanWithBackgroundAgentsInstructions())
-					log.Printf("[DELEGATION] Added plan+background agent instructions to system prompt (mode: plan)")
+					// Autonomous mode: agent decides whether to plan, delegate, or do it itself
+					underlyingAgent.AppendSystemPrompt(virtualtools.GetAutonomousDelegationInstructions())
+					log.Printf("[DELEGATION] Added autonomous delegation instructions to system prompt (mode: %s)", req.DelegationMode)
 				}
-				// Inject custom tier descriptions into system prompt so the manager knows about them
-				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
-					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
-						underlyingAgent.AppendSystemPrompt(tierSection)
-					}
-				}
-			} else if req.DelegationMode == "spawn" {
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetDelegationInstructions())
 				if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
 					underlyingAgent.AppendSystemPrompt(section)
 				}
@@ -4126,7 +4188,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						underlyingAgent.AppendSystemPrompt(tierSection)
 					}
 				}
-				log.Printf("[DELEGATION] Added delegation instructions to system prompt (mode: spawn)")
 			}
 
 			// Memory tools are available in all chat modes.
@@ -4789,15 +4850,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			for _, s := range allChatSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command (e.g., os.environ[\"SECRET_NAME\"] in Python or $SECRET_NAME in bash).\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
 			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 				underlyingAgent.AppendSystemPrompt(secretPrompt)
 				log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into system prompt", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
 			}
-			// Inject secrets as environment variables for shell execution
+			// Inject secrets as environment variables for shell execution (SECRET_ prefix for whitelist)
 			if workspaceEnv != nil {
 				for _, s := range allChatSecrets {
-					workspaceEnv[s.Name] = s.Value
+					workspaceEnv["SECRET_"+s.Name] = s.Value
 				}
 				log.Printf("[SECRETS] Injected %d secrets as environment variables for shell execution", len(allChatSecrets))
 			}
@@ -4910,10 +4971,35 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Final save of conversation history (in case streaming was stopped mid-way)
 		// This ensures we capture the final state even if streaming was interrupted
+		finalHistory := llmAgent.GetHistory()
 		api.conversationMux.Lock()
-		api.conversationHistory[sessionID] = llmAgent.GetHistory()
+		api.conversationHistory[sessionID] = finalHistory
 		api.conversationMux.Unlock()
-		log.Printf("[CONVERSATION DEBUG] Final save: %d messages to conversation history for session %s", len(llmAgent.GetHistory()), sessionID)
+		log.Printf("[CONVERSATION DEBUG] Final save: %d messages to conversation history for session %s", len(finalHistory), sessionID)
+
+		// Persist conversation history to DB so follow-up queries can restore it after server restart.
+		// We store a single conversation_turn event with the full message history — this is only
+		// written once at the end of each query (not per-turn) to avoid bloating the DB.
+		if api.chatDB != nil && len(finalHistory) > 0 {
+			turnEvent := unifiedevents.NewConversationTurnEvent(
+				0, // turn number not critical for restoration
+				"", // question not needed
+				len(finalHistory),
+				false, 0, nil,
+				finalHistory,
+			)
+			agentEvent := &unifiedevents.AgentEvent{
+				Type:      unifiedevents.ConversationTurn,
+				Timestamp: time.Now(),
+				SessionID: sessionID,
+				Data:      turnEvent,
+			}
+			if err := api.chatDB.StoreEvent(context.Background(), sessionID, agentEvent); err != nil {
+				log.Printf("[CONVERSATION DEBUG] Failed to persist conversation history to DB for session %s: %v", sessionID, err)
+			} else {
+				log.Printf("[CONVERSATION DEBUG] Persisted conversation history (%d messages) to DB for session %s", len(finalHistory), sessionID)
+			}
+		}
 
 		// Save Claude Code CLI session ID for --resume on next turn
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
@@ -5079,6 +5165,13 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 			}
 		}
 		api.workflowOrchestratorContextMux.Unlock()
+
+		// Remove from active executions registry
+		api.activeWorkflowExecutionsMux.Lock()
+		for _, qid := range queryIDs {
+			delete(api.activeWorkflowExecutions, qid)
+		}
+		api.activeWorkflowExecutionsMux.Unlock()
 		log.Printf("[SESSION DEBUG] Canceled %d workflow execution(s) for session %s", len(queryIDs), sessionID)
 	}
 
@@ -7088,7 +7181,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			for _, s := range allDelegationSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command (e.g., os.environ[\"SECRET_NAME\"] in Python or $SECRET_NAME in bash).\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
 			underlyingAgent.AppendSystemPrompt(secretPrompt)
 			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
 		}
@@ -7188,11 +7281,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 			workspaceExecutors, subAgentEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(subAgentUserID, sessionID)
 			log.Printf("[USER_ID_DEBUGGING] Sub-agent workspace executors: created with explicit userID=%q sessionID=%q", subAgentUserID, sessionID)
-			// Inject secrets as environment variables for sub-agent shell execution
+			// Inject secrets as environment variables for sub-agent shell execution (SECRET_ prefix for whitelist)
 			delegationSecrets := mergeGlobalSecrets(parentReq.DecryptedSecrets, parentReq.SelectedGlobalSecrets)
 			if subAgentEnv != nil && len(delegationSecrets) > 0 {
 				for _, s := range delegationSecrets {
-					subAgentEnv[s.Name] = s.Value
+					subAgentEnv["SECRET_"+s.Name] = s.Value
 				}
 				log.Printf("[SECRETS] Injected %d secrets as env vars for sub-agent shell execution", len(delegationSecrets))
 			}
@@ -7241,6 +7334,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 				additionalFolders = append(additionalFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, additionalFolders...)
+				// Set default working directory for sub-agent shell commands
+				if subAgentEnv != nil {
+					subAgentEnv["_DEFAULT_WORKING_DIR"] = planFolder + "/"
+				}
 				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
 			} else {
 				extraFolders := []string{}
@@ -7252,6 +7349,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 				extraFolders = append(extraFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
+				// Set default working directory for sub-agent shell commands (chat mode)
+				if subAgentEnv != nil {
+					subAgentEnv["_DEFAULT_WORKING_DIR"] = "Chats/"
+				}
 			}
 
 			// Register workspace tools
@@ -8736,13 +8837,17 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	// This sets MCP_SESSION_ID and secrets as shell env vars for code execution mode.
 	secretEnvVars := make(map[string]string, len(allSecrets))
 	for _, s := range allSecrets {
-		secretEnvVars[s.Name] = s.Value
+		secretEnvVars["SECRET_"+s.Name] = s.Value
 	}
 	sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
 	for name, executor := range sessionAwareExecutors {
 		allExecutors[name] = executor
 	}
 	cfg.WorkspaceEnvRef = workspaceEnv
+	// Set default working directory for workshop shell commands
+	if workspacePath != "" {
+		workspaceEnv["_DEFAULT_WORKING_DIR"] = workspacePath
+	}
 	log.Printf("[WORKSHOP] Replaced workspace executors with session-aware versions (sessionID=%q, secrets=%d)", sessionID, len(secretEnvVars))
 
 	cfg.CustomTools = allTools

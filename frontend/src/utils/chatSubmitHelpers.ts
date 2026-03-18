@@ -173,7 +173,7 @@ export function buildQueryRequestPayload(params: {
     enabled_tools: enabledTools.map(tool => tool.name),
     enabled_servers: effectiveServers,
     selected_tools: hasActivePreset ? filteredPresetTools : undefined,
-    provider: effectiveLLMConfig.provider,
+    provider: effectiveLLMConfig.provider as AgentQueryRequest['provider'],
     model_id: effectiveLLMConfig.model_id,
     llm_config: llmConfigWithApiKeys as AgentQueryRequest['llm_config'],
     preset_query_id: workflowPresetId || chatPresetId || undefined,
@@ -200,10 +200,10 @@ export function buildQueryRequestPayload(params: {
     delegation_mode: isMultiAgentMode
       ? 'plan' as const
       : (isChatMode && useAppStore.getState().delegationMode !== 'off'
-        ? useAppStore.getState().delegationMode as 'spawn'
+        ? 'plan' as const
         : undefined),
     plan_phase: isMultiAgentMode
-      ? (effectivePlanPhase ?? currentTab?.config?.planPhaseOverride ?? 'planning')
+      ? ((effectivePlanPhase ?? currentTab?.config?.planPhaseOverride ?? 'planning') as 'planning' | 'execution')
       : undefined,
     delegation_tier_config: isMultiAgentMode
       ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)

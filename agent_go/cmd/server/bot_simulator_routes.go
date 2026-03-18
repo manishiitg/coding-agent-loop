@@ -371,9 +371,8 @@ func simulatorSaveConfigHandler(db database.Database) http.HandlerFunc {
 		if req.DefaultSkills != nil {
 			cfgMap["default_skills"] = req.DefaultSkills
 		}
-		if req.DelegationMode == "plan" || req.DelegationMode == "spawn" {
-			cfgMap["delegation_mode"] = req.DelegationMode
-		}
+		// delegation_mode is always "plan" (unified autonomous mode)
+		cfgMap["delegation_mode"] = "plan"
 		if req.AllowedEmails != nil {
 			cfgMap["allowed_emails"] = req.AllowedEmails
 		}

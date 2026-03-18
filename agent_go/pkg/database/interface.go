@@ -85,6 +85,13 @@ type Database interface {
 	UpdateScheduledJobRun(ctx context.Context, id string, status string, errMsg string, durationMs *int64, runFolder string, sessionID string) error
 	ListScheduledJobRuns(ctx context.Context, jobID string, limit, offset int) ([]ScheduledJobRun, int, error)
 
+	// Employee Management
+	CreateEmployee(ctx context.Context, employee *Employee) (*Employee, error)
+	GetEmployee(ctx context.Context, id string) (*Employee, error)
+	UpdateEmployee(ctx context.Context, id string, employee *Employee) (*Employee, error)
+	DeleteEmployee(ctx context.Context, id string) error
+	ListEmployees(ctx context.Context) ([]Employee, error)
+
 	// Health check
 	Ping(ctx context.Context) error
 	Close() error

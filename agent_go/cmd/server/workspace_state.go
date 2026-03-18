@@ -33,6 +33,9 @@ type WorkspaceState struct {
 
 	// Workflow phases
 	Phases []orchtypes.WorkflowPhase `json:"phases"`
+
+	// Currently running executions for this workspace (from in-memory registry)
+	ActiveExecutions []ActiveWorkflowExecution `json:"active_executions,omitempty"`
 }
 
 // handleLoadWorkspaceState handles loading all workspace state in a single request
@@ -134,6 +137,15 @@ func (api *StreamingAPI) handleLoadWorkspaceState(w http.ResponseWriter, r *http
 		json.NewEncoder(w).Encode(response)
 		return
 	}
+
+	// Populate active executions from in-memory registry
+	api.activeWorkflowExecutionsMux.RLock()
+	for _, exec := range api.activeWorkflowExecutions {
+		if exec.WorkspacePath == workspacePath {
+			state.ActiveExecutions = append(state.ActiveExecutions, *exec)
+		}
+	}
+	api.activeWorkflowExecutionsMux.RUnlock()
 
 	// Success - return all data
 	response := WorkspaceStateResponse{
@@ -288,14 +300,56 @@ func (api *StreamingAPI) getRunFoldersFromWorkspace(ctx context.Context, workspa
 		folderInfos = folderInfos[:maxFolders]
 	}
 
-	// Load progress for all iterations/groups
-	// This ensures progress is shown for all folders in the dropdown
+	// Load progress and metadata for all iterations/groups
 	for i := range folderInfos {
-		stepsFilePath := workspacePath + "/runs/" + folderInfos[i].Name + "/execution/steps_done.json"
+		folderName := folderInfos[i].Name
+		stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
 		if progress, err := readProgressForFolder(ctx, stepsFilePath); err == nil && progress != nil {
 			folderInfos[i].Progress = progress
 		}
+
+		metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
+		metadata, _ := readRunMetadata(ctx, metadataPath)
+
+		if metadata == nil && folderInfos[i].Progress != nil {
+			// Fallback: infer metadata from progress and token_usage for legacy runs
+			metadata = inferRunMetadata(ctx, workspacePath, folderName, folderInfos[i].Progress)
+			if metadata != nil {
+				_ = writeRunMetadata(ctx, metadataPath, metadata)
+			}
+		} else if metadata != nil && metadata.Status == "running" && folderInfos[i].Progress != nil {
+			// Auto-derive completion from progress
+			p := folderInfos[i].Progress
+			if p.TotalSteps > 0 && len(p.CompletedStepIndices) >= p.TotalSteps {
+				completedAt := p.LastUpdated
+				metadata.Status = "completed"
+				metadata.CompletedAt = &completedAt
+				_ = writeRunMetadata(ctx, metadataPath, metadata)
+			}
+		}
+
+		if metadata != nil {
+			folderInfos[i].Metadata = metadata
+		}
 	}
+
+	// Re-sort by created_at (most recent first) when metadata is available
+	sort.Slice(folderInfos, func(i, j int) bool {
+		mi := folderInfos[i].Metadata
+		mj := folderInfos[j].Metadata
+		if mi != nil && mj != nil {
+			return mi.CreatedAt.After(mj.CreatedAt)
+		}
+		// Folders with metadata come first
+		if mi != nil {
+			return true
+		}
+		if mj != nil {
+			return false
+		}
+		// Fallback: iteration number descending
+		return extractIterationNumber(folderInfos[i].Name) > extractIterationNumber(folderInfos[j].Name)
+	})
 
 	return folderInfos, nil
 }
@@ -312,4 +366,36 @@ func extractIterationNumber(name string) int {
 		}
 	}
 	return -1
+}
+
+// handleGetActiveExecutions returns currently running workflow executions
+// GET /api/workflow/active-executions?workspace_path=... (optional filter)
+func (api *StreamingAPI) handleGetActiveExecutions(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+
+	api.activeWorkflowExecutionsMux.RLock()
+	var executions []ActiveWorkflowExecution
+	for _, exec := range api.activeWorkflowExecutions {
+		if workspacePath == "" || exec.WorkspacePath == workspacePath {
+			executions = append(executions, *exec)
+		}
+	}
+	api.activeWorkflowExecutionsMux.RUnlock()
+
+	if executions == nil {
+		executions = []ActiveWorkflowExecution{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"executions": executions,
+	})
 }

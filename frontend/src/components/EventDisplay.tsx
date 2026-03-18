@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '../stores'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
+import { useAppStore } from '../stores/useAppStore'
 import type { PollingEvent } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 
@@ -57,7 +58,8 @@ const getMarkdownComponents = (compact: boolean) => ({
       const handleClick = (e: React.MouseEvent) => {
         e.preventDefault()
         e.stopPropagation()
-        const { setSelectedFile, setShowFileContent, setLoadingFileContent, highlightFile, expandFoldersForFile, setWorkspaceMinimized } = useWorkspaceStore.getState()
+        const { setSelectedFile, setShowFileContent, setLoadingFileContent, highlightFile, expandFoldersForFile } = useWorkspaceStore.getState()
+        const { setWorkspaceMinimized } = useAppStore.getState()
         let resolvedPath = workspaceFilepath
         if (workspaceFilepath.startsWith('Plans/') && !workspaceFilepath.includes('.')) {
           resolvedPath = workspaceFilepath + '/plan.md'

@@ -249,6 +249,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeHumanInputStep(
 			hcpo.variableValues = make(map[string]string)
 		}
 		hcpo.variableValues[humanInputStep.VariableName] = response
+		// Also sync to workspace env so shell commands can access it
+		if envRef := hcpo.GetWorkspaceEnvRef(); envRef != nil {
+			envRef["SECRET_"+humanInputStep.VariableName] = response
+		}
 		hcpo.GetLogger().Info(fmt.Sprintf("📝 Stored response in variable: %s = %s", humanInputStep.VariableName, response))
 	}
 

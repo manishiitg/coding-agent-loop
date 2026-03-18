@@ -2718,3 +2718,78 @@ func (s *SupabaseDB) ListScheduledJobRuns(ctx context.Context, jobID string, lim
 	}
 	return runs, total, nil
 }
+
+// Employee CRUD operations
+
+func (db *SupabaseDB) CreateEmployee(ctx context.Context, employee *Employee) (*Employee, error) {
+	if employee.ID == "" {
+		employee.ID = uuid.New().String()
+	}
+	if employee.AvatarColor == "" {
+		employee.AvatarColor = "#6366f1"
+	}
+	now := time.Now()
+	employee.CreatedAt = now
+	employee.UpdatedAt = now
+
+	_, err := db.db.ExecContext(ctx,
+		`INSERT INTO employees (id, name, avatar_color, description, created_at, updated_at, user_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		employee.ID, employee.Name, employee.AvatarColor, employee.Description, employee.CreatedAt, employee.UpdatedAt, employee.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create employee: %w", err)
+	}
+	return employee, nil
+}
+
+func (db *SupabaseDB) GetEmployee(ctx context.Context, id string) (*Employee, error) {
+	var emp Employee
+	err := db.db.QueryRowContext(ctx,
+		`SELECT id, name, avatar_color, description, created_at, updated_at, COALESCE(user_id, '') FROM employees WHERE id = $1`, id).
+		Scan(&emp.ID, &emp.Name, &emp.AvatarColor, &emp.Description, &emp.CreatedAt, &emp.UpdatedAt, &emp.UserID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get employee: %w", err)
+	}
+	return &emp, nil
+}
+
+func (db *SupabaseDB) UpdateEmployee(ctx context.Context, id string, employee *Employee) (*Employee, error) {
+	employee.UpdatedAt = time.Now()
+	_, err := db.db.ExecContext(ctx,
+		`UPDATE employees SET name = $1, avatar_color = $2, description = $3, updated_at = $4 WHERE id = $5`,
+		employee.Name, employee.AvatarColor, employee.Description, employee.UpdatedAt, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update employee: %w", err)
+	}
+	return db.GetEmployee(ctx, id)
+}
+
+func (db *SupabaseDB) DeleteEmployee(ctx context.Context, id string) error {
+	_, err := db.db.ExecContext(ctx, `DELETE FROM employees WHERE id = $1`, id)
+	return err
+}
+
+func (db *SupabaseDB) ListEmployees(ctx context.Context) ([]Employee, error) {
+	rows, err := db.db.QueryContext(ctx,
+		`SELECT id, name, avatar_color, description, created_at, updated_at, COALESCE(user_id, '') FROM employees ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list employees: %w", err)
+	}
+	defer rows.Close()
+
+	var employees []Employee
+	for rows.Next() {
+		var emp Employee
+		if err := rows.Scan(&emp.ID, &emp.Name, &emp.AvatarColor, &emp.Description, &emp.CreatedAt, &emp.UpdatedAt, &emp.UserID); err != nil {
+			return nil, fmt.Errorf("failed to scan employee: %w", err)
+		}
+		employees = append(employees, emp)
+	}
+	if employees == nil {
+		employees = []Employee{}
+	}
+	return employees, nil
+}

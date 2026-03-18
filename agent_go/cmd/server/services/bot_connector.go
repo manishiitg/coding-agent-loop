@@ -997,13 +997,9 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string) 
 			if raw, ok := cfgData["default_skills"]; ok {
 				json.Unmarshal(raw, &defaultSkills)
 			}
-			// Parse delegation_mode (plan or spawn, defaults to plan)
-			if raw, ok := cfgData["delegation_mode"]; ok {
-				var mode string
-				if err := json.Unmarshal(raw, &mode); err == nil && (mode == "plan" || mode == "spawn") {
-					req["delegation_mode"] = mode
-				}
-			}
+			// delegation_mode is always "plan" (unified autonomous mode)
+			// Legacy "spawn" values in config are treated as "plan"
+			req["delegation_mode"] = "plan"
 		}
 	}
 

@@ -1071,6 +1071,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const newEvents: PollingEvent[] = []
     let hasCompletionEvent = false
 
+    // Check if we already have a frontend-created user message for this session
+    // (prevents duplicate user messages when backend also emits user_message)
+    const existingEvents = chatStore.getTabEvents(actualSessionId)
+    const hasFrontendUserMessage = existingEvents.some(e => e.type === 'user_message' && e.id?.startsWith('user-message-'))
+
     console.time(`[PERF] event-filter-loop (${eventsBeforeFilter.length} events)`)
     for (const event of eventsBeforeFilter) {
       const agentEvent = event.data as Record<string, unknown> | undefined
@@ -1079,6 +1084,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const rawCorrelationId = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
       const isSubAgentEvent = (typeof rawComponent === 'string' && rawComponent.startsWith('delegation-'))
         || (typeof rawCorrelationId === 'string' && (rawCorrelationId.startsWith('delegation-') || rawCorrelationId.startsWith('workshop-')))
+
+      // Skip backend user_message events when we already have a frontend-created one
+      // (avoids duplicate user message bubbles in the chat)
+      if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
+        continue
+      }
 
       if (event.type === 'streaming_start') {
         const correlationId = innerData?.correlation_id ?? agentEvent?.correlation_id
@@ -2347,8 +2358,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Clear queued messages and reset notification dedup tracker
     if (activeTab) {
       const chatStore = useChatStore.getState()
-      chatStore.setTabConfig(activeTab.tabId, { queuedMessages: [] })
-      isProcessingQueueRef.current = false
+      chatStore.setTabConfig(activeTab.tabId, { queuedMessages: [], isQueueProcessing: false })
     }
     notifiedWorkshopAgentsRef.current.clear()
     

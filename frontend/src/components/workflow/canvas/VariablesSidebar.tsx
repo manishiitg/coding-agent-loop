@@ -80,6 +80,8 @@ export const VariablesSidebar: React.FC<VariablesSidebarProps> = ({
     if (!manifest) {
       // No manifest yet — create one with empty variables and a first group
       const newManifest: VariablesManifest = {
+        objective: '',
+        extraction_date: new Date().toISOString(),
         variables: [],
         groups: [{ group_id: 'group-1', values: {}, enabled: true }]
       }

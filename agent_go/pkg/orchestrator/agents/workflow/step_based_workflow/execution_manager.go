@@ -920,6 +920,7 @@ func (em *ExecutionManager) ApplyExecutionContext(setup *ExecutionSetup) {
 	// Set variable values for batch execution
 	if setup.VariableValues != nil {
 		orch.variableValues = setup.VariableValues
+		SyncVariablesToWorkspaceEnv(orch.BaseOrchestrator, setup.VariableValues)
 	}
 
 	orch.GetLogger().Info(fmt.Sprintf("🔧 Applied execution context: skipHuman=%v, fastMode=%v, singleStep=%v",

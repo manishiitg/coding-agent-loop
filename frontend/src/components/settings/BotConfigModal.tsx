@@ -26,7 +26,7 @@ export default function BotConfigModal({ isOpen, onClose }: BotConfigModalProps)
   const [selectedServers, setSelectedServers] = useState<string[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [allowedEmails, setAllowedEmails] = useState('')
-  const [delegationMode, setDelegationMode] = useState<'plan' | 'spawn'>('plan')
+  const delegationMode = 'plan' as const
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -53,9 +53,7 @@ export default function BotConfigModal({ isOpen, onClose }: BotConfigModalProps)
         setTierConfig({})
         setCustomTiers({})
       }
-      if (cfg.delegation_mode === 'plan' || cfg.delegation_mode === 'spawn') {
-        setDelegationMode(cfg.delegation_mode)
-      }
+      // delegation_mode is always 'plan' now (unified autonomous mode)
     } catch {
       // ignore
     }
@@ -400,28 +398,7 @@ export default function BotConfigModal({ isOpen, onClose }: BotConfigModalProps)
             <span className="text-[10px] text-muted-foreground">Comma-separated. Leave empty to allow everyone.</span>
           </div>
 
-          {/* Delegation Mode */}
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-muted-foreground">Delegation Mode</span>
-            <div className="flex items-center gap-2">
-              {(['plan', 'spawn'] as const).map(mode => (
-                <button
-                  key={mode}
-                  onClick={() => { setDelegationMode(mode); setDirty(true); setSaved(false) }}
-                  className={`px-3 py-1 text-xs rounded-md border transition-colors ${
-                    delegationMode === mode
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-secondary text-muted-foreground border-border hover:text-foreground'
-                  }`}
-                >
-                  {mode === 'plan' ? 'Plan' : 'Spawn'}
-                </button>
-              ))}
-            </div>
-            <span className="text-[10px] text-muted-foreground">
-              Plan: agent creates a plan then delegates tasks. Spawn: agent directly spawns sub-agents.
-            </span>
-          </div>
+          {/* Delegation Mode — unified autonomous mode, no toggle needed */}
 
           {/* Summary */}
           <div className="text-xs text-muted-foreground">

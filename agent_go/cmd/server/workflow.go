@@ -322,6 +322,79 @@ func aggregateTokenFields(dst, src map[string]interface{}) {
 
 // readProgressForFolder reads steps_done.json for a given folder and returns the progress
 // Returns nil if the file doesn't exist or can't be read (non-fatal)
+func readRunMetadata(ctx context.Context, metadataFilePath string) (*RunMetadata, error) {
+	content, exists, err := readFileFromWorkspace(ctx, metadataFilePath)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+	var metadata RunMetadata
+	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
+		return nil, nil
+	}
+	return &metadata, nil
+}
+
+// inferRunMetadata creates metadata for legacy run folders that don't have run_metadata.json.
+// Uses token_usage.json created_at as start time, progress.LastUpdated for completion.
+func inferRunMetadata(ctx context.Context, workspacePath, folderName string, progress *StepProgress) *RunMetadata {
+	if progress == nil {
+		return nil
+	}
+
+	metadata := &RunMetadata{
+		Status:      "running",
+		TriggeredBy: "manual", // assume manual for legacy runs
+	}
+
+	// Try to get created_at from token_usage.json
+	tokenPaths := []string{
+		workspacePath + "/runs/" + folderName + "/token_usage.json",
+	}
+	for _, tp := range tokenPaths {
+		content, exists, err := readFileFromWorkspace(ctx, tp)
+		if err != nil || !exists {
+			continue
+		}
+		var tokenFile struct {
+			CreatedAt string `json:"created_at"`
+			UpdatedAt string `json:"updated_at"`
+		}
+		if err := json.Unmarshal([]byte(content), &tokenFile); err == nil && tokenFile.CreatedAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, tokenFile.CreatedAt); err == nil {
+				metadata.CreatedAt = t
+			} else if t, err := time.Parse(time.RFC3339, tokenFile.CreatedAt); err == nil {
+				metadata.CreatedAt = t
+			}
+		}
+		break
+	}
+
+	// Fallback: use progress.LastUpdated as rough created_at if token_usage didn't work
+	if metadata.CreatedAt.IsZero() {
+		metadata.CreatedAt = progress.LastUpdated
+	}
+
+	// Determine completion
+	if progress.TotalSteps > 0 && len(progress.CompletedStepIndices) >= progress.TotalSteps {
+		completedAt := progress.LastUpdated
+		metadata.Status = "completed"
+		metadata.CompletedAt = &completedAt
+	}
+
+	return metadata
+}
+
+func writeRunMetadata(ctx context.Context, metadataFilePath string, metadata *RunMetadata) error {
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal run metadata: %w", err)
+	}
+	return writeFileToWorkspace(ctx, metadataFilePath, string(data))
+}
+
 func readProgressForFolder(ctx context.Context, stepsFilePath string) (*StepProgress, error) {
 	// Use the generic file reading helper
 	content, exists, err := readFileFromWorkspace(ctx, stepsFilePath)
@@ -533,10 +606,50 @@ func extractIterationFoldersFromChildren(children []interface{}, existingFolders
 	return existingFolders
 }
 
+// ActiveWorkflowExecution tracks a currently running workflow execution in memory
+type ActiveWorkflowExecution struct {
+	QueryID       string    `json:"query_id"`
+	SessionID     string    `json:"session_id"`
+	PresetQueryID string    `json:"preset_query_id,omitempty"`
+	WorkspacePath string    `json:"workspace_path"`
+	RunFolder     string    `json:"run_folder,omitempty"`
+	TriggeredBy   string    `json:"triggered_by"` // "manual", "cron"
+	StartedAt     time.Time `json:"started_at"`
+}
+
+// RunMetadataLLM captures which model was used for a specific role
+type RunMetadataLLM struct {
+	Provider string `json:"provider,omitempty"`
+	ModelID  string `json:"model_id,omitempty"`
+}
+
+// RunMetadataModels captures the LLM configuration used for the run
+type RunMetadataModels struct {
+	AllocationMode string           `json:"allocation_mode,omitempty"` // "manual" or "tiered"
+	ExecutionLLM   *RunMetadataLLM  `json:"execution_llm,omitempty"`
+	LearningLLM    *RunMetadataLLM  `json:"learning_llm,omitempty"`
+	PhaseLLM       *RunMetadataLLM  `json:"phase_llm,omitempty"`
+	Tier1          *RunMetadataLLM  `json:"tier_1,omitempty"`
+	Tier2          *RunMetadataLLM  `json:"tier_2,omitempty"`
+	Tier3          *RunMetadataLLM  `json:"tier_3,omitempty"`
+	TempOverride   *RunMetadataLLM  `json:"temp_override,omitempty"`
+	TempOverride2  *RunMetadataLLM  `json:"temp_override_2,omitempty"`
+}
+
+// RunMetadata stores lifecycle information for a run folder
+type RunMetadata struct {
+	CreatedAt   time.Time          `json:"created_at"`
+	CompletedAt *time.Time         `json:"completed_at,omitempty"`
+	Status      string             `json:"status"`                    // "running", "completed"
+	TriggeredBy string             `json:"triggered_by,omitempty"`    // "manual", "cron", "workflow_builder"
+	Models      *RunMetadataModels `json:"models,omitempty"`          // LLM config used for this run
+}
+
 // RunFolderInfo represents information about a single run folder
 type RunFolderInfo struct {
 	Name     string        `json:"name"`
 	Progress *StepProgress `json:"progress,omitempty"` // Progress info if available
+	Metadata *RunMetadata  `json:"metadata,omitempty"` // Lifecycle metadata
 }
 
 // RunFoldersResponse represents the response for listing run folders
@@ -978,7 +1091,7 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 			Name: folderName,
 		}
 
-		// Only read progress for the latest N iterations (most likely to be selected)
+		// Only read progress/metadata for the latest N iterations (most likely to be selected)
 		if i < maxFoldersWithProgress {
 			// Try to read steps_done.json for this folder
 			stepsFilePath := workspacePath + "/runs/" + folderName + "/execution/steps_done.json"
@@ -986,28 +1099,51 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 			if err == nil && progress != nil {
 				folderInfo.Progress = progress
 			}
+
+			// Try to read run_metadata.json
+			metadataPath := workspacePath + "/runs/" + folderName + "/run_metadata.json"
+			metadata, _ := readRunMetadata(r.Context(), metadataPath)
+
+			if metadata == nil && progress != nil {
+				// Fallback: infer metadata from progress and token_usage for legacy runs
+				metadata = inferRunMetadata(r.Context(), workspacePath, folderName, progress)
+				if metadata != nil {
+					_ = writeRunMetadata(r.Context(), metadataPath, metadata)
+				}
+			} else if metadata != nil && metadata.Status == "running" && progress != nil && progress.TotalSteps > 0 && len(progress.CompletedStepIndices) >= progress.TotalSteps {
+				completedAt := progress.LastUpdated
+				metadata.Status = "completed"
+				metadata.CompletedAt = &completedAt
+				_ = writeRunMetadata(r.Context(), metadataPath, metadata)
+			}
+
+			if metadata != nil {
+				folderInfo.Metadata = metadata
+			}
 		}
 
 		folderInfos = append(folderInfos, folderInfo)
 	}
 
-	// Sort folder infos by iteration number (descending - highest first)
-	// Supports both formats: iteration-X and iteration-X/group-Y
+	// Sort by created_at (most recent first) when metadata is available,
+	// fallback to iteration number descending
 	if len(folderInfos) > 0 {
 		sort.Slice(folderInfos, func(i, j int) bool {
+			mi := folderInfos[i].Metadata
+			mj := folderInfos[j].Metadata
+			if mi != nil && mj != nil {
+				return mi.CreatedAt.After(mj.CreatedAt)
+			}
+			if mi != nil {
+				return true
+			}
+			if mj != nil {
+				return false
+			}
+			// Fallback: iteration number descending
 			extractIteration := func(name string) int {
-				// Try nested format first: iteration-X/group-Y
-				re := regexp.MustCompile(`iteration-(\d+)/`)
+				re := regexp.MustCompile(`iteration-(\d+)`)
 				matches := re.FindStringSubmatch(name)
-				if len(matches) > 1 {
-					var num int
-					if _, err := fmt.Sscanf(matches[1], "%d", &num); err == nil {
-						return num
-					}
-				}
-				// Fallback to top-level format: iteration-X
-				re = regexp.MustCompile(`iteration-(\d+)$`)
-				matches = re.FindStringSubmatch(name)
 				if len(matches) > 1 {
 					var num int
 					if _, err := fmt.Sscanf(matches[1], "%d", &num); err == nil {
@@ -1016,14 +1152,7 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 				}
 				return -1
 			}
-
-			iterI := extractIteration(folderInfos[i].Name)
-			iterJ := extractIteration(folderInfos[j].Name)
-
-			if iterI != iterJ {
-				return iterI > iterJ
-			}
-			return folderInfos[i].Name > folderInfos[j].Name
+			return extractIteration(folderInfos[i].Name) > extractIteration(folderInfos[j].Name)
 		})
 	}
 
@@ -1589,6 +1718,22 @@ func (api *StreamingAPI) handleCreateRunFolder(w http.ResponseWriter, r *http.Re
 	if !createApiResp.Success {
 		http.Error(w, fmt.Sprintf("Failed to create folder: %s", createApiResp.Error), http.StatusInternalServerError)
 		return
+	}
+
+	// Write run_metadata.json with creation time
+	triggeredBy := r.URL.Query().Get("triggered_by")
+	if triggeredBy == "" {
+		triggeredBy = "manual"
+	}
+	metadata := &RunMetadata{
+		CreatedAt:   time.Now(),
+		Status:      "running",
+		TriggeredBy: triggeredBy,
+	}
+	metadataPath := folderPath + "/run_metadata.json"
+	if err := writeRunMetadata(r.Context(), metadataPath, metadata); err != nil {
+		// Non-fatal: log but don't fail the folder creation
+		log.Printf("[WORKFLOW] Warning: failed to write run_metadata.json for %s: %v", newFolderName, err)
 	}
 
 	// Success response

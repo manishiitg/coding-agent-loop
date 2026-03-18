@@ -39,6 +39,7 @@ func NewSchedulerService(db database.Database, api *StreamingAPI) *SchedulerServ
 
 // Start loads all enabled jobs and starts the scheduler
 func (s *SchedulerService) Start(ctx context.Context) error {
+	log.Printf("[SCHEDULER] Starting scheduler service...")
 	scheduler, err := gocron.NewScheduler()
 	if err != nil {
 		return fmt.Errorf("failed to create scheduler: %w", err)
@@ -92,10 +93,17 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	}
 
 	s.scheduler.Start()
-	log.Printf("[SCHEDULER] Started")
+	log.Printf("[SCHEDULER] ✅ Started with %d jobs. Server time: %s, timezone: %s",
+		len(s.jobIDs), time.Now().Format(time.RFC3339), time.Now().Location().String())
+
+	// Log all registered jobs with next run times for debugging
+	for jobID, gocronID := range s.jobIDs {
+		log.Printf("[SCHEDULER] Active job: db_id=%s gocron_id=%s", jobID, gocronID)
+	}
 
 	// Wait for context cancellation
 	<-ctx.Done()
+	log.Printf("[SCHEDULER] Shutting down (context canceled)")
 	return nil
 }
 
@@ -144,7 +152,12 @@ func (s *SchedulerService) LoadJob(job *database.ScheduledJob) error {
 	}
 
 	s.jobIDs[job.ID] = gocronJob.ID()
-	log.Printf("[SCHEDULER] Registered job %s (%s) with cron %q", job.ID, job.Name, job.CronExpression)
+	nextRun := s.getNextRunTime(job)
+	nextRunStr := "unknown"
+	if nextRun != nil {
+		nextRunStr = nextRun.Format(time.RFC3339)
+	}
+	log.Printf("[SCHEDULER] Registered job %s (%s) cron=%q timezone=%s next_run=%s enabled=%v", job.ID, job.Name, job.CronExpression, job.Timezone, nextRunStr, job.Enabled)
 	return nil
 }
 
@@ -239,37 +252,47 @@ func (s *SchedulerService) StopRunningJob(job *database.ScheduledJob) {
 // triggerJob is called by gocron when a cron fires
 func (s *SchedulerService) triggerJob(job *database.ScheduledJob) {
 	ctx := context.Background()
-	log.Printf("[SCHEDULER] Triggering job %s (%s)", job.ID, job.Name)
+	log.Printf("[SCHEDULER] ⏰ Cron fired for job %s (%s) at %s", job.ID, job.Name, time.Now().Format(time.RFC3339))
 
 	// Reload job from DB to get current config
 	currentJob, err := s.db.GetScheduledJob(ctx, job.ID)
-	if err != nil || currentJob == nil {
-		log.Printf("[SCHEDULER] Job %s not found in DB, skipping", job.ID)
+	if err != nil {
+		log.Printf("[SCHEDULER] ❌ Failed to reload job %s from DB: %v", job.ID, err)
+		return
+	}
+	if currentJob == nil {
+		log.Printf("[SCHEDULER] ❌ Job %s not found in DB, skipping", job.ID)
 		return
 	}
 	if !currentJob.Enabled {
-		log.Printf("[SCHEDULER] Job %s is disabled, skipping", job.ID)
+		log.Printf("[SCHEDULER] ⏭️ Job %s (%s) is disabled, skipping", job.ID, currentJob.Name)
 		return
 	}
 
 	// Prevent concurrent runs — skip if already running
 	if currentJob.LastStatus == "running" {
-		log.Printf("[SCHEDULER] Job %s is already running (session: %s), skipping this trigger", job.ID, currentJob.LastSessionID)
+		log.Printf("[SCHEDULER] ⏭️ Job %s (%s) is already running (session: %s, started: %v), skipping this trigger",
+			job.ID, currentJob.Name, currentJob.LastSessionID, currentJob.LastRunAt)
 		return
 	}
 
-	if _, err := s.runJob(ctx, currentJob); err != nil {
-		log.Printf("[SCHEDULER] Job %s runJob error: %v", job.ID, err)
+	log.Printf("[SCHEDULER] 🚀 Starting job %s (%s) preset=%s", job.ID, currentJob.Name, currentJob.PresetQueryID)
+	sessionID, err := s.runJob(ctx, currentJob)
+	if err != nil {
+		log.Printf("[SCHEDULER] ❌ Job %s (%s) failed: %v", job.ID, currentJob.Name, err)
+	} else {
+		log.Printf("[SCHEDULER] ✅ Job %s (%s) completed successfully, session=%s", job.ID, currentJob.Name, sessionID)
 	}
 }
 
 // runJob marks the job as running, executes it, and updates the final status with duration.
 func (s *SchedulerService) runJob(ctx context.Context, job *database.ScheduledJob) (string, error) {
 	startTime := time.Now().UTC()
+	log.Printf("[SCHEDULER] runJob starting for %s (%s) at %s, groups=%v", job.ID, job.Name, startTime.Format(time.RFC3339), job.GroupIDs)
 
 	// Mark as running before execution
 	if err := s.db.UpdateScheduledJobRunStatus(ctx, job.ID, startTime, job.NextRunAt, "", "running", "", nil); err != nil {
-		log.Printf("[SCHEDULER] Failed to set running status for job %s: %v", job.ID, err)
+		log.Printf("[SCHEDULER] ❌ Failed to set running status for job %s: %v", job.ID, err)
 	}
 
 	// Create a run history entry
@@ -360,6 +383,7 @@ func (s *SchedulerService) executeJob(ctx context.Context, job *database.Schedul
 		"query":           query,
 		"agent_mode":      preset.AgentMode,
 		"preset_query_id": preset.ID,
+		"triggered_by":    "cron",
 	}
 
 	// Pass workspace folder (required for workflow mode)
@@ -414,13 +438,17 @@ func (s *SchedulerService) executeJob(ctx context.Context, job *database.Schedul
 
 	// Generate session ID
 	sessionID := fmt.Sprintf("sched_%s_%d", job.ID[:8], time.Now().UnixNano())
+	log.Printf("[SCHEDULER] executeJob for %s (%s): session=%s agent_mode=%s workspace=%v",
+		job.ID, job.Name, sessionID, preset.AgentMode, preset.SelectedFolder.String)
 
 	// Use startSessionInternal to run the query (same as bot connector pattern)
 	runErr := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil)
 	if runErr != nil {
+		log.Printf("[SCHEDULER] ❌ executeJob session failed for %s: %v", job.ID, runErr)
 		return sessionID, fmt.Errorf("session execution failed: %w", runErr)
 	}
 
+	log.Printf("[SCHEDULER] ✅ executeJob completed for %s, session=%s", job.ID, sessionID)
 	return sessionID, nil
 }
 

@@ -319,6 +319,17 @@ type AgentLLMFallback struct {
 	ModelID  string `json:"model_id"`
 }
 
+// Employee represents an employee (workflow grouping) in the database
+type Employee struct {
+	ID          string    `json:"id" db:"id"`
+	Name        string    `json:"name" db:"name"`
+	AvatarColor string    `json:"avatar_color" db:"avatar_color"`
+	Description string    `json:"description" db:"description"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	UserID      string    `json:"user_id,omitempty" db:"user_id"`
+}
+
 // PresetQuery represents a preset query in the database
 type PresetQuery struct {
 	ID                   string          `json:"id" db:"id"`
@@ -337,6 +348,7 @@ type PresetQuery struct {
 	SelectedGlobalSecretNames    string          `json:"selected_global_secret_names" db:"selected_global_secret_names"`               // JSON array of global secret names (NULL=all)
 	EnableBrowserAccess          bool            `json:"enable_browser_access" db:"enable_browser_access"`                             // Browser automation access
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
+	EmployeeID           sql.NullString  `json:"employee_id" db:"employee_id"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at" db:"updated_at"`
 	CreatedBy            string          `json:"created_by" db:"created_by"`
@@ -361,6 +373,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		SelectedGlobalSecretNames *string         `json:"selected_global_secret_names,omitempty"`
 		EnableBrowserAccess       bool            `json:"enable_browser_access"`
 		IsPredefined         bool            `json:"is_predefined"`
+		EmployeeID           *string         `json:"employee_id,omitempty"`
 		CreatedAt            time.Time       `json:"created_at"`
 		UpdatedAt            time.Time       `json:"updated_at"`
 		CreatedBy            string          `json:"created_by"`
@@ -392,6 +405,9 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 	// Convert sql.NullString to *string
 	if p.SelectedFolder.Valid {
 		result.SelectedFolder = &p.SelectedFolder.String
+	}
+	if p.EmployeeID.Valid {
+		result.EmployeeID = &p.EmployeeID.String
 	}
 
 	return json.Marshal(result)

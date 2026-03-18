@@ -26,11 +26,12 @@ type FolderGuardConfig struct {
 
 // Client handles communication with the workspace API directly via REST
 type Client struct {
-	BaseURL     string
-	HTTPClient  *http.Client
-	FolderGuard *FolderGuardConfig
-	UserID      string            // User ID for per-user folder isolation
-	ExtraEnv    map[string]string // Extra env vars to inject into shell commands (e.g., MCP_API_URL, MCP_API_TOKEN)
+	BaseURL            string
+	HTTPClient         *http.Client
+	FolderGuard        *FolderGuardConfig
+	UserID             string            // User ID for per-user folder isolation
+	ExtraEnv           map[string]string // Extra env vars to inject into shell commands (e.g., MCP_API_URL, MCP_API_TOKEN)
+	DefaultWorkingDir  string            // Default working directory for shell commands (relative to docs-dir)
 }
 
 // ClientOption is a functional option for configuring the Client
@@ -61,10 +62,18 @@ func WithUserID(userID string) ClientOption {
 }
 
 // WithExtraEnv sets extra environment variables to inject into shell commands.
-// Only MCP_* prefixed vars are forwarded to the shell (enforced server-side).
+// Only MCP_* and SECRET_* prefixed vars are forwarded to the shell (enforced server-side).
 func WithExtraEnv(env map[string]string) ClientOption {
 	return func(c *Client) {
 		c.ExtraEnv = env
+	}
+}
+
+// WithDefaultWorkingDir sets the default working directory for shell commands
+// (relative to docs-dir, e.g., "Chats/", "Plans/", "Workflow/my-project/").
+func WithDefaultWorkingDir(dir string) ClientOption {
+	return func(c *Client) {
+		c.DefaultWorkingDir = dir
 	}
 }
 

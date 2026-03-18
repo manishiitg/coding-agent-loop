@@ -87,7 +87,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
               setAvailableGroups(resp.manifest.groups)
               // Default: select all groups if no prior selection
               setSelectedGroupIds(prev =>
-                prev.length === 0 ? resp.manifest.groups.map((g: VariableGroup) => g.group_id) : prev
+                prev.length === 0 ? resp.manifest!.groups!.map((g: VariableGroup) => g.group_id) : prev
               )
             }
           })

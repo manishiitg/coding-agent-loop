@@ -983,10 +983,18 @@ export const agentApi = {
   },
 
   // Create a new run folder (iteration)
-  createRunFolder: async (workspacePath: string): Promise<CreateRunFolderResponse> => {
-    const response = await api.post('/api/workflow/run-folder', null, {
-      params: { workspace_path: workspacePath }
-    })
+  createRunFolder: async (workspacePath: string, triggeredBy?: string): Promise<CreateRunFolderResponse> => {
+    const params: Record<string, string> = { workspace_path: workspacePath }
+    if (triggeredBy) params.triggered_by = triggeredBy
+    const response = await api.post('/api/workflow/run-folder', null, { params })
+    return response.data
+  },
+
+  // Get active workflow executions (from backend in-memory registry)
+  getActiveExecutions: async (workspacePath?: string): Promise<{ executions: import('./api-types').ActiveWorkflowExecution[] }> => {
+    const params: Record<string, string> = {}
+    if (workspacePath) params.workspace_path = workspacePath
+    const response = await api.get('/api/workflow/active-executions', { params })
     return response.data
   },
 
@@ -1373,6 +1381,33 @@ export const sessionShareApi = {
   getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
     const response = await api.get(`/api/shared/${shareToken}`)
     return response.data
+  },
+
+  // Employee API
+  listEmployees: async (): Promise<{ employees: import('./api-types').Employee[] }> => {
+    const response = await api.get('/api/employees')
+    return response.data
+  },
+
+  createEmployee: async (employee: { name: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
+    const response = await api.post('/api/employees', employee)
+    return response.data
+  },
+
+  updateEmployee: async (id: string, employee: { name?: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
+    const response = await api.put(`/api/employees/${id}`, employee)
+    return response.data
+  },
+
+  deleteEmployee: async (id: string): Promise<void> => {
+    await api.delete(`/api/employees/${id}`)
+  },
+
+  assignWorkflowEmployee: async (presetQueryId: string, employeeId: string | null): Promise<void> => {
+    await api.post('/api/employees/assign-workflow', {
+      preset_query_id: presetQueryId,
+      employee_id: employeeId,
+    })
   },
 }
 

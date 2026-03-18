@@ -179,6 +179,27 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return timeA - timeB;
     });
 
+    // Debug: log if user_message is not at the end (ordering issue)
+    const userMsgIdx = result.findIndex(e => e.type === 'user_message' && e.id?.startsWith('user-message-'));
+    if (userMsgIdx >= 0 && userMsgIdx < result.length - 5 && result.length > 10) {
+      const userMsg = result[userMsgIdx];
+      const firstEvent = result[0];
+      const lastEvent = result[result.length - 1];
+      console.warn('[EventHierarchy] user_message ordering debug:', {
+        userMsgIdx,
+        total: result.length,
+        userMsgTimestamp: userMsg.timestamp,
+        userMsgParsed: userMsg.timestamp ? Date.parse(userMsg.timestamp) : 'none',
+        firstTimestamp: firstEvent?.timestamp,
+        firstParsed: firstEvent?.timestamp ? Date.parse(firstEvent.timestamp) : 'none',
+        lastTimestamp: lastEvent?.timestamp,
+        lastParsed: lastEvent?.timestamp ? Date.parse(lastEvent.timestamp) : 'none',
+        // Sample: check if old events have timestamps
+        eventsWithoutTimestamp: result.filter(e => !e.timestamp).length,
+        first5Timestamps: result.slice(0, 5).map(e => ({ id: e.id?.slice(0, 20), type: e.type, ts: e.timestamp })),
+      });
+    }
+
     if (result.length <= MAX_EVENTS_TO_PROCESS) return result;
 
     // Smart cap: preserve structural events, cap sub-agent children per delegation.

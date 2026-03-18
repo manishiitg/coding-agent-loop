@@ -14,6 +14,7 @@ interface AppState {
   // UI state
   sidebarMinimized: boolean
   workspaceMinimized: boolean
+  showWorkflowsOverview: boolean
   
   // Code execution mode (for chat mode when no preset is active)
   useCodeExecutionMode: boolean
@@ -37,6 +38,7 @@ interface AppState {
   // UI actions
   setSidebarMinimized: (minimized: boolean) => void
   setWorkspaceMinimized: (minimized: boolean) => void
+  setShowWorkflowsOverview: (show: boolean) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
   setDelegationMode: (mode: 'off' | 'spawn') => void
   // Last plan phase chosen in multi-agent mode — persisted so new tabs inherit it
@@ -65,6 +67,7 @@ export const useAppStore = create<AppState>()(
           selectedPresetId: null,
           sidebarMinimized: false,
           workspaceMinimized: false,
+          showWorkflowsOverview: false,
           useCodeExecutionMode: true, // Default to enabled
           delegationMode: 'spawn' as const, // Default to spawn (delegation enabled by default)
           // Actions
@@ -132,6 +135,10 @@ export const useAppStore = create<AppState>()(
 
         setWorkspaceMinimized: (minimized) => {
           set({ workspaceMinimized: minimized })
+        },
+
+        setShowWorkflowsOverview: (show) => {
+          set({ showWorkflowsOverview: show })
         },
 
         setUseCodeExecutionMode: (enabled) => {

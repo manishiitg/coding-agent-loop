@@ -1645,7 +1645,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
-                planSteps={plan?.steps || []}
+
               />
             </div>
           ) : isDecisionStep(step) && (node.type as string) === 'decision' ? (
@@ -1690,7 +1690,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
-                planSteps={plan?.steps || []}
+
               />
             </div>
           ) : isTodoTaskStep(step) && (node.type as string) === 'todo_task' ? (
@@ -1778,7 +1778,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
-                planSteps={plan?.steps || []}
+
               />
             </div>
           ) : (
@@ -1810,7 +1810,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
                 isTodoTaskStep={(node.type as string) === 'todo_task'}
                 isExpanded={true}
                 onToggleExpanded={() => {}}
-                planSteps={plan?.steps || []}
+
               />
             </div>
           )}

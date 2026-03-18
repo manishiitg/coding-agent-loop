@@ -9,15 +9,26 @@ import (
 )
 
 type ExecuteShellCommandParams struct {
-	Command     string             `json:"command"`
-	Timeout     *int               `json:"timeout,omitempty"`
-	UseShell    *bool              `json:"use_shell,omitempty"`
-	FolderGuard *FolderGuardConfig `json:"folder_guard,omitempty"`
-	ExtraEnv    map[string]string  `json:"extra_env,omitempty"`
+	Command          string             `json:"command"`
+	WorkingDirectory string             `json:"working_directory,omitempty"`
+	Timeout          *int               `json:"timeout,omitempty"`
+	UseShell         *bool              `json:"use_shell,omitempty"`
+	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
+	ExtraEnv         map[string]string  `json:"extra_env,omitempty"`
 }
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
+	// Debug: log ExtraEnv keys
+	if len(c.ExtraEnv) > 0 {
+		keys := make([]string, 0, len(c.ExtraEnv))
+		for k := range c.ExtraEnv {
+			keys = append(keys, k)
+		}
+		log.Printf("[SHELL_DEBUG] Client.ExtraEnv keys: %v (count=%d)", keys, len(c.ExtraEnv))
+	} else {
+		log.Printf("[SHELL_DEBUG] Client.ExtraEnv is EMPTY")
+	}
 	// Populate folder guard configuration from context or client.
 	// Two context key systems exist:
 	//   1. Chat/plan/prototype modes: FolderGuardAllowedWriteFolderKey (from server.go wrappers)
@@ -73,6 +84,15 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// Always use shell execution - removed from tool definition to simplify LLM interface
 	useShell := true
 	params.UseShell = &useShell
+
+	// Set default working directory: client field > ExtraEnv hint > empty (workspace root)
+	if params.WorkingDirectory == "" {
+		if c.DefaultWorkingDir != "" {
+			params.WorkingDirectory = c.DefaultWorkingDir
+		} else if dir, ok := c.ExtraEnv["_DEFAULT_WORKING_DIR"]; ok && dir != "" {
+			params.WorkingDirectory = dir
+		}
+	}
 
 	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN)
 	if len(c.ExtraEnv) > 0 && params.ExtraEnv == nil {

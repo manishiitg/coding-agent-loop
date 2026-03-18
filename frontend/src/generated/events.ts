@@ -875,6 +875,8 @@ export interface OrchestratorAgentStartEvent {
   step_index?: number;
   timestamp?: string;
   trace_id?: string;
+  use_code_execution_mode?: boolean;
+  use_tool_search_mode?: boolean;
 }
 export interface OrchestratorEndEvent {
   component?: string;

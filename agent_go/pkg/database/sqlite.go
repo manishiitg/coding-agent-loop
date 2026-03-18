@@ -2971,3 +2971,78 @@ func (s *SQLiteDB) ListScheduledJobRuns(ctx context.Context, jobID string, limit
 	}
 	return runs, total, nil
 }
+
+// Employee CRUD operations
+
+func (db *SQLiteDB) CreateEmployee(ctx context.Context, employee *Employee) (*Employee, error) {
+	if employee.ID == "" {
+		employee.ID = uuid.New().String()
+	}
+	if employee.AvatarColor == "" {
+		employee.AvatarColor = "#6366f1"
+	}
+	now := time.Now()
+	employee.CreatedAt = now
+	employee.UpdatedAt = now
+
+	_, err := db.db.ExecContext(ctx,
+		`INSERT INTO employees (id, name, avatar_color, description, created_at, updated_at, user_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		employee.ID, employee.Name, employee.AvatarColor, employee.Description, employee.CreatedAt, employee.UpdatedAt, employee.UserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create employee: %w", err)
+	}
+	return employee, nil
+}
+
+func (db *SQLiteDB) GetEmployee(ctx context.Context, id string) (*Employee, error) {
+	var emp Employee
+	err := db.db.QueryRowContext(ctx,
+		`SELECT id, name, avatar_color, description, created_at, updated_at, COALESCE(user_id, '') FROM employees WHERE id = ?`, id).
+		Scan(&emp.ID, &emp.Name, &emp.AvatarColor, &emp.Description, &emp.CreatedAt, &emp.UpdatedAt, &emp.UserID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get employee: %w", err)
+	}
+	return &emp, nil
+}
+
+func (db *SQLiteDB) UpdateEmployee(ctx context.Context, id string, employee *Employee) (*Employee, error) {
+	employee.UpdatedAt = time.Now()
+	_, err := db.db.ExecContext(ctx,
+		`UPDATE employees SET name = ?, avatar_color = ?, description = ?, updated_at = ? WHERE id = ?`,
+		employee.Name, employee.AvatarColor, employee.Description, employee.UpdatedAt, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update employee: %w", err)
+	}
+	return db.GetEmployee(ctx, id)
+}
+
+func (db *SQLiteDB) DeleteEmployee(ctx context.Context, id string) error {
+	_, err := db.db.ExecContext(ctx, `DELETE FROM employees WHERE id = ?`, id)
+	return err
+}
+
+func (db *SQLiteDB) ListEmployees(ctx context.Context) ([]Employee, error) {
+	rows, err := db.db.QueryContext(ctx,
+		`SELECT id, name, avatar_color, description, created_at, updated_at, COALESCE(user_id, '') FROM employees ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list employees: %w", err)
+	}
+	defer rows.Close()
+
+	var employees []Employee
+	for rows.Next() {
+		var emp Employee
+		if err := rows.Scan(&emp.ID, &emp.Name, &emp.AvatarColor, &emp.Description, &emp.CreatedAt, &emp.UpdatedAt, &emp.UserID); err != nil {
+			return nil, fmt.Errorf("failed to scan employee: %w", err)
+		}
+		employees = append(employees, emp)
+	}
+	if employees == nil {
+		employees = []Employee{}
+	}
+	return employees, nil
+}

@@ -116,6 +116,23 @@ func LoadVariableValues(ctx context.Context, bo *orchestrator.BaseOrchestrator, 
 	return variableValues, nil
 }
 
+// SyncVariablesToWorkspaceEnv injects the current variableValues into workspaceEnvRef
+// with a SECRET_ prefix so they pass through the workspace API whitelist filter.
+// This makes workflow variables available as $SECRET_VAR_NAME in execute_shell_command.
+func SyncVariablesToWorkspaceEnv(bo *orchestrator.BaseOrchestrator, variableValues map[string]string) {
+	if bo == nil || len(variableValues) == 0 {
+		return
+	}
+	envRef := bo.GetWorkspaceEnvRef()
+	if envRef == nil {
+		return
+	}
+	for k, v := range variableValues {
+		envRef["SECRET_"+k] = v
+	}
+	bo.GetLogger().Info(fmt.Sprintf("[VARIABLES] Synced %d variable values as SECRET_* env vars for shell execution", len(variableValues)))
+}
+
 // ResolveVariables replaces {{VARIABLE}} placeholders with actual values
 // Public method that accepts variableValues as parameter
 func ResolveVariables(text string, variableValues map[string]string) string {

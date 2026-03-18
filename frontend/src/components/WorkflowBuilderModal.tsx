@@ -136,7 +136,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
       // Build tiered LLM config from multi-agent delegation tiers
       const tierConfig = activeTab?.config?.delegationTierConfig || llmStore.delegationTierConfig
       const chatLLM = llmStore.getConfigForMode('chat').primaryConfig
-      const defaultLLM: AgentLLMConfig = { provider: chatLLM.provider, model_id: chatLLM.model_id }
+      const defaultLLM: AgentLLMConfig = { provider: chatLLM.provider as AgentLLMConfig['provider'], model_id: chatLLM.model_id }
       const toAgentLLM = (t: { provider: string; model_id: string }): AgentLLMConfig =>
         ({ provider: t.provider as AgentLLMConfig['provider'], model_id: t.model_id })
 

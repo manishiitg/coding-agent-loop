@@ -2374,6 +2374,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Wire up live tool call query for workshop query_step_tools
 		workflowOrchestrator.SetToolCallQueryFunc(formatToolCallSummaries(api))
 
+		// Wire up bgAgentRegistry notifier so todo task sub-agents trigger auto-notification
+		// to the main workshop agent when they complete.
+		workflowOrchestrator.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
+
+
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being canceled when the HTTP request ends
 		workflowCtx, workflowCancel := context.WithCancel(context.Background())
@@ -7601,6 +7606,47 @@ func (q *bgAgentQuerierImpl) ListAgents(sessionID string) ([]*virtualtools.BGAge
 
 func (q *bgAgentQuerierImpl) TerminateAgent(sessionID, agentID string) error {
 	return q.registry.CancelAgent(sessionID, agentID)
+}
+
+// todoSubAgentBgNotifier implements step_based_workflow.SubAgentNotifier using bgAgentRegistry.
+// It registers todo task sub-agents so the main workshop agent receives a synthetic turn
+// (auto-notification) when each completes.
+type todoSubAgentBgNotifier struct {
+	api       *StreamingAPI
+	sessionID string
+}
+
+func (n *todoSubAgentBgNotifier) OnSubAgentStart(agentID, name string) {
+	bgAgent := &BackgroundAgent{
+		ID:        agentID,
+		Name:      name,
+		SessionID: n.sessionID,
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+	}
+	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
+
+	// Ensure the background completion loop is running for this session so that
+	// NotifyCompletion's channel send is actually consumed.
+	n.api.completionLoopStartedMu.Lock()
+	if !n.api.completionLoopStarted[n.sessionID] {
+		n.api.completionLoopStarted[n.sessionID] = true
+		go n.api.backgroundCompletionLoop(n.sessionID)
+	}
+	n.api.completionLoopStartedMu.Unlock()
+}
+
+func (n *todoSubAgentBgNotifier) OnSubAgentComplete(agentID, name, result string, err error) {
+	agent := n.api.bgAgentRegistry.Get(n.sessionID, agentID)
+	if agent == nil {
+		return
+	}
+	if err != nil {
+		agent.SetError(err.Error())
+	} else {
+		agent.SetResult(result)
+	}
+	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
 }
 
 // truncateForToolResponse truncates a string for inclusion in tool responses

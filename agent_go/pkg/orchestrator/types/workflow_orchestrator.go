@@ -163,6 +163,10 @@ type WorkflowOrchestrator struct {
 	// toolCallQueryFunc provides live tool call query capability for workshop sessions.
 	// Set by the server layer which has access to the EventStore.
 	toolCallQueryFunc step_based_workflow.ToolCallQueryFunc
+
+	// extraSubAgentNotifier is an additional notifier set by the server layer (e.g. for bgAgentRegistry).
+	// It is chained with the workshop notifier inside runInteractiveWorkshop.
+	extraSubAgentNotifier step_based_workflow.SubAgentNotifier
 }
 
 // SetToolCallQueryFunc sets the function for querying live tool calls from the event store.
@@ -170,6 +174,13 @@ type WorkflowOrchestrator struct {
 func (wo *WorkflowOrchestrator) SetToolCallQueryFunc(fn step_based_workflow.ToolCallQueryFunc) {
 	wo.toolCallQueryFunc = fn
 }
+
+// SetExtraSubAgentNotifier sets an additional notifier chained with the workshop notifier.
+// Used by server.go to hook bgAgentRegistry for synthetic turn notifications.
+func (wo *WorkflowOrchestrator) SetExtraSubAgentNotifier(n step_based_workflow.SubAgentNotifier) {
+	wo.extraSubAgentNotifier = n
+}
+
 
 // SetVirtualPlan sets a synthetic plan for the workflow (used by Task Agent mode)
 func (wo *WorkflowOrchestrator) SetVirtualPlan(plan *step_based_workflow.PlanningResponse) {
@@ -554,13 +565,22 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 		controller.SetCdpPort(wo.cdpPort)
 	}
 
-	// Build workshop manager using presetPhaseLLM (same as other phase agents)
+	// Build workshop manager using presetPhaseLLM (same as other phase agents).
+	// NewInteractiveWorkshopManager sets a workshopSubAgentNotifier on the controller.
+	// If server provided an extra notifier (e.g. bgAgentRegistry), chain them together.
 	workshopManager := step_based_workflow.NewInteractiveWorkshopManager(
 		controller,
 		wo.presetPhaseLLM,
 		wo.getSessionID(),
 		wo.getWorkflowID(),
 	)
+	if wo.extraSubAgentNotifier != nil {
+		// Chain: workshop notifier (stepRegistry) + server notifier (bgAgentRegistry)
+		controller.SetSubAgentNotifier(step_based_workflow.ChainSubAgentNotifiers(
+			controller.GetSubAgentNotifier(),
+			wo.extraSubAgentNotifier,
+		))
+	}
 
 	// Wire up live tool call query if available
 	if wo.toolCallQueryFunc != nil {

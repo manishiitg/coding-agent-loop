@@ -52,6 +52,7 @@ const DEDICATED_MCP_SERVERS = new Set(['playwright'])
 export interface ActiveAgentInfo {
   name: string
   type: 'agent' | 'delegation'
+  depth: number
 }
 
 interface ChatInputProps {
@@ -3365,11 +3366,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             </div>
                             <div className="max-h-48 overflow-y-auto">
                               {activeAgents.map((a, i) => (
-                                <div key={i} className="flex items-center gap-2 px-3 py-2 border-b last:border-b-0 border-gray-100 dark:border-gray-700/50">
+                                <div
+                                  key={i}
+                                  className="flex items-center gap-1.5 py-1.5 border-b last:border-b-0 border-gray-100 dark:border-gray-700/50 pr-3"
+                                  style={{ paddingLeft: `${8 + a.depth * 14}px` }}
+                                >
+                                  {a.depth > 0 && (
+                                    <span className="text-gray-300 dark:text-gray-600 flex-shrink-0 text-[10px] leading-none">└─</span>
+                                  )}
                                   <Loader2 className="w-3 h-3 animate-spin text-blue-500 dark:text-blue-400 flex-shrink-0" />
                                   <span className="text-xs text-gray-700 dark:text-gray-300 truncate">{a.name}</span>
                                   <span className="text-[10px] text-gray-400 dark:text-gray-500 flex-shrink-0 ml-auto">
-                                    {a.type === 'delegation' ? 'sub-agent' : 'step'}
+                                    {a.type === 'delegation' ? 'sub-agent' : a.depth === 0 ? 'step' : 'agent'}
                                   </span>
                                 </div>
                               ))}

@@ -54,9 +54,8 @@ export function useRenderLogger(
 
   if (changed.length > 0) {
     console.log(`[Render] ${name} #${renderCount.current}  changed: ${changed.join(', ')}`)
-  } else {
-    console.log(`[Render] ${name} #${renderCount.current}  (no dep change)`)
   }
+  // Skip "no dep change" logs — too noisy
 }
 
 /**

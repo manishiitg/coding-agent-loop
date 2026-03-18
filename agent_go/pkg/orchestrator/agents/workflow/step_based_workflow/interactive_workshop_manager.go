@@ -410,6 +410,37 @@ func (iwm *InteractiveWorkshopManager) refreshVariablesManifest(ctx context.Cont
 	}
 }
 
+// workshopSubAgentNotifier implements SubAgentNotifier by registering todo task
+// sub-agents into the workshop stepRegistry so query_step can find them.
+type workshopSubAgentNotifier struct {
+	registry *WorkshopStepRegistry
+}
+
+func (n *workshopSubAgentNotifier) OnSubAgentStart(agentID, name string) {
+	exec := &WorkshopStepExecution{
+		ID:     agentID,
+		StepID: name,
+		Status: WorkshopStepRunning,
+	}
+	n.registry.Register(exec)
+}
+
+func (n *workshopSubAgentNotifier) OnSubAgentComplete(agentID, name, result string, err error) {
+	exec := n.registry.Get(agentID)
+	if exec == nil {
+		return
+	}
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if err != nil {
+		exec.Status = WorkshopStepFailed
+		exec.Err = err
+	} else {
+		exec.Status = WorkshopStepDone
+		exec.Result = result
+	}
+}
+
 // NewInteractiveWorkshopManager creates a new InteractiveWorkshopManager
 func NewInteractiveWorkshopManager(
 	controller *StepBasedWorkflowOrchestrator,
@@ -417,12 +448,16 @@ func NewInteractiveWorkshopManager(
 	sessionID string,
 	workflowID string,
 ) *InteractiveWorkshopManager {
+	registry := newWorkshopStepRegistry()
+	// Wire sub-agent notifier so todo task sub-agents appear in stepRegistry
+	// and are queryable via query_step
+	controller.SetSubAgentNotifier(&workshopSubAgentNotifier{registry: registry})
 	return &InteractiveWorkshopManager{
 		controller:   controller,
 		presetLLM:    presetLLM,
 		sessionID:    sessionID,
 		workflowID:   workflowID,
-		stepRegistry: newWorkshopStepRegistry(),
+		stepRegistry: registry,
 	}
 }
 
@@ -2177,7 +2212,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: run_in_background — spawn independent background agent (not tied to a workflow step)
 	if err := mcpAgent.RegisterCustomTool(
 		"run_in_background",
-		"Spawn an independent background agent to run a task with the same tools as the workflow. Returns an execution_id immediately. You will be notified when it completes. Use this to offload context-heavy work or run tasks in parallel.",
+		"Spawn an independent background agent to run a task with the same tools as the workflow. Returns an execution_id immediately. You will be notified when it completes. Use this to offload context-heavy work or run tasks in parallel.\n\nagent_type controls the agent model:\n- \"executor\" (default): single-pass execution agent — best for focused, well-defined tasks\n- \"orchestrator\": todo task orchestrator with call_generic_agent — best for complex multi-step tasks that benefit from task management and sub-agent delegation. Sub-agent completions also auto-notify you.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -2188,6 +2223,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"instruction": map[string]interface{}{
 					"type":        "string",
 					"description": "Comprehensive instructions for the background agent. This is the agent's task — be specific about what it should do, inputs, expected outputs.",
+				},
+				"agent_type": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"executor", "orchestrator"},
+					"description": "executor (default): single-pass agent. orchestrator: todo task orchestrator with sub-agent delegation.",
 				},
 			},
 			"required": []string{"name", "instruction"},
@@ -2209,6 +2249,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			instruction, ok := instructionRaw.(string)
 			if !ok || instruction == "" {
 				return "instruction must be a non-empty string", nil
+			}
+
+			agentType := "executor"
+			if v, ok := args["agent_type"].(string); ok && v != "" {
+				agentType = v
 			}
 
 			// Create slug from name for execution ID
@@ -2253,7 +2298,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					})
 				}
 
-				result, err := iwm.runBackgroundTaskAgent(execCtx, name, instruction)
+				var result string
+				var err error
+				if agentType == "orchestrator" {
+					result, err = iwm.runBackgroundTodoTaskAgent(execCtx, name, instruction)
+				} else {
+					result, err = iwm.runBackgroundTaskAgent(execCtx, name, instruction)
+				}
 
 				// Update status BEFORE emitting event so query_step sees the final state
 				exec.mu.Lock()
@@ -2302,8 +2353,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}()
 
-			logger.Info(fmt.Sprintf("🚀 Workshop: background task %q started, execution_id=%q", name, execID))
-			return fmt.Sprintf("Background task %q started.\nexecution_id: %q\nYou will be automatically notified when it completes.", name, execID), nil
+			logger.Info(fmt.Sprintf("🚀 Workshop: background task %q started (type=%s), execution_id=%q", name, agentType, execID))
+			return fmt.Sprintf("Background task %q started (type=%s).\nexecution_id: %q\nYou will be automatically notified when it completes.", name, agentType, execID), nil
 		},
 		"workflow",
 	); err != nil {
@@ -6138,6 +6189,61 @@ func (agent *WorkflowBackgroundTaskAgent) Execute(ctx context.Context, templateV
 	}
 
 	return result, updatedHistory, nil
+}
+
+// runBackgroundTodoTaskAgent runs a todo task orchestrator as a background agent.
+// Unlike runBackgroundTaskAgent (single-pass), this supports multi-step task management
+// and sub-agent delegation via call_generic_agent. Sub-agent completions auto-notify
+// the main workshop agent via the subAgentNotifier already set on the controller.
+func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Context, name, instruction string) (string, error) {
+	stepID := fmt.Sprintf("bg-todo-%s-%d", strings.ToLower(strings.ReplaceAll(name, " ", "-")), time.Now().UnixNano()%100000)
+
+	// Build a minimal TodoTaskPlanStep from the instruction
+	innerStep := &RegularPlanStep{
+		Type: StepTypeRegular,
+		CommonStepFields: CommonStepFields{
+			ID:              stepID + "-inner",
+			Title:           name,
+			Description:     instruction,
+			SuccessCriteria: fmt.Sprintf("Complete all tasks described in the instruction for: %s", name),
+		},
+	}
+	todoStep := &TodoTaskPlanStep{
+		Type:               StepTypeTodoTask,
+		ID:                 stepID,
+		Title:              name,
+		TodoTaskStep:       innerStep,
+		PredefinedRoutes:   nil,  // generic agent only
+		EnableGenericAgent: true,
+		NextStepID:         "end",
+	}
+
+	execCtx := &ExecutionContext{
+		SkipHumanInput:    true,
+		FastExecuteMode:   false,
+		FastExecuteEndStep: -1,
+		RunSingleStepOnly: false,
+		SingleStepTarget:  -1,
+		IsEvaluationMode:  false,
+	}
+
+	_, _, err := iwm.controller.executeTodoTaskStep(
+		ctx,
+		todoStep,
+		0,
+		&StepProgress{},
+		[]string{},
+		[]string{},
+		0,
+		execCtx,
+		[]PlanStepInterface{todoStep},
+		stepID,
+		nil,
+	)
+	if err != nil {
+		return fmt.Sprintf("Background todo task %q failed: %v", name, err), err
+	}
+	return fmt.Sprintf("Background todo task %q completed.", name), nil
 }
 
 // runBackgroundTaskAgent creates and runs a standalone background agent

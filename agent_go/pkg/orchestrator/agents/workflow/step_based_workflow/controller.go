@@ -15,6 +15,35 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
+// SubAgentNotifier is called by the todo task controller when a sub-agent starts and completes.
+// Implemented by the server layer to inject auto-notifications into the main workshop agent.
+type SubAgentNotifier interface {
+	OnSubAgentStart(agentID, name string)
+	OnSubAgentComplete(agentID, name, result string, err error)
+}
+
+// compositeSubAgentNotifier calls multiple notifiers in sequence.
+type compositeSubAgentNotifier struct {
+	notifiers []SubAgentNotifier
+}
+
+func (c *compositeSubAgentNotifier) OnSubAgentStart(agentID, name string) {
+	for _, n := range c.notifiers {
+		n.OnSubAgentStart(agentID, name)
+	}
+}
+
+func (c *compositeSubAgentNotifier) OnSubAgentComplete(agentID, name, result string, err error) {
+	for _, n := range c.notifiers {
+		n.OnSubAgentComplete(agentID, name, result, err)
+	}
+}
+
+// ChainSubAgentNotifiers returns a notifier that calls all provided notifiers in sequence.
+func ChainSubAgentNotifiers(notifiers ...SubAgentNotifier) SubAgentNotifier {
+	return &compositeSubAgentNotifier{notifiers: notifiers}
+}
+
 // StepBasedWorkflowOrchestrator manages simplified human-controlled todo planning process
 // - Single execution (no iterations)
 // - No validation phase
@@ -100,6 +129,20 @@ type StepBasedWorkflowOrchestrator struct {
 
 	// Workshop: ad-hoc human input passed via execute_step (injected into PreviousStepsSummary as critical feedback)
 	interactiveWorkflowHumanInput string
+
+	// SubAgentNotifier is called when a todo task sub-agent starts/completes.
+	// Used by the server layer to inject auto-notifications into the main workshop agent.
+	subAgentNotifier SubAgentNotifier
+}
+
+// SetSubAgentNotifier sets the notifier called on todo task sub-agent start/completion.
+func (hcpo *StepBasedWorkflowOrchestrator) SetSubAgentNotifier(n SubAgentNotifier) {
+	hcpo.subAgentNotifier = n
+}
+
+// GetSubAgentNotifier returns the current sub-agent notifier (may be nil).
+func (hcpo *StepBasedWorkflowOrchestrator) GetSubAgentNotifier() SubAgentNotifier {
+	return hcpo.subAgentNotifier
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator

@@ -744,6 +744,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		ConversationHistoryCapture: &capturedHistory,
 	}
 
+	// Notify sub-agent start
+	agentID := fmt.Sprintf("todo-generic-%s", response.TodoIDToExecute)
+	if hcpo.subAgentNotifier != nil {
+		hcpo.subAgentNotifier.OnSubAgentStart(agentID, taskTitle)
+	}
+
 	// Push context before sub-agent execution (preserve orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
 		cab.PushContext("execution", stepIndex, genericStep.GetID(), genericStep.GetTitle())
@@ -773,6 +779,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	// Pop context after sub-agent execution (restore orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
 		cab.PopContext()
+	}
+
+	// Notify sub-agent completion
+	if hcpo.subAgentNotifier != nil {
+		resultStr := fmt.Sprintf("Generic agent completed: %s", executionResult)
+		if err != nil {
+			resultStr = fmt.Sprintf("Generic agent failed: %v", err)
+		}
+		hcpo.subAgentNotifier.OnSubAgentComplete(agentID, taskTitle, resultStr, err)
 	}
 
 	if err != nil {
@@ -904,6 +919,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 		ConversationHistoryCapture: &capturedHistory,
 	}
 
+	// Notify sub-agent start
+	subAgentNotifID := fmt.Sprintf("todo-sub-%s-%s", stepPath, route.RouteID)
+	subAgentNotifName := fmt.Sprintf("%s (%s)", route.RouteName, response.TodoIDToExecute)
+	if hcpo.subAgentNotifier != nil {
+		hcpo.subAgentNotifier.OnSubAgentStart(subAgentNotifID, subAgentNotifName)
+	}
+
 	// Push context before sub-agent execution (preserve orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
 		cab.PushContext("execution", stepIndex, route.SubAgentStep.GetID(), route.SubAgentStep.GetTitle())
@@ -932,6 +954,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	// Pop context after sub-agent execution (restore orchestrator context)
 	if cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge); ok {
 		cab.PopContext()
+	}
+
+	// Notify sub-agent completion
+	if hcpo.subAgentNotifier != nil {
+		resultStr := fmt.Sprintf("Sub-agent %s completed: %s", route.RouteName, executionResult)
+		if err != nil {
+			resultStr = fmt.Sprintf("Sub-agent %s failed: %v", route.RouteName, err)
+		}
+		hcpo.subAgentNotifier.OnSubAgentComplete(subAgentNotifID, subAgentNotifName, resultStr, err)
 	}
 
 	if err != nil {

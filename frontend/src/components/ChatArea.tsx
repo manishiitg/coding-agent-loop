@@ -493,8 +493,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const activeAgents = useMemo(() => {
     if ((!isStreaming && !hasRunningBgAgents) || tabEvents.length === 0) return []
 
-    // Track running agents by correlation ID, plus agent_type for dedup
-    const running = new Map<string, { name: string, agentType: string, type: 'agent' | 'delegation' }>()
+    // Track running agents by correlation ID with depth (based on how many are already running when each starts)
+    const running = new Map<string, { name: string, agentType: string, type: 'agent' | 'delegation', depth: number }>()
 
     for (const event of tabEvents) {
       const agentEvent = event.data as Record<string, unknown> | undefined
@@ -504,7 +504,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
         const name = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'Agent') as string
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
-        if (corrId) running.set(corrId, { name, agentType, type: 'agent' })
+        if (corrId && !running.has(corrId)) {
+          // If a wrapper entry exists for this step ("Step: X" matches new agent "X"), replace it
+          let depth = running.size
+          for (const [wrapperCorrId, wrapperAgent] of running.entries()) {
+            if (wrapperAgent.agentType === 'workshop-step-execution' &&
+                wrapperAgent.name === `Step: ${name}`) {
+              depth = wrapperAgent.depth
+              running.delete(wrapperCorrId)
+              break
+            }
+          }
+          running.set(corrId, { name, agentType, type: 'agent', depth })
+        }
       } else if (event.type === 'orchestrator_agent_end') {
         const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
         if (corrId) running.delete(corrId)
@@ -512,7 +524,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const delegationId = (innerData?.delegation_id ?? agentEvent?.delegation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
         const rawName = (innerData?.agent_name ?? agentEvent?.agent_name ?? innerData?.instruction ?? agentEvent?.instruction ?? 'Sub-agent') as string
         const name = typeof rawName === 'string' && rawName.length > 50 ? rawName.substring(0, 50) + '...' : rawName
-        if (delegationId) running.set(delegationId, { name: typeof name === 'string' ? name : 'Sub-agent', agentType: '', type: 'delegation' })
+        if (delegationId && !running.has(delegationId)) {
+          const depth = running.size
+          running.set(delegationId, { name: typeof name === 'string' ? name : 'Sub-agent', agentType: '', type: 'delegation', depth })
+        }
       } else if (event.type === 'delegation_end') {
         const delegationId = (innerData?.delegation_id ?? agentEvent?.delegation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
         if (delegationId) running.delete(delegationId)
@@ -520,16 +535,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
 
     if (running.size === 0) return []
-
-    // Deduplicate by agent_type — if parent wrapper and child step share the same
-    // agent_type (e.g. "hdfc-master-task"), keep only the latest (child) which has
-    // the human-friendly agent_name. Fall back to name dedup for delegation events.
-    const deduped = new Map<string, { name: string, type: 'agent' | 'delegation' }>()
-    for (const agent of running.values()) {
-      const key = agent.agentType || agent.name
-      deduped.set(key, { name: agent.name, type: agent.type })
-    }
-    return Array.from(deduped.values())
+    return Array.from(running.values())
   }, [isStreaming, hasRunningBgAgents, tabEvents])
 
   // --- Render tracking (filter by [Render] in console) ---

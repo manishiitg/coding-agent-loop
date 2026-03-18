@@ -253,29 +253,38 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			if baseData == nil {
 				c.logger.Warn(fmt.Sprintf("⚠️ ContextAwareBridge: GetBaseEventData returned nil for event %s", event.Type))
 			} else {
-				if baseData.Metadata == nil {
-					baseData.Metadata = make(map[string]any)
+				// Build a NEW metadata map instead of modifying in-place.
+				// Modifying an existing map while another goroutine may be iterating it
+				// during JSON serialization (SSE) causes "concurrent map iteration and map write".
+				// By creating a fresh map and assigning it before forwarding the event,
+				// the SSE goroutine always sees a fully-populated, immutable snapshot.
+				newMeta := make(map[string]any, len(baseData.Metadata)+8)
+				for k, v := range baseData.Metadata {
+					newMeta[k] = v
 				}
 
 				// Add current step ID (simple tracking - which step is running)
 				if hasStepID {
-					baseData.Metadata["current_step_id"] = currentStepID
+					newMeta["current_step_id"] = currentStepID
 				}
 
 				// Add batch context (which group is running)
 				if hasBatchContext {
-					baseData.Metadata["batch_group_id"] = currentGroupID
-					baseData.Metadata["batch_group_index"] = currentGroupIdx
-					baseData.Metadata["batch_total_groups"] = totalGroups
+					newMeta["batch_group_id"] = currentGroupID
+					newMeta["batch_group_index"] = currentGroupIdx
+					newMeta["batch_total_groups"] = totalGroups
 				}
 
 				// Add full orchestrator context if available (backward compat)
 				if hasOrchestratorContext {
-					baseData.Metadata["orchestrator_phase"] = currentPhase
-					baseData.Metadata["orchestrator_step"] = currentStep
-					baseData.Metadata["orchestrator_step_id"] = currentStepID
-					baseData.Metadata["orchestrator_agent_name"] = currentAgentName
+					newMeta["orchestrator_phase"] = currentPhase
+					newMeta["orchestrator_step"] = currentStep
+					newMeta["orchestrator_step_id"] = currentStepID
+					newMeta["orchestrator_agent_name"] = currentAgentName
 				}
+
+				// Atomically replace the metadata map (all writes done before assignment)
+				baseData.Metadata = newMeta
 
 				c.logger.Debug(fmt.Sprintf("✅ ContextAwareBridge: Added metadata to event %s, metadata keys count: %d", event.Type, len(baseData.Metadata)))
 			}

@@ -231,6 +231,21 @@ type TodoVerificationResponse struct {
 	ModifiedTodoListMarkdown string    `json:"modified_todo_list_markdown,omitempty"`
 }
 
+// convertDBFallbacks converts a slice of database.AgentLLMFallback to step_based_workflow.AgentLLMFallback.
+func convertDBFallbacks(fallbacks []database.AgentLLMFallback) []step_based_workflow.AgentLLMFallback {
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	result := make([]step_based_workflow.AgentLLMFallback, len(fallbacks))
+	for i, fb := range fallbacks {
+		result[i] = step_based_workflow.AgentLLMFallback{
+			Provider: fb.Provider,
+			ModelID:  fb.ModelID,
+		}
+	}
+	return result
+}
+
 // convertDBAgentLLMConfig converts a database.AgentLLMConfig to step_based_workflow.AgentLLMConfig,
 // including fallback models.
 func convertDBAgentLLMConfig(dbConfig *database.AgentLLMConfig) *step_based_workflow.AgentLLMConfig {
@@ -303,10 +318,7 @@ func NewWorkflowOrchestrator(
 	var presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
 	if presetLLMConfig != nil {
 		if presetLLMConfig.LearningLLM != nil && presetLLMConfig.LearningLLM.Provider != "" && presetLLMConfig.LearningLLM.ModelID != "" {
-			presetLearningLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.LearningLLM.Provider,
-				ModelID:  presetLLMConfig.LearningLLM.ModelID,
-			}
+			presetLearningLLM = convertDBAgentLLMConfig(presetLLMConfig.LearningLLM)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for learning
 			presetLearningLLM = &step_based_workflow.AgentLLMConfig{
@@ -316,10 +328,7 @@ func NewWorkflowOrchestrator(
 		}
 		// Extract phase LLM (used by all phase agents: planning, anonymization, plan improvement, etc.)
 		if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
-			presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.PhaseLLM.Provider,
-				ModelID:  presetLLMConfig.PhaseLLM.ModelID,
-			}
+			presetPhaseLLM = convertDBAgentLLMConfig(presetLLMConfig.PhaseLLM)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
 			// Fall back to legacy single default for phase agents
 			presetPhaseLLM = &step_based_workflow.AgentLLMConfig{
@@ -335,10 +344,27 @@ func NewWorkflowOrchestrator(
 	// Extract tiered LLM allocation config
 	var tieredConfig *step_based_workflow.TieredLLMConfig
 	if presetLLMConfig != nil && presetLLMConfig.TieredConfig != nil {
+		tier1 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier1)
+		tier2 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier2)
+		tier3 := convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier3)
+		// If a tier has no fallbacks configured, inherit from the ExecutionLLM fallbacks.
+		// This covers the common case where the user sets fallbacks on the main execution LLM
+		// but not explicitly on each tier.
+		if presetLLMConfig.ExecutionLLM != nil && len(presetLLMConfig.ExecutionLLM.Fallbacks) > 0 {
+			if tier1 != nil && len(tier1.Fallbacks) == 0 {
+				tier1.Fallbacks = convertDBFallbacks(presetLLMConfig.ExecutionLLM.Fallbacks)
+			}
+			if tier2 != nil && len(tier2.Fallbacks) == 0 {
+				tier2.Fallbacks = convertDBFallbacks(presetLLMConfig.ExecutionLLM.Fallbacks)
+			}
+			if tier3 != nil && len(tier3.Fallbacks) == 0 {
+				tier3.Fallbacks = convertDBFallbacks(presetLLMConfig.ExecutionLLM.Fallbacks)
+			}
+		}
 		tieredConfig = &step_based_workflow.TieredLLMConfig{
-			Tier1: convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier1),
-			Tier2: convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier2),
-			Tier3: convertDBAgentLLMConfig(presetLLMConfig.TieredConfig.Tier3),
+			Tier1: tier1,
+			Tier2: tier2,
+			Tier3: tier3,
 		}
 		// Phase LLM is independent of tiered mode - it's always configured separately
 		// The frontend saves phase_llm with Tier1 as default when user hasn't explicitly set one
@@ -347,10 +373,10 @@ func NewWorkflowOrchestrator(
 		} else {
 			log.Printf("[TIERED_LLM] WARNING: No Phase LLM configured - phase agents will fail")
 		}
-		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s, Tier2: %s/%s, Tier3: %s/%s",
-			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID,
-			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID,
-			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID)
+		log.Printf("[TIERED_LLM] Tiered mode enabled - Tier1: %s/%s (fallbacks: %d), Tier2: %s/%s (fallbacks: %d), Tier3: %s/%s (fallbacks: %d)",
+			tieredConfig.Tier1.Provider, tieredConfig.Tier1.ModelID, len(tieredConfig.Tier1.Fallbacks),
+			tieredConfig.Tier2.Provider, tieredConfig.Tier2.ModelID, len(tieredConfig.Tier2.Fallbacks),
+			tieredConfig.Tier3.Provider, tieredConfig.Tier3.ModelID, len(tieredConfig.Tier3.Fallbacks))
 	}
 
 	// Extract feature toggles from preset config

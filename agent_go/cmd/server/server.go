@@ -4334,6 +4334,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseRunFolder = req.ExecutionOptions.SelectedRunFolder
 					phaseEnabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
 				}
+				// If no run folder selected by the user, auto-detect the latest iteration.
+				if phaseRunFolder == "" && phaseWorkspacePath != "" {
+					phaseRunFolder = resolveLatestRunFolder(context.WithoutCancel(r.Context()), phaseWorkspacePath, phaseWSClient)
+				}
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
 					"WorkspacePath":       phaseWorkspacePath,
@@ -4350,31 +4354,38 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseTemplateVars["UseKnowledgebase"] = "true" // default; overridden by preset below if needed
 				}
 
+				// Use a detached context for workspace file reads during setup so that
+				// SSE streaming or other concurrent request activity cannot cancel them.
+				// context.WithoutCancel preserves values (user ID, tracing) but drops the
+				// cancellation signal, which is safe for these short, bounded reads.
+				setupCtx := context.WithoutCancel(r.Context())
+
 				// Read existing plan from workspace (if any)
-				existingPlanJSON := todo_creation_human.ReadPlanFromWorkspace(r.Context(), phaseWorkspacePath, phaseReadFile)
+				existingPlanJSON := todo_creation_human.ReadPlanFromWorkspace(setupCtx, phaseWorkspacePath, phaseReadFile)
 				if existingPlanJSON != "" {
 					phaseTemplateVars["ExistingPlanJSON"] = existingPlanJSON
 					log.Printf("[WORKFLOW_PHASE] Loaded existing plan (%d bytes)", len(existingPlanJSON))
 				}
 
 				// Read variable names from workspace (if any)
-				variableNames := todo_creation_human.ReadVariablesFromWorkspace(r.Context(), phaseWorkspacePath, phaseReadFile)
+				variableNames := todo_creation_human.ReadVariablesFromWorkspace(setupCtx, phaseWorkspacePath, phaseReadFile)
 				if variableNames != "" {
 					phaseTemplateVars["VariableNames"] = variableNames
 					log.Printf("[WORKFLOW_PHASE] Loaded variable names")
 				}
 
-				// Load evaluation context for evaluation-builder phase
-				if workflowPhaseID == "evaluation-builder" || workflowPhaseID == "workflow-builder" {
+				// Load evaluation context for evaluation-builder phase only.
+				// workflow-builder reads evaluation files on demand via execute_shell_command.
+				if workflowPhaseID == "evaluation-builder" {
 					// Read evaluation plan
-					evalPlanContent, evalPlanErr := phaseReadFile(r.Context(), phaseWorkspacePath+"/evaluation/evaluation_plan.json")
+					evalPlanContent, evalPlanErr := phaseReadFile(setupCtx, phaseWorkspacePath+"/evaluation/evaluation_plan.json")
 					if evalPlanErr == nil && evalPlanContent != "" {
 						phaseTemplateVars["EvaluationPlanJSON"] = evalPlanContent
 						log.Printf("[WORKFLOW_PHASE] Loaded evaluation plan (%d bytes)", len(evalPlanContent))
 					}
 					// Read latest evaluation report if a run folder is selected
 					if phaseRunFolder != "" {
-						evalReportContent, evalReportErr := phaseReadFile(r.Context(), phaseWorkspacePath+"/evaluation/runs/"+phaseRunFolder+"/evaluation_report.json")
+						evalReportContent, evalReportErr := phaseReadFile(setupCtx, phaseWorkspacePath+"/evaluation/runs/"+phaseRunFolder+"/evaluation_report.json")
 						if evalReportErr == nil && evalReportContent != "" {
 							phaseTemplateVars["EvaluationReportJSON"] = evalReportContent
 							log.Printf("[WORKFLOW_PHASE] Loaded evaluation report from %s (%d bytes)", phaseRunFolder, len(evalReportContent))
@@ -4583,16 +4594,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 										if presetLLMConfig.TieredConfig != nil {
 											refreshedTiered := &todo_creation_human.TieredLLMConfig{
 												Tier1: &todo_creation_human.AgentLLMConfig{
-													Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
-													ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+													Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
+													ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
+													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
 												},
 												Tier2: &todo_creation_human.AgentLLMConfig{
-													Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
-													ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+													Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
+													ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
+													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
 												},
 												Tier3: &todo_creation_human.AgentLLMConfig{
-													Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
-													ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+													Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
+													ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
+													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
 												},
 											}
 											workshopSession.UpdateTieredConfig(refreshedTiered)
@@ -8614,6 +8628,61 @@ func buildWorkshopGroupInfo(
 	return sb.String()
 }
 
+// resolveLatestRunFolder lists the runs/ directory and returns the name of the latest
+// iteration folder (e.g. "iteration-27"). Returns "" if no runs exist or on error.
+func resolveLatestRunFolder(ctx context.Context, workspacePath string, wsClient *workspace.Client) string {
+	runsPath := workspacePath + "/runs"
+	maxDepth := 1
+	resp, err := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{
+		Folder:   runsPath,
+		MaxDepth: &maxDepth,
+	})
+	if err != nil {
+		return ""
+	}
+
+	// Parse response — try the three known formats
+	type wsFile struct {
+		FilePath string `json:"filepath"`
+		Type     string `json:"type"`
+	}
+	var files []wsFile
+	if err := json.Unmarshal([]byte(resp), &files); err != nil {
+		var wrapped struct {
+			Files []wsFile `json:"files"`
+		}
+		if err2 := json.Unmarshal([]byte(resp), &wrapped); err2 == nil {
+			files = wrapped.Files
+		} else {
+			var api struct {
+				Data []wsFile `json:"data"`
+			}
+			if err3 := json.Unmarshal([]byte(resp), &api); err3 == nil {
+				files = api.Data
+			}
+		}
+	}
+
+	maxIter := 0
+	for _, f := range files {
+		if f.Type != "folder" {
+			continue
+		}
+		name := f.FilePath
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			name = name[idx+1:]
+		}
+		var n int
+		if _, err := fmt.Sscanf(name, "iteration-%d", &n); err == nil && n > maxIter {
+			maxIter = n
+		}
+	}
+	if maxIter == 0 {
+		return ""
+	}
+	return fmt.Sprintf("iteration-%d", maxIter)
+}
+
 // buildWorkshopConfig loads the full preset and builds a WorkshopConfig that replicates
 // the exact same tool/LLM/browser/image-gen setup as a normal workflow execution.
 // This mirrors the logic in the /api/workflow handler (lines ~2003-2260) so the workshop
@@ -8765,16 +8834,19 @@ func (api *StreamingAPI) buildWorkshopConfig(
 						cfg.LLMAllocationMode = "tiered"
 						cfg.TieredConfig = &todo_creation_human.TieredLLMConfig{
 							Tier1: &todo_creation_human.AgentLLMConfig{
-								Provider: presetLLMConfig.TieredConfig.Tier1.Provider,
-								ModelID:  presetLLMConfig.TieredConfig.Tier1.ModelID,
+								Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
+								ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
+								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
 							},
 							Tier2: &todo_creation_human.AgentLLMConfig{
-								Provider: presetLLMConfig.TieredConfig.Tier2.Provider,
-								ModelID:  presetLLMConfig.TieredConfig.Tier2.ModelID,
+								Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
+								ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
+								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
 							},
 							Tier3: &todo_creation_human.AgentLLMConfig{
-								Provider: presetLLMConfig.TieredConfig.Tier3.Provider,
-								ModelID:  presetLLMConfig.TieredConfig.Tier3.ModelID,
+								Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
+								ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
+								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
 							},
 						}
 						log.Printf("[WORKSHOP] Tiered mode: T1=%s/%s T2=%s/%s T3=%s/%s",
@@ -9169,8 +9241,9 @@ func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQuer
 func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legacyModelID string) *todo_creation_human.AgentLLMConfig {
 	if specific != nil && specific.Provider != "" && specific.ModelID != "" {
 		return &todo_creation_human.AgentLLMConfig{
-			Provider: specific.Provider,
-			ModelID:  specific.ModelID,
+			Provider:  specific.Provider,
+			ModelID:   specific.ModelID,
+			Fallbacks: workshopConvertFallbacks(specific.Fallbacks),
 		}
 	}
 	if legacyProvider != "" && legacyModelID != "" {
@@ -9180,4 +9253,19 @@ func workshopExtractLLM(specific *database.AgentLLMConfig, legacyProvider, legac
 		}
 	}
 	return nil
+}
+
+// workshopConvertFallbacks converts database fallbacks to step_based_workflow fallbacks.
+func workshopConvertFallbacks(fallbacks []database.AgentLLMFallback) []todo_creation_human.AgentLLMFallback {
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	result := make([]todo_creation_human.AgentLLMFallback, len(fallbacks))
+	for i, fb := range fallbacks {
+		result[i] = todo_creation_human.AgentLLMFallback{
+			Provider: fb.Provider,
+			ModelID:  fb.ModelID,
+		}
+	}
+	return result
 }

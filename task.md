@@ -4,6 +4,10 @@
 
 35. in workflows, we shouldh ave plan versions published?  - PROGRESS... add this as a tool to workflow builder also
 
+35. in workflows, we shouldh ave plan versions published?  - PROGRESS
+
+38. should plan debugger etc bhi multichat agent... how make that more integrate with workflows?
+
 39. add termporal to agents / workflows --- not use something simpler
 
 41. camoflux is inside docker, review if thats best or alternative possible because we can see the ui if outside https://github.com/whit3rabbit/camoufox-mcp  - PROGRESS
@@ -20,8 +24,6 @@
 50. should multiagent should have all mcps, skills, selected by defaut? and in tool search mode?
 
 51. deploy on railway? with low config see if it works?
-
-52. the openapi sepc, has too many extra tokens - DONE
 
 53. right now when using mcpbriget, we keep aing mcp_api_url and token.. some smart way to auto inject that to skip that maybe?
 

@@ -320,15 +320,16 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 	case "workflow-builder":
 		// Use the full workshop system template (same as orchestrator mode)
 		// so the chat agent gets all plan design guidance, optimization tips, etc.
-		templateData["PlanJSON"] = templateVars["ExistingPlanJSON"]
+		// PlanJSON is intentionally NOT injected here — the agent uses list_steps
+		// to fetch the plan on demand, avoiding a large static injection on every request.
 		templateData["RunFolder"] = templateVars["RunFolder"]
 		templateData["StepConfigSummary"] = templateVars["StepConfigSummary"]
 		templateData["ProgressSummary"] = templateVars["ProgressSummary"]
 		templateData["GroupInfo"] = templateVars["GroupInfo"]
 		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
-		templateData["EvaluationPlanJSON"] = templateVars["EvaluationPlanJSON"]
-		templateData["EvaluationReportJSON"] = templateVars["EvaluationReportJSON"]
+		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
+		// the agent reads them on demand via execute_shell_command.
 		tmpl = interactiveWorkshopSystemTemplate
 	case "human-assisted-execution":
 		// Execution-only template — same tools but no optimization/plan-modification guidance
@@ -600,7 +601,10 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	}
 
 	// Pre-load the plan so list_steps and get_step_prompts work immediately (best-effort).
-	if loadErr := controller.LoadPlanForWorkshop(ctx); loadErr != nil {
+	// Use a detached context so SSE streaming or other concurrent request activity cannot
+	// cancel this short, bounded read. context.WithoutCancel preserves values but drops
+	// the cancellation signal.
+	if loadErr := controller.LoadPlanForWorkshop(context.WithoutCancel(ctx)); loadErr != nil {
 		logger.Warn(fmt.Sprintf("[WORKSHOP] Could not pre-load plan (%v) — will retry on first tool call", loadErr))
 	}
 

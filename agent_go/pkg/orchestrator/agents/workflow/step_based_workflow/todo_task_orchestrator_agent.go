@@ -27,37 +27,27 @@ You orchestrate work by managing a task list (tasks.md) and delegating to sub-ag
 
 ## Execution Loop
 
-**1. PLAN** — If tasks.md is empty, analyze the objective and create it:
+**1. PLAN** — If tasks.md is empty, read the Step Instructions in the user message and create tasks.md from them:
 '''
-# Plan
-Approach description.
 # Tasks
 ## Pending
-- [ ] task_1: Clone repository and extract metadata
-- [ ] task_2: Analyze codebase structure
+- [ ] task_1: Description
+- [ ] task_2: Description
 ## In Progress
 ## Completed
 ## Removed
 '''
 
-**2. EXECUTE** — Pick pending tasks, mark as in-progress ([~]), delegate or do them. Run independent tasks in parallel.
+**2. EXECUTE** — Dispatch pending tasks to sub-agents (predefined routes or generic agents). Run independent tasks in parallel.
+  - Use **predefined routes** for tasks that match a known sub-agent
+  - Use **call_generic_agent** for any task that doesn't fit a predefined route — generic agents have full tool access and can handle ad-hoc work
   - **Before delegating**: Mark task(s) as In Progress ([~]) in tasks.md
-  - **After success**: Mark as Completed ([x]) and move to Completed section
-  - **After failure**: Keep as In Progress or revert to Pending with a note. Use get_sub_agent_conversation to inspect what happened before retrying.
-  - **Self-execution fallback**: If a sub-agent fails twice on the same task, do it yourself instead of delegating again. You have a higher-reasoning LLM and full tool access — use get_sub_agent_conversation to understand what went wrong, review the LEARNING HISTORY for relevant patterns, then execute the task directly using your own tools. This avoids wasting iterations on repeated delegation failures.
-  - tasks.md must ALWAYS reflect the true current state — never leave completed work marked as pending
+  - **After success**: Mark as Completed ([x])
+  - **After failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
+  - **Edge cases / unexpected errors**: Add new tasks to tasks.md as needed to handle them, then continue
+  - tasks.md must always reflect true current state
 
-**3. REFLECT** — After every batch: What did I learn? Add/remove/refine tasks. Update tasks.md via heredoc rewrite.
-
-**4. COMPLETE** — When the OBJECTIVE is met (not just all tasks done): verify outputs, then call mark_step_complete(reason). This is required to exit.
-
-**Your plan is a hypothesis.** Adapt it after every execution — add, remove, refine tasks based on what you learn. Never blindly execute a fixed list.
-
-### When to Adapt the Plan
-- **ADD tasks**: Sub-agent revealed additional work, discovered dependencies, or a complex task needs splitting
-- **REMOVE tasks**: Work already done by a previous task, approach changed, or task is redundant
-- **REFINE tasks**: You have more specific info, success criteria need tightening, or scope needs adjustment
-- **Document removals**: Move to Removed section with reason (e.g., [REMOVED] task_5: Unnecessary — handled by task_2)
+**3. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs, call mark_step_complete(reason). Required to exit.
 
 ---
 
@@ -165,9 +155,7 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 
 {{"{{TOOL_STRUCTURE}}"}}`)
 
-var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `# {{.StepTitle}}
-
-## Objective
+var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `## Success Criteria
 {{.StepSuccessCriteria}}
 
 ## Context
@@ -189,30 +177,15 @@ var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestrato
 {{.SubAgentResult}}
 {{end}}
 
-## Action Required
-
-### If tasks.md is EMPTY:
-1. Analyze the current state — read existing files in the output folder
-2. Create YOUR OWN plan based on what you observe is missing/needed
-3. Do NOT copy the background notes below as your task list — they are reference information only
-
-### If tasks.md has PENDING tasks:
-→ Select next task and execute (yourself or delegate)
-→ Reflect: What did I learn? What should change?
-→ Update tasks.md: mark complete [x], ADD new tasks, REMOVE unnecessary ones
-
-### When OBJECTIVE is achieved:
-→ Ensure all required outputs are created
-→ Call mark_step_complete(reason) to signal completion
-
----
-
-<details>
-<summary>Background Notes (reference only — do NOT treat as a task list)</summary>
-
+{{if .StepDescription}}
+## Step Instructions
 {{.StepDescription}}
+{{end}}
 
-</details>`)
+## Action Required
+- If tasks.md is EMPTY: read Step Instructions above, create tasks.md, begin dispatching
+- If tasks.md has PENDING tasks: dispatch next task(s) to sub-agents, handle failures
+- When SUCCESS CRITERIA is met: call mark_step_complete(reason)`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
 // This agent manages a todo list and delegates work to predefined or generic sub-agents

@@ -1003,13 +1003,8 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
 ### Current Plan
-{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}No plan available.{{end}}
+{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use `+"`list_steps`"+` to see the current plan and its steps.{{end}}
 
-{{if .EvaluationPlanJSON}}### Evaluation Plan
-` + "```json\n{{.EvaluationPlanJSON}}\n```" + `
-{{end}}{{if .EvaluationReportJSON}}### Latest Evaluation Report
-` + "```json\n{{.EvaluationReportJSON}}\n```" + `
-{{end}}
 ## 📊 EVALUATION
 
 Evaluation plans test execution quality. Each eval step checks one execution step's output.
@@ -1242,7 +1237,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
 ### Current Plan
-{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}No plan available.{{end}}
+{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use `+"`list_steps`"+` to see the current plan and its steps.{{end}}
 
 ## 📖 STEP EXECUTION WORKFLOW
 

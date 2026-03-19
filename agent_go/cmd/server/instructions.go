@@ -277,11 +277,17 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	parts = append(parts, fmt.Sprintf("### Workflow: %s\n", workflowName))
 	parts = append(parts, fmt.Sprintf("**Workspace Path:** `%s/`\n", wsPath))
 
-	// 0. Custom instructions (instructions.md) — user-saved instructions for this workflow
-	customInstructions := readFileContent(client, path.Join(wsPath, "instructions.md"))
-	if customInstructions != "" {
-		parts = append(parts, "**Custom Instructions (saved by user):**")
-		parts = append(parts, customInstructions)
+	// 0. Workflow memory (memory/ folder) — user-saved knowledge for this workflow
+	// Also check legacy instructions.md for backward compatibility
+	memoryDir := path.Join(wsPath, "memory")
+	memoryContent := readDirectoryMarkdownFiles(client, memoryDir)
+	if memoryContent == "" {
+		// Fallback: read legacy instructions.md
+		memoryContent = readFileContent(client, path.Join(wsPath, "instructions.md"))
+	}
+	if memoryContent != "" {
+		parts = append(parts, "**Workflow Memory:**")
+		parts = append(parts, memoryContent)
 		parts = append(parts, "")
 	}
 
@@ -376,6 +382,30 @@ func readFileContent(client *skills.WorkspaceAPIClient, filePath string) string 
 		return ""
 	}
 	return strings.TrimSpace(content)
+}
+
+// readDirectoryMarkdownFiles reads all .md files from a directory and concatenates them.
+// Returns empty string if directory doesn't exist or has no .md files.
+func readDirectoryMarkdownFiles(client *skills.WorkspaceAPIClient, dirPath string) string {
+	entries, err := client.ListFiles(dirPath)
+	if err != nil {
+		return ""
+	}
+
+	var memoryParts []string
+	for _, entry := range entries {
+		if entry.Type != "file" || !strings.HasSuffix(entry.Filepath, ".md") {
+			continue
+		}
+		content := readFileContent(client, entry.Filepath)
+		if content != "" {
+			memoryParts = append(memoryParts, content)
+		}
+	}
+	if len(memoryParts) == 0 {
+		return ""
+	}
+	return strings.Join(memoryParts, "\n\n---\n\n")
 }
 
 // variableEntry represents a variable in variables.json

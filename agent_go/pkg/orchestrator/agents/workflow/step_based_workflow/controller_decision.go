@@ -214,31 +214,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeDecisionStep(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step evaluated: result=%t", decisionResponse.Result))
 
-	// AUTO-UNLOCK LEARNINGS: If decision result is false, automatically unlock learnings for the step
-	// This ensures that when a decision step returns false, the step can learn from the failure
-	// Skip for human-assisted learning mode — learnings are manually curated and treated as final
-	if !decisionResponse.Result {
-		decisionStepID := step.GetID()
-		// Get agent configs for the step to check if learnings are locked
-		stepConfigsForUnlock := getAgentConfigs(step)
-		isHumanAssistedStep := stepConfigsForUnlock != nil && stepConfigsForUnlock.LearningMode == "human_assisted"
-		isLearningsLocked := stepConfigsForUnlock != nil && stepConfigsForUnlock.LockLearnings != nil && *stepConfigsForUnlock.LockLearnings
-		if isLearningsLocked && !isHumanAssistedStep {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Decision step returned FALSE - auto-unlocking learnings for step %s so it can learn from the failure", decisionStepID))
-			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, decisionStepID); unlockErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", decisionStepID, unlockErr))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (decision step returned false)", decisionStepID))
-				// Update unlock metadata - use step path for learning path identifier
-				unlockStepPath := fmt.Sprintf("step-%d-decision", stepIndex+1)
-				learningPathIdentifier := decisionStepID // Use step ID as learning path identifier (new format)
-				if metadataErr := hcpo.updateUnlockMetadata(ctx, decisionStepID, stepIndex, unlockStepPath, learningPathIdentifier, "decision_step_false"); metadataErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for step %s: %v", decisionStepID, metadataErr))
-				}
-			}
-		}
-	}
-
 	// Emit decision_evaluated event with structured response
 	hcpo.emitDecisionEvaluatedEvent(ctx, step, stepIndex, decisionStepPath, decisionResponse)
 

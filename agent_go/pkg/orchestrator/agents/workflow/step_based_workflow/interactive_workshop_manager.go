@@ -479,7 +479,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	iwm.controller.SetWorkspacePath(workspacePath)
 
 	// Use the run folder passed from the frontend toolbar selection (if any).
-	// If empty, leave selectedRunFolder unset — the LLM will call list_runs and
+	// If empty, leave selectedRunFolder unset — the LLM will run 'ls runs/' and
 	// pick the appropriate iteration via execute_step's iteration parameter.
 	if runFolder != "" {
 		iwm.controller.selectedRunFolder = runFolder
@@ -565,7 +565,7 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 		"Plans",  // Allow reading plans for reference
 	}
 	// Write to full workspace — the workshop agent and its background agents need to write
-	// to learnings, knowledgebase, execution, instructions.md, and other workspace files.
+	// to learnings, knowledgebase, execution, memory/, and other workspace files.
 	// Plan tools also write to planning/ via workspace API (bypass guard).
 	writePaths := []string{
 		workspacePath,
@@ -679,9 +679,27 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
 - **Auto-notifications may be delayed.** Messages prefixed with [AUTO-NOTIFICATION] report step completions/failures, but they can arrive late — sometimes after you've already moved on to different work or the user has changed the plan. Always check whether a notification is still relevant to the **current** plan and context before acting on it. Do not assume a notification reflects the latest state.
 
-**NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (get_step_details, debug_step, get_workflow_config, etc.).
+**NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (debug_step, get_workflow_config, etc.) or read workspace files directly via shell commands.
 
-**Saving custom instructions:** When the user asks you to save or remember specific instructions, tips, or guidelines for this workflow, write them to ` + "`{{.WorkspacePath}}/instructions.md`" + ` using shell_command (e.g. ` + "`cat >> instructions.md`" + `) or diff_patch_workspace_file. These instructions are automatically loaded into the system prompt on every future session. Append to the file rather than overwriting existing instructions.
+**Workflow Memory (memory/):** You have a persistent memory system at ` + "`{{.WorkspacePath}}/memory/`" + `. All .md files in this folder are automatically loaded into your system prompt on every future session. Use this to build up workflow-specific knowledge across conversations.
+
+**When to save memory:**
+- When the user asks you to remember something, save a preference, or store instructions
+- When you discover important errors, gotchas, or workarounds during workflow execution that would be valuable in future runs
+- When the user expresses preferences about how this workflow should be managed (e.g., "always run step X before Y", "don't optimize step Z")
+- When debugging reveals root causes or environment-specific issues (e.g., "API rate-limits after 100 requests", "login fails if session cookie expires after 30 min")
+
+**How to save:** Write to ` + "`memory/memory.md`" + ` using execute_shell_command or diff_patch_workspace_file. Append new entries rather than overwriting. Example:
+- ` + "`echo '\\n## Login requires 2FA\\nThe portal requires OTP verification after login. Always wait for the OTP step.' >> memory/memory.md`" + `
+- ` + "`echo '\\n## Sheet format\\nColumn A is date (YYYY-MM-DD), Column B is amount (no commas).' >> memory/memory.md`" + `
+
+**What NOT to save:** Don't save things derivable from the plan, step configs, or learnings. Memory is for workflow-level knowledge that doesn't belong in any specific step.
+
+{{if .StepSummary}}
+## 📋 CURRENT PLAN STEPS
+{{.StepSummary}}
+Use ` + "`cat planning/plan.json`" + ` for full step details (descriptions, validation schemas, context dependencies).
+{{end}}
 
 ## 📐 PLAN DESIGN — From Requirements to Steps
 
@@ -697,7 +715,7 @@ Break the user's requirement into **concrete actions** — things an agent must 
 | Scenario | Step Type | Why |
 |----------|-----------|-----|
 | Agent performs a task and writes output | **Regular** | Simplest type — one agent, one output |
-| Task has multiple known sub-tasks that repeat | **Todo Task** with sub-agents | Each sub-task gets its own learning, validation, and tools |
+| Task has multiple known sub-tasks that repeat | **Todo Task** (sub-workflow/pipeline) with sub-agents | Each sub-task gets its own learning, validation, and tools |
 | Need to branch based on prior step output (no new work) | **Conditional** | Inspection-only — reads context, picks a branch |
 | Need to do work first, then branch based on the result | **Decision** | Execute → evaluate → route |
 | Need to pick one of N paths based on context | **Routing** | N-way LLM evaluation → pick one route |
@@ -722,7 +740,9 @@ Every step reads from prior steps and writes for downstream steps:
 - Steps can read from and write to knowledgebase/ — reference files as 'knowledgebase/file.ext' in step descriptions.
 - Use **update_step_config** with 'disable_knowledgebase: true' for steps that don't need persistent storage access.
 {{end}}
-### Step 4: When to Use Todo Task with Sub-Agents
+### Step 4: When to Use Todo Task (Sub-Workflow / Pipeline) with Sub-Agents
+
+**Note:** Users may refer to todo_task steps as "sub-workflows" or "pipelines", and to the routes/sub-agent steps within them as "sub-agents". These are the same concept.
 
 **Use todo_task when the step manages MULTIPLE discrete tasks**, especially when:
 - The tasks are **known in advance** and will run each time (e.g., "process each form field", "check each compliance item")
@@ -766,11 +786,11 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 ## ⚙️ WORKSHOP TOOLS
 
-### Discovery
-- **list_steps** — Lists all steps with IDs, titles, types, and config tags (optimized, learning mode). Use this first, then get_step_details for full info on specific steps.
-- **get_step_details(step_id)** — Full details of a single step: description, success_criteria, context_dependencies, validation_schema, and agent_configs (servers, tools, mode, LLMs).
-- **list_runs** — Lists existing iteration folders and their group subfolders. Use this to discover previous runs before executing.
-- **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
+### Discovery (use execute_shell_command to read workspace files directly)
+- **Plan & steps**: ` + "`cat planning/plan.json`" + ` — full plan with all step definitions (IDs, types, descriptions, success_criteria, context_dependencies, validation_schema). Use ` + "`cat planning/plan.json | python3 -c \"import sys,json; [print(f'{i+1}. {s[\\\"id\\\"]} [{s[\\\"type\\\"]}] - {s[\\\"title\\\"]}') for i,s in enumerate(json.load(sys.stdin)[\\\"steps\\\"])]\" `" + ` for a quick summary.
+- **Step configs**: ` + "`cat step_config.json`" + ` — step-level config overrides (servers, tools, mode, learning settings, LLMs)
+- **Runs**: ` + "`ls runs/`" + ` — list existing iteration folders; ` + "`ls runs/iteration-N/`" + ` — list group subfolders within an iteration
+- **Variables & groups**: ` + "`cat variables.json`" + ` — variable definitions and group configurations (group_id, display_name, values, enabled status)
 
 ### Background Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **human_input** provides text input/instructions for the step agent. **For human input steps**: pass **human_input** to automatically answer the step's question instead of blocking for user input — this lets you provide answers based on your conversation context. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
@@ -791,7 +811,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types (execution, todo_task, conditional, decision, routing).
 - **get_workflow_config** — **Use this to see the full workflow configuration.** Shows: MCP servers (selected + all available with descriptions), skills, secrets (names only), and LLM config (tiered allocation with fallbacks, preset defaults). Always use this tool when asked about MCP servers, skills, secrets, or LLM config — do NOT explore the filesystem.
 - **get_llm_config** — Show per-step LLM overrides from step_config.json (for workflow-level LLM config, use get_workflow_config instead)
-- **get_variables** — Read current variable definitions and group configurations
+- **Variables**: Read ` + "`cat variables.json`" + ` via execute_shell_command for variable definitions and group configurations
 
 ### Variable Management
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
@@ -804,8 +824,8 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 ### Schedule Management
 - **list_schedules** — List all cron schedules for this workflow
-- **create_schedule(name, cron_expression, timezone?, group_ids?)** — Create a new cron schedule. Use get_variables first to look up group IDs if the user wants specific groups.
-- **update_schedule(job_id, name?, cron_expression?, timezone?, group_ids?, enabled?)** — Update a schedule. Use get_variables to look up group IDs.
+- **create_schedule(name, cron_expression, timezone?, group_ids?)** — Create a new cron schedule. Read variables.json to look up group IDs if the user wants specific groups.
+- **update_schedule(job_id, name?, cron_expression?, timezone?, group_ids?, enabled?)** — Update a schedule. Read variables.json to look up group IDs.
 - **delete_schedule(job_id)** — Delete a schedule
 - **trigger_schedule(job_id)** — Manually trigger a schedule run now
 - **get_schedule_runs(job_id, limit?)** — View run history for a schedule
@@ -976,8 +996,8 @@ When the user asks to enable code execution for a step, use: update_step_config(
 - **Already-optimized steps** (optimized=true in step_config) skip the optimization prompt on completion — the notification just says "proceed to next step".
 - **Reset optimization** (optimized=false) only if you make major changes to the step description, tools, or validation schema — then re-run and re-optimize once.
 
-### 9. Todo Task — The Preferred Multi-Step Pattern
-**Default to todo_task** when a step involves multiple distinct sub-tasks. This is the most powerful step type — it gives each sub-task independent learnings, tools, skills, and debugging.
+### 9. Todo Task (Sub-Workflow / Pipeline) — The Preferred Multi-Step Pattern
+**Default to todo_task** when a step involves multiple distinct sub-tasks. Users may call this a "sub-workflow" or "pipeline" — it's the most powerful step type, giving each sub-task (sub-agent) independent learnings, tools, skills, and debugging.
 
 **When to use todo_task (prefer this over a single large regular step):**
 - The step has **3+ distinct actions** (e.g., "login, extract data, generate report") — each becomes a sub-agent
@@ -1038,7 +1058,7 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
 ### Current Plan
-{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use `+"`list_steps`"+` to see the current plan and its steps.{{end}}
+{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use ` + "`cat planning/plan.json`" + ` to see the current plan and its steps.{{end}}
 
 ## 📊 EVALUATION
 
@@ -1080,8 +1100,8 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 
 **Every time the user asks to run a step**, do this before calling execute_step:
 
-1. Call **list_runs** to see existing iterations and their group subfolders (with group_ids)
-2. Call **list_groups** to see available groups and their group_ids
+1. Run ` + "`ls runs/`" + ` to see existing iterations and their group subfolders
+2. Run ` + "`cat variables.json`" + ` to see available groups and their group_ids
 3. **ALWAYS reuse the latest existing iteration** unless the user explicitly asks for a new one. Do NOT create iteration-2, iteration-3, etc. on your own — just keep using the latest iteration. Creating unnecessary iterations clutters the workspace with redundant output folders.
    - If no iterations exist yet, create **iteration-1**
    - If iterations exist, **reuse the highest-numbered one** (e.g., if iteration-3 exists, use iteration-3)
@@ -1089,7 +1109,7 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 4. For the group: suggest the toolbar-selected group or the one matching the user's request. Only confirm if ambiguous.
 5. Once determined, pass both **iteration** and **group_id** explicitly to every execute_step call
 
-**Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
+**Never guess the group_id from the run folder path or the user's name** — always read variables.json to find the correct group_id (e.g., "group-1", "group-2").
 
 ### Running Steps
 1. User says "run step-X" → determine iteration + group first (see above) → call **execute_step("step-id", iteration, group_id)** → get execution_id
@@ -1143,7 +1163,7 @@ The plan can contain several step types. Top-level steps appear in the plan's "s
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Decision** (type: "decision"): Executes a step, then branches based on evidence in context. Contains **if_true_steps** and **if_false_steps** — arrays of inner steps that run depending on the decision outcome.
 - **Conditional** (type: "conditional"): Inspection-only branch (no execution of the main step). Contains **if_true_steps** and **if_false_steps** — evaluated based on prior context without running an agent.
-- **Todo Task** (type: "todo_task"): Manages a dynamic todo list with trackable tasks. Has a **todo_task_step** (main orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning).
+- **Todo Task / Sub-Workflow** (type: "todo_task"): Manages a dynamic todo list with trackable tasks. Users may call this a "sub-workflow", "pipeline", or "sub-agents". Has a **todo_task_step** (main orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning).
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** (main evaluator) and **orchestration_routes** — each route has a **sub_agent_step** (inner step).
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports response types: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Loop** (type: "loop"): Repeat until criteria met (polled progress).
@@ -1151,12 +1171,17 @@ The plan can contain several step types. Top-level steps appear in the plan's "s
 
 ### Inner Steps
 Inner steps live inside conditional branches, orchestration routes, or todo_task routes. They have their own step IDs and can be individually:
-- Listed via **list_steps** (shown indented under their parent)
+- Visible in plan.json (shown as nested steps under their parent)
 - Executed via **execute_step(inner_step_id)**
 - Analyzed via **analyze_step(inner_step_id)**
 - Configured via **update_step_config(inner_step_id, ...)**
 
-When debugging a failing workflow, use **list_steps** to see ALL steps including inner ones, then target the specific inner step that needs attention.
+When debugging a failing workflow, read plan.json to see ALL steps including inner ones, then target the specific inner step that needs attention.
+
+{{if .CustomInstructions}}
+## 🧠 WORKFLOW MEMORY
+{{.CustomInstructions}}
+{{end}}
 
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
@@ -1189,17 +1214,29 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
 - **Auto-notifications may be delayed.** Messages prefixed with [AUTO-NOTIFICATION] report step completions/failures, but they can arrive late — sometimes after you've already moved on to different work or the user has changed the plan. Always check whether a notification is still relevant to the **current** plan and context before acting on it. Do not assume a notification reflects the latest state.
 
-**NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the tools (get_step_details, debug_step, get_workflow_config, etc.).
+**NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the tools (debug_step, get_workflow_config, etc.) or read workspace files directly via shell commands.
 
-**Saving custom instructions:** When the user asks you to save or remember specific instructions, tips, or guidelines for this workflow, write them to ` + "`{{.WorkspacePath}}/instructions.md`" + ` using shell_command (e.g. ` + "`cat >> instructions.md`" + `) or diff_patch_workspace_file. These instructions are automatically loaded into the system prompt on every future session. Append to the file rather than overwriting existing instructions.
+**Workflow Memory (memory/):** You have a persistent memory system at ` + "`{{.WorkspacePath}}/memory/`" + `. All .md files in this folder are automatically loaded into your system prompt on every future session. Use this to build up workflow-specific knowledge across conversations.
+
+**When to save memory:**
+- When the user asks you to remember something, save a preference, or store instructions
+- When you discover important errors, gotchas, or workarounds during workflow execution that would be valuable in future runs
+- When the user expresses preferences about how this workflow should be managed (e.g., "always run step X before Y", "don't optimize step Z")
+- When debugging reveals root causes or environment-specific issues (e.g., "API rate-limits after 100 requests", "login fails if session cookie expires after 30 min")
+
+**How to save:** Write to ` + "`memory/memory.md`" + ` using execute_shell_command or diff_patch_workspace_file. Append new entries rather than overwriting. Example:
+- ` + "`echo '\\n## Login requires 2FA\\nThe portal requires OTP verification after login. Always wait for the OTP step.' >> memory/memory.md`" + `
+- ` + "`echo '\\n## Sheet format\\nColumn A is date (YYYY-MM-DD), Column B is amount (no commas).' >> memory/memory.md`" + `
+
+**What NOT to save:** Don't save things derivable from the plan, step configs, or learnings. Memory is for workflow-level knowledge that doesn't belong in any specific step.
 
 ## ⚙️ TOOLS
 
-### Discovery
-- **list_steps** — Lists all steps with IDs, titles, types, and config tags (optimized, learning mode). Use this first, then get_step_details for full info on specific steps.
-- **get_step_details(step_id)** — Full details of a single step: description, success_criteria, context_dependencies, validation_schema, and agent_configs (servers, tools, mode, LLMs).
-- **list_runs** — Lists existing iteration folders and their group subfolders. Use this to discover previous runs before executing.
-- **list_groups** — Lists available variable groups. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.
+### Discovery (use execute_shell_command to read workspace files directly)
+- **Plan & steps**: ` + "`cat planning/plan.json`" + ` — full plan with all step definitions (IDs, types, descriptions, success_criteria, context_dependencies, validation_schema). Use ` + "`cat planning/plan.json | python3 -c \"import sys,json; [print(f'{i+1}. {s[\\\"id\\\"]} [{s[\\\"type\\\"]}] - {s[\\\"title\\\"]}') for i,s in enumerate(json.load(sys.stdin)[\\\"steps\\\"])]\" `" + ` for a quick summary.
+- **Step configs**: ` + "`cat step_config.json`" + ` — step-level config overrides (servers, tools, mode, learning settings, LLMs)
+- **Runs**: ` + "`ls runs/`" + ` — list existing iteration folders; ` + "`ls runs/iteration-N/`" + ` — list group subfolders within an iteration
+- **Variables & groups**: ` + "`cat variables.json`" + ` — variable definitions and group configurations (group_id, display_name, values, enabled status)
 
 ### Background Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **human_input** provides text input/instructions for the step agent. **For human input steps**: pass **human_input** to automatically answer the step's question instead of blocking for user input — this lets you provide answers based on your conversation context. **Important: by default, skip_learning=true** — no learnings are generated after execution for faster iteration. To generate learnings, pass skip_learning=false explicitly.
@@ -1213,7 +1250,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types.
 - **get_workflow_config** — See full workflow config: MCP servers (selected + available with descriptions), skills, secrets (names only), LLM config (tiered + defaults with fallbacks)
 - **get_llm_config** — Show per-step LLM overrides from step_config.json
-- **get_variables** — Read variable definitions and group configurations
+- **Variables**: Read ` + "`cat variables.json`" + ` via execute_shell_command for variable definitions and group configurations
 
 ### Variable Management
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
@@ -1272,7 +1309,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
 ### Current Plan
-{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use `+"`list_steps`"+` to see the current plan and its steps.{{end}}
+{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use ` + "`cat planning/plan.json`" + ` to see the current plan and its steps.{{end}}
 
 ## 📖 STEP EXECUTION WORKFLOW
 
@@ -1287,8 +1324,8 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 
 **Every time the user asks to run a step**, do this before calling execute_step:
 
-1. Call **list_runs** to see existing iterations and their group subfolders (with group_ids)
-2. Call **list_groups** to see available groups and their group_ids
+1. Run ` + "`ls runs/`" + ` to see existing iterations and their group subfolders
+2. Run ` + "`cat variables.json`" + ` to see available groups and their group_ids
 3. **ALWAYS reuse the latest existing iteration** unless the user explicitly asks for a new one. Do NOT create iteration-2, iteration-3, etc. on your own — just keep using the latest iteration. Creating unnecessary iterations clutters the workspace with redundant output folders.
    - If no iterations exist yet, create **iteration-1**
    - If iterations exist, **reuse the highest-numbered one** (e.g., if iteration-3 exists, use iteration-3)
@@ -1296,7 +1333,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 4. For the group: suggest the toolbar-selected group or the one matching the user's request. Only confirm if ambiguous.
 5. Once determined, pass both **iteration** and **group_id** explicitly to every execute_step call
 
-**Never guess the group_id from the run folder path or the user's name** — always use the group_id shown by list_groups (e.g., "group-1", "group-2").
+**Never guess the group_id from the run folder path or the user's name** — always read variables.json to find the correct group_id (e.g., "group-1", "group-2").
 
 ### Running Steps
 1. User says "run step-X" (or "run all") → determine iteration + group first (see above) → call **execute_step("step-id", iteration, group_id)** → get execution_id
@@ -1310,7 +1347,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 
 ### Running All Steps
 When the user asks to "run all" or "run the workflow":
-1. Call **list_steps** to get all steps in order
+1. Read ` + "`cat planning/plan.json`" + ` to get all steps in order
 2. Execute them sequentially (you'll be auto-notified when each completes before starting the next)
 3. For conditional/decision steps, the execution engine handles branching automatically
 4. Report progress after each step completes
@@ -1324,7 +1361,7 @@ The plan can contain several step types. Top-level steps appear in the plan's "s
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Decision** (type: "decision"): Executes a step, then branches based on evidence in context. Contains **if_true_steps** and **if_false_steps** — arrays of inner steps that run depending on the decision outcome.
 - **Conditional** (type: "conditional"): Inspection-only branch (no execution of the main step). Contains **if_true_steps** and **if_false_steps** — evaluated based on prior context without running an agent.
-- **Todo Task** (type: "todo_task"): Manages a dynamic todo list with trackable tasks. Has a **todo_task_step** (main orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning).
+- **Todo Task / Sub-Workflow** (type: "todo_task"): Manages a dynamic todo list with trackable tasks. Users may call this a "sub-workflow", "pipeline", or "sub-agents". Has a **todo_task_step** (main orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning).
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** (main evaluator) and **orchestration_routes** — each route has a **sub_agent_step** (inner step).
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports response types: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Loop** (type: "loop"): Repeat until criteria met (polled progress).
@@ -1332,8 +1369,13 @@ The plan can contain several step types. Top-level steps appear in the plan's "s
 
 ### Inner Steps
 Inner steps live inside conditional branches, orchestration routes, or todo_task routes. They have their own step IDs and can be individually:
-- Listed via **list_steps** (shown indented under their parent)
+- Visible in plan.json (shown as nested steps under their parent)
 - Executed via **execute_step(inner_step_id)**
+
+{{if .CustomInstructions}}
+## 🧠 WORKFLOW MEMORY
+{{.CustomInstructions}}
+{{end}}
 
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
@@ -1570,359 +1612,6 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 // When fullMode is true (workflow-builder), all tools are registered including config/optimization/learning tools.
 // When fullMode is false (human-assisted-execution), only execution-related tools are registered.
 func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger, fullMode bool) {
-	// Tool 0: list_steps — list all steps with IDs and titles
-	if err := mcpAgent.RegisterCustomTool(
-		"list_steps",
-		"List all steps in the current plan with their IDs and titles. Call this to discover step IDs before using execute_step.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load plan: %v", err), nil
-			}
-			plan := iwm.controller.approvedPlan
-			if plan == nil || len(plan.Steps) == 0 {
-				return "No steps found in plan.", nil
-			}
-
-			// Load step configs to show optimized + learning_mode
-			stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
-			stepConfigMap := make(map[string]*AgentConfigs, len(stepConfigs))
-			for i := range stepConfigs {
-				if stepConfigs[i].AgentConfigs != nil {
-					stepConfigMap[stepConfigs[i].ID] = stepConfigs[i].AgentConfigs
-				}
-			}
-
-			var sb strings.Builder
-			allSteps := collectAllSteps(plan.Steps)
-			topCount := len(plan.Steps)
-			innerCount := len(allSteps) - topCount
-			sb.WriteString(fmt.Sprintf("## Plan Steps (%d top-level", topCount))
-			if innerCount > 0 {
-				sb.WriteString(fmt.Sprintf(", %d inner", innerCount))
-			}
-			sb.WriteString(")\n\n")
-			for _, info := range allSteps {
-				step := info.Step
-				stepID := step.GetID()
-
-				// Build tags (optimized, learning mode, agent mode)
-				var tags []string
-				if cfg, ok := stepConfigMap[stepID]; ok {
-					if cfg.Optimized != nil && *cfg.Optimized {
-						tags = append(tags, "✓ optimized")
-					}
-					if cfg.LearningMode != "" {
-						tags = append(tags, "learning:"+cfg.LearningMode)
-					}
-					if cfg.DisableLearning != nil && *cfg.DisableLearning {
-						tags = append(tags, "learning:disabled")
-					}
-					// Agent execution mode
-					if cfg.UseCodeExecutionMode != nil && *cfg.UseCodeExecutionMode {
-						tags = append(tags, "mode:code-exec")
-					} else if cfg.UseToolSearchMode != nil && *cfg.UseToolSearchMode {
-						tags = append(tags, "mode:tool-search")
-					} else {
-						tags = append(tags, "mode:simple")
-					}
-				}
-				tagStr := ""
-				if len(tags) > 0 {
-					tagStr = "  [" + strings.Join(tags, ", ") + "]"
-				}
-
-				if info.TopIndex > 0 {
-					// Top-level step
-					sb.WriteString(fmt.Sprintf("%d. **%s** [%s]%s\n   ID: `%s`\n\n", info.TopIndex, step.GetTitle(), step.StepType(), tagStr, stepID))
-				} else {
-					// Inner step — indented
-					sb.WriteString(fmt.Sprintf("   ↳ **%s** [%s] (parent: `%s`, branch: %s)%s\n      ID: `%s`\n\n", step.GetTitle(), step.StepType(), info.ParentID, info.BranchName, tagStr, stepID))
-				}
-			}
-			return sb.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_steps tool: %v", err))
-	}
-
-	// Tool: get_step_details — get full details of a single step
-	if err := mcpAgent.RegisterCustomTool(
-		"get_step_details",
-		"Get full details of a single step: description, success_criteria, context_dependencies, context_output, validation_schema, and agent_configs (servers, tools, mode, learning settings, LLMs). Use after list_steps to drill into a specific step.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"step_id": map[string]interface{}{
-					"type":        "string",
-					"description": "The step ID from plan.json (e.g., 'step-create-report') or positional reference (e.g., '1', 'step-1')",
-				},
-			},
-			"required": []string{"step_id"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			stepIDRaw, ok := args["step_id"]
-			if !ok || stepIDRaw == nil {
-				return "step_id is required", nil
-			}
-			stepID, ok := stepIDRaw.(string)
-			if !ok || stepID == "" {
-				return "step_id must be a non-empty string", nil
-			}
-
-			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
-				return fmt.Sprintf("Failed to load plan: %v", err), nil
-			}
-			resolvedID, resolveErr := resolveWorkshopStepID(iwm.controller, stepID)
-			if resolveErr != nil {
-				return resolveErr.Error(), nil
-			}
-
-			stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, resolvedID)
-			if stepInfo == nil {
-				return fmt.Sprintf("step %q not found in plan", stepID), nil
-			}
-
-			step := stepInfo.Step
-			var sb strings.Builder
-
-			// Header
-			sb.WriteString(fmt.Sprintf("## %s [%s]\n", step.GetTitle(), step.StepType()))
-			sb.WriteString(fmt.Sprintf("ID: `%s`\n\n", step.GetID()))
-
-			// Description
-			if desc := step.GetDescription(); desc != "" {
-				sb.WriteString("### Description\n")
-				sb.WriteString(desc)
-				sb.WriteString("\n\n")
-			}
-
-			// Success criteria
-			if sc := step.GetSuccessCriteria(); sc != "" {
-				sb.WriteString("### Success Criteria\n")
-				sb.WriteString(sc)
-				sb.WriteString("\n\n")
-			}
-
-			// Context dependencies
-			if deps := step.GetContextDependencies(); len(deps) > 0 {
-				sb.WriteString("### Context Dependencies\n")
-				for _, d := range deps {
-					sb.WriteString(fmt.Sprintf("- %s\n", d))
-				}
-				sb.WriteString("\n")
-			}
-
-			// Context output
-			if co := step.GetContextOutput().String(); co != "" {
-				sb.WriteString("### Context Output\n")
-				sb.WriteString(co)
-				sb.WriteString("\n\n")
-			}
-
-			// Validation schema
-			if vs := step.GetValidationSchema(); vs != nil {
-				vsJSON, err := json.MarshalIndent(vs, "", "  ")
-				if err == nil {
-					sb.WriteString("### Validation Schema\n```json\n")
-					sb.WriteString(string(vsJSON))
-					sb.WriteString("\n```\n\n")
-				}
-			}
-
-			// Step-type-specific fields (serialize the full step minus common fields)
-			stepJSON, err := json.MarshalIndent(step, "", "  ")
-			if err == nil {
-				sb.WriteString("### Step Definition (full)\n```json\n")
-				sb.WriteString(string(stepJSON))
-				sb.WriteString("\n```\n\n")
-			}
-
-			// Agent configs from step_config.json
-			stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
-			var agentCfg *AgentConfigs
-			for i := range stepConfigs {
-				if stepConfigs[i].ID == resolvedID && stepConfigs[i].AgentConfigs != nil {
-					agentCfg = stepConfigs[i].AgentConfigs
-					break
-				}
-			}
-			if agentCfg != nil {
-				cfgJSON, err := json.MarshalIndent(agentCfg, "", "  ")
-				if err == nil {
-					sb.WriteString("### Agent Configs (from step_config.json)\n```json\n")
-					sb.WriteString(string(cfgJSON))
-					sb.WriteString("\n```\n")
-				}
-			} else {
-				sb.WriteString("### Agent Configs\nNo step-level config overrides — using preset defaults.\n")
-			}
-
-			return sb.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_step_details tool: %v", err))
-	}
-
-	// Tool: list_runs — discover existing iterations and run folders
-	if err := mcpAgent.RegisterCustomTool(
-		"list_runs",
-		"List existing iteration/run folders in the workspace. Shows which iterations exist and what group subfolders they contain. Use this to discover previous runs before asking the user whether to continue an existing iteration or start a new one.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			runsPath := fmt.Sprintf("%s/runs", iwm.controller.GetWorkspacePath())
-			iterations, err := iwm.controller.listRunFolders(ctx, runsPath)
-			if err != nil || len(iterations) == 0 {
-				return "No runs found. This workflow has not been executed yet. A new iteration-1 will be created on first execute_step.", nil
-			}
-
-			// Refresh manifest from file to avoid stale group data
-			iwm.refreshVariablesManifest(ctx)
-
-			// Build folder-name → group_id lookup from manifest
-			folderToGroupID := map[string]string{}
-			if iwm.controller.variablesManifest != nil {
-				for _, g := range iwm.controller.variablesManifest.Groups {
-					folderName := g.GroupID
-					if g.DisplayName != "" {
-						if s := iwm.controller.sanitizeDisplayNameForFolder(g.DisplayName); s != "" {
-							folderName = s
-						}
-					}
-					folderToGroupID[folderName] = g.GroupID
-				}
-			}
-
-			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("## Existing Runs (%d iterations)\n\n", len(iterations)))
-
-			// Non-group folders that may appear inside iteration folders
-			nonGroupFolders := map[string]bool{
-				"execution": true, "logs": true, "progress": true,
-			}
-
-			for _, iterFolder := range iterations {
-				iterPath := fmt.Sprintf("%s/%s", runsPath, iterFolder)
-				subFolders, err := iwm.controller.listRunFolders(ctx, iterPath)
-				if err != nil {
-					sb.WriteString(fmt.Sprintf("- **%s** (no group subfolders)\n", iterFolder))
-				} else {
-					// Filter out non-group folders (execution/, logs/, etc.)
-					var groupFolders []string
-					for _, sf := range subFolders {
-						if !nonGroupFolders[sf] {
-							groupFolders = append(groupFolders, sf)
-						}
-					}
-
-					if len(groupFolders) == 0 {
-						sb.WriteString(fmt.Sprintf("- **%s** (no group subfolders)\n", iterFolder))
-					} else {
-						var groupDescs []string
-						for _, sf := range groupFolders {
-							if gid, ok := folderToGroupID[sf]; ok {
-								groupDescs = append(groupDescs, fmt.Sprintf("%s (group_id: %s)", sf, gid))
-							} else {
-								groupDescs = append(groupDescs, sf)
-							}
-						}
-						sb.WriteString(fmt.Sprintf("- **%s** (%d groups: %s)\n", iterFolder, len(groupFolders), strings.Join(groupDescs, ", ")))
-					}
-				}
-			}
-
-			maxIter := iwm.controller.findMaxIterationNumber(iterations)
-			sb.WriteString(fmt.Sprintf("\n**Latest iteration**: iteration-%d\n", maxIter))
-			sb.WriteString(fmt.Sprintf("**Next new iteration**: iteration-%d\n", maxIter+1))
-			sb.WriteString("\nTo run on an existing iteration, pass `iteration` to `execute_step` (e.g., `iteration-2`).\n")
-			sb.WriteString("To start a new iteration, pass the next iteration number (e.g., `iteration-3`).\n")
-			sb.WriteString("The run folder is auto-calculated from iteration + group.")
-
-			return sb.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_runs tool: %v", err))
-	}
-
-	// Tool: list_groups — discover available variable groups (read-only)
-	if err := mcpAgent.RegisterCustomTool(
-		"list_groups",
-		"List available variable groups for step execution. Each group has a group_id, display_name, variable values, and enabled status. The active group is auto-selected from the workspace toolbar; use this to discover groups if you need to override.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			// Refresh manifest from file to avoid stale group data
-			iwm.refreshVariablesManifest(ctx)
-			manifest := iwm.controller.variablesManifest
-			if manifest == nil || !manifest.HasGroups() {
-				if manifest != nil && len(manifest.Variables) > 0 {
-					values := make(map[string]string)
-					for _, v := range manifest.Variables {
-						values[v.Name] = v.Value
-					}
-					return fmt.Sprintf("No variable groups defined. Single set of variables:\n%v", values), nil
-				}
-				return "No variable groups defined. This workflow does not use variables.", nil
-			}
-
-			var sb strings.Builder
-			groups := manifest.Groups
-			enabledCount := 0
-			for _, g := range groups {
-				if g.Enabled {
-					enabledCount++
-				}
-			}
-			sb.WriteString(fmt.Sprintf("## Variable Groups (%d total, %d enabled)\n\n", len(groups), enabledCount))
-
-			// Show active group from toolbar selection
-			activeGroupID := ""
-			if len(iwm.controller.enabledGroupIDs) > 0 {
-				activeGroupID = iwm.controller.enabledGroupIDs[0]
-			}
-
-			for _, g := range groups {
-				status := "enabled"
-				if !g.Enabled {
-					status = "disabled"
-				}
-				displayName := g.DisplayName
-				if displayName == "" {
-					displayName = g.GroupID
-				}
-				active := ""
-				if g.GroupID == activeGroupID {
-					active = " **[ACTIVE]**"
-				}
-				sb.WriteString(fmt.Sprintf("- **%s** (group_id: `%s`, %s)%s\n", displayName, g.GroupID, status, active))
-				if len(g.Values) > 0 {
-					for k, v := range g.Values {
-						sb.WriteString(fmt.Sprintf("  - %s = %s\n", k, v))
-					}
-				}
-			}
-			if activeGroupID != "" {
-				sb.WriteString(fmt.Sprintf("\nActive group (from toolbar): `%s` — used by default for execute_step.\n", activeGroupID))
-			}
-			sb.WriteString("\nTo override, pass `group_id` to `execute_step`.")
-			return sb.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_groups tool: %v", err))
-	}
-
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
@@ -1936,11 +1625,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional variable group ID override (e.g., 'group-1'). If omitted, uses the group selected in the workspace toolbar. Use list_groups to see available groups.",
+					"description": "Optional variable group ID override (e.g., 'group-1'). If omitted, uses the group selected in the workspace toolbar. Read variables.json to see available groups.",
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name (e.g., 'iteration-3'). Use list_runs to see available iterations. The full run folder is auto-calculated from iteration + group.",
+					"description": "Iteration folder name (e.g., 'iteration-3'). Run 'ls runs/' to see available iterations. The full run folder is auto-calculated from iteration + group.",
 				},
 				"skip_learning": map[string]interface{}{
 					"type":        "boolean",
@@ -1995,7 +1684,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			// Validate iteration is provided
 			if iteration == "" {
-				return "iteration is required (e.g., 'iteration-3'). Use list_runs to see available iterations.", nil
+				return "iteration is required (e.g., 'iteration-3'). Run 'ls runs/' to see available iterations.", nil
 			}
 
 			// Build run_folder from iteration + group folder name
@@ -2477,11 +2166,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "Iteration folder name (e.g., 'iteration-3'). Use list_runs to see available iterations.",
+					"description": "Iteration folder name (e.g., 'iteration-3'). Run 'ls runs/' to see available iterations.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Variable group ID (e.g., 'group-1'). Use list_groups to see available groups.",
+					"description": "Variable group ID (e.g., 'group-1'). Read variables.json to see available groups.",
 				},
 			},
 			"required": []string{"step_id", "iteration", "group_id"},
@@ -2501,10 +2190,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			groupID, _ := args["group_id"].(string)
 
 			if iteration == "" {
-				return "iteration is required (e.g., 'iteration-3'). Use list_runs to see available iterations.", nil
+				return "iteration is required (e.g., 'iteration-3'). Run 'ls runs/' to see available iterations.", nil
 			}
 			if groupID == "" {
-				return "group_id is required (e.g., 'group-1'). Use list_groups to see available groups.", nil
+				return "group_id is required (e.g., 'group-1'). Read variables.json to see available groups.", nil
 			}
 
 			// Refresh manifest from file to avoid stale group data
@@ -3090,7 +2779,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iwm.controller.approvedPlan != nil {
 				stepInfo := findWorkshopStepByID(iwm.controller.approvedPlan.Steps, stepID)
 				if stepInfo == nil {
-					errors = append(errors, fmt.Sprintf("Step ID %q not found in the current plan. Valid step IDs can be found via list_steps.", stepID))
+					errors = append(errors, fmt.Sprintf("Step ID %q not found in the current plan. Valid step IDs can be found in planning/plan.json.", stepID))
 				}
 			}
 
@@ -3851,7 +3540,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"iteration": map[string]interface{}{
 					"type":        "string",
-					"description": "The iteration folder (e.g., 'iteration-1'). Use list_runs to see available iterations.",
+					"description": "The iteration folder (e.g., 'iteration-1'). Run 'ls runs/' to see available iterations.",
 				},
 				"group_id": map[string]interface{}{
 					"type":        "string",
@@ -3880,7 +3569,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			iteration, _ := args["iteration"].(string)
 			if iteration == "" {
-				return "iteration is required (e.g., 'iteration-1'). Use list_runs to see available iterations.", nil
+				return "iteration is required (e.g., 'iteration-1'). Run 'ls runs/' to see available iterations.", nil
 			}
 			groupID, _ := args["group_id"].(string)
 			if groupID == "" {
@@ -4644,57 +4333,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	} // end if fullMode — builder-only tools (run_background_task, get_llm_config)
 
-	// Tool: get_variables — read current variable definitions and group configurations
-	if err := mcpAgent.RegisterCustomTool(
-		"get_variables",
-		"Read current variable definitions and their values. Shows the base variable definitions and group configurations.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			manifest, err := readVariablesFromFile(ctx, iwm.controller.GetWorkspacePath(), func(ctx context.Context, path string) (string, error) {
-				return iwm.controller.ReadWorkspaceFile(ctx, path)
-			})
-			if err != nil {
-				return fmt.Sprintf("Could not read variables.json: %v", err), nil
-			}
-			if manifest == nil || len(manifest.Variables) == 0 {
-				return "No variables defined in this workflow.", nil
-			}
-
-			var sb strings.Builder
-			sb.WriteString("## Variables\n\n")
-			sb.WriteString("### Definitions\n")
-			for _, v := range manifest.Variables {
-				sb.WriteString(fmt.Sprintf("- **%s** = `%s` — %s\n", v.Name, v.Value, v.Description))
-			}
-
-			if manifest.HasGroups() {
-				sb.WriteString(fmt.Sprintf("\n### Groups (%d)\n", len(manifest.Groups)))
-				for _, g := range manifest.Groups {
-					status := "enabled"
-					if !g.Enabled {
-						status = "disabled"
-					}
-					displayName := g.DisplayName
-					if displayName == "" {
-						displayName = g.GroupID
-					}
-					sb.WriteString(fmt.Sprintf("\n**%s** (`%s`, %s):\n", displayName, g.GroupID, status))
-					for k, v := range g.Values {
-						sb.WriteString(fmt.Sprintf("  - %s = %s\n", k, v))
-					}
-				}
-			}
-
-			return sb.String(), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_variables tool: %v", err))
-	}
-
 	// Tool: update_variable — add, update, or delete variables
 	updateVariableSchema := getUpdateVariableSchema()
 	updateVariableParams, parseErr := parseSchemaForToolParameters(updateVariableSchema)
@@ -5406,7 +5044,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Variable group IDs to run (e.g., 'group-1', 'group-2'). Use get_variables to see available groups. Empty = run all groups.",
+					"description": "Variable group IDs to run (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Empty = run all groups.",
 				},
 			},
 			"required": []string{"name", "cron_expression"},
@@ -5470,7 +5108,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"group_ids": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "New variable group IDs (e.g., 'group-1', 'group-2'). Use get_variables to see available groups. Pass empty array to clear (run all groups).",
+					"description": "New variable group IDs (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Pass empty array to clear (run all groups).",
 				},
 				"enabled": map[string]interface{}{
 					"type":        "boolean",
@@ -6372,10 +6010,12 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		}
 	}
 
-	// Load custom instructions from workspace
+	// Load workflow memory from memory/memory.md (falls back to legacy instructions.md)
 	customInstructions := ""
-	if content, err := iwm.controller.ReadWorkspaceFile(ctx, "instructions.md"); err == nil && content != "" {
-		customInstructions = fmt.Sprintf("\n## Custom Instructions\n%s", content)
+	if content, err := iwm.controller.ReadWorkspaceFile(ctx, "memory/memory.md"); err == nil && content != "" {
+		customInstructions = fmt.Sprintf("\n## 🧠 Workflow Memory\n%s", content)
+	} else if content, err := iwm.controller.ReadWorkspaceFile(ctx, "instructions.md"); err == nil && content != "" {
+		customInstructions = fmt.Sprintf("\n## 🧠 Workflow Memory\n%s", content)
 	}
 
 	// Apply post-setup configuration (folder guard + registry for code execution mode)

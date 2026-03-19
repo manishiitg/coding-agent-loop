@@ -4,7 +4,7 @@ import { EventDispatcher, type DelegationStats, type EventNode } from './EventDi
 import { agentApi } from '../../services/api';
 import { useChatStore } from '../../stores/useChatStore';
 import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../constants/events';
-import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS } from './eventModeUtils';
+import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS, SUMMARY_MODE_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useRenderLogger, useMemoLogger } from '../../utils/renderLogger';
 import './EventHierarchy.css';
@@ -116,7 +116,20 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   // const setTabHideToolCalls = useChatStore(state => state.setTabHideToolCalls) // kept for future "show all / collapse all"
   const sessionId = tab?.sessionId
   const hideToolCalls = tab?.hideToolCalls || false
-  
+  // 'summary' mode: only show high-level agent activity (agent start/end, step progress,
+  // errors, user messages). Drops tool calls, LLM events, MCP internals — reducing
+  // ~500 events to ~20-30 for background workflows.
+  const viewMode = tab?.viewMode || 'detailed'
+
+  // Holds the last returned displayEvents array for ref-stability.
+  // The displayEvents memo below does heavy work (dedup, filter, sort, smart cap).
+  // Even when the output is identical, it produces a new array ref — which cascades:
+  //   new displayEvents ref → eventTree rebuilds (Map + parent-child linking for all events)
+  //     → flattenedItems rebuilds (tree walk + tool-call grouping)
+  //       → Virtuoso diffs all items
+  // By returning the previous ref when output hasn't changed, this entire chain becomes a no-op.
+  const displayEventsRef = useRef<PollingEvent[]>([]);
+
   // Merge loaded older events with current events — single-pass filter
   const displayEvents = useMemo(() => {
     // Avoid spread when loadedOlderEvents is empty (common case)
@@ -138,6 +151,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       // Dedup by ID
       if (seenIds.has(event.id)) continue;
       seenIds.add(event.id);
+
+      // SUMMARY MODE: Early exit — if the event type isn't in the allowlist, skip it entirely.
+      // This is checked right after dedup so we avoid all downstream filter logic (hidden events,
+      // streaming checks, delegation tool extraction, etc.) for events we'll drop anyway.
+      // Reduces processing from ~500 events to ~20-30 for typical workflows.
+      if (viewMode === 'summary' && !SUMMARY_MODE_EVENTS.has(type)) continue;
 
       // Never-display events
       if (NEVER_DISPLAY_EVENTS.has(type)) continue;
@@ -186,7 +205,29 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       result.splice(0, resumeIdx + 1);
     }
 
-    if (result.length <= MAX_EVENTS_TO_PROCESS) return result;
+    // REF-STABILITY HELPER
+    // Returns the previous array ref when output is unchanged, preventing the expensive
+    // downstream cascade (eventTree → flattenedItems → Virtuoso diff).
+    //
+    // Safe because events are append-only with unique IDs:
+    //   - New event appended → last ID changes → new ref (correct)
+    //   - Cleanup trims from front → first ID changes → new ref (correct)
+    //   - No change → same length + same first/last ID → return prev ref (skip cascade)
+    const returnStable = (arr: PollingEvent[]): PollingEvent[] => {
+      const prev = displayEventsRef.current;
+      if (
+        arr.length === prev.length &&     // same count after filter+dedup+cap
+        arr.length > 0 &&                 // guard empty-to-empty
+        arr[0]?.id === prev[0]?.id &&     // front unchanged (catches cleanup trim)
+        arr[arr.length - 1]?.id === prev[prev.length - 1]?.id  // tail unchanged (catches new appends)
+      ) {
+        return prev;  // same ref → eventTree memo skips → flattenedItems skips → Virtuoso no-op
+      }
+      displayEventsRef.current = arr;  // output changed — cache new array
+      return arr;
+    };
+
+    if (result.length <= MAX_EVENTS_TO_PROCESS) return returnStable(result);
 
     // Smart cap: preserve structural events, cap sub-agent children per delegation.
     // Structural events (delegation_start/end, orchestrator boundaries) are always kept
@@ -239,8 +280,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
 
     // Reverse back to chronological order
     capped.reverse();
-    return capped;
-  }, [events, loadedOlderEvents]);
+    return returnStable(capped);
+  }, [events, loadedOlderEvents, viewMode]);
 
   // Tool call grouping is done in flattenedItems (after tree building + flattening),
   // so sub-agent events — which are excluded from the flat list at delegation_start nodes —

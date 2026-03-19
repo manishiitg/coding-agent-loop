@@ -174,10 +174,9 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	if s := os.Getenv("GEMINI_API_KEY"); s != "" {
 		keys.GeminiCLI = &s
 	}
-	// Codex CLI: CODEX_API_KEY takes priority, falls back to OPENAI_API_KEY
+	// Codex CLI: only use explicit CODEX_API_KEY (not OPENAI_API_KEY).
+	// Codex CLI has its own stored auth via `codex login`.
 	if s := os.Getenv("CODEX_API_KEY"); s != "" {
-		keys.CodexCLI = &s
-	} else if s := os.Getenv("OPENAI_API_KEY"); s != "" {
 		keys.CodexCLI = &s
 	}
 	if s := os.Getenv("MINIMAX_API_KEY"); s != "" {
@@ -593,12 +592,11 @@ func validateCodexCLI(apiKey string) llm.APIKeyValidationResponse {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "codex", "exec", "--full-auto", "--skip-git-repo-check", "-c", `model_reasoning_effort="medium"`, "Say hello in one short sentence.")
-	// Pass API key as env var if provided (from frontend or server .env)
+	// Only pass API key if explicitly provided from frontend.
+	// Do NOT fall back to OPENAI_API_KEY — Codex CLI has its own auth
+	// (via `codex login` stored in ~/.codex/auth.json) which should be preferred.
 	if apiKey == "" {
 		apiKey = os.Getenv("CODEX_API_KEY")
-	}
-	if apiKey == "" {
-		apiKey = os.Getenv("OPENAI_API_KEY")
 	}
 	if apiKey != "" {
 		cmd.Env = append(os.Environ(), "CODEX_API_KEY="+apiKey)

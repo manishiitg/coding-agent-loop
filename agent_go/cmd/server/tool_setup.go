@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -563,4 +564,82 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 
 	log.Printf("[PLAN FOLDER GUARD] Wrapped %d executors - writes restricted to: %v", len(wrappedExecutors), allowedWriteFolders)
 	return wrappedExecutors
+}
+
+// loadWorkflowMemory reads all .md files from the memory/ folder in the workspace.
+// Falls back to legacy instructions.md if memory/ folder doesn't exist.
+// Returns concatenated content or empty string.
+func loadWorkflowMemory(workspacePath string, readFile func(context.Context, string) (string, error), ctx context.Context) string {
+	// Try reading memory/ folder via shell to list files
+	// Since we only have readFile, try reading a few common patterns
+	// First try legacy instructions.md as a simple fallback
+	var parts []string
+
+	// Try memory/ folder — read individual files by listing via the workspace
+	// We'll use the readFile function to read memory/memory.md (the index/main file)
+	memoryPath := workspacePath + "/memory"
+
+	// Try reading the main memory file
+	if content, err := readFile(ctx, memoryPath+"/memory.md"); err == nil && content != "" {
+		parts = append(parts, strings.TrimSpace(content))
+	}
+
+	// If no memory/ files found, fall back to legacy instructions.md
+	if len(parts) == 0 {
+		if content, err := readFile(ctx, workspacePath+"/instructions.md"); err == nil && content != "" {
+			return strings.TrimSpace(content)
+		}
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// extractStepSummary parses plan JSON and returns a compact step summary string.
+// Format: "1. step-id [type] - Title\n2. ..."
+// For todo_task steps, also lists sub-agent routes indented.
+func extractStepSummary(planJSON string) string {
+	var plan struct {
+		Steps []json.RawMessage `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+		return ""
+	}
+	if len(plan.Steps) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	for i, raw := range plan.Steps {
+		var step struct {
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Title string `json:"title"`
+			// For todo_task steps
+			PredefinedRoutes []struct {
+				RouteID      string `json:"route_id"`
+				SubAgentStep struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				} `json:"sub_agent_step"`
+			} `json:"predefined_routes,omitempty"`
+			// For decision/conditional steps
+			IfTrueSteps  []json.RawMessage `json:"if_true_steps,omitempty"`
+			IfFalseSteps []json.RawMessage `json:"if_false_steps,omitempty"`
+		}
+		if err := json.Unmarshal(raw, &step); err != nil {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("%d. `%s` [%s] — %s\n", i+1, step.ID, step.Type, step.Title))
+
+		// Show sub-agents for todo_task steps
+		for _, route := range step.PredefinedRoutes {
+			if route.SubAgentStep.ID != "" {
+				sb.WriteString(fmt.Sprintf("   ↳ `%s` — %s\n", route.SubAgentStep.ID, route.SubAgentStep.Title))
+			}
+		}
+	}
+	return sb.String()
 }

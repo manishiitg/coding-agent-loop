@@ -293,12 +293,18 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
 	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
 
-	// Read custom instructions from instructions.md (user-saved per-workflow instructions)
+	// Read workflow memory from memory/memory.md (falls back to legacy instructions.md)
 	customInstructions := ""
 	if workspacePath != "" {
-		instructionsPath := workspacePath + "/instructions.md"
-		if content, err := skills.ReadFile(instructionsPath); err == nil && strings.TrimSpace(content) != "" {
+		memoryPath := workspacePath + "/memory/memory.md"
+		if content, err := skills.ReadFile(memoryPath); err == nil && strings.TrimSpace(content) != "" {
 			customInstructions = strings.TrimSpace(content)
+		} else {
+			// Fallback: legacy instructions.md
+			instructionsPath := workspacePath + "/instructions.md"
+			if content, err := skills.ReadFile(instructionsPath); err == nil && strings.TrimSpace(content) != "" {
+				customInstructions = strings.TrimSpace(content)
+			}
 		}
 	}
 

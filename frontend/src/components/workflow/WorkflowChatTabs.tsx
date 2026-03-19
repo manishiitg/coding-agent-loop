@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useCallback, useRef } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { X, ArrowDown, Square, Maximize2, Minimize2 } from 'lucide-react'
+import { X, ArrowDown, Square, Maximize2, Minimize2, List, ListTree } from 'lucide-react'
 import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/useChatStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
@@ -154,6 +154,7 @@ export const WorkflowChatTabs: React.FC = () => {
     autoScroll,
     setAutoScroll,
     setTabStreaming,
+    setTabViewMode,
   } = useChatStore(useShallow(state => ({
     chatTabs: state.chatTabs,
     activeTabId: state.activeTabId,
@@ -163,11 +164,18 @@ export const WorkflowChatTabs: React.FC = () => {
     autoScroll: state.autoScroll,
     setAutoScroll: state.setAutoScroll,
     setTabStreaming: state.setTabStreaming,
+    setTabViewMode: state.setTabViewMode,
   })))
 
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
   const chatAreaExpanded = useWorkflowStore(state => state.chatAreaExpanded)
   const setChatAreaExpanded = useWorkflowStore(state => state.setChatAreaExpanded)
+
+  // View mode for the active tab — 'summary' shows only agent outputs, 'detailed' shows everything
+  const activeViewMode = useChatStore(state => {
+    const tab = activeTabId ? state.chatTabs[activeTabId] : null
+    return tab?.viewMode || 'detailed'
+  })
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
 
   // Filter to only show workflow tabs for the active preset (have sessionId or isStreaming)
@@ -279,6 +287,39 @@ export const WorkflowChatTabs: React.FC = () => {
               {autoScroll ? 'Auto-scroll' : 'Manual'}
             </span>
           </button>
+
+          {/* View Mode Toggle — switch between detailed (all events) and summary (agent outputs only) */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (activeTabId) {
+                    setTabViewMode(activeTabId, activeViewMode === 'summary' ? 'detailed' : 'summary')
+                  }
+                }}
+                className={`flex items-center gap-1 p-1.5 rounded text-xs font-medium transition-colors
+                  ${activeViewMode === 'summary'
+                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
+                  }
+                  hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100
+                `}
+              >
+                {activeViewMode === 'summary' ? (
+                  <List className="w-3.5 h-3.5" />
+                ) : (
+                  <ListTree className="w-3.5 h-3.5" />
+                )}
+                <span className="hidden sm:inline">
+                  {activeViewMode === 'summary' ? 'Summary' : 'Detailed'}
+                </span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{activeViewMode === 'summary' ? 'Summary view — showing agent outputs only' : 'Detailed view — showing all events'}</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Expand/Collapse Button */}
           <Tooltip>

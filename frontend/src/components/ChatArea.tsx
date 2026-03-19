@@ -448,8 +448,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // If there are no tabs, return empty array (tabs should always exist in multi-tab mode)
   // Filter out workspace_file_operation events from display
   // (These events are still sent to frontend for workspace store processing, but hidden from chat UI)
+  //
+  // PERF FIX: Return a ref-stable array when the filtered output hasn't changed.
+  // Events are append-only with unique IDs, so comparing length + first/last ID
+  // is sufficient. This prevents downstream cascade: EventHierarchy → eventTree →
+  // flattenedItems → Virtuoso diff — all skip when the ref is the same.
+  // Holds the last returned displayEvents array. Used to avoid creating a new array
+  // reference when the filtered output is identical — which would otherwise cascade
+  // through EventHierarchy props → eventTree memo → flattenedItems memo → Virtuoso diff,
+  // all for zero actual change.
+  const displayEventsRef = useRef<PollingEvent[]>([])
+
   const displayEvents = useMemo(() => {
-    return tabEvents.filter(event => {
+    const filtered = tabEvents.filter(event => {
       if (event.type === 'workspace_file_operation') return false
 
       // Hide Total Token Usage and Context Offloading events
@@ -468,6 +479,29 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       return true
     })
+
+    // REF-STABILITY CHECK
+    // .filter() always returns a new array, even when every element passes through unchanged.
+    // That new reference triggers downstream useMemo/React.memo to recompute (they compare by ===).
+    //
+    // Events are append-only with unique IDs and immutable payloads, so we can cheaply detect
+    // "same output" by comparing length + first ID + last ID (3 string comparisons).
+    //
+    // When the check passes we return the *previous* array ref — downstream memos see the same
+    // object and bail out entirely: eventTree skip → flattenedItems skip → Virtuoso no-op.
+    const prev = displayEventsRef.current
+    if (
+      filtered.length === prev.length &&   // same count after filtering
+      filtered.length > 0 &&               // guard against empty-to-empty flip
+      filtered[0]?.id === prev[0]?.id &&   // first event unchanged (catches cleanup trimming from front)
+      filtered[filtered.length - 1]?.id === prev[prev.length - 1]?.id  // last event unchanged (catches new appends)
+    ) {
+      return prev  // same ref → no downstream recomputation
+    }
+
+    // Output actually changed — cache the new array for next comparison
+    displayEventsRef.current = filtered
+    return filtered
   }, [tabEvents])
 
   // Derive the most recently started active agent from start/end event pairs.
@@ -1308,8 +1342,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Process workflow events — only for the ACTIVE preset's tabs
     // Background workflow tabs (different preset) still receive and store events via SSE,
     // but we skip side effects (canvas updates, step progress, workspace refresh) to avoid
-    // polluting the currently visible workflow's UI state
-    if (selectedModeCategory === 'workflow' && isActivePresetTab) {
+    // polluting the currently visible workflow's UI state.
+    //
+    // PERF: Also skip when tab is in 'summary' viewMode — the user doesn't need live
+    // canvas node updates (running/completed/failed colors) in summary mode, and each
+    // setStepStatus/handleBatchGroup call triggers workflowStore state updates which
+    // cascade into React Flow node re-renders.
+    const tabViewMode = tab ? (useChatStore.getState().getTab(tab.tabId)?.viewMode ?? 'detailed') : 'detailed'
+    if (selectedModeCategory === 'workflow' && isActivePresetTab && tabViewMode !== 'summary') {
       console.time(`[PERF] workflow-event-loop (${response.events.length} events)`)
       const workflowStore = useWorkflowStore.getState()
       for (const event of response.events as PollingEvent[]) {

@@ -48,6 +48,20 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeTabId = useChatStore(state => state.activeTabId)
 
+  // Track Shift key state to show "minimize" hint on selected item
+  const [shiftHeld, setShiftHeld] = useState(false)
+  useEffect(() => {
+    if (!isOpen) return
+    const onKey = (e: KeyboardEvent) => setShiftHeld(e.shiftKey)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keyup', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keyup', onKey)
+      setShiftHeld(false)
+    }
+  }, [isOpen])
+
   // Reset state on open
   useEffect(() => {
     if (isOpen) {
@@ -159,10 +173,34 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
   }, [selectedIndex])
 
-  const handleSelect = useCallback(async (item: QuickSwitcherItem) => {
+  // Switch to a workflow/chat. When `minimize` is true, the old workflow's tabs
+  // are set to 'summary' viewMode (lightweight rendering — agent outputs only,
+  // no tool calls, no canvas updates) and the new workflow's tabs to 'detailed'.
+  const handleSelect = useCallback(async (item: QuickSwitcherItem, minimize = false) => {
     if (item.type === 'workflow') {
-      const { applyPreset } = useGlobalPresetStore.getState()
-      applyPreset(item.preset, 'workflow')
+      const chatStore = useChatStore.getState()
+      const presetStore = useGlobalPresetStore.getState()
+
+      if (minimize) {
+        // Set ALL tabs of the OLD (current) preset to summary mode — they're going to background
+        const oldPresetId = presetStore.activePresetIds.workflow
+        if (oldPresetId) {
+          Object.values(chatStore.chatTabs).forEach(tab => {
+            if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === oldPresetId) {
+              chatStore.setTabViewMode(tab.tabId, 'summary')
+            }
+          })
+        }
+
+        // Set ALL tabs of the NEW preset to detailed mode — they're coming to foreground
+        Object.values(chatStore.chatTabs).forEach(tab => {
+          if (tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === item.id) {
+            chatStore.setTabViewMode(tab.tabId, 'detailed')
+          }
+        })
+      }
+
+      presetStore.applyPreset(item.preset, 'workflow')
     } else {
       // Restore chat session
       const tabId = await restoreSession(item.session.session_id, {
@@ -184,7 +222,9 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (filteredItems.length > 0 && selectedIndex >= 0 && selectedIndex < filteredItems.length) {
-        handleSelect(filteredItems[selectedIndex])
+        // Shift+Enter: switch AND minimize the old workflow (set to summary mode).
+        // Plain Enter: switch normally (keep old workflow in detailed mode).
+        handleSelect(filteredItems[selectedIndex], e.shiftKey)
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
@@ -252,7 +292,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
                   }`}
                   onMouseEnter={() => setSelectedIndex(index)}
-                  onMouseDown={e => { e.preventDefault(); handleSelect(item) }}
+                  onMouseDown={e => { e.preventDefault(); handleSelect(item, e.shiftKey) }}
                 >
                   <Icon className={`w-4 h-4 flex-shrink-0 ${item.isActive ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`} />
                   <div className="flex-1 min-w-0">
@@ -273,6 +313,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
                     </div>
                     <div className="text-xs text-muted-foreground truncate">{item.subtitle}</div>
                   </div>
+                  {/* Show "minimize current" hint when Shift is held on a non-active workflow item */}
+                  {isSelected && shiftHeld && isWorkflowMode && item.type === 'workflow' && !item.isActive && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-300 font-medium flex-shrink-0 animate-in fade-in duration-150">
+                      minimize current
+                    </span>
+                  )}
                 </div>
               )
             })
@@ -283,7 +329,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 text-[11px] text-gray-400 dark:text-gray-500 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↑↓</kbd> navigate</span>
-            <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↵</kbd> select</span>
+            <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↵</kbd> switch</span>
+            {isWorkflowMode && (
+              <span><kbd className="px-1 py-0.5 bg-amber-200 dark:bg-amber-800 text-amber-700 dark:text-amber-300 rounded text-[10px]">⇧↵</kbd> switch &amp; minimize</span>
+            )}
           </div>
           <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">esc</kbd> close</span>
         </div>

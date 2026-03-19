@@ -148,6 +148,14 @@ export interface ChatTab {
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
+  // View mode controls how much detail is rendered in the event list.
+  // 'detailed' — full event stream (tool calls, LLM events, delegation internals, etc.)
+  // 'summary'  — lightweight view showing only high-level agent activity:
+  //   agent start/end, step progress, todo items, errors, user messages, delegation cards.
+  //   Drops tool calls, LLM generation, streaming, MCP internals — reducing event count
+  //   from ~500 to ~20-30 for a typical workflow. Ideal for background workflows where
+  //   the user only cares about progress, not execution details.
+  viewMode: 'detailed' | 'summary'
   config: ChatTabConfig  // Tab-specific configuration
   createdAt: number  // Timestamp for ordering
   lastViewedEventCount: number  // @deprecated - use lastViewedEventCounts instead
@@ -392,6 +400,7 @@ interface ChatState extends StoreActions {
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
+  setTabViewMode: (tabId: string, viewMode: 'detailed' | 'summary') => void
   getTabConfig: (tabId: string) => ChatTabConfig | undefined
   setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => void
   setTabMetadata: (tabId: string, metadataUpdate: Partial<NonNullable<ChatTab['metadata']>>) => void
@@ -1239,6 +1248,7 @@ export const useChatStore = create<ChatState>()(
           isCompleted: false,
           hasRunningBgAgents: false,
           hideToolCalls: true,
+          viewMode: 'detailed', // Default to full detail — user or system can switch to 'summary' for background workflows
           config: defaultConfig, // Initialize with default config from global state
           createdAt: timestamp,
           lastViewedEventCount: 0, // @deprecated - kept for backwards compat
@@ -1590,6 +1600,22 @@ export const useChatStore = create<ChatState>()(
             [tabId]: {
               ...tab,
               hideToolCalls
+            }
+          }
+        }))
+      },
+
+      setTabViewMode: (tabId: string, viewMode: 'detailed' | 'summary') => {
+        const state = get()
+        const tab = state.chatTabs[tabId]
+        if (!tab) return
+
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: {
+              ...state.chatTabs[tabId],
+              viewMode
             }
           }
         }))
@@ -2054,6 +2080,7 @@ export const useChatStore = create<ChatState>()(
                 hasRunningBgAgents: false,
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
+                viewMode: tab.viewMode ?? 'detailed', // Persist view mode across reload
                 config: { ...tab.config, selectedPlanFolder: undefined }, // CRITICAL: Persist full config including:
                 // - selectedServers (MCP server selections)
                 // - llmConfig (LLM provider, model_id, fallback_models, etc.)

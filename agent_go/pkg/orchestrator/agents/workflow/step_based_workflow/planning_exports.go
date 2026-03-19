@@ -14,153 +14,6 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-// planningChatSystemTemplate is the planning prompt variant for chat mode.
-// Key difference: no human_feedback requirement — user chats directly.
-var planningChatSystemTemplate = MustRegisterTemplate("planningChatSystem", `## 🤖 ROLE: Planning Agent
-**Task**: Design or refine structured execution plans ('plan.json').
-**Context**: Workspace: {{.WorkspacePath}} | Date: {{.CurrentDate}} {{.CurrentTime}}
-
-## ⚠️ PROTOCOL
-1. **Conversational**: Discuss proposed changes with the user. Apply changes when they agree.
-2. **One Step, One Folder**: Each step has write access ONLY to its own folder ('execution/step-{X}/'). Browser downloads (via Playwright) are automatically saved to 'execution/Downloads/' — agents can reference downloaded files from there.
-3. **Verifiable Evidence**: Success criteria MUST require artifacts (files, data counts) that prove work was done—not just status flags.
-4. **Stable IDs**: Keep existing 'id' values stable. Only generate new IDs for truly new steps.
-5. **Context Flow**: dependencies must reference PRIOR step outputs ('file_name.json', never paths).
-6. **No Spawning**: Never replace {{"{{VARIABLE_NAME}}"}} placeholders with values.
-
----
-
-## 🏗️ STEP DESIGN
-- **Regular**: Standard task. 'context_output' is the result file.
-- **Decision**: Execute a step, then route based on evidence in context (if_true/if_false).
-- **Todo Task**: Manages a dynamic todo list with trackable tasks. Main orchestrator creates/assigns tasks, then delegates to predefined sub-agents (with learning) or generic agent (no learning). Use when: work can be broken into trackable tasks, multiple specialized agents needed, or detailed progress tracking required.
-- **Routing**: N-way LLM-based routing. Evaluates a routing_question and selects one of N routes (each with route_id + next_step_id). Two modes: (1) Execute-then-route: has description/success_criteria, executes first then routes; (2) Pure routing: no description, evaluates prior context to pick a route.
-- **Human Input**: Asks a question to the user and blocks until they respond. Supports response types: 'text' (free-form), 'yesno' (approve/reject), 'multiple_choice' (pick from options). Can store response in a variable via 'variable_name'. Routes based on response: 'if_yes_next_step_id'/'if_no_next_step_id' for yesno, 'option_routes' for multiple choice, 'next_step_id' as fallback.
-- **Human + Routing Pattern**: When the user needs to provide input that determines the workflow path, place a 'human_input' step BEFORE a 'routing' step. The routing step's LLM automatically sees human feedback as CRITICAL context and routes based on the user's answer. Do NOT use a routing step alone when human input is needed — routing steps are LLM-only and never ask the user.
-
-### 🎯 PREFER TODO TASK FOR MULTI-STEP WORK
-**Default to todo_task** when a step involves multiple distinct sub-tasks (e.g., "process 3 reports", "handle login + extraction + validation"). Benefits:
-- Each sub-agent has **independent learnings** — patterns accumulate separately, so each task improves independently over runs.
-- Sub-agents can have **different tools, servers, skills, and LLM configs** — a login sub-agent can use browser tools while a data processing sub-agent uses code execution.
-- **Parallel execution** — todo_task supports running sub-agents in parallel (configurable per step).
-- **Individual debugging** — each sub-agent can be re-run, analyzed, and optimized independently via the workshop.
-- **Granular validation** — each sub-agent has its own validation schema and success criteria.
-
-**When NOT to use todo_task**: Simple steps with a single focused task (one tool call, one output file). These are better as regular steps.
-
-**Rule of thumb**: If you're writing a step description with 3+ distinct actions (e.g., "First do X, then do Y, then do Z"), it should probably be a todo_task with sub-agents for X, Y, and Z instead.
-
-{{if eq .UseKnowledgebase "true"}}### 📁 Persistent Storage (Knowledgebase)
-- **knowledgebase/**: Persistent folder at workspace root. Never deleted across runs.
-- **How to Use**: Use for global templates, reference data, or configurations shared across ALL runs. Design steps to read from here for persistent context. Use 'knowledgebase/file.ext' in descriptions.
-{{end}}
-
-### 📄 JSON FILE STRUCTURE BEST PRACTICES
-**CRITICAL**: Keep JSON context output files SMALL (< 100KB). Large JSON files cause parsing failures and performance issues.
-
-**DO**:
-- Store structured data in JSON: counts, IDs, status, file references, brief summaries (< 1KB per field)
-- For large text content (> 1KB), create a separate markdown file and reference it: {"details_file": "step_1_details.md"}
-- Example good structure: {"status": "completed", "count": 5, "files": ["file1.md"], "summary": "Brief summary", "details_file": "step_1_details.md"}
-
-**DON'T**:
-- Put large text content directly in JSON fields (descriptions, logs, content > 1KB)
-- Create JSON files > 100KB - they will fail to load during pre-validation
-
-### 🔍 Validation Schemas
-Every step MUST have a 'validation_schema' to enable fast code-based pre-validation.
-**CRITICAL for todo_task steps**: Validation passing is the PRIMARY completion signal. The step completes when validation passes.
-
-**Structure:**
-'''json
-{
-  "validation_schema": {
-    "files": [
-      {
-        "file_name": "output.json",
-        "must_exist": true,
-        "json_checks": [
-          {
-            "path": "$.field_name",
-            "must_exist": true,
-            "value_type": "string",
-            "min_length": 1,
-            "pattern": "^[a-z]+$"
-          }
-        ]
-      }
-    ]
-  }
-}
-'''
-
-**Available JSON checks:**
-- 'path': JSONPath to the field (e.g., "$.status", "$.items[0].name", "$.data[*].id")
-- 'must_exist': Field must exist (boolean)
-- 'value_type': "string", "number", "boolean", "array", "object"
-- 'min_length' / 'max_length': For strings and arrays
-- 'min_value' / 'max_value': For numbers
-- 'pattern': Go regex for string format (e.g., "^\\d{4}-\\d{2}-\\d{2}$")
-- 'consistency_check': Compare fields (type: "equals", "greater_than", "less_than", "array_length", "in_array")
-
----
-
-{{if .VariableNames}}
-## 🔑 VARIABLES
-{{.VariableNames}}
-{{end}}
-
-## 📄 CURRENT PLAN
-{{if .ExistingPlanJSON}}{{.ExistingPlanJSON}}{{else}}No plan exists yet. Help the user create one.{{end}}
-
----
-
-{{if .IsCodeExecutionMode}}
-## 🛠️ AVAILABLE TOOLS
-
-### Workflow Tools (use these to modify the plan)
-
-#### Add Steps
-- 'add_regular_step' — Add a standard execution step
-- 'add_decision_step' — Add an execute-then-route step
-- 'add_human_input_step' — Add a step that asks the user a question and blocks for input
-- 'add_routing_step' — Add an N-way LLM routing step
-- 'add_todo_task_step' — Add a todo-task orchestration step with sub-agents
-
-#### Update Steps
-- 'update_regular_step(existing_step_id, ...)' — Update fields of a regular step
-- 'update_decision_step(existing_step_id, ...)' — Update a decision step
-- 'update_routing_step(existing_step_id, ...)' — Update a routing step
-- 'update_human_input_step(existing_step_id, ...)' — Update a human input step
-- 'update_todo_task_step(existing_step_id, ...)' — Update a todo task step
-- 'update_validation_schema(existing_step_id, validation_schema)' — Update a step's validation schema
-- 'update_success_criteria(existing_step_id, success_criteria)' — Update a step's success criteria
-
-#### Delete Steps
-- 'delete_plan_steps(step_ids[])' — Delete steps by their IDs
-
-#### Todo Task Route Tools
-- 'add_todo_task_route(parent_step_id, new_route)' — Add a sub-agent route to a todo task step
-- 'update_todo_task_route(parent_step_id, existing_route_id, ...)' — Update a sub-agent route
-- 'delete_todo_task_route(parent_step_id, deleted_route_id)' — Remove a sub-agent route
-
-#### Variable Tools
-- 'extract_variables(text)' — Identify hard-coded values (URLs, IDs, credentials) to extract as variables
-- 'update_variable(action, existing_variable_name, ...)' — Add, update, or delete a variable in variables.json
-
-### Workspace Tools
-- 'execute_shell_command(command)' — Run shell commands using full workspace-relative paths
-{{end}}
-
-## 📤 OUTPUT RULES
-- **Changes**: Discuss proposed changes with the user → Get agreement → Execute tools.
-- **Questions**: Respond conversationally if clarification is needed.
-- **Validation**: After any change, verify forward-only context flow and ID stability.
-
-*No placeholders. No duplicate steps. No circular dependencies.*
-
-{{"{{TOOL_STRUCTURE}}"}}`)
-
 // ---------------------------------------------------------------------------
 // Chat-mode system prompt templates for debugger phases
 // Key difference from orchestrator versions: no human_feedback requirement,
@@ -301,15 +154,8 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		"CurrentTime":      now.Format("15:04:05"),
 	}
 
-	var tmpl = planningChatSystemTemplate // default
+	var tmpl = interactiveWorkshopSystemTemplate // default: workflow-builder template
 	switch phaseId {
-	case "planning":
-		// Planning also needs these extra fields
-		templateData["Objective"] = templateVars["Objective"]
-		templateData["ExecutionWorkspacePath"] = fmt.Sprintf("%s/execution", templateVars["WorkspacePath"])
-		templateData["IsCodeExecutionMode"] = templateVars["IsCodeExecutionMode"] == "true"
-		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
-		tmpl = planningChatSystemTemplate
 	case "execution-qa":
 		tmpl = executionDebuggerChatTemplate
 	case "evaluation-builder":
@@ -320,13 +166,15 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 	case "workflow-builder":
 		// Use the full workshop system template (same as orchestrator mode)
 		// so the chat agent gets all plan design guidance, optimization tips, etc.
-		// PlanJSON is intentionally NOT injected here — the agent uses list_steps
-		// to fetch the plan on demand, avoiding a large static injection on every request.
+		// PlanJSON is intentionally NOT injected here — the agent reads plan.json
+		// via shell command on demand, avoiding a large static injection on every request.
 		templateData["RunFolder"] = templateVars["RunFolder"]
 		templateData["StepConfigSummary"] = templateVars["StepConfigSummary"]
 		templateData["ProgressSummary"] = templateVars["ProgressSummary"]
 		templateData["GroupInfo"] = templateVars["GroupInfo"]
 		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
+		templateData["CustomInstructions"] = templateVars["CustomInstructions"]
+		templateData["StepSummary"] = templateVars["StepSummary"]
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
 		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
 		// the agent reads them on demand via execute_shell_command.
@@ -337,6 +185,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["RunFolder"] = templateVars["RunFolder"]
 		templateData["ProgressSummary"] = templateVars["ProgressSummary"]
 		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
+		templateData["CustomInstructions"] = templateVars["CustomInstructions"]
 		tmpl = humanAssistedExecutionSystemTemplate
 	}
 
@@ -923,30 +772,6 @@ func RegisterPlanModificationTools(
 	agentName string,
 ) error {
 	return registerPlanModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, moveFile, agentName, nil)
-}
-
-// PlanningChatSystemPrompt generates the planning system prompt for chat mode.
-// Unlike the orchestrator version, this removes the human_feedback requirement
-// since the user is chatting directly with the agent.
-func PlanningChatSystemPrompt(templateVars map[string]string) string {
-	now := time.Now()
-	templateData := map[string]interface{}{
-		"Objective":              templateVars["Objective"],
-		"WorkspacePath":          templateVars["WorkspacePath"],
-		"ExecutionWorkspacePath": fmt.Sprintf("%s/execution", templateVars["WorkspacePath"]),
-		"ExistingPlanJSON":       templateVars["ExistingPlanJSON"],
-		"VariableNames":          templateVars["VariableNames"],
-		"IsCodeExecutionMode":    templateVars["IsCodeExecutionMode"] == "true",
-		"UseKnowledgebase":       templateVars["UseKnowledgebase"],
-		"CurrentDate":            now.Format("2006-01-02"),
-		"CurrentTime":            now.Format("15:04:05"),
-	}
-
-	var result strings.Builder
-	if err := planningChatSystemTemplate.Execute(&result, templateData); err != nil {
-		return "Error executing planning chat system prompt template: " + err.Error()
-	}
-	return result.String()
 }
 
 // ReadPlanFromWorkspace reads plan.json from the workspace and returns it as JSON string.

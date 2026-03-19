@@ -58,30 +58,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		learningDetailLevel = agentConfigs.LearningDetailLevel
 	}
 
-	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
-	// This ensures that when validation fails, learnings are unlocked even if they were previously locked
-	// Skip for human-assisted learning mode — learnings are manually curated and treated as final
-	validationFailed := validationResponse != nil && !validationResponse.IsSuccessCriteriaMet
-	isHumanAssistedLearningMode := agentConfigs != nil && agentConfigs.LearningMode == "human_assisted"
-	if validationFailed && !isHumanAssistedLearningMode {
-		isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
-		if isLearningsLocked {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Validation failed - auto-unlocking learnings for step %s so it can learn from the failure", step.GetID()))
-			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, step.GetID()); unlockErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", step.GetID(), unlockErr))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (validation failed)", step.GetID()))
-				// Update unlock metadata
-				if metadataErr := hcpo.updateUnlockMetadata(ctx, step.GetID(), stepIndex, stepPath, learningPathIdentifier, "validation_failed"); metadataErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for step %s: %v", step.GetID(), metadataErr))
-				}
-				// Update agentConfigs to reflect the unlock (for this function's execution)
-				if agentConfigs != nil {
-					lockValue := false
-					agentConfigs.LockLearnings = &lockValue
-				}
-			}
-		}
+	// LOCK LEARNINGS: If learnings are locked, skip the entire learning phase (both success and failure)
+	// Locked means the learnings are considered final — no further learning needed
+	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
+	if isLearningsLocked {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked for step %s - skipping success learning phase entirely", step.GetID()))
+		return nil
 	}
 
 	// Helper function to update metadata with turnCount when learning is skipped
@@ -138,24 +120,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	} else if err != nil {
 		// Log warning but continue if metadata read fails (assume 0 learnings)
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning metadata for limit check: %v (continuing)", err))
-	}
-
-	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
-	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
-	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
-	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
-	if isLearningsLocked {
-		// Check if learnings folder exists and has content
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
-		if err != nil {
-			// If we can't check, assume empty and run learning
-		} else if learningsEmpty {
-			// Learnings are locked but folder is empty - run learning to create initial learnings
-		} else {
-			// Learnings are locked and learnings exist - skip learning but record turnCount
-			_ = updateMetadataWhenSkipped("learnings locked")
-			return nil
-		}
 	}
 
 	// Skip learning if "none" is selected or learning is disabled
@@ -421,30 +385,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		learningDetailLevel = agentConfigs.LearningDetailLevel
 	}
 
-	// AUTO-UNLOCK LEARNINGS: If validation failed, automatically unlock learnings so the step can learn from the failure
-	// This ensures that when validation fails, learnings are unlocked even if they were previously locked
-	// Skip for human-assisted learning mode — learnings are manually curated and treated as final
-	validationFailed := validationResponse != nil && !validationResponse.IsSuccessCriteriaMet
-	isHumanAssistedLearningMode := agentConfigs != nil && agentConfigs.LearningMode == "human_assisted"
-	if validationFailed && !isHumanAssistedLearningMode {
-		isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
-		if isLearningsLocked {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Validation failed - auto-unlocking learnings for step %s so it can learn from the failure", step.GetID()))
-			if unlockErr := hcpo.unlockStepLearningsInConfig(ctx, step.GetID()); unlockErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to auto-unlock learnings for step %s: %v", step.GetID(), unlockErr))
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Auto-unlocked learnings for step %s (validation failed)", step.GetID()))
-				// Update unlock metadata
-				if metadataErr := hcpo.updateUnlockMetadata(ctx, step.GetID(), stepIndex, stepPath, learningPathIdentifier, "validation_failed"); metadataErr != nil {
-					hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update unlock metadata for step %s: %v", step.GetID(), metadataErr))
-				}
-				// Update agentConfigs to reflect the unlock (for this function's execution)
-				if agentConfigs != nil {
-					lockValue := false
-					agentConfigs.LockLearnings = &lockValue
-				}
-			}
-		}
+	// LOCK LEARNINGS: If learnings are locked, skip the entire failure learning phase
+	// Locked means the learnings are considered final — no further learning needed
+	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
+	if isLearningsLocked {
+		hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked for step %s - skipping failure learning phase entirely", step.GetID()))
+		return "", "", nil
 	}
 
 	// TEMP LLM OVERRIDE: Skip failure learning if tempLLM was used (we should fallback to main LLM instead of learning)
@@ -505,27 +451,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 			hcpo.GetLogger().Info(fmt.Sprintf("📊 Recorded turnCount (%d) for %s (failure learning skipped: %s)", turnCount, learningPathIdentifier, skipReason))
 		}
 		return metadataErr
-	}
-
-	// LOCK LEARNINGS: Check if learnings are locked (prevents learning agent from running but still uses existing learnings)
-	// Note: Lock learnings takes precedence - even in code execution mode, if learnings are locked, skip learning agent
-	// EXCEPTION: If learnings are locked but learnings don't exist, still run learning to create initial learnings
-	isLearningsLocked := agentConfigs != nil && agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings
-	if isLearningsLocked {
-		// Check if learnings folder exists and has content
-		learningsEmpty, err := hcpo.isStepLearningsFolderEmpty(ctx, step.GetID(), stepIndex, stepPath)
-		if err != nil {
-			// If we can't check, assume empty and run learning
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but cannot check if learnings exist - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
-		} else if learningsEmpty {
-			// Learnings are locked but folder is empty - run learning to create initial learnings
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked but folder is empty - running learning to create initial learnings for %s/%d", learningPathIdentifier, totalSteps))
-		} else {
-			// Learnings are locked and learnings exist - skip learning but record turnCount
-			hcpo.GetLogger().Info(fmt.Sprintf("🔒 Learnings locked: Skipping failure learning analysis for %s/%d (using existing learnings)", learningPathIdentifier, totalSteps))
-			_ = updateMetadataWhenSkippedFailure("learnings locked")
-			return "", "", nil
-		}
 	}
 
 	// Skip learning if "none" is selected or learning is disabled

@@ -4386,6 +4386,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if existingPlanJSON != "" {
 					phaseTemplateVars["ExistingPlanJSON"] = existingPlanJSON
 					log.Printf("[WORKFLOW_PHASE] Loaded existing plan (%d bytes)", len(existingPlanJSON))
+
+					// Extract compact step summary for workflow-builder prompt
+					if stepSummary := extractStepSummary(existingPlanJSON); stepSummary != "" {
+						phaseTemplateVars["StepSummary"] = stepSummary
+						log.Printf("[WORKFLOW_PHASE] Extracted step summary (%d steps)", strings.Count(stepSummary, "\n"))
+					}
 				}
 
 				// Read variable names from workspace (if any)
@@ -4411,6 +4417,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							phaseTemplateVars["EvaluationReportJSON"] = evalReportContent
 							log.Printf("[WORKFLOW_PHASE] Loaded evaluation report from %s (%d bytes)", phaseRunFolder, len(evalReportContent))
 						}
+					}
+				}
+
+				// Load workflow memory from memory/ folder (user-saved knowledge for this workflow)
+				if phaseWorkspacePath != "" {
+					memoryContent := loadWorkflowMemory(phaseWorkspacePath, phaseReadFile, setupCtx)
+					if memoryContent != "" {
+						phaseTemplateVars["CustomInstructions"] = memoryContent
+						log.Printf("[WORKFLOW_PHASE] Loaded workflow memory (%d bytes)", len(memoryContent))
 					}
 				}
 

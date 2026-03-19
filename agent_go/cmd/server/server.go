@@ -2385,10 +2385,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Wire up live tool call query for workshop query_step_tools
 		workflowOrchestrator.SetToolCallQueryFunc(formatToolCallSummaries(api))
 
-		// Wire up bgAgentRegistry notifier so todo task sub-agents trigger auto-notification
-		// to the main workshop agent when they complete.
-		workflowOrchestrator.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
-
 
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being canceled when the HTTP request ends
@@ -2880,10 +2876,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			defer func() {
 				api.setSessionBusy(sessionID, false)
-				// Drain pending completions after turn ends
+				// Drain pending completions after turn ends (batched to avoid concurrent StreamWithEvents)
 				pending := api.drainPendingCompletions(sessionID)
-				for _, pendingAgentID := range pending {
-					go api.processBackgroundAgentCompletion(sessionID, pendingAgentID)
+				if len(pending) > 0 {
+					go api.processBatchedBackgroundAgentCompletions(sessionID, pending)
 				}
 			}()
 		}
@@ -3575,12 +3571,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[FILE CONTEXT] Extracted write paths from @context: %v", fileContextFolders)
 				}
 
-				// Workflow phase: auto-grant write access to the preset's own workflow folder
-				// This ensures the workflow-builder can always write to its own Workflow/X folder
-				// even without explicit @context references
+				// Workflow phase: grant write access only to specific subfolders within the workflow folder.
+				// planning/ is intentionally excluded (read-only for the workflow builder).
+				// Full read access to the workflow folder is unrestricted by the guard.
 				if isWorkflowPhase && workflowPhaseFolder != "" {
-					fileContextFolders = append(fileContextFolders, workflowPhaseFolder+"/")
-					log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Auto-added workflow folder write access: %s/", workflowPhaseFolder)
+					workflowWriteSubfolders := []string{"knowledgebase/", "execution/", "learnings/", "scripts/", "runs/"}
+					for _, sub := range workflowWriteSubfolders {
+						fileContextFolders = append(fileContextFolders, workflowPhaseFolder+"/"+sub)
+					}
+					log.Printf("[WORKFLOW_PHASE FOLDER GUARD] Write access restricted to subfolders of %s: %v", workflowPhaseFolder, workflowWriteSubfolders)
 				}
 
 				// Apply folder guard to restrict writes based on mode
@@ -7727,6 +7726,10 @@ func (n *todoSubAgentBgNotifier) OnSubAgentStart(agentID, name string) {
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
 
+	// Pre-create the channel synchronously so NotifyCompletion never drops
+	// a completion due to a race with backgroundCompletionLoop startup.
+	n.api.bgAgentRegistry.GetNotificationChannel(n.sessionID)
+
 	// Ensure the background completion loop is running for this session so that
 	// NotifyCompletion's channel send is actually consumed.
 	n.api.completionLoopStartedMu.Lock()
@@ -8002,6 +8005,67 @@ func (api *StreamingAPI) backgroundCompletionLoop(sessionID string) {
 	log.Printf("[BG AGENT] Completion loop ended for session %s", sessionID)
 }
 
+// processBatchedBackgroundAgentCompletions builds a single [AUTO-NOTIFICATION] message for one or more
+// completed agents and fires ONE synthetic turn. Subsequent drained completions are chained via
+// the synthetic turn's own defer, avoiding concurrent StreamWithEvents calls.
+func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID string, agentIDs []string) {
+	if len(agentIDs) == 0 {
+		return
+	}
+
+	// Single completion: use the normal individual path (simpler message).
+	if len(agentIDs) == 1 {
+		api.processBackgroundAgentCompletion(sessionID, agentIDs[0])
+		return
+	}
+
+	// Multiple completions: build a batched [AUTO-NOTIFICATION] message.
+	var parts []string
+	var emittedIDs []string
+	for _, agentID := range agentIDs {
+		agent := api.bgAgentRegistry.Get(sessionID, agentID)
+		if agent == nil {
+			continue
+		}
+		agent.mu.Lock()
+		if agent.notified {
+			agent.mu.Unlock()
+			continue
+		}
+		agent.notified = true
+		agent.mu.Unlock()
+
+		snap := agent.GetSnapshot()
+		var resultText string
+		if snap.Status == BGAgentCompleted {
+			resultText = truncateForToolResponse(snap.Result, 1000)
+		} else if snap.Status == BGAgentFailed {
+			resultText = fmt.Sprintf("Error: %s", snap.Error)
+		} else {
+			resultText = fmt.Sprintf("Status: %s", snap.Status)
+		}
+		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s): %s\n  Result: %s", snap.Name, snap.ID, snap.Status, resultText))
+		emittedIDs = append(emittedIDs, agentID)
+	}
+
+	if len(parts) == 0 {
+		return
+	}
+
+	syntheticMsg := fmt.Sprintf("[AUTO-NOTIFICATION] Multiple step completions:\n%s", strings.Join(parts, "\n"))
+
+	// Emit synthetic_turn_ready event for each agent
+	for _, agentID := range emittedIDs {
+		api.emitBackgroundAgentEvent(sessionID, agentID, "synthetic_turn_ready", map[string]interface{}{
+			"message":  "Background agents completed. The main agent will process the results.",
+			"agent_id": agentID,
+			"status":   "completed",
+		})
+	}
+
+	api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
 // processBackgroundAgentCompletion injects a synthetic message and triggers a new main agent turn
 func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID string) {
 	agent := api.bgAgentRegistry.Get(sessionID, agentID)
@@ -8031,7 +8095,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 	}
 
 	syntheticMsg := fmt.Sprintf(
-		"[Background Agent Notification]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s",
+		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s",
 		snap.Name, snap.ID, snap.Status, resultText)
 
 	// NOTE: Don't inject syntheticMsg into conversation history here.
@@ -8105,11 +8169,11 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			delete(api.agentCancelFuncs, sessionID)
 			api.agentCancelMux.Unlock()
 
-			// Clear session busy and drain pending completions
+			// Clear session busy and drain pending completions (batched to avoid concurrent StreamWithEvents)
 			api.setSessionBusy(sessionID, false)
 			pending := api.drainPendingCompletions(sessionID)
-			for _, pendingAgentID := range pending {
-				go api.processBackgroundAgentCompletion(sessionID, pendingAgentID)
+			if len(pending) > 0 {
+				go api.processBatchedBackgroundAgentCompletions(sessionID, pending)
 			}
 		}()
 

@@ -803,6 +803,7 @@ export interface PresetQuery {
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
   enable_browser_access?: boolean; // Browser automation access
   is_predefined: boolean;
+  employee_id?: string; // Assigned employee ID
   created_at: string;
   updated_at: string;
   created_by: string;

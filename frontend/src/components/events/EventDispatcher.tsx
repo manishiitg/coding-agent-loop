@@ -1654,7 +1654,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
               <div className="text-red-600 dark:text-red-400 whitespace-pre-wrap">{error}</div>
             )}
             {result && (
-              <div className="text-gray-600 dark:text-gray-400 whitespace-pre-wrap max-h-40 overflow-y-auto overscroll-y-contain">{result}</div>
+              <div className="text-gray-600 dark:text-gray-400 max-h-40 overflow-y-auto overscroll-y-contain">
+                <MarkdownRenderer content={result} />
+              </div>
             )}
           </div>
         </details>

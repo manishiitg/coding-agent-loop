@@ -5,6 +5,7 @@ import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
 import GitSyncStatus from './workspace/GitSyncStatus'
+import BrowserProcesses from './workspace/BrowserProcesses'
 import SemanticSearchSync from './workspace/SemanticSearchSync'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
@@ -783,26 +784,27 @@ export default function Workspace({
             // Process the content to convert escaped newlines to actual newlines
             // Only process if content is a non-empty string
             if (processedContent && typeof processedContent === 'string') {
-              processedContent = processedContent
-                .replace(/\\n/g, '\n')  // Convert \n to actual newlines
-                .replace(/\\t/g, '\t')  // Convert \t to actual tabs
-                .replace(/\\r/g, '\r'); // Convert \r to actual carriage returns
-
-              // Check if this is a JSON file (by extension OR content)
+              // Check if this is a JSON file (by extension OR content) BEFORE escape replacement
+              // The \\n replacement corrupts JSON strings that contain literal \n escape sequences
               const extensionIsJson = file.filepath.toLowerCase().endsWith('.json')
-              const contentIsJson = isValidJSON(processedContent)
+              const contentIsJson = !extensionIsJson && isValidJSON(processedContent)
               isJsonFile = extensionIsJson || contentIsJson
 
-              // If it's a JSON file, try to parse and format it
               if (isJsonFile) {
+                // For JSON files, parse directly (the content already has proper escapes)
                 try {
                   const parsed = JSON.parse(processedContent)
                   formattedJson = JSON.stringify(parsed, null, 2)
                 } catch (parseError) {
-                  // If JSON parsing fails, keep the original content
                   console.warn('Failed to parse JSON file:', parseError)
                   formattedJson = null
                 }
+              } else {
+                // For non-JSON files, convert escaped newlines to actual newlines
+                processedContent = processedContent
+                  .replace(/\\n/g, '\n')
+                  .replace(/\\t/g, '\t')
+                  .replace(/\\r/g, '\r')
               }
             }
           }
@@ -1977,6 +1979,13 @@ export default function Workspace({
                     </div>
                   </div>
                   )}
+                </div>
+              )}
+
+              {/* Browser Processes - Hidden in selection mode */}
+              {!isSelectionMode && (
+                <div className="relative">
+                  <BrowserProcesses />
                 </div>
               )}
 

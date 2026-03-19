@@ -691,7 +691,7 @@ export const WorkflowsOverviewPage: React.FC = () => {
   const { setModeCategory, selectedModeCategory } = useModeStore()
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const popups = usePopupState()
-  const [activeTab, setActiveTab] = useState<'workflows' | 'employees'>('workflows')
+  const [activeTab, setActiveTab] = useState<'workflows' | 'employees'>('employees')
 
   useEffect(() => { loadData() }, [loadData])
 

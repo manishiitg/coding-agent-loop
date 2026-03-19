@@ -8,7 +8,31 @@ interface LLMGenerationErrorEventProps {
   mode?: 'compact' | 'detailed'
 }
 
+function getErrorSummary(error: string): string {
+  const trimmed = error.trim()
+  if (!trimmed) return trimmed
+
+  const codexPrefix = /^codex cli execution failed:\s*/i
+  if (codexPrefix.test(trimmed)) {
+    const remainder = trimmed.replace(codexPrefix, '').trim()
+    if (remainder && !/^exit status \d+$/i.test(remainder)) return remainder
+  }
+
+  const retryCodexPrefix = /^retry:\s*codex cli execution failed:\s*/i
+  if (retryCodexPrefix.test(trimmed)) {
+    const remainder = trimmed.replace(retryCodexPrefix, '').trim()
+    if (remainder && !/^exit status \d+$/i.test(remainder)) return remainder
+  }
+
+  const msgMatch = trimmed.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+  if (msgMatch?.[1]) return msgMatch[1]
+
+  return trimmed
+}
+
 export const LLMGenerationErrorEventDisplay: React.FC<LLMGenerationErrorEventProps> = ({ event, mode = 'compact' }) => {
+  const errorDisplay = event.error ? getErrorSummary(event.error) : null
+
   if (mode === 'compact') {
     return (
       <div className="p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md">
@@ -18,7 +42,7 @@ export const LLMGenerationErrorEventDisplay: React.FC<LLMGenerationErrorEventPro
           {event.turn && <span className="text-red-600 dark:text-red-400">• Turn {event.turn}</span>}
           {event.model_id && <span className="text-red-600 dark:text-red-400">• {event.model_id}</span>}
           {event.duration && <span className="text-red-600 dark:text-red-400">• {formatDuration(event.duration)}</span>}
-          {event.error && <span className="text-red-600 dark:text-red-400">• {event.error}</span>}
+          {errorDisplay && <span className="text-red-600 dark:text-red-400">• {errorDisplay}</span>}
         </div>
       </div>
     )
@@ -50,10 +74,10 @@ export const LLMGenerationErrorEventDisplay: React.FC<LLMGenerationErrorEventPro
         )}
         
         {/* Error message */}
-        {event.error && (
+        {errorDisplay && (
           <div className="bg-red-100 dark:bg-red-800 border border-red-200 dark:border-red-700 rounded-md p-2">
             <div className="font-medium">Error:</div>
-            <div className="mt-1 text-red-800 dark:text-red-200">{event.error}</div>
+            <div className="mt-1 text-red-800 dark:text-red-200 whitespace-pre-wrap break-words">{errorDisplay}</div>
           </div>
         )}
         

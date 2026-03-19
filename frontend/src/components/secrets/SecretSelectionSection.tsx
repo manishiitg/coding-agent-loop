@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Checkbox } from '../ui/checkbox';
 import { KeyRound, Globe } from 'lucide-react';
 import { useSecretsStore } from '../../stores';
@@ -18,6 +18,13 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
 }) => {
   const secrets = useSecretsStore((s) => s.secrets);
   const globalSecrets = useSecretsStore((s) => s.globalSecrets);
+  const fetchGlobalSecrets = useSecretsStore((s) => s.fetchGlobalSecrets);
+
+  useEffect(() => {
+    if (globalSecrets.length === 0) {
+      fetchGlobalSecrets();
+    }
+  }, []);
 
   const toggle = (id: string) => {
     if (selectedSecrets.includes(id)) {
@@ -50,9 +57,9 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
         Secrets
       </label>
 
-      <div className="border border-gray-200 dark:border-gray-700 rounded-md max-h-64 overflow-y-auto">
+      <div className="border border-gray-200 dark:border-gray-700 rounded-md max-h-64 overflow-y-auto bg-white dark:bg-gray-800">
         {globalSecrets.map((gs) => (
-          <div key={`global-${gs.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <div key={`global-${gs.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
             <Checkbox
               id={`global-secret-${gs.name}`}
               checked={selectedGlobalSecrets === null || selectedGlobalSecrets.includes(gs.name)}
@@ -68,13 +75,13 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
         ))}
 
         {sorted.map((secret) => (
-          <div key={secret.id} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-700">
+          <div key={secret.id} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
             <Checkbox
               id={`secret-${secret.id}`}
               checked={selectedSecrets.includes(secret.id)}
               onCheckedChange={() => toggle(secret.id)}
             />
-            <label htmlFor={`secret-${secret.id}`} className="flex-1 text-sm font-medium cursor-pointer select-none">
+            <label htmlFor={`secret-${secret.id}`} className="flex-1 text-sm font-medium cursor-pointer select-none text-gray-900 dark:text-gray-100">
               {secret.name}
             </label>
           </div>

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -496,10 +497,21 @@ func GetSyncStatus(c *gin.Context) {
 		return
 	}
 
-	// Check git status
-	statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
+	// Check git status (skip untracked files and renames for performance on large repos)
+	gitCtx, gitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer gitCancel()
+	statusCmd := exec.CommandContext(gitCtx, "git", "-C", docsDir, "status", "--porcelain", "-uno", "--no-renames")
 	output, err := statusCmd.Output()
 	if err != nil {
+		if gitCtx.Err() == context.DeadlineExceeded {
+			log.Printf("[SYNC] WARNING: git status timed out after 30s for directory: %s", docsDir)
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Git status timed out — workspace may be too large",
+				Error:   "git status exceeded 30s timeout",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
 			Success: false,
 			Message: "Failed to check git status",
@@ -743,7 +755,9 @@ Happy planning! 🚀
 		}
 
 		// Check if there are any changes to commit
-		statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
+		initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer initCancel()
+		statusCmd := exec.CommandContext(initCtx, "git", "-C", docsDir, "status", "--porcelain", "-uno", "--no-renames")
 		output, err := statusCmd.Output()
 		if err != nil {
 			return fmt.Errorf("failed to check git status: %v", err)

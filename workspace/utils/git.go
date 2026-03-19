@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -211,9 +212,15 @@ func PushToGitHub(docsDir, githubBranch string) error {
 // GetGitStatus returns the current git status
 func GetGitStatus(docsDir string) (*GitStatus, error) {
 	log.Printf("[GIT] Getting git status for directory: %s", docsDir)
-	statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	statusCmd := exec.CommandContext(ctx, "git", "-C", docsDir, "status", "--porcelain", "-uno", "--no-renames")
 	output, err := statusCmd.Output()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[GIT] ERROR: git status timed out after 30s for directory: %s", docsDir)
+			return nil, fmt.Errorf("git status timed out after 30s — workspace may be too large")
+		}
 		log.Printf("[GIT] ERROR: Failed to execute git status: %v", err)
 		return nil, fmt.Errorf("failed to check git status: %v", err)
 	}
@@ -429,7 +436,9 @@ func LocalCommit(docsDir string, commitMessage string) error {
 	}
 
 	// Check if there are changes to commit
-	statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
+	commitCtx, commitCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer commitCancel()
+	statusCmd := exec.CommandContext(commitCtx, "git", "-C", docsDir, "status", "--porcelain", "-uno", "--no-renames")
 	output, err := statusCmd.Output()
 	if err != nil {
 		return fmt.Errorf("failed to check git status: %v", err)

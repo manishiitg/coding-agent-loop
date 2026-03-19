@@ -6,6 +6,8 @@ import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useAppStore } from '../../stores/useAppStore'
+import { useModeStore } from '../../stores/useModeStore'
+import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { workspaceApi, agentApi, getApiBaseUrl } from '../../services/api'
 import mermaid from 'mermaid'
 
@@ -154,11 +156,35 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   // Standard file opening logic — mirrors Workspace.tsx handleFileClick
   const handleWorkspaceLink = async (filepath: string) => {
     try {
-      // Auto-resolve folder paths to their default file (e.g. Plans/foo -> Plans/foo/plan.md)
+      // In workflow mode, paths like "knowledgebase/..." are adjusted (prefix stripped).
+      // We need to prepend the workflow folder path for the API call.
+      const standardPrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+      const isStandardPath = standardPrefixes.some(p => filepath.startsWith(p))
       let resolvedPath = filepath
-      if (filepath.startsWith('Plans/') && !filepath.includes('.')) {
-        resolvedPath = filepath + '/plan.md'
+
+      if (!isStandardPath) {
+        const modeCategory = useModeStore.getState().selectedModeCategory
+        if (modeCategory === 'workflow') {
+          const activePreset = useGlobalPresetStore.getState().getActivePreset('workflow')
+          const folderFilepath = activePreset?.selectedFolder?.filepath
+          if (folderFilepath) {
+            const parts = folderFilepath.split('/').filter(Boolean)
+            const lastPart = parts[parts.length - 1]
+            const isFile = lastPart?.includes('.')
+            const workflowFolderPath = isFile && parts.length > 1 ? parts.slice(0, -1).join('/') : parts.join('/')
+            resolvedPath = `${workflowFolderPath}/${filepath}`
+          }
+        }
       }
+
+      // Auto-resolve folder paths to their default file (e.g. Plans/foo -> Plans/foo/plan.md)
+      if (resolvedPath.startsWith('Plans/') && !resolvedPath.includes('.')) {
+        resolvedPath = resolvedPath + '/plan.md'
+      }
+
+      // displayPath is what the workspace tree uses (adjusted path without workflow prefix)
+      // resolvedPath is the full path for API calls
+      const displayPath = filepath.startsWith('Plans/') && !filepath.includes('.') ? filepath + '/plan.md' : filepath
 
       const fileName = resolvedPath.split('/').pop() || resolvedPath
       const ext = fileName.split('.').pop()?.toLowerCase() || ''
@@ -171,11 +197,11 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
       // 1. Ensure workspace is visible
       setWorkspaceMinimized(false)
 
-      // 2. Expand folders and highlight in explorer
-      expandFoldersForFile(resolvedPath)
-      highlightFile(resolvedPath)
+      // 2. Expand folders and highlight in explorer (use display path for tree navigation)
+      expandFoldersForFile(displayPath)
+      highlightFile(displayPath)
 
-      // 3. Select file and start loading content
+      // 3. Select file and start loading content (use resolvedPath for API)
       setSelectedFile({ name: fileName, path: resolvedPath })
       setLoadingFileContent(true)
 
@@ -238,7 +264,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     // Group 1: Optional opening backtick
     // Group 2: The actual path (starting with allowed prefixes)
     // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
-    const pathRegex = /(`?)\b((?:Chats|Downloads|Workflow|Plans|skills)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
+    const pathRegex = /(`?)\b((?:Chats|Downloads|Workflow|Plans|skills|knowledgebase)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
     
     // Replace with custom link protocol "#workspace/" to avoid sanitization issues
     // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.
@@ -489,7 +515,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/', 'knowledgebase/']
             const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
             const workspaceFilepath = href?.startsWith('#workspace/')
               ? decodeURIComponent(href.replace('#workspace/', ''))
@@ -524,7 +550,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             )
           },
           img: ({ src, alt }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/', 'knowledgebase/']
             const isWorkspacePath = !!src && workspacePrefixes.some(p => src.startsWith(p))
             const resolvedSrc = isWorkspacePath
               ? `${getApiBaseUrl()}/api/public/file?path=${btoa(src!)}`

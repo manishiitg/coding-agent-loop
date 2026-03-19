@@ -90,7 +90,7 @@ func runSync(cmd *cobra.Command, args []string) {
 		}
 
 		// Check for local changes
-		statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain")
+		statusCmd := exec.Command("git", "-C", docsDir, "status", "--porcelain", "-uno", "--no-renames")
 		output, err := statusCmd.Output()
 		if err != nil {
 			fmt.Printf("❌ Failed to check git status: %v\n", err)

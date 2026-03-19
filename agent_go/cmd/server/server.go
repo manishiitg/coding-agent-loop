@@ -2013,6 +2013,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				workflowPhaseFolder = phasePreset.SelectedFolder.String
 				log.Printf("[WORKFLOW_PHASE] Resolved workflow folder for FolderGuard: %s", workflowPhaseFolder)
 			}
+			// Load global secret selection from preset — frontend may not send selected_global_secrets
+			// for workflow_phase requests. Without this, nil selection means ALL global secrets leak.
+			if req.SelectedGlobalSecrets == nil {
+				if phasePreset.SelectedGlobalSecretNames != "" {
+					var names []string
+					if err := json.Unmarshal([]byte(phasePreset.SelectedGlobalSecretNames), &names); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Failed to parse selected_global_secret_names from preset: %v", err)
+					} else {
+						req.SelectedGlobalSecrets = &names
+						log.Printf("[WORKFLOW_PHASE] Loaded %d selected global secret names from preset", len(names))
+					}
+				} else {
+					emptyNames := []string{}
+					req.SelectedGlobalSecrets = &emptyNames
+					log.Printf("[WORKFLOW_PHASE] No global secrets configured in preset — defaulting to none")
+				}
+			}
 		}
 		// Convert to simple agent mode so it falls through to the standard agent path
 		req.AgentMode = "simple"
@@ -5016,6 +5033,127 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CONVERSATION DEBUG] Failed to persist conversation history to DB for session %s: %v", sessionID, err)
 			} else {
 				log.Printf("[CONVERSATION DEBUG] Persisted conversation history (%d messages) to DB for session %s", len(finalHistory), sessionID)
+			}
+		}
+
+		// Save builder conversation log + token_usage.json for workflow phase sessions.
+		// One file per session — overwrites on each follow-up with the full cumulative history.
+		// Resolve workspace-docs root so files are visible in the UI.
+		if isWorkflowPhase && workflowPhaseFolder != "" && len(finalHistory) > 0 {
+			wsRoot := filepath.Join("..", "workspace-docs")
+			builderDir := filepath.Join(wsRoot, workflowPhaseFolder, "builder")
+			if err := os.MkdirAll(builderDir, 0755); err != nil {
+				log.Printf("[BUILDER LOG] Failed to create builder dir %s: %v", builderDir, err)
+			} else {
+				// 1. Save conversation log (one file per session, overwritten on each turn)
+				convData := map[string]interface{}{
+					"session_id":           sessionID,
+					"phase_id":             workflowPhaseID,
+					"conversation_history": finalHistory,
+					"updated_at":           time.Now().Format(time.RFC3339),
+				}
+				if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
+					logPath := filepath.Join(builderDir, fmt.Sprintf("session-%s-conversation.json", sessionID))
+					if err := os.WriteFile(logPath, convJSON, 0644); err != nil {
+						log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
+					} else {
+						log.Printf("[BUILDER LOG] Saved conversation log (%d messages) to %s", len(finalHistory), logPath)
+					}
+				}
+
+				// 2. Update {workflowFolder}/token_usage.json (same PhaseTokenUsageFile format used by execution)
+				// This adds builder costs alongside execution phase costs in the same file,
+				// keyed as "builder" phase so it appears in the existing cost popup.
+				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
+					promptTokens, completionTokens, _, cacheTokens, reasoningTokens, llmCallCount, _,
+						inputCost, outputCost, reasoningCost, cacheCost, totalCost, _ := underlying.GetTokenUsageWithPricing()
+
+					fmtM := func(tokens int) string {
+						return fmt.Sprintf("%.3fM", float64(tokens)/1_000_000.0)
+					}
+
+					phaseKey := workflowPhaseID // e.g. "workflow-builder", "planning"
+					modelUsage := &orchestrator.ModelTokenUsage{
+						Provider:         finalProvider,
+						InputTokens:     promptTokens,
+						OutputTokens:    completionTokens,
+						InputTokensM:    fmtM(promptTokens),
+						OutputTokensM:   fmtM(completionTokens),
+						CacheTokens:     cacheTokens,
+						CacheTokensM:    fmtM(cacheTokens),
+						ReasoningTokens:  reasoningTokens,
+						ReasoningTokensM: fmtM(reasoningTokens),
+						LLMCallCount:    llmCallCount,
+						InputCost:       inputCost,
+						OutputCost:      outputCost,
+						ReasoningCost:   reasoningCost,
+						CacheCost:       cacheCost,
+						TotalCost:       totalCost,
+					}
+
+					tokenFilePath := filepath.Join(wsRoot, workflowPhaseFolder, "token_usage.json")
+					var tokenFile orchestrator.PhaseTokenUsageFile
+					if existingData, err := os.ReadFile(tokenFilePath); err == nil {
+						json.Unmarshal(existingData, &tokenFile)
+					}
+					if tokenFile.ByPhaseAndModel == nil {
+						tokenFile.ByPhaseAndModel = make(map[string]map[string]*orchestrator.ModelTokenUsage)
+						tokenFile.ByModel = make(map[string]*orchestrator.ModelTokenUsage)
+						tokenFile.CreatedAt = time.Now()
+					}
+					tokenFile.UpdatedAt = time.Now()
+
+					// Add/accumulate per-phase entry
+					if tokenFile.ByPhaseAndModel[phaseKey] == nil {
+						tokenFile.ByPhaseAndModel[phaseKey] = make(map[string]*orchestrator.ModelTokenUsage)
+					}
+					if existing, ok := tokenFile.ByPhaseAndModel[phaseKey][underlying.ModelID]; ok {
+						existing.InputTokens += promptTokens
+						existing.OutputTokens += completionTokens
+						existing.CacheTokens += cacheTokens
+						existing.ReasoningTokens += reasoningTokens
+						existing.LLMCallCount += llmCallCount
+						existing.InputTokensM = fmtM(existing.InputTokens)
+						existing.OutputTokensM = fmtM(existing.OutputTokens)
+						existing.CacheTokensM = fmtM(existing.CacheTokens)
+						existing.ReasoningTokensM = fmtM(existing.ReasoningTokens)
+						existing.InputCost += inputCost
+						existing.OutputCost += outputCost
+						existing.ReasoningCost += reasoningCost
+						existing.CacheCost += cacheCost
+						existing.TotalCost += totalCost
+					} else {
+						tokenFile.ByPhaseAndModel[phaseKey][underlying.ModelID] = modelUsage
+					}
+
+					// Update aggregate by_model
+					if existing, ok := tokenFile.ByModel[underlying.ModelID]; ok {
+						existing.InputTokens += promptTokens
+						existing.OutputTokens += completionTokens
+						existing.CacheTokens += cacheTokens
+						existing.ReasoningTokens += reasoningTokens
+						existing.LLMCallCount += llmCallCount
+						existing.InputTokensM = fmtM(existing.InputTokens)
+						existing.OutputTokensM = fmtM(existing.OutputTokens)
+						existing.CacheTokensM = fmtM(existing.CacheTokens)
+						existing.ReasoningTokensM = fmtM(existing.ReasoningTokens)
+						existing.InputCost += inputCost
+						existing.OutputCost += outputCost
+						existing.ReasoningCost += reasoningCost
+						existing.CacheCost += cacheCost
+						existing.TotalCost += totalCost
+					} else {
+						tokenFile.ByModel[underlying.ModelID] = modelUsage
+					}
+
+					if tokenJSON, err := json.MarshalIndent(tokenFile, "", "  "); err == nil {
+						if err := os.WriteFile(tokenFilePath, tokenJSON, 0644); err != nil {
+							log.Printf("[BUILDER LOG] Failed to write token_usage.json: %v", err)
+						} else {
+							log.Printf("[BUILDER LOG] Updated %s/token_usage.json (phase=%s, $%.4f this turn)", workflowPhaseFolder, phaseKey, totalCost)
+						}
+					}
+				}
 			}
 		}
 

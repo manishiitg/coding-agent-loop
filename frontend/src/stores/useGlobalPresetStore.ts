@@ -230,7 +230,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               preDiscoveredTools,
               enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
               enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
-              enableBrowserAccess: preset.enable_browser_access ?? false
+              enableBrowserAccess: preset.enable_browser_access ?? false,
+              employee_id: preset.employee_id || undefined,
             }
           })
 

@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { RefreshCw, GitBranch, Pause, Play, ArrowUp } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { RefreshCw, GitBranch, ArrowUp } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { GitSyncStatus } from '../../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
@@ -26,34 +26,18 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
   const [showConflictResolution, setShowConflictResolution] = useState<boolean>(false)
   const [conflictError, setConflictError] = useState<string | null>(null)
   
-  // Polling state
-  const [isPolling, setIsPolling] = useState<boolean>(true)
-  const [lastPollTime, setLastPollTime] = useState<Date | null>(null)
-  const [pollingEnabled, setPollingEnabled] = useState<boolean>(true)
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const lastStatusRef = useRef<GitSyncStatus | null>(null)
+  // Last fetch tracking (no automatic polling — user-driven only)
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null)
 
-  // Fetch Git sync status with change detection
-  const fetchStatus = useCallback(async (isPolling = false) => {
+  // Fetch Git sync status (user-driven only, no automatic polling)
+  const fetchStatus = useCallback(async () => {
     try {
-      if (!isPolling) setLoading(true)
+      setLoading(true)
       setError(null)
       const response = await agentApi.getGitSyncStatus()
       if (response.success && response.data) {
-        const newStatus = response.data
-        
-        // Only update if status actually changed (for polling efficiency)
-        if (isPolling && lastStatusRef.current) {
-          const hasChanged = JSON.stringify(newStatus) !== JSON.stringify(lastStatusRef.current)
-          if (!hasChanged) {
-            setLastPollTime(new Date())
-            return // No change, skip update
-          }
-        }
-        
-        setStatus(newStatus)
-        lastStatusRef.current = newStatus
-        setLastPollTime(new Date())
+        setStatus(response.data)
+        setLastFetchTime(new Date())
       } else {
         setError(response.message || 'Failed to fetch Git status')
       }
@@ -61,14 +45,13 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       console.error('Failed to fetch Git status:', err)
       setError(err instanceof Error ? err.message : 'Failed to fetch Git status')
     } finally {
-      if (!isPolling) setLoading(false)
+      setLoading(false)
     }
   }, [])
 
-  // Manual sync with polling pause
+  // Manual sync
   const handleSync = async () => {
     try {
-      setIsPolling(false) // Pause polling during sync
       setSyncing(true)
       setError(null)
       setConflictError(null)
@@ -105,14 +88,12 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       }
     } finally {
       setSyncing(false)
-      setIsPolling(true) // Resume polling after sync
     }
   }
 
   // Force push local changes
   const handleForcePushLocal = async () => {
     try {
-      setIsPolling(false)
       setSyncing(true)
       setError(null)
       setConflictError(null)
@@ -145,7 +126,6 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
   // Force pull remote changes
   const handleForcePullRemote = async () => {
     try {
-      setIsPolling(false)
       setSyncing(true)
       setError(null)
       setConflictError(null)
@@ -180,51 +160,13 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
     fetchStatus()
   }, [fetchStatus])
 
-  // Polling effect - only poll when visible and enabled
-  useEffect(() => {
-    if (isVisible && pollingEnabled && isPolling) {
-      const interval = setInterval(() => {
-        fetchStatus(true) // Pass true to indicate this is a polling call
-      }, 60000) // 60 seconds
-      
-      pollingIntervalRef.current = interval
-      
-      return () => {
-        if (interval) {
-          clearInterval(interval)
-          pollingIntervalRef.current = null
-        }
-      }
-    } else {
-      // Clear interval if not visible or polling disabled
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
-        pollingIntervalRef.current = null
-      }
-    }
-  }, [isVisible, pollingEnabled, isPolling, fetchStatus])
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
-      }
-    }
-  }, [])
-
-  // Toggle polling
-  const togglePolling = () => {
-    setPollingEnabled(!pollingEnabled)
-  }
-
-  // Format time since last poll
-  const getTimeSinceLastPoll = () => {
-    if (!lastPollTime) return 'Never'
+  // Format time since last fetch
+  const getTimeSinceLastFetch = () => {
+    if (!lastFetchTime) return 'Never'
     const now = new Date()
-    const diffMs = now.getTime() - lastPollTime.getTime()
+    const diffMs = now.getTime() - lastFetchTime.getTime()
     const diffSeconds = Math.floor(diffMs / 1000)
-    
+
     if (diffSeconds < 60) return `${diffSeconds}s ago`
     const diffMinutes = Math.floor(diffSeconds / 60)
     if (diffMinutes < 60) return `${diffMinutes}m ago`
@@ -258,12 +200,6 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
     return 'text-green-500'
   }
 
-  const getPollingStatus = () => {
-    if (!isVisible) return 'Paused (hidden)'
-    if (!pollingEnabled) return 'Disabled'
-    if (syncing) return 'Paused (syncing)'
-    return 'Active'
-  }
 
   return (
     <TooltipProvider>
@@ -315,10 +251,7 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
                   )}
                   <div className="mt-2 pt-1 border-t border-gray-200 dark:border-gray-600">
                     <p className="text-xs text-gray-500">
-                      Auto-refresh: {getPollingStatus()}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Last checked: {getTimeSinceLastPoll()}
+                      Last checked: {getTimeSinceLastFetch()}
                     </p>
                   </div>
                 </div>
@@ -442,38 +375,10 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
                 </div>
               )}
 
-              {/* Polling Status Section */}
+              {/* Last Fetched */}
               <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
-                    Auto-refresh Status
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500">
-                      {getTimeSinceLastPoll()}
-                    </span>
-                    <button
-                      onClick={togglePolling}
-                      className={`p-1 rounded transition-colors ${
-                        pollingEnabled 
-                          ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900' 
-                          : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-                      }`}
-                      title={pollingEnabled ? 'Disable auto-refresh' : 'Enable auto-refresh'}
-                    >
-                      {pollingEnabled ? (
-                        <Pause className="w-3 h-3" />
-                      ) : (
-                        <Play className="w-3 h-3" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-                <div className="text-xs text-gray-500 mb-2">
-                  Status: {getPollingStatus()}
-                  {isVisible && pollingEnabled && !syncing && (
-                    <span className="ml-1 text-green-600">•</span>
-                  )}
+                <div className="text-xs text-gray-500">
+                  Last checked: {getTimeSinceLastFetch()}
                 </div>
               </div>
 

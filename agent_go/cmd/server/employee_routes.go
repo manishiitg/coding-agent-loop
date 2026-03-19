@@ -15,10 +15,10 @@ func EmployeeRoutes(router *mux.Router, db database.Database) {
 
 	apiRouter.HandleFunc("", listEmployeesHandler(db)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("", createEmployeeHandler(db)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/assign-workflow", assignWorkflowEmployeeHandler(db)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/{id}", getEmployeeHandler(db)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/{id}", updateEmployeeHandler(db)).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/{id}", deleteEmployeeHandler(db)).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/assign-workflow", assignWorkflowEmployeeHandler(db)).Methods("POST", "OPTIONS")
 }
 
 func listEmployeesHandler(db database.Database) http.HandlerFunc {

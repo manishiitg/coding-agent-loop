@@ -158,11 +158,11 @@ func assignWorkflowEmployeeHandler(db database.Database) http.HandlerFunc {
 		var err error
 		if req.EmployeeID != nil && *req.EmployeeID != "" {
 			_, err = sqlDB.ExecContext(r.Context(),
-				`UPDATE preset_queries SET employee_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				`UPDATE preset_queries SET employee_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
 				*req.EmployeeID, req.PresetQueryID)
 		} else {
 			_, err = sqlDB.ExecContext(r.Context(),
-				`UPDATE preset_queries SET employee_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+				`UPDATE preset_queries SET employee_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
 				req.PresetQueryID)
 		}
 		if err != nil {

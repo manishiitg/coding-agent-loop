@@ -224,9 +224,8 @@ export const EmployeeDashboard: React.FC = () => {
 
       const unassigned: WorkflowSummary[] = []
       for (const [, summary] of summaries) {
-        // Check if preset has employee_id (it comes from backend JSON)
-        const presetAny = summary.preset as Record<string, unknown>
-        const empId = presetAny.employee_id as string | undefined
+        // Check if preset has employee_id (mapped from backend)
+        const empId = (summary.preset as { employee_id?: string }).employee_id
         if (empId && empMap.has(empId)) {
           const empData = empMap.get(empId)!
           empData.workflows.push(summary)
@@ -397,7 +396,7 @@ export const EmployeeDashboard: React.FC = () => {
                 {workflows.map(wf => (
                   <div
                     key={wf.preset.id}
-                    className="flex items-center justify-between px-5 py-2.5 cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-700/20 transition-colors"
+                    className="flex items-center justify-between px-5 py-2.5 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors"
                     onClick={() => handleOpenWorkflow(wf.preset)}
                   >
                     <div className="flex items-center gap-3">
@@ -433,7 +432,7 @@ export const EmployeeDashboard: React.FC = () => {
                                 <button
                                   key={emp.id}
                                   onClick={() => handleAssign(wf.preset.id, emp.id)}
-                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-gray-50 dark:hover:bg-gray-700"
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700/70"
                                 >
                                   <EmployeeAvatar name={emp.name} color={emp.avatar_color} size="sm" />
                                   <span className="text-gray-700 dark:text-gray-300">{emp.name}</span>

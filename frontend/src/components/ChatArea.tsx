@@ -2011,11 +2011,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       useAppStore.getState().setCurrentQuery(queryWithContext)
     }
 
-    // If there are existing events from a previous turn, inject a separator so old events get collapsed.
-    // This ensures the new user message is immediately visible without scrolling past old events.
+    // Only inject a conversation_resumed separator when the tab was restored from history
+    // (e.g., page refresh, sidebar click). Don't inject on normal multi-turn conversations
+    // where the agent just finished a turn — that would hide the ongoing conversation.
     const existingEvents = chatStore.getTabEvents(tabSessionId)
     const eventsToAdd: PollingEvent[] = []
-    if (existingEvents.length > 0 && !existingEvents.some(e => e.type === 'conversation_resumed')) {
+    const isRestoredTab = currentTab?.metadata?.isRestored === true
+    if (isRestoredTab && existingEvents.length > 0 && !existingEvents.some(e => e.type === 'conversation_resumed')) {
       eventsToAdd.push(createConversationResumedEvent(existingEvents.length))
     }
     eventsToAdd.push(createUserMessageEvent(query.trim()))
@@ -2496,6 +2498,20 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
             {!activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
+            )}
+
+            {activeTab?.sessionId && tabEvents.some(e => e.type === 'conversation_resumed') && (
+              <div className="flex justify-end px-2 py-1">
+                <button
+                  onClick={handleNewChat}
+                  disabled={isStreaming}
+                  className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-30 flex items-center gap-1 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                  title="Start a new conversation"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                  New Chat
+                </button>
+              </div>
             )}
 
             {activeTab?.sessionId && (

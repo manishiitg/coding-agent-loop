@@ -179,11 +179,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       return timeA - timeB;
     });
 
-    // When a conversation_resumed separator exists, drop all events before it.
-    // The separator carries the previous event count for the collapsed summary.
+    // When a conversation_resumed separator exists, drop all events before AND including it.
+    // This hides old restored events so the user sees only the new conversation.
     const resumeIdx = result.findIndex(e => e.type === 'conversation_resumed');
-    if (resumeIdx > 0) {
-      result.splice(0, resumeIdx);
+    if (resumeIdx >= 0) {
+      result.splice(0, resumeIdx + 1);
     }
 
     if (result.length <= MAX_EVENTS_TO_PROCESS) return result;

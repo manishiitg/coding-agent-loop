@@ -397,6 +397,34 @@ export const agentApi = {
     }
   },
 
+  // Browser process management — list and cleanup stale chromium instances in workspace container
+  getBrowserProcesses: async (): Promise<{
+    success: boolean;
+    processes: Array<{
+      pid: number;
+      cpu: number;
+      mem_mb: number;
+      started_at: string;
+      user_data_dir: string;
+      type: string;
+    }>;
+    count: number;
+  }> => {
+    const response = await workspaceApi.get('/api/browser/processes', { timeout: 10000 });
+    return response.data;
+  },
+
+  cleanupBrowserProcesses: async (pids?: number[]): Promise<{
+    success: boolean;
+    killed: number;
+    message: string;
+    remaining?: number;
+  }> => {
+    const body = pids ? { pids } : { all: true };
+    const response = await workspaceApi.post('/api/browser/cleanup', body, { timeout: 10000 });
+    return response.data;
+  },
+
   syncGWSSkills: async (): Promise<{
     synced: number;
     failed?: { name: string; error: string }[];
@@ -1244,6 +1272,33 @@ export const agentApi = {
     return response.data
   },
 
+  // Employee API
+  listEmployees: async (): Promise<{ employees: import('./api-types').Employee[] }> => {
+    const response = await api.get('/api/employees')
+    return response.data
+  },
+
+  createEmployee: async (employee: { name: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
+    const response = await api.post('/api/employees', employee)
+    return response.data
+  },
+
+  updateEmployee: async (id: string, employee: { name?: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
+    const response = await api.put(`/api/employees/${id}`, employee)
+    return response.data
+  },
+
+  deleteEmployee: async (id: string): Promise<void> => {
+    await api.delete(`/api/employees/${id}`)
+  },
+
+  assignWorkflowEmployee: async (presetQueryId: string, employeeId: string | null): Promise<void> => {
+    await api.post('/api/employees/assign-workflow', {
+      preset_query_id: presetQueryId,
+      employee_id: employeeId,
+    })
+  },
+
 }
 
 export const healthApi = {
@@ -1381,33 +1436,6 @@ export const sessionShareApi = {
   getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
     const response = await api.get(`/api/shared/${shareToken}`)
     return response.data
-  },
-
-  // Employee API
-  listEmployees: async (): Promise<{ employees: import('./api-types').Employee[] }> => {
-    const response = await api.get('/api/employees')
-    return response.data
-  },
-
-  createEmployee: async (employee: { name: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
-    const response = await api.post('/api/employees', employee)
-    return response.data
-  },
-
-  updateEmployee: async (id: string, employee: { name?: string; avatar_color?: string; description?: string }): Promise<import('./api-types').Employee> => {
-    const response = await api.put(`/api/employees/${id}`, employee)
-    return response.data
-  },
-
-  deleteEmployee: async (id: string): Promise<void> => {
-    await api.delete(`/api/employees/${id}`)
-  },
-
-  assignWorkflowEmployee: async (presetQueryId: string, employeeId: string | null): Promise<void> => {
-    await api.post('/api/employees/assign-workflow', {
-      preset_query_id: presetQueryId,
-      employee_id: employeeId,
-    })
   },
 }
 

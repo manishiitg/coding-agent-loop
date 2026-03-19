@@ -10,6 +10,7 @@ import { XlsxRenderer } from "./components/ui/XlsxRenderer";
 import { DocxRenderer } from "./components/ui/DocxRenderer";
 import { PdfRenderer } from "./components/ui/PdfRenderer";
 import { HtmlRenderer } from "./components/ui/HtmlRenderer";
+import { ConversationRenderer, isConversationJSON } from "./components/ui/ConversationRenderer";
 import { resetSessionId, agentApi } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
 import type { ActiveSessionInfo, FileVersion } from "./services/api-types";
@@ -1316,11 +1317,22 @@ localStorage sizes: ${Object.entries(storageSizes).map(([k, v]) => `${k}: ${v}KB
                             )
                           }
 
+                          // Conversation log files (-conversation.json)
+                          if (selectedFile?.path && isValidJSON(fileContent)) {
+                            try {
+                              const parsed = JSON.parse(fileContent)
+                              console.log('[ConversationRenderer] path:', selectedFile.path, 'isConv:', isConversationJSON(selectedFile.path, parsed))
+                              if (isConversationJSON(selectedFile.path, parsed)) {
+                                return <ConversationRenderer content={fileContent} />
+                              }
+                            } catch { /* fall through to generic JSON */ }
+                          }
+
                           // Check for JSON files
                           if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
                             // Check if content looks like formatted JSON (has proper indentation)
                             const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')
-                            
+
                             return (
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">

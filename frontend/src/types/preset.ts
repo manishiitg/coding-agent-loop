@@ -21,6 +21,7 @@ export interface CustomPreset {
   enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
   enableBrowserAccess?: boolean; // Browser automation access
   camofoxHeaded?: boolean; // Show visible browser window for stealth mode
+  employee_id?: string; // Assigned employee ID
 }
 
 export interface PredefinedPreset {

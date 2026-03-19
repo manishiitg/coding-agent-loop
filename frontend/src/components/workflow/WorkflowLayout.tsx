@@ -63,6 +63,7 @@ import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chat
 // Stable empty array for Zustand selector (must be module-level to avoid referential instability)
 const EMPTY_WORKFLOW_EVENTS: PollingEvent[] = []
 
+
 /**
  * Helper function to restore workflow state from loaded events
  * Called during workflow reconnection to restore:
@@ -662,18 +663,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         )
         console.warn('[DEBUG preset_query_id] Active workflow sessions:', activeWorkflowSessions.length)
 
-        // 2. Get recent workflow sessions for this preset from the database
-        //    Fetch both 'workflow' and 'workflow_phase' modes (execution + builder)
+        // 2. Get recent workflow execution sessions for this preset from the database
+        //    Only fetch 'workflow' mode (builder chats are saved to workspace files)
         //    Try preset_query_id filter first (fast), then fall back to client-side filtering
         let dbSessions: import('../../services/api-types').ChatHistorySummary[] = []
         try {
           console.warn('[DEBUG preset_query_id] Querying DB for preset:', activePresetId)
-          // First: try direct DB filter by preset_query_id (works for sessions after backend fix)
-          const [directWorkflow, directPhase] = await Promise.all([
-            agentApi.getChatSessions(10, 0, activePresetId, 'workflow'),
-            agentApi.getChatSessions(10, 0, activePresetId, 'workflow_phase'),
-          ])
-          dbSessions = [...(directWorkflow.sessions || []), ...(directPhase.sessions || [])]
+          // Only fetch workflow execution sessions (not workflow_phase builder chats —
+          // those are now saved to workspace files and don't need DB restore)
+          const directWorkflow = await agentApi.getChatSessions(10, 0, activePresetId, 'workflow')
+          dbSessions = directWorkflow.sessions || []
           console.warn('[DEBUG preset_query_id] Direct DB results:', dbSessions.length)
 
           // If direct filter returned nothing, fall back to client-side filtering
@@ -733,13 +732,24 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         console.warn('[DEBUG preset_query_id] DB sessions after filter:', recentDbSessions.length)
         for (const s of recentDbSessions) {
           const wfMeta = (s.config as any)?.workflow_metadata
+          // Try to extract phaseId from metadata, config, or agent_mode
+          let phaseId = wfMeta?.phase_id as string | undefined
+          if (!phaseId && s.agent_mode === 'workflow_phase') {
+            // workflow_phase sessions store phase_id in config
+            phaseId = (s.config as any)?.phase_id
+          }
+          if (!phaseId && s.title) {
+            // Fallback: try to extract from title
+            const match = s.title.match(/(?:workflow[- ]builder|planning|evaluation[- ]builder)/i)
+            if (match) phaseId = match[0].toLowerCase().replace(/\s/g, '-')
+          }
           sessionsToRestore.push({
             sessionId: s.session_id,
             query: undefined,
             title: s.title,
             status: s.status,
             isActive: false,
-            phaseId: wfMeta?.phase_id,
+            phaseId,
             phaseName: wfMeta?.phase_name
           })
         }
@@ -762,28 +772,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const newSessions = sessionsToRestore.filter(s => !existingSessionIds.has(s.sessionId))
         console.warn('[DEBUG preset_query_id] New sessions (after dedup):', newSessions.length, 'existing tabs:', existingSessionIds.size)
 
-        if (newSessions.length === 0 && sessionsToRestore.length > 0) {
-          // All sessions already have tabs — hydrate any that have 0 events, then show chat area
-          for (const session of sessionsToRestore) {
-            const events = getTabEvents(session.sessionId)
-            if (events.length === 0) {
-              console.warn('[DEBUG preset_query_id] Hydrating empty tab for session:', session.sessionId.slice(0, 8))
-              try {
-                await restoreWorkflowStateFromEvents(session.sessionId)
-              } catch (err) {
-                console.warn('[WorkflowReconnect] Failed to hydrate events for', session.sessionId, err)
-              }
-            }
-          }
-          const currentPresetTabs = Object.values(chatTabs).filter(t =>
-            t.metadata?.mode === 'workflow' && t.metadata?.presetQueryId === activePresetId
-          )
-          if (currentPresetTabs.length > 0) {
-            const { switchTab } = useChatStore.getState()
-            switchTab(currentPresetTabs[currentPresetTabs.length - 1].tabId)
-            setShowChatArea(true)
-          }
-          console.warn('[DEBUG preset_query_id] All sessions already have tabs, hydrated empty ones')
+        if (newSessions.length === 0) {
+          console.warn('[DEBUG preset_query_id] No new sessions to restore, done')
           return
         }
         // Only restore sessions that don't have tabs yet

@@ -562,13 +562,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 
 	// Build sub-agent execution context for tool-based delegation
+	// Propagate workshop correlation ID from the calling context so sub-agent events
+	// are tagged with the workshop step's ID (enables frontend auto-notifications).
+	workshopCorrelationID := ""
+	if forcedID, ok := ctx.Value(events.ForceCorrelationIDKey).(string); ok {
+		workshopCorrelationID = forcedID
+	}
 	subAgentExecCtx := &SubAgentExecutionContext{
-		TodoTaskStep: step,
-		StepIndex:    stepIndex,
-		StepPath:     stepPath,
-		AllSteps:     allSteps,
-		Progress:     progress,
-		StepConfig:   stepConfig, // Pass step config for sub_agent_llm override
+		TodoTaskStep:          step,
+		StepIndex:             stepIndex,
+		StepPath:              stepPath,
+		AllSteps:              allSteps,
+		Progress:              progress,
+		StepConfig:            stepConfig, // Pass step config for sub_agent_llm override
+		WorkshopCorrelationID: workshopCorrelationID,
 	}
 
 	// Use factory method to create agent with proper event bridge connection

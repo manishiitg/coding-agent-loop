@@ -709,6 +709,9 @@ type ExecutionOptions struct {
 
 	// Cleanup control
 	SkipExecutionCleanup bool `json:"skip_execution_cleanup,omitempty"` // If true, skip deleting execution folders before running steps
+
+	// Workshop mode override (builder/optimizer/runner) — sent from frontend toggle
+	WorkshopMode string `json:"workshop_mode,omitempty"`
 }
 
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)

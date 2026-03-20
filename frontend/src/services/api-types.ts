@@ -139,6 +139,9 @@ export interface AgentQueryRequest {
   }
   // Existing plan folder to reuse (skips creating new folder in multi-agent mode)
   plan_folder?: string
+  // Auto-notification flag: when true, this is a background agent completion notification,
+  // not a user-initiated message. Backend treats it as a synthetic turn (doesn't block user input).
+  is_auto_notification?: boolean
 }
 
 // Delegation tier configuration for multi-LLM support
@@ -354,6 +357,7 @@ export interface GetEventsResponse {
   session_status: string // Session status: "running", "completed", "error", "stopped", "inactive" (required - source of truth)
   last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
   has_running_background_agents?: boolean // Whether background agents are still running for this session
+  is_synthetic_turn?: boolean // True when running auto-notification turn (frontend should not block input)
 }
 
 // Observer APIs removed - no longer needed
@@ -726,11 +730,13 @@ export interface SSEEventMessage {
   session_status?: string
   last_processed_index: number
   has_running_background_agents?: boolean
+  is_synthetic_turn?: boolean
 }
 
 export interface SSEStatusMessage {
   session_status?: string
   has_running_background_agents?: boolean
+  is_synthetic_turn?: boolean
 }
 
 export interface CreateChatSessionRequest {
@@ -1022,6 +1028,9 @@ export interface ExecutionOptions {
 
   // Cleanup control
   skip_execution_cleanup?: boolean;  // If true, skip deleting execution folders before running steps
+
+  // Workshop mode override (builder/optimizer/debugger/runner)
+  workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner';
 }
 
 // Execution strategy constants (matching backend)

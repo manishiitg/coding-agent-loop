@@ -97,15 +97,16 @@ type ServerConfig struct {
 
 // ActiveSessionInfo represents an active session for page refresh recovery
 type ActiveSessionInfo struct {
-	SessionID    string    `json:"session_id"`
-	AgentMode    string    `json:"agent_mode"`
-	Status       string    `json:"status"` // "running", "paused", "completed"
-	LastActivity time.Time `json:"last_activity"`
-	CreatedAt    time.Time `json:"created_at"`
-	Query        string    `json:"query,omitempty"`
-	LLMGuidance  string    `json:"llm_guidance,omitempty"` // LLM guidance message for this session
-	MemoryFolder string    `json:"memory_folder,omitempty"` // Override memory folder (default: Plans/memories)
-	UserID       string    `json:"-"`                      // User ID for session isolation (not exposed in JSON)
+	SessionID      string    `json:"session_id"`
+	AgentMode      string    `json:"agent_mode"`
+	Status         string    `json:"status"` // "running", "paused", "completed"
+	LastActivity   time.Time `json:"last_activity"`
+	CreatedAt      time.Time `json:"created_at"`
+	Query          string    `json:"query,omitempty"`
+	LLMGuidance    string    `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
+	MemoryFolder   string    `json:"memory_folder,omitempty"` // Override memory folder (default: Plans/memories)
+	UserID         string    `json:"-"`                       // User ID for session isolation (not exposed in JSON)
+	IsSyntheticTurn bool     `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
 }
 
 // StreamingAPI represents the streaming API server
@@ -316,6 +317,9 @@ type QueryRequest struct {
 
 	// Triggered by: "manual", "cron" — for tracking execution source
 	TriggeredBy string `json:"triggered_by,omitempty"`
+	// Auto-notification flag: when true, this is a background agent completion notification
+	// (not user-initiated). Backend treats it as a synthetic turn so frontend doesn't block input.
+	IsAutoNotification bool `json:"is_auto_notification,omitempty"`
 	// Internal: user ID for synthetic turn reconstruction (not from JSON)
 	userID string `json:"-"`
 }
@@ -1019,8 +1023,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Create HTTP server
 	srv := &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", config.Host, config.Port),
-		WriteTimeout: time.Second * 30,  // Increased for streaming
-		ReadTimeout:  time.Second * 30,  // Increased for streaming
+		WriteTimeout: 0,                 // No write timeout — long-running tool calls (sub-agents) can take 30+ minutes
+		ReadTimeout:  time.Second * 30,  // Read timeout for incoming requests
 		IdleTimeout:  time.Second * 300, // 5 min idle timeout to prevent early closes during long queries
 		Handler:      router,
 	}
@@ -2509,7 +2513,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Chat-only phases should not go through the orchestrator path.
 			// If the database has these as workflow status, reject early with a clear message.
-			if workflowStatus == "workflow-builder" || workflowStatus == "human-assisted-execution" {
+			if workflowStatus == "workflow-builder" {
 				log.Printf("[WORKFLOW ERROR] Phase %q is chat-only — cannot execute via orchestrator. Use phase chat mode instead.", workflowStatus)
 				api.eventStore.AddEvent(sessionID, events.Event{
 					ID:        fmt.Sprintf("chat_only_error_%d", time.Now().UnixNano()),
@@ -2884,7 +2888,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.lastQueryMu.Lock()
 		api.lastQueryRequests[sessionID] = req
 		api.lastQueryMu.Unlock()
+
+		// If a synthetic (auto-notification) turn is running, cancel it so user gets priority.
+		// The synthetic turn's auto-notification content is already in conversation history,
+		// so the agent will see it as context when processing the user's message.
+		if api.isSyntheticTurn(sessionID) {
+			api.agentCancelMux.RLock()
+			cancelFn, hasCancelFn := api.agentCancelFuncs[sessionID]
+			api.agentCancelMux.RUnlock()
+			if hasCancelFn {
+				log.Printf("[SYNTHETIC_TURN] Cancelling synthetic turn for session %s — user message takes priority", sessionID)
+				cancelFn()
+				// Wait briefly for the synthetic turn goroutine to clean up
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+
 		api.setSessionBusy(sessionID, true)
+		// Mark auto-notification turns as synthetic so frontend doesn't block input
+		if req.IsAutoNotification {
+			api.setSyntheticTurn(sessionID, true)
+		} else {
+			api.setSyntheticTurn(sessionID, false)
+		}
 	}
 
 	// Process the query in the background
@@ -2892,6 +2918,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Clear session busy when the agent turn completes
 		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
 			defer func() {
+				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
 				// Drain pending completions after turn ends (batched to avoid concurrent StreamWithEvents)
 				pending := api.drainPendingCompletions(sessionID)
@@ -3046,6 +3073,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[GEMINI CLI] Auto-enabled code execution mode for MCP tool access via bridge")
 		}
 
+		// Auto-enable code execution mode for codex-cli provider.
+		// Codex CLI accesses MCP tools via the pre-configured bridge,
+		// which requires code execution mode to expose per-tool API endpoints.
+		if req.Provider == "codex-cli" && !useCodeExecutionMode {
+			useCodeExecutionMode = true
+			log.Printf("[CODEX CLI] Auto-enabled code execution mode for MCP tool access via bridge")
+		}
+
 		// CRITICAL: Always respect request value for tool search mode when explicitly set
 		// The frontend explicitly sends use_tool_search_mode (true or false), so we should use it
 		useToolSearchMode = req.UseToolSearchMode
@@ -3060,7 +3095,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
 		// so the orchestrator can efficiently discover tools for research.
 		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" {
+			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
 			}
@@ -4236,6 +4271,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[GEMINI CLI] Added human tool HTTP API override instructions")
 			}
+			if req.Provider == "codex-cli" {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
+				log.Printf("[CODEX CLI] Added human tool HTTP API override instructions")
+			}
 
 			// [BROWSER_UPLOAD] Inject file upload instructions into the agent's system prompt
 			// and register the path transformer on the agent itself (primary interception point).
@@ -4365,8 +4404,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					"IsCodeExecutionMode": "true",
 				}
 
+				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below)
+				if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
+					phaseTemplateVars["WorkshopMode"] = req.ExecutionOptions.WorkshopMode
+					log.Printf("[WORKSHOP_MODE] Using frontend override: %s", req.ExecutionOptions.WorkshopMode)
+				}
+
 				// Build GroupInfo and extra template vars for the interactive-workshop system prompt
-				if workflowPhaseID == "workflow-builder" || workflowPhaseID == "human-assisted-execution" {
+				if workflowPhaseID == "workflow-builder" {
 					groupInfo := buildWorkshopGroupInfo(r.Context(), phaseWorkspacePath, phaseReadFile, phaseRunFolder, phaseEnabledGroupIDs)
 					if groupInfo != "" {
 						phaseTemplateVars["GroupInfo"] = groupInfo
@@ -4392,6 +4437,58 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseTemplateVars["StepSummary"] = stepSummary
 						log.Printf("[WORKFLOW_PHASE] Extracted step summary (%d steps)", strings.Count(stepSummary, "\n"))
 					}
+				}
+
+				// Auto-detect workshop mode if not provided by frontend
+				if phaseTemplateVars["WorkshopMode"] == "" && existingPlanJSON != "" && workflowPhaseID == "workflow-builder" {
+					stepConfigJSON, _ := phaseReadFile(setupCtx, phaseWorkspacePath+"/planning/step_config.json")
+					optimizedSet := make(map[string]bool)
+					if stepConfigJSON != "" {
+						var scData struct {
+							Steps []struct {
+								ID           string `json:"id"`
+								AgentConfigs *struct {
+									Optimized *bool `json:"optimized,omitempty"`
+								} `json:"agent_configs,omitempty"`
+							} `json:"steps"`
+						}
+						if err := json.Unmarshal([]byte(stepConfigJSON), &scData); err == nil {
+							for _, sc := range scData.Steps {
+								if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil && *sc.AgentConfigs.Optimized {
+									optimizedSet[sc.ID] = true
+								}
+							}
+						}
+					}
+					var planData struct {
+						Steps []struct {
+							ID string `json:"id"`
+						} `json:"steps"`
+					}
+					if err := json.Unmarshal([]byte(existingPlanJSON), &planData); err == nil {
+						var unoptimized []string
+						for _, s := range planData.Steps {
+							if !optimizedSet[s.ID] {
+								unoptimized = append(unoptimized, s.ID)
+							}
+						}
+						totalSteps := len(planData.Steps)
+						optimizedCount := totalSteps - len(unoptimized)
+						if optimizedCount == 0 {
+							phaseTemplateVars["WorkshopMode"] = "builder"
+						} else if optimizedCount >= totalSteps {
+							phaseTemplateVars["WorkshopMode"] = "runner"
+						} else {
+							phaseTemplateVars["WorkshopMode"] = "optimizer"
+						}
+						if len(unoptimized) > 0 {
+							phaseTemplateVars["UnoptimizedSteps"] = strings.Join(unoptimized, ", ")
+						}
+						log.Printf("[WORKSHOP_MODE] Auto-detected: %s (optimized: %d/%d)", phaseTemplateVars["WorkshopMode"], optimizedCount, totalSteps)
+					}
+				}
+				if phaseTemplateVars["WorkshopMode"] == "" {
+					phaseTemplateVars["WorkshopMode"] = "builder"
 				}
 
 				// Read variable names from workspace (if any)
@@ -4438,7 +4535,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKFLOW_PHASE] Overrode system prompt (%d chars) for phase=%s", len(phaseSystemPrompt), workflowPhaseID)
 
 				// Append secrets to the phase agent's system prompt so it knows what's available
-				if workflowPhaseID == "workflow-builder" || workflowPhaseID == "human-assisted-execution" {
+				if workflowPhaseID == "workflow-builder" {
 					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 					if len(phaseSecrets) > 0 {
 						entries := make([]orchestrator.SecretEntry, len(phaseSecrets))
@@ -4495,34 +4592,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger, true)
 						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for evaluation-builder (execute_step, query_step, generate_learnings, run_full_evaluation, etc.)")
-					}
-				case "human-assisted-execution":
-					// Workshop execution tools only (NO plan modification tools)
-					// Get or create per-session workshop controller + step registry
-					haeSessionKey := sessionID
-					var haeSession *todo_creation_human.WorkshopChatSession
-					if cached, ok := api.workshopChatSessions.Load(haeSessionKey); ok {
-						haeSession = cached.(*todo_creation_human.WorkshopChatSession)
-						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for human-assisted-execution %s", sessionID)
-						// Refresh enabled group IDs from current request (toolbar selection may have changed)
-						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
-							haeSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
-							log.Printf("[WORKFLOW_PHASE] Refreshed HAE enabled group IDs: %v", req.ExecutionOptions.EnabledGroupIDs)
-						}
-					} else {
-						haeCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
-						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), haeCfg)
-						if sessionErr != nil {
-							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create human-assisted-execution session: %v", sessionErr)
-						} else {
-							haeSession = newSession
-							api.workshopChatSessions.Store(haeSessionKey, haeSession)
-							log.Printf("[WORKFLOW_PHASE] Created new human-assisted-execution session for %s", sessionID)
-						}
-					}
-					if haeSession != nil {
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, haeSession, api.logger, false)
-						log.Printf("[WORKFLOW_PHASE] Registered execution tools for human-assisted-execution (execute_step, query_step, stop_step, list_steps, etc.)")
 					}
 				case "workflow-builder":
 					// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
@@ -4937,7 +5006,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
-		log.Printf("[LATENCY_DEBUG] T+%dms | Starting StreamWithEvents (LLM call) | queryID=%s", time.Since(startTime).Milliseconds(), queryID)
+		log.Printf("[STREAMING_LIFECYCLE] T+%dms | Starting StreamWithEvents | session=%s query=%.80s", time.Since(startTime).Milliseconds(), sessionID, chatQuery)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
 		if err != nil {
 			log.Printf("[AGENT DEBUG] llmAgent.StreamWithEvents() error: %v", err)
@@ -5016,7 +5085,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			default:
 			}
 		}
-		log.Printf("[AGENT DEBUG] Streaming loop exited for query %s", queryID)
+		log.Printf("[STREAMING_LIFECYCLE] StreamWithEvents completed | session=%s chunks=%d duration=%dms", sessionID, chunkCount, time.Since(startTime).Milliseconds())
 		log.Printf("[AGENT DEBUG] After streaming loop, streamCtx.Err(): %v", streamCtx.Err())
 
 		// Final save of conversation history (in case streaming was stopped mid-way)
@@ -7662,7 +7731,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// Apply CLI provider override to sub-agents when the parent uses a CLI-based provider.
 			// Without this, sub-agents spawned by a claude-code/gemini-cli main agent would try to
 			// call workspace/delegation tools as native Bash/Read/Write — which are blocked.
-			if parentReq.Provider == "claude-code" || parentReq.Provider == "gemini-cli" {
+			if parentReq.Provider == "claude-code" || parentReq.Provider == "gemini-cli" || parentReq.Provider == "codex-cli" {
 				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
 				log.Printf("[DELEGATION] Applied CLI provider override to sub-agent (provider: %s)", parentReq.Provider)
 			}
@@ -8124,6 +8193,26 @@ func (api *StreamingAPI) setSessionBusy(sessionID string, busy bool) {
 	api.sessionBusyMu.Unlock()
 }
 
+// setSyntheticTurn marks a session as running an auto-notification synthetic turn.
+// The frontend uses this to avoid blocking user input during background agent notifications.
+func (api *StreamingAPI) setSyntheticTurn(sessionID string, synthetic bool) {
+	api.activeSessionsMux.Lock()
+	defer api.activeSessionsMux.Unlock()
+	if session, exists := api.activeSessions[sessionID]; exists {
+		session.IsSyntheticTurn = synthetic
+	}
+}
+
+// isSyntheticTurn returns true if the session is currently running a synthetic (auto-notification) turn.
+func (api *StreamingAPI) isSyntheticTurn(sessionID string) bool {
+	api.activeSessionsMux.RLock()
+	defer api.activeSessionsMux.RUnlock()
+	if session, exists := api.activeSessions[sessionID]; exists {
+		return session.IsSyntheticTurn
+	}
+	return false
+}
+
 // queuePendingCompletion adds a completed agent ID to the pending queue
 func (api *StreamingAPI) queuePendingCompletion(sessionID, agentID string) {
 	api.pendingMu.Lock()
@@ -8297,6 +8386,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 	// This prevents concurrent synthetic turns from the completion listener
 	api.setSessionBusy(sessionID, true)
 
+	// Mark as synthetic turn so frontend doesn't block user input
+	api.setSyntheticTurn(sessionID, true)
+
 	// Update session status to running
 	api.updateSessionStatus(sessionID, "running")
 
@@ -8321,6 +8413,9 @@ func (api *StreamingAPI) executeSyntheticTurn(sessionID, syntheticMsg string) {
 			api.agentCancelMux.Lock()
 			delete(api.agentCancelFuncs, sessionID)
 			api.agentCancelMux.Unlock()
+
+			// Clear synthetic turn flag
+			api.setSyntheticTurn(sessionID, false)
 
 			// Clear session busy and drain pending completions (batched to avoid concurrent StreamWithEvents)
 			api.setSessionBusy(sessionID, false)

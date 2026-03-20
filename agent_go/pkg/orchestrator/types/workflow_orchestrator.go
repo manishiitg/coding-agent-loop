@@ -59,12 +59,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
-				ID:          "human-assisted-execution",
-				Title:       "Human In The Loop",
-				Description: "Run workflow steps interactively via chat. Choose which steps to run, monitor progress, and review results — without plan modifications or optimization.",
-				Options:     []WorkflowPhaseOption{},
-			},
-			{
 				ID:          database.WorkflowStatusPreVerification,
 				Title:       "Execution",
 				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
@@ -447,7 +441,7 @@ func (wo *WorkflowOrchestrator) executeFlow(
 
 	// workflow-builder, human-assisted-execution, and evaluation-builder are chat-only phases —
 	// they should never reach the orchestrator path. If they do, return an error.
-	if workflowStatus == "workflow-builder" || workflowStatus == "human-assisted-execution" || workflowStatus == "evaluation-builder" {
+	if workflowStatus == "workflow-builder" || workflowStatus == "evaluation-builder" {
 		return "", fmt.Errorf("%s is a chat-only phase — use phase chat mode instead of orchestrator execution", workflowStatus)
 	}
 
@@ -927,8 +921,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
 					"evaluation-debugger",                  // Evaluation debugger phase
-					"workflow-builder",                 // Interactive workshop phase
-					"human-assisted-execution",             // Human assisted execution phase
+					"workflow-builder",                     // Interactive workshop phase
 				}
 				valid := false
 				for _, status := range validStatuses {

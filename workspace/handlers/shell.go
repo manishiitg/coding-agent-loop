@@ -97,16 +97,12 @@ func ExecuteShellCommand(c *gin.Context) {
 	}
 
 	// Validate and set timeout
-	timeoutSeconds := 60 // Default timeout
-	if req.Timeout > 0 {
-		if req.Timeout > 300 {
-			c.JSON(http.StatusBadRequest, models.APIResponse[any]{
-				Success: false,
-				Message: "Timeout too large",
-				Error:   "Timeout cannot exceed 300 seconds (5 minutes)",
-			})
-			return
-		}
+	// Default: 60s for normal commands. 0 = 30 minutes (for long-running operations
+	// like sub-agent calls via curl).
+	timeoutSeconds := 60
+	if req.Timeout == 0 {
+		timeoutSeconds = 3600 // 1 hour
+	} else if req.Timeout > 0 {
 		timeoutSeconds = req.Timeout
 	}
 

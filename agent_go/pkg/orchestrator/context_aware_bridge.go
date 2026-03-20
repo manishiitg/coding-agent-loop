@@ -222,6 +222,22 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 		}
 	}
 
+	// Tag events with workshop_step_id in metadata (without changing CorrelationID).
+	// This lets the frontend detect "this event belongs to a workshop step execution"
+	// for auto-notifications, without breaking EventHierarchy grouping.
+	if forcedID, ok := ctx.Value(orchevents.ForceCorrelationIDKey).(string); ok && forcedID != "" && strings.HasPrefix(forcedID, "workshop-") {
+		if baseData, ok := event.Data.(interface {
+			GetBaseEventData() *events.BaseEventData
+		}); ok {
+			if bd := baseData.GetBaseEventData(); bd != nil {
+				if bd.Metadata == nil {
+					bd.Metadata = make(map[string]any)
+				}
+				bd.Metadata["workshop_step_id"] = forcedID
+			}
+		}
+	}
+
 	// Copy orchestrator and batch context while holding read lock
 	c.mu.RLock()
 	currentPhase := c.currentPhase

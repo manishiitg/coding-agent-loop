@@ -175,18 +175,12 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
 		templateData["CustomInstructions"] = templateVars["CustomInstructions"]
 		templateData["StepSummary"] = templateVars["StepSummary"]
+		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
+		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
 		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
 		// the agent reads them on demand via execute_shell_command.
 		tmpl = interactiveWorkshopSystemTemplate
-	case "human-assisted-execution":
-		// Execution-only template — same tools but no optimization/plan-modification guidance
-		templateData["PlanJSON"] = templateVars["ExistingPlanJSON"]
-		templateData["RunFolder"] = templateVars["RunFolder"]
-		templateData["ProgressSummary"] = templateVars["ProgressSummary"]
-		templateData["UseKnowledgebase"] = templateVars["UseKnowledgebase"]
-		templateData["CustomInstructions"] = templateVars["CustomInstructions"]
-		tmpl = humanAssistedExecutionSystemTemplate
 	}
 
 	var result strings.Builder

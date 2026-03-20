@@ -669,9 +669,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         let dbSessions: import('../../services/api-types').ChatHistorySummary[] = []
         try {
           console.warn('[DEBUG preset_query_id] Querying DB for preset:', activePresetId)
-          // Only fetch workflow execution sessions (not workflow_phase builder chats —
-          // those are now saved to workspace files and don't need DB restore)
-          const directWorkflow = await agentApi.getChatSessions(10, 0, activePresetId, 'workflow')
+          // Only fetch workflow_phase sessions (builder, evaluation-builder, etc.)
+          // Old 'workflow' execution sessions should not be auto-restored — they create
+          // empty "Execute" tabs when opening a workflow for the first time.
+          const directWorkflow = await agentApi.getChatSessions(10, 0, activePresetId, 'workflow_phase')
           dbSessions = directWorkflow.sessions || []
           console.warn('[DEBUG preset_query_id] Direct DB results:', dbSessions.length)
 

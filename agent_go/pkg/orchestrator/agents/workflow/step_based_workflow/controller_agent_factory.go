@@ -702,7 +702,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 	// Rule 2: Step-specific config (if explicitly set)
 	// Rule 3: Workflow/preset default
 	actualProvider := config.LLMConfig.Primary.Provider
-	if actualProvider == "claude-code" || actualProvider == "gemini-cli" {
+	if actualProvider == "claude-code" || actualProvider == "gemini-cli" || actualProvider == "codex-cli" {
 		// Rule 1: CLI providers always use code execution mode
 		config.UseCodeExecutionMode = true
 		config.UseToolSearchMode = false
@@ -1494,7 +1494,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	// Rule 2: Step config if explicitly set
 	// Rule 3: Non-CLI providers default to false
 	conditionalProvider := config.LLMConfig.Primary.Provider
-	if conditionalProvider == "claude-code" || conditionalProvider == "gemini-cli" {
+	if conditionalProvider == "claude-code" || conditionalProvider == "gemini-cli" || conditionalProvider == "codex-cli" {
 		config.UseCodeExecutionMode = true
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Code execution mode forced for conditional agent CLI provider '%s'", conditionalProvider))
 	} else if stepConfig != nil && stepConfig.UseCodeExecutionMode != nil {
@@ -1599,6 +1599,10 @@ type SubAgentExecutionContext struct {
 	AllSteps     []PlanStepInterface
 	Progress     *StepProgress
 	StepConfig   *AgentConfigs // Step-level configuration for LLM overrides
+
+	// WorkshopCorrelationID is the correlation ID from the workshop's execute_step call.
+	// Propagated to sub-agent contexts so their events are tagged with the workshop step's ID.
+	WorkshopCorrelationID string
 
 	// CallHistory records every sub-agent call made during this todo task step.
 	// Protected by callHistoryMu for concurrent tool calls.
@@ -1720,7 +1724,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 
 	// Enable code execution mode for CLI providers (claude-code, gemini-cli) that need HTTP bridge for tool routing
 	// Non-CLI providers use simple agent mode (no code execution)
-	isCodeExecutionMode := llmConfig.Primary.Provider == "claude-code" || llmConfig.Primary.Provider == "gemini-cli"
+	isCodeExecutionMode := llmConfig.Primary.Provider == "claude-code" || llmConfig.Primary.Provider == "gemini-cli" || llmConfig.Primary.Provider == "codex-cli"
 	config.UseCodeExecutionMode = isCodeExecutionMode
 	if isCodeExecutionMode {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Todo task orchestrator: code execution mode enabled for CLI provider '%s'", llmConfig.Primary.Provider))
@@ -2083,6 +2087,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 	return func(ctx context.Context, routeID, todoID, instructions, successCriteria string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing predefined sub-agent via tool: route=%s, todo=%s", routeID, todoID))
 
+		// Propagate workshop correlation IDs to sub-agent context so events are tagged correctly.
+		// The ctx here comes from the tool call (mcpagent), which may not have the workshop's
+		// ForceCorrelationIDKey. Use the workshop correlation ID from SubAgentExecutionContext.
+		if execCtx.WorkshopCorrelationID != "" {
+			if forcedID, ok := ctx.Value(orchestrator_events.ForceCorrelationIDKey).(string); !ok || forcedID == "" {
+				ctx = context.WithValue(ctx, orchestrator_events.ForceCorrelationIDKey, execCtx.WorkshopCorrelationID)
+				ctx = context.WithValue(ctx, orchestrator_events.IsSubAgentContextKey, true)
+			}
+		}
+
 		// Browser isolation: generate isolated session ID when share_browser=false
 		if sb, ok := ctx.Value(virtualtools.SubAgentShareBrowserKey).(bool); ok && !sb {
 			isolatedSessionID := fmt.Sprintf("%s-isolated-%d", hcpo.getSessionID(), time.Now().UnixNano())
@@ -2159,6 +2173,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 ) virtualtools.ExecuteGenericAgentFunc {
 	return func(ctx context.Context, todoID, instructions, successCriteria string) (string, error) {
 		hcpo.GetLogger().Info(fmt.Sprintf("🤖 [TOOL] Executing generic agent via tool: todo=%s", todoID))
+
+		// Propagate workshop correlation IDs to sub-agent context
+		if execCtx.WorkshopCorrelationID != "" {
+			if forcedID, ok := ctx.Value(orchestrator_events.ForceCorrelationIDKey).(string); !ok || forcedID == "" {
+				ctx = context.WithValue(ctx, orchestrator_events.ForceCorrelationIDKey, execCtx.WorkshopCorrelationID)
+				ctx = context.WithValue(ctx, orchestrator_events.IsSubAgentContextKey, true)
+			}
+		}
 
 		// Browser isolation: generate isolated session ID when share_browser=false
 		if sb, ok := ctx.Value(virtualtools.SubAgentShareBrowserKey).(bool); ok && !sb {

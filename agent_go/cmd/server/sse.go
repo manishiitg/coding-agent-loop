@@ -19,12 +19,14 @@ type sseEventMessage struct {
 	SessionStatus              string         `json:"session_status,omitempty"`
 	LastProcessedIndex         int            `json:"last_processed_index"`
 	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"`
+	IsSyntheticTurn            bool           `json:"is_synthetic_turn,omitempty"` // True when running auto-notification turn (frontend should not block input)
 }
 
 // sseStatusMessage is sent on the "status" SSE event.
 type sseStatusMessage struct {
 	SessionStatus              string `json:"session_status,omitempty"`
 	HasRunningBackgroundAgents bool   `json:"has_running_background_agents,omitempty"`
+	IsSyntheticTurn            bool   `json:"is_synthetic_turn,omitempty"`
 }
 
 // handleSSEStream serves a Server-Sent Events stream of session events.
@@ -106,6 +108,7 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				SessionStatus:              sessionStatus,
 				LastProcessedIndex:         result.LastProcessedIndex,
 				HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
 			}
 			if err := writeSSEEvent(w, "event", result.LastProcessedIndex, msg); err != nil {
 				return
@@ -160,6 +163,7 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				SessionStatus:              currentStatus,
 				LastProcessedIndex:         lastIndex,
 				HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
 			}
 			if err := writeSSEEvent(w, "event", lastIndex, msg); err != nil {
 				return
@@ -176,6 +180,7 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 			msg := sseStatusMessage{
 				SessionStatus:              currentStatus,
 				HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
 			}
 			if err := writeSSEEvent(w, "status", -1, msg); err != nil {
 				return

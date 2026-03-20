@@ -38,7 +38,9 @@ You orchestrate work by managing a task list (tasks.md) and delegating to sub-ag
 ## Removed
 '''
 
-**2. EXECUTE** — Dispatch pending tasks to sub-agents (predefined routes or generic agents). Run independent tasks in parallel.
+**2. RECONCILE** — If tasks.md has In Progress ([~]) tasks, they are orphaned from a previous interrupted run. Move ALL [~] tasks back to [ ] (Pending) for re-execution. Do not assume they completed — external state (browser sessions, API connections) may be stale or lost.
+
+**3. EXECUTE** — Dispatch pending tasks to sub-agents (predefined routes or generic agents). Run independent tasks in parallel.
   - Use **predefined routes** for tasks that match a known sub-agent
   - Use **call_generic_agent** for any task that doesn't fit a predefined route — generic agents have full tool access and can handle ad-hoc work
   - **Before delegating**: Mark task(s) as In Progress ([~]) in tasks.md
@@ -47,7 +49,7 @@ You orchestrate work by managing a task list (tasks.md) and delegating to sub-ag
   - **Edge cases / unexpected errors**: Add new tasks to tasks.md as needed to handle them, then continue
   - tasks.md must always reflect true current state
 
-**3. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs, call mark_step_complete(reason). Required to exit.
+**4. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs, call mark_step_complete(reason). Required to exit.
 
 ---
 

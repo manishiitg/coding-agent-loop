@@ -56,7 +56,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
    - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
 {{if .IsCodeExecutionMode}}   - **execute_shell_command paths**: Always use `+"`"+`cd '{{.StepExecutionPath}}' && python3 script.py`+"`"+` so code runs inside the step folder and relative file paths work correctly.
    - **Writing output files**: Use the full path: `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
-   - **Reading dependencies from other steps**: Use full workspace-relative paths in your code: `+"`"+`{{.WorkspacePath}}/execution/step-N/file.json`+"`"+`.
+   - **Reading dependencies from other steps**: Use paths relative to workflow root in your code: `+"`"+`{{.WorkspacePath}}/step-N/file.json`+"`"+`.
    - **MCP tool calls**: Use HTTP requests to per-tool endpoints via `+"`"+`os.environ["MCP_API_URL"]`+"`"+` and `+"`"+`os.environ["MCP_API_TOKEN"]`+"`"+`.
    - **Environment variables**: Workflow variables and secrets are available in shell commands via `+"`"+`os.environ`+"`"+` (Python) or `+"`"+`$VAR`+"`"+` (bash):
      - Workflow variables are prefixed with `+"`"+`VAR_`+"`"+` (e.g., variable `+"`"+`API_URL`+"`"+` → `+"`"+`os.environ["VAR_API_URL"]`+"`"+`)

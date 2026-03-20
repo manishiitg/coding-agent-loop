@@ -311,14 +311,21 @@ else
     echo "✅ camofox-mcp already installed"
 fi
 
-# Build mcpbridge binary (required for Gemini CLI MCP bridge)
-# Install from the published module (avoids go.work workspace constraint)
-echo "🔨 Installing mcpbridge binary from published release..."
-GOWORK=off go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest 2>&1
+# Build mcpbridge binary (required for CLI provider MCP bridge)
+# Install from local source to pick up latest fixes (e.g., virtual tool scoping)
+echo "🔨 Building mcpbridge binary from local source..."
+(cd "${SCRIPT_DIR}/../../mcpagent" && go install ./cmd/mcpbridge/) 2>&1
 if [ $? -eq 0 ]; then
-    echo "✅ mcpbridge binary installed: $(which mcpbridge || echo ~/go/bin/mcpbridge)"
+    echo "✅ mcpbridge binary installed from local source: $(which mcpbridge || echo ~/go/bin/mcpbridge)"
 else
-    echo "⚠️  Failed to install mcpbridge (Gemini CLI MCP bridge will not work)"
+    # Fallback to published module if local build fails
+    echo "⚠️  Local build failed, falling back to published release..."
+    GOWORK=off go install github.com/manishiitg/mcpagent/cmd/mcpbridge@latest 2>&1
+    if [ $? -eq 0 ]; then
+        echo "✅ mcpbridge binary installed from published release: $(which mcpbridge || echo ~/go/bin/mcpbridge)"
+    else
+        echo "⚠️  Failed to install mcpbridge (CLI provider MCP bridge will not work)"
+    fi
 fi
 
 # Run the server with all the enhanced configuration

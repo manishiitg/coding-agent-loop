@@ -63,6 +63,7 @@ type GetEventsResponse struct {
 	SessionStatus              string         `json:"session_status,omitempty"`                // Session status: "running", "completed", "error", "stopped", "inactive"
 	LastProcessedIndex         int            `json:"last_processed_index"`                    // Last index processed in unfiltered array (for correct sinceIndex tracking)
 	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"` // Whether background agents are still running for this session
+	IsSyntheticTurn            bool           `json:"is_synthetic_turn,omitempty"`             // True when running auto-notification turn (frontend should not block input)
 }
 
 // --- POLLING API HANDLERS ---

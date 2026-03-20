@@ -21,6 +21,37 @@ import { findCommand, loadAndRegisterUserCommands, type CommandContext, type Com
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
 import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
+import { useWorkflowStore } from '../stores/useWorkflowStore'
+
+function WorkshopModeToggle() {
+  const workshopMode = useWorkflowStore(state => state.workshopMode)
+  const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
+  const modes = [
+    { id: 'builder' as const, label: 'Build', title: 'Build — design workflow' },
+    { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize — run, analyze, fix, mark optimized' },
+    { id: 'debugger' as const, label: 'Debug', title: 'Debug — investigate existing runs and logs' },
+    { id: 'runner' as const, label: 'Run', title: 'Run — execute and report' },
+  ]
+  return (
+    <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
+      {modes.map(({ id, label, title }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => setWorkshopMode(id)}
+          className={`px-2 py-1 transition-colors ${
+            workshopMode === id
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+          }`}
+          title={title}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
 import InlineSelectionPopup from './InlineSelectionPopup'
 import type { InlineSelectionItem } from './InlineSelectionPopup'
 import SkillImportDialog from './skills/SkillImportDialog'
@@ -3403,6 +3434,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div className="flex items-center gap-1">
+                      {/* Workshop mode toggle: Build / Optimize / Run */}
+                      {workflowPhaseId === 'workflow-builder' && (
+                        <WorkshopModeToggle />
+                      )}
                       {/* Multi-agent phase toggle: Plan / Exec */}
                       {isMultiAgentMode && (
                         <div className="flex items-center rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden text-xs font-medium">

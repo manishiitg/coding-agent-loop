@@ -678,7 +678,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildPreviousStepsSummary(allSteps []
 
 		summary.WriteString(fmt.Sprintf("**Step %d: %s**\n", i+1, resolvedTitle))
 		summary.WriteString(fmt.Sprintf("- **Description**: %s\n", description))
-		summary.WriteString(fmt.Sprintf("- **Output File**: `%s/%s`\n", stepExecutionPath, resolvedOutput))
+		// Strip workflow root prefix so paths are relative to working directory
+		relStepExecPath := strings.TrimPrefix(stepExecutionPath, hcpo.GetWorkspacePath()+"/")
+		summary.WriteString(fmt.Sprintf("- **Output File**: `%s/%s`\n", relStepExecPath, resolvedOutput))
 		summary.WriteString("\n")
 
 		stepCount++
@@ -867,24 +869,44 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
 		}
 
+		// Strip workflow root prefix from paths used in prompts.
+		// Shell commands run from the workflow root (via _DEFAULT_WORKING_DIR),
+		// so prompt paths must be relative to it, not to docsDir.
+		// e.g., "Workflow/ICICI BANK PARSING-v2/runs/..." → "runs/..."
+		workflowRoot := hcpo.GetWorkspacePath()
+		stripWorkflowPrefix := func(path string) string {
+			trimmed := strings.TrimPrefix(path, workflowRoot+"/")
+			if trimmed == path {
+				return strings.TrimPrefix(path, workflowRoot)
+			}
+			return trimmed
+		}
+		stripWorkflowPrefixSlice := func(paths []string) []string {
+			result := make([]string, len(paths))
+			for i, p := range paths {
+				result[i] = stripWorkflowPrefix(p)
+			}
+			return result
+		}
+
 		templateVars := map[string]string{
 			"StepTitle":             ResolveVariables(step.GetTitle(), hcpo.variableValues),
 			"StepDescription":       ResolveVariables(step.GetDescription(), hcpo.variableValues),
 			"StepSuccessCriteria":   ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
 			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
-			"WorkspacePath":         executionWorkspacePath,                    // Execution subdirectory (folder guard validates against this)
-			"LearningsPath":         learningsPath,                             // Learnings folder path for reading learning files and scripts/code
-			"KnowledgebasePath":     knowledgebasePath,                         // Knowledgebase folder path (persistent files across runs) - empty if disabled
-			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),       // Whether knowledgebase is enabled
-			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),    // Code execution mode flag (step-specific or preset)
-			"UseToolSearchMode":     fmt.Sprintf("%v", isToolSearchMode),       // Tool search mode flag (step-specific or preset)
-			"HumanFeedback":         "",                                        // Human feedback for retry attempts (set after validation failure)
-			"StepNumber":            stepPath,                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-			"StepExecutionPath":     stepExecutionPath,                         // Full execution folder path (e.g., "execution/step-8")
-			"FolderGuardReadPaths":  strings.Join(folderGuardReadPaths, ", "),  // Folder guard read paths for agent guidance
-			"FolderGuardWritePaths": strings.Join(folderGuardWritePaths, ", "), // Folder guard write paths for agent guidance
-			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),   // Skip cleanup mode flag for state verification prompt
-			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),  // Evaluation mode flag for eval-specific prompt guidance
+			"WorkspacePath":         stripWorkflowPrefix(executionWorkspacePath),                        // Execution path relative to workflow root
+			"LearningsPath":         stripWorkflowPrefix(learningsPath),                                 // Learnings folder path relative to workflow root
+			"KnowledgebasePath":     stripWorkflowPrefix(knowledgebasePath),                             // Knowledgebase folder path relative to workflow root
+			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                                // Whether knowledgebase is enabled
+			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                             // Code execution mode flag (step-specific or preset)
+			"UseToolSearchMode":     fmt.Sprintf("%v", isToolSearchMode),                                // Tool search mode flag (step-specific or preset)
+			"HumanFeedback":         "",                                                                 // Human feedback for retry attempts (set after validation failure)
+			"StepNumber":            stepPath,                                                           // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+			"StepExecutionPath":     stripWorkflowPrefix(stepExecutionPath),                             // Execution folder path relative to workflow root
+			"FolderGuardReadPaths":  strings.Join(stripWorkflowPrefixSlice(folderGuardReadPaths), ", "), // Folder guard read paths (relative to workflow root)
+			"FolderGuardWritePaths": strings.Join(stripWorkflowPrefixSlice(folderGuardWritePaths), ", "),// Folder guard write paths (relative to workflow root)
+			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),                            // Skip cleanup mode flag for state verification prompt
+			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                           // Evaluation mode flag for eval-specific prompt guidance
 		}
 
 		// Inject workflow variables as environment variables for code execution mode.
@@ -900,24 +922,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			}
 		}
 
-		// Add context dependencies with full execution paths (so agent knows exact file locations)
+		// Add context dependencies with execution paths relative to workflow root
 		contextDeps := step.GetContextDependencies()
 		if len(contextDeps) > 0 {
 			resolvedDeps := ResolveVariablesArray(contextDeps, hcpo.variableValues)
-			// Map each dependency to its full path by finding which previous step produced it
+			// Map each dependency to its path by finding which previous step produced it
 			fullPathDeps := make([]string, 0, len(resolvedDeps))
 			for _, dep := range resolvedDeps {
 				fullPath := dep // Default to bare filename if no match found
 				for j := 0; j < stepIndex && j < len(allSteps); j++ {
 					prevOutput := ResolveVariables(allSteps[j].GetContextOutput().String(), hcpo.variableValues)
 					if prevOutput == dep {
-						// Found the producing step — construct full path
+						// Found the producing step — construct path relative to workflow root
 						prevStepPath := fmt.Sprintf("step-%d", j+1)
 						if allSteps[j].StepType() == StepTypeDecision {
 							prevStepPath = fmt.Sprintf("step-%d-decision", j+1)
 						}
 						prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, prevStepPath)
-						fullPath = fmt.Sprintf("%s/%s", prevStepExecPath, dep)
+						fullPath = fmt.Sprintf("%s/%s", stripWorkflowPrefix(prevStepExecPath), dep)
 						break
 					}
 				}
@@ -1380,8 +1402,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				default:
 				}
 
-				// CLI providers (claude-code, gemini-cli) keep IsCodeExecutionMode=true because they ARE
-				// code execution environments. UseToolSearchMode is already false from agent factory.
+				// Sync templateVars with the agent's resolved config.
+				// applyStepConfigToAgentConfig may have changed UseCodeExecutionMode/UseToolSearchMode
+				// (e.g., CLI providers like codex-cli force code execution mode on and tool search off),
+				// but templateVars were built before the agent was created. The system prompt template
+				// reads these vars, so they must reflect the final resolved values.
+				if executionAgent.GetConfig() != nil {
+					templateVars["IsCodeExecutionMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseCodeExecutionMode)
+					templateVars["UseToolSearchMode"] = fmt.Sprintf("%v", executionAgent.GetConfig().UseToolSearchMode)
+				}
 
 				// Pre-save prompts.json so get_step_prompts works during execution (not just after)
 				if eoa, ok := executionAgent.(*WorkflowExecutionOnlyAgent); ok {

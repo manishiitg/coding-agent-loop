@@ -131,17 +131,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		}
 	}
 
-	// 2b. If skip_learning requested, temporarily override DisableLearning on the target step's config.
-	// This avoids modifying step_config.json — it's a runtime-only override for this execution.
+	// 2b. If skip_learning requested, temporarily override LockLearnings on the target step's config.
+	// This uses LockLearnings (not DisableLearning) so existing learnings are still passed to the
+	// execution agent — only the post-execution learning phase is skipped.
+	// DisableLearning would skip BOTH reading existing learnings AND running the learning phase.
 	if opts != nil && opts.SkipLearning {
 		for i := range stepConfigs {
 			if stepConfigs[i].ID == stepID {
 				if stepConfigs[i].AgentConfigs == nil {
 					stepConfigs[i].AgentConfigs = &AgentConfigs{}
 				}
-				disableVal := true
-				stepConfigs[i].AgentConfigs.DisableLearning = &disableVal
-				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] skip_learning=true: temporarily disabled learning for step %q (runtime only)", stepID))
+				lockVal := true
+				stepConfigs[i].AgentConfigs.LockLearnings = &lockVal
+				hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] skip_learning=true: temporarily locked learnings for step %q (existing learnings still used, learning phase skipped)", stepID))
 				// Re-populate runtime fields for this step so the override takes effect
 				for _, info := range allStepInfos {
 					if info.Step.GetID() == stepID {

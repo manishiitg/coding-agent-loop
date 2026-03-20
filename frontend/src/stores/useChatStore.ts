@@ -147,6 +147,7 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
+  isSyntheticTurn: boolean  // Whether current streaming turn is an auto-notification (user can still send messages)
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   // View mode controls how much detail is rendered in the event list.
   // 'detailed' — full event stream (tool calls, LLM events, delegation internals, etc.)
@@ -398,6 +399,7 @@ interface ChatState extends StoreActions {
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
+  setTabSyntheticTurn: (tabId: string, isSyntheticTurn: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   setTabViewMode: (tabId: string, viewMode: 'detailed' | 'summary') => void
@@ -2114,11 +2116,18 @@ export const useChatStore = create<ChatState>()(
           let removedCount = 0
           for (const [tabId, tab] of Object.entries(state.chatTabs)) {
             const age = now - (tab.createdAt || 0)
-            if (age < MAX_TAB_AGE) {
-              freshTabs[tabId] = tab
-            } else {
+            if (age >= MAX_TAB_AGE) {
               removedCount++
+              continue
             }
+            // Drop workflow execution tabs (mode=workflow without phaseId) — these are
+            // old "Execute" tabs that show as empty when reopening a workflow.
+            // Only workflow_phase tabs (workflow-builder, evaluation-builder, etc.) should persist.
+            if (tab.metadata?.mode === 'workflow' && !tab.metadata?.phaseId) {
+              removedCount++
+              continue
+            }
+            freshTabs[tabId] = tab
           }
           if (removedCount > 0) {
             logger.debug('ChatStore', `Cleaned up ${removedCount} stale tabs on rehydrate`)

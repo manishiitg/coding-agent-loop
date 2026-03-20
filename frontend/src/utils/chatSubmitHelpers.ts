@@ -19,7 +19,6 @@ const CHAT_COMPATIBLE_PHASES = new Set([
   'planning',
   'evaluation-builder',
   'workflow-builder',
-  'human-assisted-execution',
 ])
 
 

@@ -107,22 +107,6 @@ const PHASE_CHAT_INFO: Record<string, {
       'System prompts only available for runs after this feature was added',
     ],
   },
-  'human-assisted-execution': {
-    title: 'Human Assisted Execution',
-    description: 'Run workflow steps interactively — choose which steps to run, monitor progress, and review results.',
-    capabilities: [
-      'Run any plan step in the background and poll for results',
-      'Cancel a running step mid-execution',
-      'Choose which steps to run and in what order',
-      'View step results and debug failures',
-      'Run shell commands for investigation',
-    ],
-    limitations: [
-      'Cannot modify the plan or step configs',
-      'No optimization or learning management',
-      'Steps run one at a time per execute_step call',
-    ],
-  },
 }
 
 function PhaseChatEmptyState({ phaseId }: { phaseId: string }) {
@@ -1027,7 +1011,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Takes an events response (same shape from SSE or REST) and a tab, then processes
   // session status, streaming chunks, event filtering, and stores events.
   const processEventsResponse = useCallback((
-    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; session_id?: string },
+    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; session_id?: string },
     sessionId: string,
     tab: ChatTab | null
   ) => {
@@ -1044,6 +1028,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const sessionStatus = response.session_status
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
+      const isSyntheticTurn = response.is_synthetic_turn ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
@@ -1214,11 +1199,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       // Dedup keys now include correlation_id (unique per execution), so clearing is not needed
 
-      // Auto-notify chat agent when a workshop step completes (the wrapper event only).
-      // Sub-agent events (execution, learning) are ignored — only the final step-level event triggers a notification.
+      // Auto-notify chat agent when a workshop step or sub-agent completes.
+      // Workshop wrapper events (workshop-step-*) and sub-agent events within workshop steps
+      // (detected by workshop- correlation_id) both trigger notifications.
       if (event.type === 'orchestrator_agent_end' && tab) {
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
-        if (agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task') {
+        const isWorkshopWrapper = agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task'
+        // Sub-agents within workshop steps have workshop_step_id in metadata (set by ContextAwareEventBridge)
+        const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
+        const workshopStepId = metadata?.workshop_step_id as string | undefined
+        const isWorkshopSubAgent = !isWorkshopWrapper && !!workshopStepId
+          && (agentType === 'todo_planner_execution' || agentType === 'generic_execution' || agentType === 'todo_task_orchestrator')
+        if (isWorkshopWrapper || isWorkshopSubAgent) {
           const agentName = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'unknown') as string
           const success = (innerData?.success ?? agentEvent?.success) as boolean
           const result = (innerData?.result ?? agentEvent?.result ?? '') as string
@@ -1256,13 +1248,47 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               // Check if the result content indicates failure even when success=true (no execution error)
               // A step can complete without throwing an error but still report STATUS: FAILED in the result
               const resultIndicatesFailure = success && result && /STATUS:\s*FAILED|FAILED:|FAILURE:/i.test(result)
+              // Use frontend workshop mode (from UI toggle) — more reliable than backend auto-detection
+              const workshopMode = useWorkflowStore.getState().workshopMode || (inputData?.workshop_mode ?? '') as string
+              const isStepOptimized = inputData?.step_optimized === 'true'
+
+              // Determine if this is a sub-agent within a todo task (vs a top-level step)
+              const isSubAgent = isWorkshopSubAgent
+              const eventLabel = isSubAgent ? 'SUB-AGENT' : 'STEP'
+
+              // Build mode-specific action hint for the LLM
+              let actionHint = ''
+              const isFailed = resultIndicatesFailure || !success
+              if (isFailed) {
+                if (workshopMode === 'builder') {
+                  actionHint = isSubAgent
+                    ? '\nAction: Investigate the sub-agent failure. Check its description, learnings, and tools.'
+                    : '\nAction: Investigate the failure. Fix the step description or config, then re-run.'
+                } else if (workshopMode === 'optimizer') {
+                  actionHint = '\nAction: Reset optimized flag and call optimize_step to analyze the failure.'
+                } else if (workshopMode === 'runner') {
+                  actionHint = '\nAction: Reset optimized flag (update_step_config(step_id, optimized=false)) and investigate.'
+                }
+              } else {
+                if (workshopMode === 'builder') {
+                  actionHint = isSubAgent
+                    ? '' // Don't suggest "move on" for sub-agents — parent step may have more sub-agents
+                    : '\nAction: Step works. Move on to building/testing the next step.'
+                } else if (workshopMode === 'optimizer' && !isStepOptimized) {
+                  actionHint = '\nAction: Call optimize_step(step_id) to review learnings and execution quality before marking optimized.'
+                } else if (workshopMode === 'optimizer' && isStepOptimized) {
+                  actionHint = '\nAction: Already optimized. Proceed to next unoptimized step.'
+                } else if (workshopMode === 'runner') {
+                  actionHint = '\nAction: Proceed to next step.'
+                }
+              }
 
               if (resultIndicatesFailure) {
-                notification = `${AUTO_PREFIX}[STEP FAILED] [${timestamp}]${runInfo} ${agentName} completed but result indicates failure.\nResult: ${truncated}`
+                notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} completed but result indicates failure.\nResult: ${truncated}${actionHint}`
               } else if (success) {
-                notification = `${AUTO_PREFIX}[STEP COMPLETED] [${timestamp}]${runInfo} ${agentName} finished successfully.\nResult: ${truncated}`
+                notification = `${AUTO_PREFIX}[${eventLabel} COMPLETED] [${timestamp}]${runInfo} ${agentName} finished successfully.\nResult: ${truncated}${actionHint}`
               } else {
-                notification = `${AUTO_PREFIX}[STEP FAILED] [${timestamp}]${runInfo} ${agentName} failed.\nError: ${truncated}`
+                notification = `${AUTO_PREFIX}[${eventLabel} FAILED] [${timestamp}]${runInfo} ${agentName} failed.\nError: ${truncated}${actionHint}`
               }
             }
 
@@ -1503,6 +1529,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           last_processed_index: msg.last_processed_index,
           has_more: msgAny.has_more as boolean | undefined,
           has_running_background_agents: msg.has_running_background_agents,
+          is_synthetic_turn: (msg as unknown as Record<string, unknown>).is_synthetic_turn as boolean | undefined,
           session_id: actualSessionId !== sid ? actualSessionId : undefined,
         },
         sid,
@@ -1967,7 +1994,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, [])
 
   // Wrapper function to submit query with the current local query
-  const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions) => {
+  const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean }) => {
     // Prevent double submission: if already submitting, ignore
     if (isSubmittingQueryRef.current) {
       console.warn('[ChatArea] Blocked duplicate submitQueryWithQuery call', { query: query.substring(0, 50) })
@@ -2243,6 +2270,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         phase_id: (requestPayload as any).phase_id,
       })
 
+      // Mark auto-notification requests so backend treats them as synthetic turns
+      if (options?.isAutoNotification) {
+        requestPayload.is_auto_notification = true
+      }
+
       // Set session ID and submit
       chatStore.setSessionId(tabSessionId)
       const response = await agentApi.startQuery(requestPayload, tabSessionId)
@@ -2356,7 +2388,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Small delay to ensure state is fully processed before sending
     setTimeout(async () => {
       try {
-        await submitQueryWithQueryRef.current(combinedMessage)
+        const isAutoOnly = humanMessages.length === 0 && autoMessages.length > 0
+        await submitQueryWithQueryRef.current(combinedMessage, undefined, { isAutoNotification: isAutoOnly })
       } catch (error) {
         logger.error('ChatArea', 'Failed to send queued messages:', error)
         // Re-add all messages back to the queue

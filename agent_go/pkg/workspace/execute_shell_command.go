@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
@@ -85,6 +86,15 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	useShell := true
 	params.UseShell = &useShell
 
+	// Override default shell timeout: send timeout=0 to signal "no timeout" to the
+	// Docker /api/execute endpoint. The default 60s is too short for long-running
+	// operations like sub-agent calls via curl (which can take up to 30 minutes).
+	// This matches direct tool call behavior where Timeout: 0 = runs indefinitely.
+	if params.Timeout == nil {
+		noTimeout := 0
+		params.Timeout = &noTimeout
+	}
+
 	// Set default working directory: client field > ExtraEnv hint > empty (workspace root)
 	if params.WorkingDirectory == "" {
 		if c.DefaultWorkingDir != "" {
@@ -121,6 +131,10 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	// stderr, and stdout to understand what went wrong and take corrective action.
 	// Only infrastructure errors (network, validation) use Go errors.
 	formatted, _ := formatShellResponse(respBody)
+	// Debug: log result size and first 500 chars to diagnose truncation issues
+	if len(formatted) < 200 && strings.Contains(params.Command, "call_sub_agent") {
+		log.Printf("[SHELL_RESULT_DEBUG] call_sub_agent via shell: formatted_len=%d raw_resp_len=%d formatted=%s", len(formatted), len(respBody), formatted)
+	}
 	return formatted, nil
 }
 

@@ -132,6 +132,8 @@ interface WorkflowStore {
 
   // === WORKFLOW MODE STATE ===
   workflowMode: 'plan' | 'eval'
+  workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner'
+  setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner') => void
   evaluationPlan: EvaluationPlan | null
   evaluationStepProgress: StepProgress | null
   isLoadingEvaluationPlan: boolean
@@ -492,6 +494,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // === Workflow Mode State ===
       workflowMode: 'plan',
+      workshopMode: 'builder' as const,
+      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner') => set({ workshopMode: mode }),
       evaluationPlan: null,
       evaluationStepProgress: null,
       isLoadingEvaluationPlan: false,
@@ -1026,6 +1030,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           run_mode: state.selectedRunFolder ? 'use_same_run' : 'create_new_runs_always',
           selected_run_folder: resolvedRunFolder,
           execution_strategy: executionStrategy,
+          workshop_mode: state.workshopMode,
         }
 
         // Include resume_from_step for regular step resuming

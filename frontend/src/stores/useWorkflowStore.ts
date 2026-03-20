@@ -132,8 +132,8 @@ interface WorkflowStore {
 
   // === WORKFLOW MODE STATE ===
   workflowMode: 'plan' | 'eval'
-  workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner'
-  setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner') => void
+  workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval'
+  setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => void
   evaluationPlan: EvaluationPlan | null
   evaluationStepProgress: StepProgress | null
   isLoadingEvaluationPlan: boolean
@@ -495,7 +495,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // === Workflow Mode State ===
       workflowMode: 'plan',
       workshopMode: 'builder' as const,
-      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner') => set({ workshopMode: mode }),
+      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => set({ workshopMode: mode }),
       evaluationPlan: null,
       evaluationStepProgress: null,
       isLoadingEvaluationPlan: false,

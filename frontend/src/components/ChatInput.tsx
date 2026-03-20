@@ -31,6 +31,7 @@ function WorkshopModeToggle() {
     { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize — run, analyze, fix, mark optimized' },
     { id: 'debugger' as const, label: 'Debug', title: 'Debug — investigate existing runs and logs' },
     { id: 'runner' as const, label: 'Run', title: 'Run — execute and report' },
+    { id: 'eval' as const, label: 'Eval', title: 'Eval — build and run evaluation plans' },
   ]
   return (
     <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">

@@ -1030,7 +1030,7 @@ export interface ExecutionOptions {
   skip_execution_cleanup?: boolean;  // If true, skip deleting execution folders before running steps
 
   // Workshop mode override (builder/optimizer/debugger/runner)
-  workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner';
+  workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval';
 }
 
 // Execution strategy constants (matching backend)

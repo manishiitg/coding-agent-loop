@@ -75,7 +75,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       error: null,
       
       activePresetIds: {
-        'chat': null,
         'workflow': null,
         'multi-agent': null,
       },
@@ -277,7 +276,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
                 llmConfig,
                 useCodeExecutionMode: preset.use_code_execution_mode,
                 enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
-                enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false
+                enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
+                employee_id: preset.employee_id || undefined,
               }
             })
           
@@ -648,8 +648,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
 
             // Sync global secret selection to secrets store if this is the active preset
             const activeWorkflowId = get().activePresetIds.workflow
-            const activeChatId = get().activePresetIds.chat
-            if (id === activeWorkflowId || id === activeChatId) {
+            const activeMultiAgentId = get().activePresetIds['multi-agent']
+            if (id === activeWorkflowId || id === activeMultiAgentId) {
               useSecretsStore.getState().setSelectedGlobalSecretNames(selectedGlobalSecretNames ?? null)
             }
 
@@ -751,7 +751,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           set(state => ({
             customPresets: state.customPresets.filter(preset => preset.id !== id),
             activePresetIds: {
-              chat: state.activePresetIds.chat === id ? null : state.activePresetIds.chat,
               workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow,
               'multi-agent': state.activePresetIds['multi-agent'] === id ? null : state.activePresetIds['multi-agent'],
             }
@@ -1044,7 +1043,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             } = llmState
 
             // Get the appropriate mode-specific config as base
-            const mode: 'chat' | 'workflow' = modeCategory === 'workflow' ? 'workflow' : 'chat'
+            const mode: 'multi-agent' | 'workflow' = modeCategory === 'workflow' ? 'workflow' : 'multi-agent'
             const modeConfig = getConfigForMode(mode)
             const currentPrimaryConfig = modeConfig.primaryConfig
 
@@ -1173,7 +1172,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           selectedPresetFolder: null,
           currentQuery: '',
           activePresetIds: {
-            'chat': null,
             'workflow': null,
             'multi-agent': null,
           }
@@ -1195,7 +1193,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         const allPresets = [...state.customPresets, ...state.predefinedPresets]
         
         return allPresets.filter(preset => {
-          if (modeCategory === 'chat') {
+          if (modeCategory === 'multi-agent') {
             return preset.agentMode === 'simple'
           } else if (modeCategory === 'workflow') {
             return preset.agentMode === 'workflow'

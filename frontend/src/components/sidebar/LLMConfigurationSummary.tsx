@@ -12,7 +12,7 @@ export default function LLMConfigurationSummary({
 }: LLMConfigurationSummaryProps) {
   // Get current mode from app store
   const agentMode = useAppStore(state => state.agentMode)
-  const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
+  const currentMode: 'multi-agent' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'multi-agent'
 
   const { getConfigForMode, setShowLLMModal, savedLLMs } = useLLMStore()
   const activeTabConfig = useChatStore(state =>
@@ -26,10 +26,10 @@ export default function LLMConfigurationSummary({
 
   const [isExpanded, setIsExpanded] = useState(false)
 
-  // In chat mode: show active tab's LLM if set, so sidebar reflects the actual selection/default
+  // In multi-agent mode: show active tab's LLM if set, so sidebar reflects the actual selection/default
   // In workflow mode: use agentConfig.primary or primaryConfig
   const currentLLM = useMemo(() => {
-    if (currentMode === 'chat' && activeTabConfig?.provider && activeTabConfig?.model_id) {
+    if (currentMode === 'multi-agent' && activeTabConfig?.provider && activeTabConfig?.model_id) {
       return { provider: activeTabConfig.provider, model_id: activeTabConfig.model_id }
     }
     return agentConfig?.primary || primaryConfig

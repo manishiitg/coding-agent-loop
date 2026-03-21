@@ -8,6 +8,8 @@ import type { CommandDefinition } from './types'
 import type { ModeCategory } from '../stores/useModeStore'
 import { setUserCommands } from './registry'
 
+type CommandMode = Exclude<ModeCategory, null>
+
 const iconComponents: Record<string, any> = {
   zap: Zap,
   eye: Eye,
@@ -29,7 +31,9 @@ function toCommandDefinition(uc: UserCommand): CommandDefinition {
   const icon = makeIcon(uc.frontmatter.icon || 'terminal')
 
   const modes = uc.frontmatter.modes && uc.frontmatter.modes.length > 0
-    ? uc.frontmatter.modes as ModeCategory[]
+    ? uc.frontmatter.modes
+      .map(mode => mode === 'chat' ? 'multi-agent' : mode)
+      .filter((mode): mode is CommandMode => mode === 'multi-agent' || mode === 'workflow')
     : undefined
 
   return {

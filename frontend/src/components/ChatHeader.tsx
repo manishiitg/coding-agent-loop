@@ -17,7 +17,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const { getActivePreset } = usePresetApplication()
 
   // Get active preset for current mode
-  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+  const activePreset = getActivePreset(selectedModeCategory as 'multi-agent' | 'workflow')
 
   // Check if header has any content to display
   const hasTitle = chatSessionTitle && !(selectedModeCategory === 'workflow' && activePreset)

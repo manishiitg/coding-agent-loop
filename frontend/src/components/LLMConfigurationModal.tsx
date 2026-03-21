@@ -46,8 +46,8 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
   // Get current mode from app store
   const agentMode = useAppStore(state => state.agentMode)
-  // Map 'simple' to 'chat' for our mode-specific configs
-  const currentMode: 'chat' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'chat'
+  // Map 'simple' to 'multi-agent' for our mode-specific configs
+  const currentMode: 'multi-agent' | 'workflow' = agentMode === 'workflow' ? 'workflow' : 'multi-agent'
 
   const {
     // Legacy configs (kept for backward compatibility)

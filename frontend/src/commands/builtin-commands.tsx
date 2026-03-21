@@ -140,12 +140,28 @@ export const builtinCommands: CommandDefinition[] = [
   },
   {
     command: 'workflow-builder',
-    description: 'Build a workflow from existing plans',
+    description: 'Generate a workflow spec markdown from this chat',
     icon: <Layers className="w-4 h-4" />,
     modes: ['multi-agent'],
     source: 'builtin',
     execute: (ctx) => {
-      ctx.openDialog('workflowBuilder')
+      const workflowContext = `Create a workflow specification markdown file from this conversation.
+
+Requirements:
+- Analyze this chat and extract all required implementation steps.
+- Include "Goal", "Constraints", "Required Tools & MCP Servers", "Key Learnings", "Step-by-step Plan", "Parallel Execution Plan", "Validation Checklist", and "Open Questions".
+- Make each step actionable and self-contained.
+- In "Required Tools & MCP Servers", list exact tool names/MCP servers needed per step and why.
+- In "Parallel Execution Plan", identify which tasks can run in parallel vs what is on the critical path.
+- Capture important implementation learnings from this conversation and add reusable lessons for future runs.
+- Save the output as a .md file in the workspace (for example under Chats/), so I can manually upload/use it later.
+- Return a concise summary plus the exact saved file path.`
+
+      const message = ctx.beforeSlash
+        ? `${ctx.beforeSlash}\n\n${workflowContext}`
+        : workflowContext
+
+      ctx.onSubmit(message)
     }
   },
   {

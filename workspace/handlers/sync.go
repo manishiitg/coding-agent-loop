@@ -405,7 +405,7 @@ func SyncWithGitHub(c *gin.Context) {
 		}
 
 		// Check if it's a conflict error (only for normal sync)
-		if operation == "sync" && strings.Contains(syncErr.Error(), "merge conflicts detected") {
+		if operation == "sync" && (strings.Contains(syncErr.Error(), "merge conflicts detected") || strings.Contains(syncErr.Error(), "merge conflict:")) {
 			c.JSON(http.StatusConflict, models.APIResponse[models.SyncResponse]{
 				Success: false,
 				Message: "Merge conflicts detected",

@@ -8,6 +8,7 @@ import { useChatStore } from '../stores'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useAppStore } from '../stores/useAppStore'
+import { useModeStore } from '../stores/useModeStore'
 import type { PollingEvent } from '../services/api-types'
 import { useRenderLogger } from '../utils/renderLogger'
 
@@ -122,6 +123,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const completedStreamingText = useChatStore(state =>
     sessionId ? state.completedStreamingText[sessionId] || '' : ''
   )
+  const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
 
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
@@ -219,7 +221,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
 
       {/* Completed Streaming Text - preserved intermediate output from generation */}
       {completedStreamingText && !currentStreamingText && (
-        <details className="min-w-0 group" open>
+        <details className="min-w-0 group" open={selectedModeCategory === 'workflow'}>
           <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
             Thinking
           </summary>

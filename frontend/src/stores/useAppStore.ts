@@ -16,7 +16,7 @@ interface AppState {
   workspaceMinimized: boolean
   showWorkflowsOverview: boolean
   
-  // Code execution mode (for chat mode when no preset is active)
+  // Code execution mode (for multi-agent mode when no preset is active)
   useCodeExecutionMode: boolean
 
   // Delegation mode: 'off' = disabled, 'spawn' = simple delegate only (plan is now in multi-agent mode)
@@ -92,7 +92,7 @@ export const useAppStore = create<AppState>()(
               const currentCategory = useModeStore.getState().selectedModeCategory
 
               // Don't override if the current category already maps to the same agent mode.
-              // This prevents 'multi-agent' (which maps to 'simple') from being overwritten to 'chat'.
+              // This prevents 'multi-agent' (which maps to 'simple') from being overwritten incorrectly.
               const currentCategoryAgentMode = currentCategory ? getAgentModeFromCategory(currentCategory) : null
               if (currentCategoryAgentMode !== mode) {
                 const category = getModeCategoryFromAgentMode(mode)
@@ -181,7 +181,7 @@ export const useAppStore = create<AppState>()(
         lastGWSAccess: state.lastGWSAccess
         // delegationMode: persisted so /spawn survives page refresh
         // Note: requiresNewChat is not persisted as it's temporary state
-        // File context is now mode-specific: chat tabs have their own, workflow uses preset
+        // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
         }),
         // Migrate old 'plan' delegationMode to 'off' (plan is now implicit in multi-agent mode)
         version: 1,

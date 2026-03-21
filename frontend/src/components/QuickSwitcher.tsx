@@ -72,7 +72,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       // Load chat history for non-workflow modes
       if (!isWorkflowMode) {
         setIsLoadingChats(true)
-        const modeKey = selectedModeCategory === 'multi-agent' ? 'multi-agent' : 'chat'
+        const modeKey = 'multi-agent'
         useChatStore.getState().getChatHistory(modeKey, true)
           .then(sessions => setChatSessions(sessions))
           .catch(err => console.error('[QuickSwitcher] Failed to load chat history:', err))
@@ -118,12 +118,13 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       // Chat/Multi-agent mode: show previous sessions
       return chatSessions
         .filter(s => {
+          const title = (s.title || '').toLowerCase()
+          if (title === 'organization assistant' || title.startsWith('org chat ')) return false
           // Filter out workflow sessions
           if ((s.agent_mode || '').toLowerCase() === 'workflow') return false
           // Mode-based filtering
-          const isMultiAgent = s.config?.delegation_mode === 'plan'
+          const isMultiAgent = s.config?.delegation_mode === 'plan' || s.config?.delegation_mode === 'spawn'
           if (selectedModeCategory === 'multi-agent' && !isMultiAgent) return false
-          if (selectedModeCategory === 'chat' && isMultiAgent) return false
           return true
         })
         .map(s => ({

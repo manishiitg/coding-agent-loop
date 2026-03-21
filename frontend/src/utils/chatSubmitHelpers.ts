@@ -39,9 +39,9 @@ export function determineModeFlag(params: {
   const { correctAgentMode, selectedModeCategory, presetValue, tabConfigValue } = params
 
   if (correctAgentMode === 'simple') {
-    // Chat mode: preset wins, else tab config (default false)
+    // Multi-agent mode: preset wins, else tab config (default false)
     if (presetValue !== undefined) return presetValue
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
+    if (selectedModeCategory === 'multi-agent') {
       return tabConfigValue ?? false
     }
     return false
@@ -139,16 +139,15 @@ export function buildQueryRequestPayload(params: {
     selectedGlobalSecrets,
   } = params
 
-  const isChatMode = selectedModeCategory === 'chat'
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
   // Detect workflow phase chat mode: tab has a phaseId and the phase supports conversational editing
   const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
     && currentTab?.metadata?.phaseId
     && CHAT_COMPATIBLE_PHASES.has(currentTab.metadata.phaseId)
   // isChatLikeMode: includes phase chat for basic settings (context summarization, workspace access)
-  const isChatLikeMode = isChatMode || isMultiAgentMode || isWorkflowPhaseChat
-  // isChatWithExtras: only real chat/multi-agent modes get optional extras (browser, GWS, skills, secrets, etc.)
-  const isChatWithExtras = isChatMode || isMultiAgentMode
+  const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat
+  // isChatWithExtras: only multi-agent mode gets optional extras (browser, GWS, skills, secrets, etc.)
+  const isChatWithExtras = isMultiAgentMode
 
   // Context editing from workflow preset
   let enableContextEditing: boolean | undefined = undefined
@@ -164,12 +163,38 @@ export function buildQueryRequestPayload(params: {
     }
   }
 
+  // Browser mode can drift on resumed/migrated tabs when older fields exist.
+  // Derive a robust effective mode so request payloads are consistent.
+  const rawBrowserMode = currentTab?.config?.browserMode
+  const legacyUseCdp = currentTab?.config?.useCdp === true
+  const legacyEnableBrowser = currentTab?.config?.enableBrowserAccess === true
+  const selectedServers = currentTab?.config?.selectedServers || []
+  let effectiveBrowserMode: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth' =
+    rawBrowserMode
+      ? rawBrowserMode
+      : (legacyEnableBrowser
+          ? (legacyUseCdp ? 'cdp' : 'headless')
+          : (selectedServers.includes('camofox')
+              ? 'stealth'
+              : (selectedServers.includes('playwright') ? 'playwright' : 'none')))
+
+  // Guard against stale/migrated config where browserMode says headless
+  // but useCdp is actually enabled in tab config.
+  if (effectiveBrowserMode === 'headless' && legacyUseCdp) {
+    effectiveBrowserMode = 'cdp'
+  }
+
+  const isBrowserAccessMode = effectiveBrowserMode === 'headless' || effectiveBrowserMode === 'cdp'
+  const payloadServers = isBrowserAccessMode
+    ? effectiveServers.filter(s => s !== 'playwright' && s !== 'camofox')
+    : effectiveServers
+
   return {
     query: queryWithContext,
     agent_mode: (isWorkflowPhaseChat ? 'workflow_phase' : correctAgentMode) as AgentQueryRequest['agent_mode'],
     phase_id: isWorkflowPhaseChat ? currentTab.metadata!.phaseId : undefined,
     enabled_tools: enabledTools.map(tool => tool.name),
-    enabled_servers: effectiveServers,
+    enabled_servers: payloadServers,
     selected_tools: hasActivePreset ? filteredPresetTools : undefined,
     provider: effectiveLLMConfig.provider as AgentQueryRequest['provider'],
     model_id: effectiveLLMConfig.model_id,
@@ -187,21 +212,22 @@ export function buildQueryRequestPayload(params: {
       ? (currentTab?.config?.enableWorkspaceAccess ?? true)
       : undefined,
     enable_browser_access: isChatWithExtras
-      ? ((currentTab?.config?.browserMode ?? 'none') === 'headless' || (currentTab?.config?.browserMode ?? 'none') === 'cdp')
+      ? isBrowserAccessMode
+      : undefined,
+    browser_mode: isChatWithExtras
+      ? effectiveBrowserMode
       : undefined,
     enable_gws_access: isChatWithExtras
       ? (currentTab?.config?.enableGWSAccess ?? false)
       : undefined,
-    cdp_port: isChatWithExtras && (currentTab?.config?.browserMode ?? 'none') === 'cdp'
+    cdp_port: isChatWithExtras && effectiveBrowserMode === 'cdp'
       ? (currentTab?.config?.cdpPort || 9222)
       : undefined,
     delegation_mode: isMultiAgentMode
-      ? 'plan' as const
-      : (isChatMode && useAppStore.getState().delegationMode !== 'off'
-        ? 'plan' as const
-        : undefined),
+      ? 'spawn' as const
+      : undefined,
     plan_phase: isMultiAgentMode
-      ? ((effectivePlanPhase ?? currentTab?.config?.planPhaseOverride ?? 'planning') as 'planning' | 'execution')
+      ? ('execution' as const)
       : undefined,
     delegation_tier_config: isMultiAgentMode
       ? (currentTab?.config?.delegationTierConfig ?? useLLMStore.getState().delegationTierConfig ?? undefined)
@@ -237,7 +263,7 @@ export function buildQueryRequestPayload(params: {
 }
 
 // ---------------------------------------------------------------------------
-// 1d. resolveOrCreateTab — tab resolution + session ID guarantee for chat/multi-agent
+// 1d. resolveOrCreateTab — tab resolution + session ID guarantee for multi-agent
 // ---------------------------------------------------------------------------
 
 export async function resolveOrCreateTab(params: {
@@ -247,7 +273,7 @@ export async function resolveOrCreateTab(params: {
   const { freshActiveTab, selectedModeCategory } = params
   let currentTab = freshActiveTab
 
-  if (!currentTab && (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent')) {
+  if (!currentTab && selectedModeCategory === 'multi-agent') {
     const chatStore = useChatStore.getState()
     const tabs = Object.values(chatStore.chatTabs).filter(tab =>
       tab.metadata?.mode === selectedModeCategory
@@ -255,7 +281,7 @@ export async function resolveOrCreateTab(params: {
 
     if (tabs.length === 0) {
       try {
-        const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
+        const tabName = 'Agent Chat 1'
         const newTabId = await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
         currentTab = chatStore.getTab(newTabId)
         logger.debug('ChatArea', `Created new ${selectedModeCategory} tab: ${newTabId}`)

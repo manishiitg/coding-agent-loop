@@ -94,12 +94,12 @@ async function doRestoreSession(
 
   // Step 3: Detect mode
   const config = chatSession?.config
-  const isMultiAgent = config?.delegation_mode === 'plan'
-  const tabMode = isMultiAgent ? 'multi-agent' as const : 'chat' as const
+  const isMultiAgent = config?.delegation_mode === 'plan' || config?.delegation_mode === 'spawn'
+  const tabMode = 'multi-agent' as const
   if (isMultiAgent) {
-    console.log(`${TAG} [${src}] Switching to multi-agent mode`)
-    useModeStore.getState().setModeCategory('multi-agent')
+    console.log(`${TAG} [${src}] Restoring multi-agent session`)
   }
+  useModeStore.getState().setModeCategory('multi-agent')
 
   // Step 4: Create or reuse tab
   let tabId: string

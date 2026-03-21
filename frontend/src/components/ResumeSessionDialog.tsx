@@ -28,7 +28,7 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
   const loadSessions = useCallback(async () => {
     setIsLoading(true)
     try {
-      const allSessions = await getChatHistory('chat', true)
+      const allSessions = await getChatHistory('multi-agent', true)
       setSessions(allSessions)
     } catch (err) {
       console.error('[ResumeSessionDialog] Failed to load sessions:', err)
@@ -45,7 +45,7 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
     if (isLoadingMore || !hasMore()) return
     setIsLoadingMore(true)
     try {
-      const moreSessions = await loadMoreChatHistory('chat')
+      const moreSessions = await loadMoreChatHistory('multi-agent')
       setSessions(moreSessions)
     } catch (err) {
       console.error('[ResumeSessionDialog] Failed to load more sessions:', err)
@@ -87,9 +87,8 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
     // Filter out workflow sessions
     if ((s.agent_mode || '').toLowerCase() === 'workflow') return false
     // Mode-based filtering: show only matching sessions
-    const isMultiAgent = s.config?.delegation_mode === 'plan'
+    const isMultiAgent = s.config?.delegation_mode === 'plan' || s.config?.delegation_mode === 'spawn'
     if (selectedModeCategory === 'multi-agent' && !isMultiAgent) return false
-    if (selectedModeCategory === 'chat' && isMultiAgent) return false
     // Search filter
     if (!searchQuery.trim()) return true
     const q = searchQuery.toLowerCase()
@@ -208,7 +207,7 @@ export default function ResumeSessionDialog({ onClose }: ResumeSessionDialogProp
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
-                    {session.config?.delegation_mode === 'plan' && (
+                    {(session.config?.delegation_mode === 'plan' || session.config?.delegation_mode === 'spawn') && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
                         Multi Agent
                       </span>

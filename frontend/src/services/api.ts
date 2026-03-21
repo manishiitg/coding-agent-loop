@@ -154,9 +154,9 @@ export function getSessionId(): string {
   
   // Fallback: generate a temporary session ID
   // In workflow mode, it's normal to not have an active tab until a phase is started
-  // Only warn in chat mode where tabs should always exist
+  // Only warn in multi-agent mode where tabs should always exist
   const selectedModeCategory = useModeStore.getState().selectedModeCategory
-  if (selectedModeCategory === 'chat') {
+  if (selectedModeCategory === 'multi-agent') {
     console.warn('[API] No active tab - generating temporary session ID')
   }
   return crypto.randomUUID()

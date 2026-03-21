@@ -964,78 +964,86 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
 
                     {/* CDP configuration sub-panel */}
                     {browserMode === 'cdp' && (
-                      <div className="space-y-3 p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
-                        <div className="flex items-center gap-3">
-                          <label className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">CDP Port:</label>
-                          <input
-                            type="number"
-                            value={cdpPort}
-                            onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
-                            className="w-24 px-2.5 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:border-green-500 focus:outline-none"
-                            min={1}
-                            max={65535}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => checkCdpConnection(cdpPort)}
-                            disabled={cdpChecking}
-                            className="px-3 py-1.5 text-xs font-medium bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-md text-gray-700 dark:text-gray-200 disabled:opacity-50 transition-colors"
-                          >
-                            {cdpChecking ? 'Checking...' : 'Check Connection'}
-                          </button>
-                        </div>
-                        {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
-                          <div className="rounded-lg bg-white dark:bg-gray-900/80 border border-gray-300 dark:border-gray-600 p-3 space-y-2">
-                            <p className="text-xs font-medium text-gray-700 dark:text-gray-300">macOS: Easy setup</p>
-                            <a
-                              href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
-                              download="Chrome-CDP-macOS.zip"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors"
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                              Download Chrome CDP launcher
-                            </a>
-                            <ol className="text-xs text-gray-500 dark:text-gray-400 list-decimal list-inside space-y-0.5">
-                              <li>Double-click the zip to unzip.</li>
-                              <li>Double-click <strong>launch_chrome_cdp.command</strong> — if blocked, right-click → Open → Open.</li>
-                              <li>A Terminal window opens and Chrome launches with CDP enabled.</li>
-                              <li>Click Check Connection above to verify.</li>
-                            </ol>
-                            <p className="text-xs text-amber-600 dark:text-amber-400/90 mt-1.5">
-                              The <code className="bg-gray-100 dark:bg-gray-950 px-1 rounded font-mono text-[11px]">.command</code> file is a plain shell script — no install needed. If macOS blocks it, right-click → Open → Open to allow it once.
-                            </p>
+                      <div className="p-3 rounded-lg bg-gray-100 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700">
+                        <div className="flex gap-4 items-stretch">
+                          {/* Left: port + status */}
+                          <div className="flex-1 space-y-3">
+                            <div className="flex items-center gap-3">
+                              <label className="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">CDP Port:</label>
+                              <input
+                                type="number"
+                                value={cdpPort}
+                                onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
+                                className="w-24 px-2.5 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:border-green-500 focus:outline-none"
+                                min={1}
+                                max={65535}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => checkCdpConnection(cdpPort)}
+                                disabled={cdpChecking}
+                                className="px-3 py-1.5 text-xs font-medium bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-md text-gray-700 dark:text-gray-200 disabled:opacity-50 transition-colors"
+                              >
+                                {cdpChecking ? 'Checking...' : 'Check Connection'}
+                              </button>
+                            </div>
+                            <div className="flex items-start gap-2">
+                              {cdpChecking ? (
+                                <>
+                                  <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
+                                  <span className="text-sm text-yellow-600 dark:text-yellow-400">Checking connection to port {cdpPort}...</span>
+                                </>
+                              ) : cdpConnected === true ? (
+                                <>
+                                  <div className="w-3 h-3 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
+                                  <span className="text-sm text-green-600 dark:text-green-400">Connected! Chrome is reachable on port {cdpPort}.</span>
+                                </>
+                              ) : cdpConnected === false ? (
+                                <>
+                                  <div className="w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
+                                  <span className="text-sm text-red-600 dark:text-red-400">Chrome is not reachable on port {cdpPort}.</span>
+                                </>
+                              ) : (
+                                <span className="text-xs text-gray-500">Click &quot;Check Connection&quot; to verify Chrome is reachable.</span>
+                              )}
+                            </div>
                           </div>
-                        )}
-                        <div className="flex items-start gap-2">
-                          {cdpChecking ? (
-                            <>
-                              <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
-                              <span className="text-sm text-yellow-600 dark:text-yellow-400">Checking connection to port {cdpPort}...</span>
-                            </>
-                          ) : cdpConnected === true ? (
-                            <>
-                              <div className="w-3 h-3 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
-                              <span className="text-sm text-green-600 dark:text-green-400">Connected! Chrome is reachable on port {cdpPort}.</span>
-                            </>
-                          ) : cdpConnected === false ? (
-                            <>
-                              <div className="w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
-                              <div className="text-sm">
-                                <span className="text-red-600 dark:text-red-400">Chrome is not reachable on port {cdpPort}.</span>
-                                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                                  <p className="font-medium text-gray-700 dark:text-gray-300">To enable CDP, launch Chrome with:</p>
-                                  <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1.5 rounded text-xs font-mono break-all text-green-700 dark:text-green-400 border border-gray-300 dark:border-gray-700">
-                                    {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac')
-                                      ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
-                                      : `google-chrome --remote-debugging-port=${cdpPort}`}
-                                  </code>
-                                  <p className="text-gray-500">Close all Chrome windows first, then run the command above.</p>
-                                </div>
+
+                          {/* Right: instructions */}
+                          <div className="w-64 flex-shrink-0 rounded-lg bg-white dark:bg-gray-900/80 border border-gray-300 dark:border-gray-600 p-2.5 space-y-1.5 flex flex-col">
+                            <p className="text-xs font-medium text-gray-700 dark:text-gray-300">Launch Chrome with CDP</p>
+                            {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac') && (
+                              <div className="space-y-1">
+                                <a
+                                  href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
+                                  download="Chrome-CDP-macOS.zip"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors"
+                                >
+                                  <Download className="w-3 h-3" />
+                                  Download Chrome CDP.app (macOS)
+                                </a>
+                                <ol className="text-xs text-gray-500 dark:text-gray-400 list-decimal list-inside space-y-0.5">
+                                  <li>Double-click the zip to unzip.</li>
+                                  <li>Drag <strong className="text-gray-700 dark:text-gray-300">Chrome CDP.app</strong> to <strong className="text-gray-700 dark:text-gray-300">Applications</strong>.</li>
+                                  <li>Open from Spotlight (⌘+Space) or Launchpad.</li>
+                                </ol>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">If macOS says &quot;damaged&quot;, run in Terminal:</p>
+                                <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1 rounded text-[10px] font-mono text-amber-600 dark:text-amber-400 border border-gray-300 dark:border-gray-700">
+                                  xattr -c /Applications/Chrome\ CDP.app
+                                </code>
+                                <p className="text-xs text-gray-400 dark:text-gray-600">then open it again, or right-click → Open.</p>
                               </div>
-                            </>
-                          ) : (
-                            <span className="text-xs text-gray-500">Click &quot;Check Connection&quot; to verify Chrome is reachable.</span>
-                          )}
+                            )}
+                            <p className="text-xs text-gray-500 dark:text-gray-400">Or run in Terminal (close all Chrome windows first):</p>
+                            <code className="block bg-gray-200 dark:bg-gray-950 px-2 py-1.5 rounded text-[11px] font-mono break-all text-green-700 dark:text-green-400 border border-gray-300 dark:border-gray-700">
+                              {typeof navigator !== 'undefined' && navigator.platform?.includes('Mac')
+                                ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
+                                : `google-chrome --remote-debugging-port=${cdpPort}`}
+                            </code>
+                          </div>
                         </div>
                       </div>
                     )}

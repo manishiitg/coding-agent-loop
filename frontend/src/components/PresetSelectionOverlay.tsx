@@ -12,7 +12,7 @@ interface PresetSelectionOverlayProps {
   isOpen: boolean
   onClose: () => void
   onPresetSelected: (presetId: string) => void
-  modeCategory: Exclude<ModeCategory, 'chat' | null>
+  modeCategory: Exclude<ModeCategory, null>
   setCurrentQuery?: (query: string) => void
 }
 

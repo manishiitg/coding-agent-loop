@@ -183,7 +183,7 @@ export interface ChatTabConfig {
   selectedPlanFolder?: string  // Existing plan folder to reuse (multi-agent mode; cleared after submit)
 }
 
-// Generalized ChatTab interface (works for both chat and workflow modes)
+// Generalized ChatTab interface (works for multi-agent and workflow modes)
 export interface ChatTab {
   tabId: string  // Unique ID: `chat_${timestamp}` or `phase_${phaseId}_${timestamp}`
   name: string  // Display name (e.g., "Chat 1", "Planning", "Execution")
@@ -209,8 +209,9 @@ export interface ChatTab {
   metadata?: {
     phaseId?: string  // For workflow mode: phase ID
     phaseName?: string  // For workflow mode: phase name
-    mode?: 'chat' | 'workflow' | 'multi-agent'  // Which mode this tab belongs to
+    mode?: 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
+    isOrganizationAssistant?: boolean // True when tab is reserved for Organization panel
     isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
     isRestoringSession?: boolean  // True while session events are being loaded from backend
     isViewOnly?: boolean // True when tab is in view-only mode (e.g. shared session or bot connector)
@@ -219,7 +220,7 @@ export interface ChatTab {
 
 // Helper function to get default tab config from current global state
 // Uses mode-specific configs for LLM and server selections
-const getDefaultTabConfig = (mode: 'chat' | 'workflow' | 'multi-agent' = 'chat'): ChatTabConfig => {
+const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
   const appStore = useAppStore?.getState?.()
@@ -440,7 +441,7 @@ interface ChatState extends StoreActions {
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
-  getTabsByMode: (mode: 'chat' | 'workflow') => ChatTab[]
+  getTabsByMode: (mode: 'multi-agent' | 'workflow') => ChatTab[]
   getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => ChatTab[]  // Find workflow tabs by phaseId (optionally scoped to preset)
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
@@ -1278,7 +1279,7 @@ export const useChatStore = create<ChatState>()(
       createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string) => {
         // Generate unique tab ID
         const timestamp = Date.now()
-        const mode = metadata?.mode || 'chat'
+        const mode = metadata?.mode || 'multi-agent'
         const tabId = mode === 'workflow' && metadata?.phaseId
           ? `phase_${metadata.phaseId}_${timestamp}`
           : `chat_${timestamp}`
@@ -1313,6 +1314,7 @@ export const useChatStore = create<ChatState>()(
           isStreaming: false,
           isCompleted: false,
           hasRunningBgAgents: false,
+          isSyntheticTurn: false,
           hideToolCalls: true,
           viewMode: 'detailed', // Default to full detail — user or system can switch to 'summary' for background workflows
           config: defaultConfig, // Initialize with default config from global state
@@ -1528,7 +1530,7 @@ export const useChatStore = create<ChatState>()(
         return state.chatTabs[state.activeTabId]
       },
       
-      getTabsByMode: (mode: 'chat' | 'workflow') => {
+      getTabsByMode: (mode: 'multi-agent' | 'workflow') => {
         const state = get()
         return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
       },
@@ -1580,6 +1582,18 @@ export const useChatStore = create<ChatState>()(
           chatTabs: {
             ...state.chatTabs,
             [tabId]: { ...state.chatTabs[tabId], hasRunningBgAgents }
+          }
+        }))
+      },
+
+      setTabSyntheticTurn: (tabId: string, isSyntheticTurn: boolean) => {
+        const tab = get().chatTabs[tabId]
+        if (!tab || tab.isSyntheticTurn === isSyntheticTurn) return
+
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: { ...state.chatTabs[tabId], isSyntheticTurn }
           }
         }))
       },
@@ -1716,11 +1730,9 @@ export const useChatStore = create<ChatState>()(
         })
 
         // Sync last-used settings to AppStore so new tabs inherit them.
-        // Only sync for chat/multi-agent tabs — workflow tabs have different settings.
-        // Sync last-used settings to AppStore so new tabs inherit them.
-        // Only sync for chat/multi-agent tabs — workflow tabs have different settings.
+        // Only sync for multi-agent tabs — workflow tabs have different settings.
         const tabMode = tab.metadata?.mode
-        if (tabMode === 'chat' || tabMode === 'multi-agent') {
+        if (tabMode === 'multi-agent') {
           type SyncUpdate = {
             lastSelectedSkills?: string[]
             lastSelectedSubAgents?: string[]
@@ -1785,7 +1797,7 @@ export const useChatStore = create<ChatState>()(
         const tab = state.chatTabs[tabId]
         if (!tab) return false
         
-        const mode = tab.metadata?.mode || 'chat'
+        const mode = tab.metadata?.mode || 'multi-agent'
         
         // Check if any events are completion events
         const completionEventTypes = mode === 'workflow'
@@ -2045,7 +2057,7 @@ export const useChatStore = create<ChatState>()(
                 if (modeCategory === 'workflow') {
                   agentMode = 'workflow'
                 }
-                // For 'chat' and 'multi-agent', fetch all non-workflow sessions;
+                // For multi-agent mode, fetch all non-workflow sessions;
                 // client-side filtering splits them by delegation_mode
 
                 logger.debug('ChatStore', `Fetching fresh chat history for mode: ${modeCategory} (agentMode: ${agentMode})`)
@@ -2122,13 +2134,13 @@ export const useChatStore = create<ChatState>()(
       {
         name: 'chat-store',
         partialize: (state) => ({
-          // Persist workflow, multi-agent, and chat tabs (for reconnection)
+          // Persist workflow and multi-agent tabs (for reconnection)
           // Only persist tabs created within the last 24 hours to prevent stale tabs
           // from accumulating in localStorage and causing page hangs on reload
           chatTabs: Object.fromEntries(
             Object.entries(state.chatTabs)
               .filter(([, tab]) => {
-                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'chat'
+                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent'
                 if (!isRelevantMode) return false
                 // Drop tabs older than 24 hours - they won't have active sessions
                 const MAX_TAB_AGE = 24 * 60 * 60 * 1000
@@ -2144,6 +2156,7 @@ export const useChatStore = create<ChatState>()(
                 isStreaming: false, // Reset streaming state on reload
                 isCompleted: false,
                 hasRunningBgAgents: false,
+                isSyntheticTurn: false,
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
                 viewMode: tab.viewMode ?? 'detailed', // Persist view mode across reload
@@ -2161,10 +2174,10 @@ export const useChatStore = create<ChatState>()(
               }
             ])
           ),
-          // Persist activeTabId for workflow, multi-agent, and chat tabs
+          // Persist activeTabId for workflow and multi-agent tabs
           activeTabId: (() => {
             const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent' || activeTab?.metadata?.mode === 'chat') ? state.activeTabId : null
+            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
           })()
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         }),

@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect } from 'react'
 
 const DBG = '[skill-popup]'
-import { Send, Square, Code2, Sparkles, Loader2, FolderOpen, Search, Globe, Layers, FileSearch, Play, X, History, Download, Bot, Server, ImagePlus } from 'lucide-react'
+import { Send, Square, Code2, Sparkles, Wand2, Loader2, FolderOpen, Search, Globe, Layers, X, History, Bot, Server, ImagePlus, Download, Paperclip } from 'lucide-react'
 import { Button } from './ui/Button'
 import { Textarea } from './ui/Textarea'
 import FileContextDisplay from './FileContextDisplay'
@@ -61,7 +61,6 @@ import { MCPConfigPopup } from './MCPConfigPopup'
 import MCPDetailsModal from './MCPDetailsModal'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import ResumeSessionDialog from './ResumeSessionDialog'
-import DelegationTierConfigModal from './DelegationTierConfigModal'
 import { ImageGenerationConfigModal } from './ImageGenerationConfigModal'
 import WorkflowBuilderModal from './WorkflowBuilderModal'
 import type { PlannerFile, PollingEvent } from '../services/api-types'
@@ -79,7 +78,8 @@ import type { Skill } from '../types/skills'
 import type { SubAgent } from '../types/subagents'
 
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
-const DEDICATED_MCP_SERVERS = new Set(['playwright'])
+// Managed by dedicated UI controls in ChatInput (browser/GWS icons), not MCP dropdown.
+const DEDICATED_MCP_SERVERS = new Set(['playwright', 'camofox', 'gws'])
 
 export interface ActiveAgentInfo {
   name: string
@@ -94,61 +94,8 @@ interface ChatInputProps {
   activeAgents?: ActiveAgentInfo[]
 }
 
-// Shorten model ID to max 5 char label
-const shortModelName = (modelId: string): string => {
-  let m = modelId.replace(/^(global\.|us\.|eu\.)?anthropic\./, '').replace(/^(global\.|us\.|eu\.)?meta\./, '')
-  m = m.split('/').pop() || m
-  // Map to short names
-  if (/opus-4/i.test(m)) return 'opus4'
-  if (/sonnet-4-5|sonnet-4\.5/i.test(m)) return 'sn4.5'
-  if (/sonnet-4/i.test(m)) return 'sn4'
-  if (/sonnet-3-7|sonnet-3\.7/i.test(m)) return 'sn3.7'
-  if (/sonnet-3-5|sonnet-3\.5/i.test(m)) return 'sn3.5'
-  if (/haiku-4-5|haiku-4\.5/i.test(m)) return 'hk4.5'
-  if (/haiku-3-5|haiku-3\.5/i.test(m)) return 'hk3.5'
-  if (/gpt-5-mini/i.test(m)) return 'g5m'
-  if (/gpt-5/i.test(m)) return 'gpt5'
-  if (/gpt-4\.?1-mini/i.test(m)) return 'g4.1m'
-  if (/gpt-4\.?1/i.test(m)) return 'g4.1'
-  if (/gpt-4o-mini/i.test(m)) return 'g4om'
-  if (/gpt-4o/i.test(m)) return 'g4o'
-  if (/grok/i.test(m)) return 'grok'
-  if (/gemini.*3.*flash/i.test(m)) return 'gm3f'
-  if (/gemini.*3.*pro/i.test(m)) return 'gm3p'
-  if (/gemini.*2\.?5.*pro/i.test(m)) return 'gm25p'
-  if (/gemini.*2\.?5.*flash/i.test(m)) return 'gm25f'
-  if (/gemini.*2\.?0.*flash/i.test(m)) return 'gm20f'
-  if (/gemini.*1\.?5.*pro/i.test(m)) return 'gm15p'
-  if (/gemini.*1\.?5.*flash/i.test(m)) return 'gm15f'
-  if (/gemini/i.test(m)) return 'gem'
-  if (/llama/i.test(m)) return 'llama'
-  if (/mistral/i.test(m)) return 'mstrl'
-  // Fallback: first 5 chars
-  return m.slice(0, 5)
-}
-
 // Stable empty array reference to avoid infinite loops in selectors
 const EMPTY_EVENTS: never[] = []
-
-// Provider color dot + short label for tier chip
-const providerMeta: Record<string, { color: string; label: string }> = {
-  anthropic: { color: 'bg-amber-500', label: 'An' },
-  openai: { color: 'bg-emerald-500', label: 'OA' },
-  openrouter: { color: 'bg-purple-500', label: 'OR' },
-  bedrock: { color: 'bg-orange-500', label: 'BR' },
-  vertex: { color: 'bg-sky-500', label: 'Vx' },
-  azure: { color: 'bg-blue-500', label: 'Az' },
-  'gemini-cli': { color: 'bg-teal-500', label: 'Gm' },
-}
-const TierProviderDot = ({ provider }: { provider: string }) => {
-  const meta = providerMeta[provider]
-  return (
-    <>
-      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${meta?.color || 'bg-gray-400'}`} />
-      <span className="opacity-70">{meta?.label || provider.slice(0, 2).toUpperCase()}</span>
-    </>
-  )
-}
 
 // Collapsible queued message item — shows preview for long messages with expand/collapse toggle
 const QueuedMessageItem: React.FC<{
@@ -206,7 +153,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const {
     agentMode,
     setWorkspaceMinimized,
-    delegationMode
+    delegationMode,
+    showWorkflowsOverview
   } = useAppStore()
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
@@ -221,8 +169,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const isWorkflowMode = selectedModeCategory === 'workflow'
   // Hide extras (servers, skills, agent mode, etc.) in workflow mode but show in multi-agent
   const hideExtras = isWorkflowMode
-  // For plan features, treat multi-agent as always 'plan'
-  const effectiveDelegationMode = isMultiAgentMode ? 'plan' as const : delegationMode
+  // Multi-agent now runs in spawn mode by default (can still plan via tools when needed)
+  const effectiveDelegationMode: 'off' | 'spawn' = isMultiAgentMode ? 'spawn' : delegationMode
 
   // Detect plan phase from events (planning → execution after confirm_plan_execution succeeds)
   // We'll compute this from tabEvents below after they're defined
@@ -231,27 +179,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const activeTabId = useChatStore(state => state.activeTabId)
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const addToast = useChatStore(state => state.addToast)
-  // Get active tab and its config (ChatInput is only rendered in chat mode)
+  // Get active tab and its config (ChatInput is only rendered in multi-agent mode)
   // Use selector to get only the tab we need, preventing re-renders when other tabs change
   const activeTab = useChatStore(state => 
     activeTabId ? state.chatTabs[activeTabId] : undefined
   )
+  const isOrganizationAssistant = !!activeTab?.metadata?.isOrganizationAssistant
+  const isOrganizationContext = isOrganizationAssistant || showWorkflowsOverview
   
   // Memoize tabConfig to prevent unnecessary re-renders
   const tabConfig = useMemo(() => activeTab?.config, [activeTab?.config])
-
-  // User can manually override the plan phase (planning vs execution) — stored in tab config
-  const planPhaseOverride = tabConfig?.planPhaseOverride ?? null
-  const setPlanPhaseOverride = useCallback((phase: 'planning' | 'execution' | null) => {
-    const tabId = useChatStore.getState().activeTabId
-    if (tabId) {
-      useChatStore.getState().setTabConfig(tabId, { planPhaseOverride: phase })
-    }
-    // Persist the choice so new multi-agent tabs start with the same phase
-    if (phase) {
-      useAppStore.getState().setLastMultiAgentPlanPhase(phase)
-    }
-  }, [])
 
   const defaultReasoningLevel = tabConfig?.defaultReasoningLevel ?? null
   const setDefaultReasoningLevel = useCallback((level: 'high' | 'medium' | 'low' | null) => {
@@ -278,31 +215,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (!tabSessionId) return EMPTY_EVENTS
     return allTabEvents[tabSessionId] ?? EMPTY_EVENTS
   }, [tabSessionId, allTabEvents])
-
-  // Detect plan phase from events: scan backwards for the most recent phase-changing event.
-  // - plan_approval event → execution (plan presented for approval)
-  // - create_delegation_plan tool call → planning (new plan being created)
-  // Whichever is most recent wins. Default: planning.
-  const autoDetectedPlanPhase = useMemo(() => {
-    if (!isMultiAgentMode) return null
-    for (let i = tabEvents.length - 1; i >= 0; i--) {
-      const event = tabEvents[i]
-      if (event.type === 'plan_approval') {
-        return 'execution'
-      }
-      if (event.type === 'tool_call_start' || event.type === 'tool_call_end') {
-        const agentEvent = event.data as { data?: { tool_name?: string }; tool_name?: string } | undefined
-        const toolName = agentEvent?.data?.tool_name || agentEvent?.tool_name
-        if (toolName === 'create_delegation_plan') {
-          return 'planning'
-        }
-      }
-    }
-    return null // No events yet — let user choose
-  }, [isMultiAgentMode, tabEvents])
-
-  // Effective phase: user override wins, then auto-detected, then default to 'planning'
-  const planPhase = isMultiAgentMode ? (planPhaseOverride ?? autoDetectedPlanPhase ?? 'planning') : null
 
   // Helper: check if an event is from a sub-agent (delegation)
   const isSubAgentEvent = useCallback((event: PollingEvent): boolean => {
@@ -401,7 +313,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return { contextUsagePercent: null, latestTokenUsage: null }
   }, [tabEvents, isSubAgentEvent])
 
-  // Always use tab-specific config (ChatInput is only in chat mode)
+  // Always use tab-specific config (ChatInput is only in multi-agent mode)
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   // Use ?? instead of || to preserve false values (user's selection)
@@ -418,6 +330,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const useCdp = useMemo(() => browserMode === 'cdp', [browserMode])
   const cdpPort = useMemo(() => tabConfig?.cdpPort ?? 9222, [tabConfig?.cdpPort])
   const isLocalMode = useCapabilitiesStore(state => state.capabilities?.local_mode ?? false)
+  const workspaceActiveFolder = useWorkspaceStore(state => state.activeFolder)
   const camofoxHeaded = useMemo(() => tabConfig?.camofoxHeaded ?? true, [tabConfig?.camofoxHeaded])
   const [cdpConnected, setCdpConnected] = useState<boolean | null>(null)
   const [cdpChecking, setCdpChecking] = useState(false)
@@ -426,6 +339,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [showGWSPopup, setShowGWSPopup] = useState(false)
   const [showReasoningPopup, setShowReasoningPopup] = useState(false)
   const [showActiveAgentsPanel, setShowActiveAgentsPanel] = useState(false)
+  const [isUploadingFiles, setIsUploadingFiles] = useState(false)
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false)
   // Auto-close panel when no agents are running
   useEffect(() => {
     if (activeAgents.length === 0) setShowActiveAgentsPanel(false)
@@ -568,7 +483,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         selectedSkills: cleanedSkills,
       })
       setChatSelectedServers(newServers)
-      setWorkspaceMinimized(false)
+      if (!showCdpPopup) setWorkspaceMinimized(false)
     } else if (mode === 'playwright') {
       // Playwright: no virtual tool, add 'playwright' to selectedServers, enable workspace
       const currentServers = tabConfig?.selectedServers || []
@@ -582,7 +497,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         selectedServers: newServers
       })
       setChatSelectedServers(newServers)
-      setWorkspaceMinimized(false)
+      if (!showCdpPopup) setWorkspaceMinimized(false)
     } else if (mode === 'headless' || mode === 'cdp') {
       // Headless/CDP: use agent_browser virtual tool, remove 'playwright' and 'camofox' from servers
       const currentServers = tabConfig?.selectedServers || []
@@ -595,7 +510,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         selectedServers: newServers
       })
       setChatSelectedServers(newServers)
-      setWorkspaceMinimized(false)
+      if (!showCdpPopup) setWorkspaceMinimized(false)
     } else {
       // None: disable everything, remove 'playwright' and 'camofox' from servers
       const currentServers = tabConfig?.selectedServers || []
@@ -608,7 +523,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       })
       setChatSelectedServers(newServers)
     }
-  }, [activeTabId, tabConfig?.selectedServers, tabConfig?.selectedSkills, setTabConfig, setChatSelectedServers, setWorkspaceMinimized])
+  }, [activeTabId, tabConfig?.selectedServers, tabConfig?.selectedSkills, setTabConfig, setChatSelectedServers, setWorkspaceMinimized, showCdpPopup])
 
   const setCdpPort = useCallback((port: number) => {
     if (activeTabId) {
@@ -671,7 +586,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return () => { cancelled = true; clearTimeout(timer) }
   }, [browserMode, camofoxHeaded])
 
-  // Get preset info for chat mode
+  // Get preset info for multi-agent mode
   const { getActivePreset, activePresetIds, customPresets, predefinedPresets } = usePresetApplication()
   
   // Get input text from tab config (source of truth for persistence)
@@ -809,9 +724,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [activeTabId, setTabConfig, setChatSelectedServers])
 
-  // Auto-enable tool search mode in chat mode when more than 2 MCP servers are selected
+  // Auto-enable tool search mode in multi-agent mode when more than 2 MCP servers are selected
   useEffect(() => {
-    if (selectedModeCategory !== 'chat' || !activeTabId) return
+    if (selectedModeCategory !== 'multi-agent' || !activeTabId) return
     const realServers = manualSelectedServers.filter(s => s !== 'NO_SERVERS')
     const totalTools = mcpToolList
       .filter(t => t.status === 'ok' && t.server && realServers.includes(t.server))
@@ -903,7 +818,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     getCurrentLLMOption,
     refreshAvailableLLMs: onRefreshAvailableLLMs,
     llmConfigLocked,
-    delegationTierConfig,
     workflowPrimaryConfig
   } = useLLMStore()
 
@@ -991,6 +905,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   
   // Preset folder selection
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileUploadInputRef = useRef<HTMLInputElement>(null)
+  const dragCounterRef = useRef(0)
   
   // Track previous input value to distinguish user deletion from programmatic clearing
   const prevInputTextRef = useRef<string>('')
@@ -1043,9 +959,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [skillsLoading, setSkillsLoading] = useState(false)
   const [subAgentsLoading, setSubAgentsLoading] = useState(false)
 
-  // Tier config modal state (for plan mode chip)
-  const [showTierModal, setShowTierModal] = useState(false)
-
   // Auto-resize textarea based on content
   const adjustTextareaHeight = useCallback(() => {
     if (textareaRef.current) {
@@ -1059,12 +972,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [])
 
-  // Get active preset for chat mode (used for preset query sync and UI)
-  const chatActivePreset = getActivePreset('chat')
+  // Get active preset for multi-agent mode (used for preset query sync and UI)
+  const chatActivePreset = getActivePreset('multi-agent')
   
   // Sync tab config inputText with preset query when preset is selected
   useEffect(() => {
-    const activePresetId = activePresetIds['chat']
+    const activePresetId = activePresetIds['multi-agent']
     
     if (activePresetId && activeTabId) {
       // Find the preset
@@ -1122,14 +1035,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [])
 
 
-  // Open/close workspace sidebar based on workspace access setting
-  // Also close file dialog if workspace access is disabled
+  // Close workspace sidebar when workspace access is disabled
+  // Do NOT force it open — respect the user's persisted preference
   useEffect(() => {
-    if (enableWorkspaceAccess) {
-      setWorkspaceMinimized(false) // Open workspace sidebar
-    } else {
-      setWorkspaceMinimized(true) // Close workspace sidebar
-      // Close file dialog if workspace access is disabled
+    if (!enableWorkspaceAccess) {
+      setWorkspaceMinimized(true)
       if (showFileDialog) {
         setShowFileDialog(false)
         setAtPosition(-1)
@@ -1622,15 +1532,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
-    // Handle Shift + Tab to toggle between planning and execution phase in multi-agent mode
-    if (e.key === 'Tab' && e.shiftKey && isMultiAgentMode) {
-      e.preventDefault()
-      const newPhase = planPhase === 'planning' ? 'execution' : 'planning'
-      setPlanPhaseOverride(newPhase)
-      addToast(`Switched to ${newPhase} mode`, 'info')
-      return
-    }
-
     // Handle normal Enter to submit
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
       e.preventDefault()
@@ -1895,7 +1796,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         textarea.selectionStart = textarea.selectionEnd = start + 1
       }, 0)
     }
-  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills, addToast, isMultiAgentMode, planPhase, setPlanPhaseOverride])
+  }, [inputText, onSubmit, showFileDialog, showCommandDialog, showWorkflowDialog, showSkillPopup, showServerPopup, showSubAgentPopup, tabSessionId, canSubmit, canSubmitImmediately, queryToSubmit, isSummarizing, isStreaming, handleSummarize, handleCompact, activeTabId, setTabConfig, tabConfig?.queuedMessages, onStopStreaming, openDialog, tabConfig?.selectedSkills, addToast, isMultiAgentMode])
 
   const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
@@ -2192,6 +2093,135 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     textareaRef.current?.focus()
   }, [])
 
+  const uploadTargetFolder = useMemo(() => {
+    if (selectedModeCategory === 'workflow') {
+      return workspaceActiveFolder || 'Workflow'
+    }
+    return 'Chats'
+  }, [selectedModeCategory, workspaceActiveFolder])
+
+  const uploadFilesToChat = useCallback(async (files: File[]) => {
+    if (files.length === 0 || isUploadingFiles) {
+      console.info('[CHAT_UPLOAD] no files selected or upload already in progress', { fileCount: files.length, isUploadingFiles })
+      return
+    }
+
+    setIsUploadingFiles(true)
+    addToast(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`, 'info')
+    console.info('[CHAT_UPLOAD] starting upload', { count: files.length, target: uploadTargetFolder })
+    const uploadedPaths: string[] = []
+    const failures: string[] = []
+
+    for (const file of files) {
+      try {
+        console.info('[CHAT_UPLOAD] uploading file', { name: file.name, size: file.size, type: file.type })
+        const response = await agentApi.uploadPlannerFile(file, uploadTargetFolder, `Upload ${file.name} from chat input`)
+        const uploadedPath =
+          response?.data?.file_path ||
+          response?.data?.filepath ||
+          response?.file_path ||
+          response?.filepath
+        if (uploadedPath && typeof uploadedPath === 'string') {
+          uploadedPaths.push(uploadedPath)
+          console.info('[CHAT_UPLOAD] upload success', { name: file.name, path: uploadedPath })
+        } else {
+          failures.push(`${file.name}: Upload succeeded but filepath missing in response`)
+          console.error('[CHAT_UPLOAD] missing filepath in upload response', response)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Upload failed'
+        failures.push(`${file.name}: ${message}`)
+        console.error('[CHAT_UPLOAD] upload failed', { name: file.name, error })
+      }
+    }
+
+    if (uploadedPaths.length > 0) {
+      uploadedPaths.forEach((path) => {
+        const exists = chatFileContext.some((item: { path: string }) => item.path === path)
+        if (!exists) {
+          addFileToContext({
+            name: path.split('/').pop() || path,
+            path,
+            type: 'file'
+          })
+        }
+      })
+
+      const refs = uploadedPaths.map(path => `@${path}`).join(' ')
+      const prefix = inputText.trim().length > 0 ? `${inputText} ` : ''
+      const newText = `${prefix}${refs} `
+      setLocalInputText(newText)
+      if (activeTabId) {
+        setTabConfig(activeTabId, { inputText: newText })
+      }
+
+      const ws = useWorkspaceStore.getState()
+      ws.fetchFiles(ws.activeFolder ?? undefined).catch(() => {})
+
+      addToast(
+        `Uploaded ${uploadedPaths.length}/${files.length} file${files.length > 1 ? 's' : ''} to ${uploadTargetFolder}`,
+        'success'
+      )
+
+      setTimeout(() => {
+        textareaRef.current?.focus()
+      }, 0)
+    }
+
+    if (failures.length > 0) {
+      addToast(`Upload failed for ${failures.length} file(s): ${failures.slice(0, 2).join('; ')}`, 'error')
+    }
+    if (uploadedPaths.length === 0 && failures.length === 0) {
+      addToast('No files were uploaded. Please try again.', 'error')
+    }
+    console.info('[CHAT_UPLOAD] upload completed', { uploadedCount: uploadedPaths.length, failureCount: failures.length })
+
+    setIsUploadingFiles(false)
+  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, addFileToContext, inputText, setTabConfig, addToast])
+
+  const handleUploadFilesSelected = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.info('[CHAT_UPLOAD] file input change fired')
+    const files = event.target.files ? Array.from(event.target.files) : []
+    event.target.value = ''
+    await uploadFilesToChat(files)
+  }, [uploadFilesToChat])
+
+  const handleTextareaDragEnter = useCallback((event: React.DragEvent<HTMLTextAreaElement>) => {
+    if (!event.dataTransfer?.types?.includes('Files')) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragCounterRef.current += 1
+    setIsDraggingFiles(true)
+  }, [])
+
+  const handleTextareaDragOver = useCallback((event: React.DragEvent<HTMLTextAreaElement>) => {
+    if (!event.dataTransfer?.types?.includes('Files')) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleTextareaDragLeave = useCallback((event: React.DragEvent<HTMLTextAreaElement>) => {
+    if (!event.dataTransfer?.types?.includes('Files')) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1)
+    if (dragCounterRef.current === 0) {
+      setIsDraggingFiles(false)
+    }
+  }, [])
+
+  const handleTextareaDrop = useCallback(async (event: React.DragEvent<HTMLTextAreaElement>) => {
+    if (!event.dataTransfer?.files) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDraggingFiles(false)
+    const files = Array.from(event.dataTransfer.files)
+    console.info('[CHAT_UPLOAD] files dropped', { count: files.length })
+    await uploadFilesToChat(files)
+  }, [uploadFilesToChat])
+
   // Inline skill popup: toggle skill (stays open for multi-select)
   const handleSkillPopupToggle = useCallback((skillFolderName: string) => {
     onSkillToggle(skillFolderName)
@@ -2326,7 +2356,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setFileSearchQuery(folderPath)
   }, [atPosition, inputText, activeTabId, setTabConfig])
 
-  // Removed editing preset query functionality - not needed for chat mode
+  // Removed editing preset query functionality - not needed for multi-agent mode
 
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
@@ -2347,7 +2377,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return `Chat with the ${phaseNames[workflowPhaseId!] ?? 'agent'}...`
     }
     const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
-    if (isMultiAgentMode) return `Ask anything... (Shift+Tab: switch mode | ${baseHints})`
+    if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
   }, [isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, workflowPhaseId])
 
@@ -2475,71 +2505,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               value={inputText}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
+              onDragEnter={handleTextareaDragEnter}
+              onDragOver={handleTextareaDragOver}
+              onDragLeave={handleTextareaDragLeave}
+              onDrop={handleTextareaDrop}
               placeholder={placeholder}
-              className="!min-h-[40px] max-h-[100px] resize-none text-xs overflow-y-auto leading-[1.3] !py-1 !px-3 placeholder:text-xs"
+              className={`!min-h-[40px] max-h-[100px] resize-none text-xs overflow-y-auto leading-[1.3] !py-1 !px-3 placeholder:text-xs ${
+                isDraggingFiles ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-50/30 dark:bg-blue-900/10' : ''
+              }`}
               disabled={isSummarizing || !tabSessionId || isViewOnly}
               data-testid="chat-input-textarea"
             />
+            {isDraggingFiles && (
+              <div className="text-[11px] text-blue-600 dark:text-blue-400 px-1">
+                Drop files to upload and attach to this chat
+              </div>
+            )}
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
-
-                {/* Tier config chip — plan/multi-agent mode only, always first */}
-                {effectiveDelegationMode === 'plan' && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        onClick={() => setShowTierModal(true)}
-                        className="group flex items-center gap-1 p-1.5 rounded-md border border-blue-300 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all duration-200"
-                      >
-                        <Layers className="w-3.5 h-3.5 flex-shrink-0" />
-                        {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
-                          <span className="flex items-center gap-1 max-w-0 overflow-hidden opacity-0 group-hover:max-w-[160px] group-hover:opacity-100 transition-all duration-200 whitespace-nowrap">
-                            {delegationTierConfig.main && (
-                              <span className="flex items-center gap-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
-                                <TierProviderDot provider={delegationTierConfig.main.provider} />
-                                Main
-                              </span>
-                            )}
-                            {delegationTierConfig.high && (
-                              <span className="flex items-center gap-0.5 text-[10px] font-medium">
-                                <TierProviderDot provider={delegationTierConfig.high.provider} />
-                                H
-                              </span>
-                            )}
-                            {delegationTierConfig.medium && (
-                              <span className="flex items-center gap-0.5 text-[10px] font-medium">
-                                <TierProviderDot provider={delegationTierConfig.medium.provider} />
-                                M
-                              </span>
-                            )}
-                            {delegationTierConfig.low && (
-                              <span className="flex items-center gap-0.5 text-[10px] font-medium">
-                                <TierProviderDot provider={delegationTierConfig.low.provider} />
-                                L
-                              </span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="max-w-0 overflow-hidden opacity-0 group-hover:max-w-[40px] group-hover:opacity-100 transition-all duration-200 text-[10px] font-medium whitespace-nowrap">Tiers</span>
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top">
-                      {delegationTierConfig && (delegationTierConfig.main || delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
-                        <div className="space-y-1 text-xs">
-                          {delegationTierConfig.main && <p>Main: {shortModelName(delegationTierConfig.main.model_id)} ({delegationTierConfig.main.provider})</p>}
-                          {delegationTierConfig.high && <p>High: {shortModelName(delegationTierConfig.high.model_id)} ({delegationTierConfig.high.provider})</p>}
-                          {delegationTierConfig.medium && <p>Med: {shortModelName(delegationTierConfig.medium.model_id)} ({delegationTierConfig.medium.provider})</p>}
-                          {delegationTierConfig.low && <p>Low: {shortModelName(delegationTierConfig.low.model_id)} ({delegationTierConfig.low.provider})</p>}
-                        </div>
-                      ) : (
-                        <p>Click to configure delegation tier models</p>
-                      )}
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-
                 {/* Agent Mode Selector — hidden in workflow mode, show LLM label instead */}
                 {hideExtras ? (
                   isWorkflowPhaseChat ? (
@@ -2548,7 +2531,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : null
                 ) : (
-                  (effectiveDelegationMode === 'plan' && !isMultiAgentMode) ? null : isClaudeCode ? (
+                  isClaudeCode ? (
                     /* Claude Code always uses code execution mode */
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -2653,7 +2636,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             onImportClick={() => openDialog('skillImport')}
                           />
                         )}
-                        {!hideExtras && (effectiveDelegationMode === 'spawn' || effectiveDelegationMode === 'plan') && (
+                        {!hideExtras && effectiveDelegationMode === 'spawn' && (
                           <SubAgentSelectionDropdown
                             selectedSubAgents={selectedSubAgents}
                             onSubAgentToggle={onSubAgentToggle}
@@ -2665,7 +2648,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         )}
                       </>
 
-                    {!hideExtras && (effectiveDelegationMode !== 'plan' || isMultiAgentMode) && (
+                    {!hideExtras && !isMultiAgentMode && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -2716,9 +2699,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           // Enabling browser: show config popup and default to headless
                           setBrowserMode('headless')
                           setShowCdpPopup(true)
+                          setWorkspaceMinimized(true)
                         } else {
                           // Clicking again while enabled: re-open popup to change settings
                           setShowCdpPopup(true)
+                          setWorkspaceMinimized(true)
                         }
                       }}
                       disabled={isStreaming || isSummarizing}
@@ -2841,24 +2826,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
                 {/* Browser Access Configuration Popup */}
                 {showCdpPopup && (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowCdpPopup(false)}>
-                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[420px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }}>
+                    <div className="bg-gray-900 rounded-xl shadow-2xl border border-gray-700 w-[900px] max-w-[95vw]" onClick={(e) => e.stopPropagation()}>
                       {/* Header */}
                       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
                         <div className="flex items-center gap-2">
                           <Globe className="w-5 h-5 text-green-400" />
                           <h3 className="text-base font-semibold text-white">Browser Access</h3>
                         </div>
-                        <button onClick={() => setShowCdpPopup(false)} className="text-gray-400 hover:text-gray-200 transition-colors">
+                        <button onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }} className="text-gray-400 hover:text-gray-200 transition-colors">
                           <X className="w-5 h-5" />
                         </button>
                       </div>
 
-                      {/* Content */}
-                      <div className="px-5 py-4 space-y-4">
-                        {/* Mode selection */}
-                        <div className="space-y-3">
-                          {/* Headless mode option */}
+                      {/* Content: 2-column layout */}
+                      <div className="px-5 py-4 flex gap-4 items-stretch">
+
+                        {/* Left: mode options */}
+                        <div className="flex-1 space-y-2">
+                          {/* Headless */}
                           <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                             browserMode === 'headless'
                               ? 'border-blue-500 bg-blue-950/40'
@@ -2874,12 +2860,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <div>
                               <div className="text-sm font-medium text-gray-100">Headless Browser</div>
                               <div className="text-xs text-gray-400 mt-0.5">
-                                Agent controls a headless Chromium inside Docker. You won&apos;t see the browser window.
+                                Uses{' '}
+                                <a
+                                  href="https://github.com/vercel/agent-browser"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-400 hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  agent-browser
+                                </a>
+                                {' '}by Vercel running inside a Docker container. No visible window.
                               </div>
                             </div>
                           </label>
 
-                          {/* CDP mode option */}
+                          {/* CDP */}
                           <label className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                             browserMode === 'cdp'
                               ? 'border-green-500 bg-green-950/40'
@@ -2892,15 +2888,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               onChange={() => setBrowserMode('cdp')}
                               className="mt-0.5 w-4 h-4 text-green-500 accent-green-500"
                             />
-                            <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-100">Connect to Local Chrome (CDP)</div>
-                              <div className="text-xs text-gray-400 mt-0.5">
-                                Agent connects to your real Chrome browser so you can watch it navigate in real-time.
-                              </div>
+                            <div>
+                              <div className="text-sm font-medium text-gray-100">Local Chrome (CDP)</div>
+                              <div className="text-xs text-gray-400 mt-0.5">Connect to your real Chrome browser.</div>
                             </div>
                           </label>
 
-                          {/* Playwright MCP option */}
+                          {/* Playwright */}
                           <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
                             playwrightServerStatus === 'not_found'
                               ? 'border-gray-700 opacity-50 cursor-not-allowed'
@@ -2918,31 +2912,29 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             />
                             <div className="flex-1">
                               <div className="text-sm font-medium text-gray-100">Playwright MCP</div>
-                              <div className="text-xs text-gray-400 mt-0.5">
-                                Opens a new visible browser window per session. Uses Playwright MCP server.
-                              </div>
+                              <div className="text-xs text-gray-400 mt-0.5">Opens a visible browser window via MCP server.</div>
                               {playwrightServerStatus === 'not_found' && (
-                                <div className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-red-400 mt-1 flex items-center gap-1">
                                   <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                                  &quot;playwright&quot; server not found in MCP config &mdash; add it in MCP Settings
+                                  Server not found &mdash; add in MCP Settings
                                 </div>
                               )}
                               {playwrightServerStatus === 'loading' && (
-                                <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-yellow-400 mt-1 flex items-center gap-1">
                                   <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
                                   Discovering...
                                 </div>
                               )}
                               {playwrightServerStatus === 'error' && (
-                                <div className="text-xs text-amber-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-amber-400 mt-1 flex items-center gap-1">
                                   <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                                  Playwright server has errors &mdash; check MCP Settings
+                                  Server has errors &mdash; check MCP Settings
                                 </div>
                               )}
                             </div>
                           </label>
 
-                          {/* Stealth (Camofox MCP) mode option */}
+                          {/* Stealth */}
                           <label className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
                             camofoxServerStatus === 'not_found'
                               ? 'border-gray-700 opacity-50 cursor-not-allowed'
@@ -2960,157 +2952,201 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             />
                             <div className="flex-1">
                               <div className="text-sm font-medium text-gray-100">Stealth Browser (Camofox)</div>
-                              <div className="text-xs text-gray-400 mt-0.5">
-                                Anti-detect Firefox for sites that block bots. Headed mode with session persistence.
-                              </div>
+                              <div className="text-xs text-gray-400 mt-0.5">Anti-detect Firefox for bot-resistant sites.</div>
                               {camofoxServerStatus === 'not_found' && (
-                                <div className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-red-400 mt-1 flex items-center gap-1">
                                   <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                                  &quot;camofox&quot; server not found in MCP config &mdash; add it in MCP Settings
+                                  Server not found &mdash; add in MCP Settings
                                 </div>
                               )}
                               {camofoxServerStatus === 'loading' && (
-                                <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-yellow-400 mt-1 flex items-center gap-1">
                                   <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-                                  Discovering MCP server...
+                                  Discovering...
                                 </div>
                               )}
                               {camofoxServerStatus === 'error' && (
-                                <div className="text-xs text-amber-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-amber-400 mt-1 flex items-center gap-1">
                                   <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
-                                  Camofox MCP server has errors &mdash; check MCP Settings
+                                  Server has errors &mdash; check MCP Settings
                                 </div>
                               )}
                               {browserMode === 'stealth' && camofoxStarting && (
-                                <div className="text-xs text-yellow-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-yellow-400 mt-1 flex items-center gap-1">
                                   <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
                                   Starting camofox-browser...
                                 </div>
                               )}
                               {browserMode === 'stealth' && !camofoxStarting && camofoxConnected === true && (
-                                <div className="text-xs text-green-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-green-400 mt-1 flex items-center gap-1">
                                   <span className="w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
                                   camofox-browser connected
                                 </div>
                               )}
                               {browserMode === 'stealth' && !camofoxStarting && camofoxConnected === false && (
-                                <div className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                                <div className="text-xs text-red-400 mt-1 flex items-center gap-1">
                                   <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
-                                  Failed to start camofox-browser &mdash; check if npm packages are installed
+                                  Failed to start &mdash; check npm packages
                                 </div>
                               )}
                             </div>
                           </label>
                         </div>
 
-                        {/* Camofox configuration - only when stealth is selected */}
-                        {browserMode === 'stealth' && (
-                          <div className="p-3 rounded-lg bg-gray-800/60 border border-gray-700">
-                            <label className="flex items-center gap-2.5 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={camofoxHeaded}
-                                onChange={(e) => {
-                                  if (activeTabId) {
-                                    setTabConfig(activeTabId, { camofoxHeaded: e.target.checked })
-                                  }
-                                }}
-                                className="w-4 h-4 rounded accent-orange-500"
-                              />
-                              <div>
-                                <div className="text-sm text-gray-200">Show browser window</div>
-                                <div className="text-xs text-gray-500">
-                                  {camofoxHeaded
-                                    ? 'Visible Firefox window — watch the agent navigate in real-time'
-                                    : 'Headless mode — browser runs in background (faster, no window)'}
-                                </div>
+                        {/* Right: context panel */}
+                        <div className="w-80 flex-shrink-0 rounded-lg bg-gray-800/60 border border-gray-700 p-3 flex flex-col gap-3">
+                          {browserMode === 'cdp' && (<>
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-400 whitespace-nowrap">Port:</label>
+                                <input
+                                  type="number"
+                                  value={cdpPort}
+                                  onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
+                                  className="w-20 px-2 py-1 text-sm border border-gray-600 rounded-md bg-gray-800 text-white focus:border-green-500 focus:outline-none"
+                                  min={1}
+                                  max={65535}
+                                />
                               </div>
-                            </label>
-                          </div>
-                        )}
-
-                        {/* CDP configuration - only when CDP is selected */}
-                        {browserMode === 'cdp' && (
-                          <div className="space-y-3 p-3 rounded-lg bg-gray-800/60 border border-gray-700">
-                            {/* Port input */}
-                            <div className="flex items-center gap-3">
-                              <label className="text-sm text-gray-400 whitespace-nowrap">CDP Port:</label>
-                              <input
-                                type="number"
-                                value={cdpPort}
-                                onChange={(e) => setCdpPort(parseInt(e.target.value) || 9222)}
-                                className="w-24 px-2.5 py-1.5 text-sm border border-gray-600 rounded-md bg-gray-800 text-white focus:border-green-500 focus:outline-none"
-                                min={1}
-                                max={65535}
-                              />
                               <button
                                 type="button"
                                 onClick={() => checkCdpConnection(cdpPort)}
                                 disabled={cdpChecking}
-                                className="px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 rounded-md text-gray-200 disabled:opacity-50 transition-colors"
+                                className="w-full px-3 py-1.5 text-xs font-medium bg-gray-700 hover:bg-gray-600 rounded-md text-gray-200 disabled:opacity-50 transition-colors"
                               >
                                 {cdpChecking ? 'Checking...' : 'Check Connection'}
                               </button>
-                            </div>
-
-                            {/* macOS: Download launcher + instructions */}
-                            {navigator.platform?.includes('Mac') && (
-                              <div className="rounded-lg bg-gray-900/80 border border-gray-600 p-3 space-y-2">
-                                <p className="text-xs font-medium text-gray-300">macOS: Easy setup</p>
-                                <a
-                                  href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
-                                  download="Chrome-CDP-macOS.zip"
-                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-green-700 hover:bg-green-600 text-white rounded-md transition-colors"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                  Download Chrome CDP launcher
-                                </a>
-                                <ol className="text-xs text-gray-400 list-decimal list-inside space-y-0.5">
-                                  <li>Double-click the zip to unzip.</li>
-                                  <li>Double-click <strong>launch_chrome_cdp.command</strong> — if blocked, right-click → Open → Open.</li>
-                                  <li>A Terminal window opens and Chrome launches with CDP on port {cdpPort}.</li>
-                                  <li>Then click Check Connection above.</li>
-                                </ol>
-                                <p className="text-xs text-amber-400/90 mt-1.5">
-                                  The <code className="bg-gray-950 px-1 rounded font-mono text-[11px]">.command</code> file is a plain shell script — no install needed. If macOS blocks it, right-click → Open → Open to allow it once.
-                                </p>
+                              <div className="flex items-start gap-1.5">
+                                {cdpChecking ? (
+                                  <>
+                                    <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
+                                    <span className="text-xs text-yellow-400">Checking port {cdpPort}...</span>
+                                  </>
+                                ) : cdpConnected === true ? (
+                                  <>
+                                    <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
+                                    <span className="text-xs text-green-400">Connected on port {cdpPort}.</span>
+                                  </>
+                                ) : cdpConnected === false ? (
+                                  <>
+                                    <div className="w-2.5 h-2.5 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
+                                    <span className="text-xs text-red-400">Not reachable on port {cdpPort}.</span>
+                                  </>
+                                ) : (
+                                  <span className="text-xs text-gray-500">Click Check Connection to verify.</span>
+                                )}
                               </div>
-                            )}
-
-                            {/* Connection status */}
-                            <div className="flex items-start gap-2">
-                              {cdpChecking ? (
-                                <>
-                                  <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse mt-0.5 flex-shrink-0" />
-                                  <span className="text-sm text-yellow-400">Checking connection to port {cdpPort}...</span>
-                                </>
-                              ) : cdpConnected === true ? (
-                                <>
-                                  <div className="w-3 h-3 rounded-full bg-green-500 mt-0.5 flex-shrink-0" />
-                                  <span className="text-sm text-green-400">Connected! Chrome is reachable on port {cdpPort}.</span>
-                                </>
-                              ) : cdpConnected === false ? (
-                                <>
-                                  <div className="w-3 h-3 rounded-full bg-red-500 mt-0.5 flex-shrink-0" />
-                                  <div className="text-sm">
-                                    <span className="text-red-400">Chrome is not reachable on port {cdpPort}.</span>
-                                    <div className="mt-2 text-xs text-gray-400 space-y-1">
-                                      <p className="font-medium text-gray-300">To enable CDP, launch Chrome with:</p>
-                                      <code className="block bg-gray-950 px-2 py-1.5 rounded text-xs font-mono break-all text-green-400 border border-gray-700">
-                                        {navigator.platform?.includes('Mac')
-                                          ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
-                                          : `google-chrome --remote-debugging-port=${cdpPort}`}
-                                      </code>
-                                      <p className="text-gray-500 mt-1">Close all Chrome windows first, then run the command above.</p>
-                                    </div>
-                                  </div>
-                                </>
-                              ) : (
-                                <span className="text-xs text-gray-500">Click &quot;Check Connection&quot; to verify Chrome is reachable.</span>
-                              )}
                             </div>
-                          </div>
-                        )}
+                            <div className="border-t border-gray-700 pt-3 space-y-1.5">
+                              <p className="text-xs font-medium text-gray-300">Launch Chrome with CDP</p>
+                              {navigator.platform?.includes('Mac') && (
+                                <div className="space-y-1">
+                                  <a
+                                    href={`${getApiBaseUrl()}/api/downloads/chrome-cdp-macOS.zip`}
+                                    download="Chrome-CDP-macOS.zip"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium bg-green-700 hover:bg-green-600 text-white rounded-md transition-colors"
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    Download Chrome CDP.app (macOS)
+                                  </a>
+                                  <ol className="text-xs text-gray-500 list-decimal list-inside space-y-0.5">
+                                    <li>Double-click the zip to unzip.</li>
+                                    <li>Drag <strong className="text-gray-300">Chrome CDP.app</strong> to your <strong className="text-gray-300">Applications</strong> folder.</li>
+                                    <li>Open it from Spotlight (⌘+Space) or Launchpad.</li>
+                                  </ol>
+                                  <p className="text-xs text-gray-500">If macOS says &quot;damaged&quot;, run in Terminal:</p>
+                                  <code className="block bg-gray-950 px-2 py-1 rounded text-[10px] font-mono text-amber-400 border border-gray-700">
+                                    xattr -c /Applications/Chrome\ CDP.app
+                                  </code>
+                                  <p className="text-xs text-gray-600">then open it again, or right-click → Open.</p>
+                                </div>
+                              )}
+                              <p className="text-xs text-gray-500">Or run in Terminal (close all Chrome windows first):</p>
+                              <code className="block bg-gray-950 px-2 py-1.5 rounded text-[10px] font-mono break-all text-green-400 border border-gray-700">
+                                {navigator.platform?.includes('Mac')
+                                  ? `/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=${cdpPort}`
+                                  : `google-chrome --remote-debugging-port=${cdpPort}`}
+                              </code>
+                            </div>
+                          </>)}
+
+                          {browserMode === 'stealth' && (
+                            <div className="space-y-2.5">
+                              <div className="space-y-1.5">
+                                <p className="text-xs font-medium text-gray-300">Stealth Browser (Camofox)</p>
+                                <p className="text-xs text-gray-400">Anti-detect Firefox that bypasses bot-detection on sites like LinkedIn, Amazon, and others.</p>
+                                <p className="text-xs text-gray-500">Features: randomised fingerprints, persistent sessions, stealth headers, and optional headed mode.</p>
+                                <p className="text-xs text-gray-500">Requires the <code className="bg-gray-950 px-1 rounded text-[10px]">camofox</code> MCP server in MCP Settings.</p>
+                              </div>
+                              <label className="flex items-start gap-2.5 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={camofoxHeaded}
+                                  onChange={(e) => {
+                                    if (activeTabId) {
+                                      setTabConfig(activeTabId, { camofoxHeaded: e.target.checked })
+                                    }
+                                  }}
+                                  className="mt-0.5 w-4 h-4 rounded accent-orange-500"
+                                />
+                                <div>
+                                  <div className="text-sm text-gray-200">Show browser window</div>
+                                  <div className="text-xs text-gray-500 mt-0.5">
+                                    {camofoxHeaded
+                                      ? 'Visible Firefox — watch agent navigate in real-time'
+                                      : 'Headless mode — browser runs in background'}
+                                  </div>
+                                </div>
+                              </label>
+                            </div>
+                          )}
+
+                          {browserMode === 'headless' && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-gray-300">Headless Browser</p>
+                              <p className="text-xs text-gray-400">
+                                Powered by{' '}
+                                <a
+                                  href="https://github.com/vercel/agent-browser"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-400 hover:underline"
+                                >
+                                  agent-browser
+                                </a>
+                                {' '}by Vercel, running inside a Docker container.
+                              </p>
+                              <p className="text-xs text-gray-500">No visible window — the agent navigates Chromium in the background.</p>
+                            </div>
+                          )}
+
+                          {browserMode === 'playwright' && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-gray-300">Playwright MCP</p>
+                              <p className="text-xs text-gray-400">
+                                Uses the official{' '}
+                                <a
+                                  href="https://github.com/microsoft/playwright-mcp"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-purple-400 hover:underline"
+                                >
+                                  microsoft/playwright-mcp
+                                </a>
+                                {' '}server.
+                              </p>
+                              <p className="text-xs text-gray-500">Each session opens a <strong className="text-gray-300">new Chrome instance</strong> — existing browser windows are not reused.</p>
+                              <p className="text-xs text-gray-500">Requires the <code className="bg-gray-950 px-1 rounded text-[10px]">playwright</code> MCP server to be configured in MCP Settings.</p>
+                            </div>
+                          )}
+
+                          {browserMode === 'none' && (
+                            <p className="text-xs text-gray-500">Select a mode to see configuration options.</p>
+                          )}
+                        </div>
                       </div>
 
                       {/* Footer */}
@@ -3120,6 +3156,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           onClick={() => {
                             setBrowserMode('none')
                             setShowCdpPopup(false)
+                            setWorkspaceMinimized(false)
                           }}
                           className="px-4 py-2 text-sm text-gray-300 hover:bg-gray-800 rounded-md transition-colors"
                         >
@@ -3127,7 +3164,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => setShowCdpPopup(false)}
+                          onClick={() => { setShowCdpPopup(false); setWorkspaceMinimized(false) }}
                           disabled={browserMode === 'cdp' && cdpConnected !== true}
                           className="px-4 py-2 text-sm font-medium bg-green-600 hover:bg-green-500 text-white rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
@@ -3436,46 +3473,40 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   ) : (
                     <div className="flex items-center gap-1">
                       {/* Workshop mode toggle: Build / Optimize / Run */}
-                      {workflowPhaseId === 'workflow-builder' && (
+                      {workflowPhaseId === 'workflow-builder' && !isOrganizationContext && (
                         <WorkshopModeToggle />
                       )}
-                      {/* Multi-agent phase toggle: Plan / Exec */}
-                      {isMultiAgentMode && (
-                        <div className="flex items-center rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden text-xs font-medium">
-                          <button
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
                             type="button"
-                            onClick={() => setPlanPhaseOverride('planning')}
-                            className={`flex items-center gap-1 px-2 py-1 transition-colors ${
-                              planPhase === 'planning'
-                                ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300'
-                                : planPhase === null
-                                  ? 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
-                                  : 'bg-white dark:bg-gray-900 text-gray-400 dark:text-gray-500 hover:bg-amber-50 dark:hover:bg-amber-900/20'
-                            }`}
-                            title="Plan first, then execute"
+                            variant="outline"
+                            size="sm"
+                            disabled={isStreaming || isSummarizing || isUploadingFiles}
+                            onClick={() => {
+                              const inputEl = fileUploadInputRef.current
+                              if (!inputEl) {
+                                console.error('[CHAT_UPLOAD] upload input ref not available')
+                                addToast('Upload input not ready. Please retry.', 'error')
+                                return
+                              }
+                              console.info('[CHAT_UPLOAD] opening file picker')
+                              inputEl.click()
+                            }}
+                            className="px-2.5"
+                            data-testid="chat-upload-button"
                           >
-                            <FileSearch className="w-3 h-3" />
-                            <span>Plan</span>
-                          </button>
-                          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600" />
-                          <button
-                            type="button"
-                            onClick={() => setPlanPhaseOverride('execution')}
-                            className={`flex items-center gap-1 px-2 py-1 transition-colors ${
-                              planPhase === 'execution'
-                                ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300'
-                                : planPhase === null
-                                  ? 'bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-green-50 dark:hover:bg-green-900/20'
-                                  : 'bg-white dark:bg-gray-900 text-gray-400 dark:text-gray-500 hover:bg-green-50 dark:hover:bg-green-900/20'
-                            }`}
-                            title="Execute directly without planning"
-                          >
-                            <Play className="w-3 h-3" />
-                            <span>Exec</span>
-                          </button>
-                        </div>
-                      )}
-
+                            {isUploadingFiles ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Paperclip className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{isUploadingFiles ? 'Uploading files...' : `Upload file(s) to ${uploadTargetFolder}`}</p>
+                        </TooltipContent>
+                      </Tooltip>
                       {isStreaming ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -3536,6 +3567,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             </div>
           </div>
         </form>
+        <input
+          ref={fileUploadInputRef}
+          type="file"
+          multiple
+          onChange={handleUploadFilesSelected}
+          className="hidden"
+          disabled={isStreaming || isSummarizing || isUploadingFiles}
+        />
       </div>
       
       {/* Command Selection Dialog */}
@@ -3587,7 +3626,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         searchQuery={skillPopupSearchQuery}
         position={skillPopupPosition}
         title="Skills"
-        icon={<Sparkles className="w-4 h-4 text-muted-foreground" />}
+        icon={<Wand2 className="w-4 h-4 text-muted-foreground" />}
         emptyMessage="No skills available"
         isLoading={skillsLoading}
       />
@@ -3653,10 +3692,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           onClose={() => closeDialog('resume')}
         />
       )}
-      <DelegationTierConfigModal
-        isOpen={showTierModal}
-        onClose={() => setShowTierModal(false)}
-      />
       {showWorkflowBuilder && (
         <WorkflowBuilderModal onClose={() => closeDialog('workflowBuilder')} />
       )}

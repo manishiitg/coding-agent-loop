@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AgentMode } from './types'
 
-export type ModeCategory = 'chat' | 'workflow' | 'multi-agent' | null
+export type ModeCategory = 'workflow' | 'multi-agent' | null
 
 interface ModeState {
   // Core mode selection
@@ -41,14 +41,15 @@ export const useModeStore = create<ModeState>()(
 
           // Actions
           setModeCategory: (category) => {
+            const normalizedCategory = category
             const currentCategory = get().selectedModeCategory
 
             // Only update if category actually changed
-            if (currentCategory === category) {
+            if (currentCategory === normalizedCategory) {
               return
             }
 
-            set({ selectedModeCategory: category })
+            set({ selectedModeCategory: normalizedCategory })
 
             // Automatically sync AppStore's agentMode when category changes
             // Use dynamic import to avoid circular dependency at module level
@@ -56,7 +57,7 @@ export const useModeStore = create<ModeState>()(
               isSyncing = true
               import('./useAppStore').then(({ useAppStore }) => {
                 const { getAgentModeFromCategory } = get()
-                const agentMode = getAgentModeFromCategory(category)
+                const agentMode = getAgentModeFromCategory(normalizedCategory)
                 const appStore = useAppStore.getState()
 
                 // Only update if agentMode would be different
@@ -98,7 +99,7 @@ export const useModeStore = create<ModeState>()(
           getModeCategoryFromAgentMode: (agentMode) => {
             switch (agentMode) {
               case 'simple':
-                return 'chat'
+                return 'multi-agent'
               case 'workflow':
                 return 'workflow'
               case 'multi-agent':
@@ -110,8 +111,6 @@ export const useModeStore = create<ModeState>()(
 
           getAgentModeFromCategory: (category) => {
             switch (category) {
-              case 'chat':
-                return 'simple'
               case 'workflow':
                 return 'workflow'
               case 'multi-agent':
@@ -124,14 +123,15 @@ export const useModeStore = create<ModeState>()(
       },
       {
         name: 'mode-store',
-        version: 1,
+        version: 2,
         partialize: (state) => ({
           selectedModeCategory: state.selectedModeCategory,
           hasCompletedInitialSetup: state.hasCompletedInitialSetup,
           lastSelectedPreset: state.lastSelectedPreset
         }),
         migrate: (persistedState: unknown) => {
-          return persistedState as ModeState
+          const state = persistedState as ModeState
+          return state
         }
       }
     )

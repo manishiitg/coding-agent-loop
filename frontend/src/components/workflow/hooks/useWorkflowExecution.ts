@@ -63,9 +63,9 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   }, [sessionId, getTabEvents])
   
   // In workflow mode, it's normal to not have an active tab until a phase is started
-  // Only warn in chat mode where tabs should always exist
-  if (!activeTab && selectedModeCategory === 'chat') {
-    console.warn(`[useWorkflowExecution] No active tab - this should not happen in chat mode`)
+  // Only warn in multi-agent mode where tabs should always exist
+  if (!activeTab && selectedModeCategory === 'multi-agent') {
+    console.warn(`[useWorkflowExecution] No active tab - this should not happen in multi-agent mode`)
   }
   
   // Chat store actions

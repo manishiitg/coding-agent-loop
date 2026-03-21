@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { MessageCircle, Workflow, Users, ArrowRight, Info } from 'lucide-react'
+import { Workflow, Users, ArrowRight, Info } from 'lucide-react'
 import { useModeStore, type ModeCategory } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication, usePresetManagement, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
@@ -101,15 +101,6 @@ const ModeCard: React.FC<ModeCardProps> = ({
             </TooltipTrigger>
             <TooltipContent side="left" className="max-w-xs">
               <div className="text-sm">
-                {category === 'chat' && (
-                  <div>
-                    <p className="font-semibold mb-2">Chat Mode</p>
-                    <p className="mb-2">Perfect for quick questions and conversations. Choose between:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      <li><strong>Simple:</strong> Direct answers without reasoning</li>
-                    </ul>
-                  </div>
-                )}
                 {category === 'workflow' && (
                   <div>
                     <p className="font-semibold mb-2">Workflow Mode</p>
@@ -164,8 +155,8 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
     console.log('[ModeSelectionModal] Selecting mode:', category)
 
-    if (category === 'chat' || category === 'multi-agent') {
-      // Chat and multi-agent modes don't need preset selection
+    if (category === 'multi-agent') {
+      // Multi-agent mode doesn't need preset selection
       // Clear any active presets when switching
       useGlobalPresetStore.getState().clearActivePreset('workflow')
 
@@ -176,7 +167,7 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
 
       console.log(`[ModeSelectionModal] ${category} mode selected, setup completed`)
       onClose()
-    } else {
+    } else if (category === 'workflow') {
       // Workflow mode - always show preset selection when switching modes
       // Clear the current mode's preset first
       const currentModeCategory = useModeStore.getState().selectedModeCategory
@@ -201,6 +192,8 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
         setPendingModeCategory(category)
         setShowPresetSelection(true)
       }
+    } else {
+      console.error('Unsupported mode category:', category)
     }
   }
 
@@ -270,12 +263,12 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
           </div>
 
           {/* Mode Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 justify-items-center max-w-5xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 justify-items-center max-w-4xl mx-auto">
             {/* Multi Agent Chat Mode */}
             <ModeCard
               category="multi-agent"
               title="Multi Agent Chat"
-              description="Delegate complex tasks to AI sub-agents with plan-driven coordination and multi-LLM tier support."
+              description="Autonomous multi-agent chat with optional planning when needed."
               icon={<Users className="w-5 h-5 text-indigo-600" />}
               features={getModeInfoForModal('multi-agent').features}
               exampleQueries={getModeInfoForModal('multi-agent').examples}
@@ -293,16 +286,6 @@ export const ModeSelectionModal: React.FC<ModeSelectionModalProps> = ({
               onSelect={() => handleModeSelect('workflow')}
             />
 
-            {/* Chat Mode */}
-            <ModeCard
-              category="chat"
-              title="Chat Mode"
-              description="Quick conversations with AI. Perfect for answering questions, brainstorming ideas, and having natural dialogues."
-              icon={<MessageCircle className="w-5 h-5 text-blue-600" />}
-              features={getModeInfoForModal('chat').features}
-              exampleQueries={getModeInfoForModal('chat').examples}
-              onSelect={() => handleModeSelect('chat')}
-            />
           </div>
 
           {/* Footer */}

@@ -3,8 +3,8 @@ package database
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -938,7 +938,7 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 // GetPresetQuery retrieves a preset query by ID
 func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuery, error) {
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, employee_id, created_at, updated_at, created_by
 		FROM preset_queries
 		WHERE id = $1
 	`
@@ -1215,7 +1215,7 @@ func (s *SupabaseDB) ListPresetQueries(ctx context.Context, limit, offset int) (
 	}
 
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, employee_id, created_at, updated_at, created_by
 		FROM preset_queries
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -1238,9 +1238,10 @@ func (s *SupabaseDB) ListPresetQueries(ctx context.Context, limit, offset int) (
 		var selectedSkillsStr sql.NullString
 		var selectedSecretsStr sql.NullString
 		var selectedGlobalSecretNamesStr sql.NullString
+		var employeeIDStr sql.NullString
 
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -1264,6 +1265,7 @@ func (s *SupabaseDB) ListPresetQueries(ctx context.Context, limit, offset int) (
 		} else {
 			preset.LLMConfig = json.RawMessage("null")
 		}
+		preset.EmployeeID = employeeIDStr
 
 		presets = append(presets, preset)
 	}
@@ -1857,7 +1859,7 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 	}
 
 	query := `
-		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, created_at, updated_at, created_by
+		SELECT id, label, query, selected_servers, selected_tools, selected_folder, agent_mode, llm_config, use_code_execution_mode, use_tool_search_mode, pre_discovered_tools, selected_skills, selected_secrets, selected_global_secret_names, enable_browser_access, is_predefined, employee_id, created_at, updated_at, created_by
 		FROM preset_queries` + whereClause + fmt.Sprintf(`
 		ORDER BY created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -1882,8 +1884,9 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 		var selectedSkillsStr sql.NullString
 		var selectedSecretsStr sql.NullString
 		var selectedGlobalSecretNamesStr sql.NullString
+		var employeeIDStr sql.NullString
 		err := rows.Scan(
-			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+			&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 		)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to scan preset query: %w", err)
@@ -1915,6 +1918,7 @@ func (s *SupabaseDB) ListPresetQueriesWithUser(ctx context.Context, limit, offse
 		} else {
 			preset.SelectedSkills = "[]"
 		}
+		preset.EmployeeID = employeeIDStr
 		presets = append(presets, preset)
 	}
 

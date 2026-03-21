@@ -1,11 +1,11 @@
-import React, { useEffect, useMemo } from 'react'
+import React, { useCallback, useEffect, useMemo } from 'react'
 import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { shouldShowEventByMode } from './events/eventModeUtils'
 import { logger } from '../utils/logger'
 interface ChatTabsProps {
-  // For chat mode: callback when starting a new chat
+  // For multi-agent mode: callback when starting a new chat
   onNewChat?: () => void
   // Auto-scroll state and toggle
   autoScroll?: boolean
@@ -24,6 +24,12 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     autoScroll: storeAutoScroll,
     setAutoScroll
   } = useChatStore()
+
+  const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
+    if (tab.metadata?.isOrganizationAssistant === true) return true
+    const normalizedName = tab.name.toLowerCase()
+    return normalizedName === 'organization assistant' || normalizedName.startsWith('org chat ')
+  }, [])
   
   // Use prop if provided, otherwise use store value
   const effectiveAutoScroll = autoScroll !== undefined ? autoScroll : storeAutoScroll
@@ -33,29 +39,36 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   
   // Auto-select first tab if none is active but tabs exist (e.g. after page refresh)
   useEffect(() => {
-    if (activeTabId) return
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') return
-    const tabs = Object.values(chatTabs).filter(tab => tab.metadata?.mode === selectedModeCategory)
-    if (tabs.length > 0) {
-      const sorted = [...tabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+    const visibleTabs = Object.values(chatTabs).filter(tab =>
+      tab.metadata?.mode === selectedModeCategory && !isHiddenOrganizationTab(tab)
+    )
+
+    if (activeTabId) {
+      const activeTab = chatTabs[activeTabId]
+      if (activeTab && !isHiddenOrganizationTab(activeTab)) return
+    }
+
+    if (selectedModeCategory !== 'multi-agent') return
+    if (visibleTabs.length > 0) {
+      const sorted = [...visibleTabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
       switchTab(sorted[0].tabId)
     }
-  }, [activeTabId, chatTabs, selectedModeCategory, switchTab])
+  }, [activeTabId, chatTabs, selectedModeCategory, switchTab, isHiddenOrganizationTab])
 
   // Filter tabs by current mode
   // In workflow mode, only show chat tabs in global ChatTabs (workflow tabs show in chat area)
   const modeTabs = useMemo(() => {
     if (selectedModeCategory === 'workflow') {
-      // In workflow mode, only show chat tabs (workflow tabs are shown in the chat area panel)
+      // In workflow mode, only show multi-agent tabs (workflow tabs are shown in the chat area panel)
       return Object.values(chatTabs).filter(tab => 
-        tab.metadata?.mode === 'chat'
+        tab.metadata?.mode === 'multi-agent'
       ).sort((a, b) => a.createdAt - b.createdAt)
     }
-    // In chat mode, show all chat tabs
+    // In multi-agent mode, show all multi-agent tabs
     return Object.values(chatTabs).filter(tab =>
-      tab.metadata?.mode === selectedModeCategory
+      tab.metadata?.mode === selectedModeCategory && !isHiddenOrganizationTab(tab)
     ).sort((a, b) => a.createdAt - b.createdAt)
-  }, [chatTabs, selectedModeCategory])
+  }, [chatTabs, selectedModeCategory, isHiddenOrganizationTab])
   
   // Session status is now delivered via SSE status events — no polling needed
 
@@ -69,10 +82,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
 
     // If no tabs remain for the current mode, auto-create a new one
     const remaining = Object.values(useChatStore.getState().chatTabs)
-      .filter(t => t.metadata?.mode === selectedModeCategory)
-    if (remaining.length === 0 && (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent')) {
-      const isMultiAgent = selectedModeCategory === 'multi-agent'
-      const tabName = isMultiAgent ? 'Agent Chat 1' : 'Chat 1'
+      .filter(t => t.metadata?.mode === selectedModeCategory && !isHiddenOrganizationTab(t))
+    if (remaining.length === 0 && selectedModeCategory === 'multi-agent') {
+      const tabName = 'Agent Chat 1'
       await useChatStore.getState().createChatTab(tabName, { mode: selectedModeCategory })
     }
   }
@@ -85,16 +97,15 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       return
     }
     
-    if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
-      const isMultiAgent = selectedModeCategory === 'multi-agent'
+    if (selectedModeCategory === 'multi-agent') {
       const mode = selectedModeCategory
       logger.debug('ChatTabs', `Creating new ${mode} tab...`)
       const chatStore = useChatStore.getState()
       const allModeTabs = Object.values(chatTabs).filter(tab =>
-        tab.metadata?.mode === mode
+        tab.metadata?.mode === mode && !isHiddenOrganizationTab(tab)
       )
       const tabNumber = allModeTabs.length + 1
-      const tabName = isMultiAgent ? `Agent Chat ${tabNumber}` : `Chat ${tabNumber}`
+      const tabName = `Agent Chat ${tabNumber}`
 
       logger.debug('ChatTabs', `Tab name: ${tabName}, existing tabs: ${allModeTabs.length}`)
 
@@ -153,8 +164,8 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     return 'bg-gray-400'
   }
   
-  // Show tabs bar in chat and multi-agent modes (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
-  const shouldShowTabsBar = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
+  // Show tabs bar in multi-agent mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
+  const shouldShowTabsBar = selectedModeCategory === 'multi-agent'
   const hasTabs = modeTabs.length > 0
   
   // In workflow mode, don't show ChatTabs at all
@@ -248,16 +259,16 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
           )
         })}
       
-      {/* New Tab Button - Show in chat and multi-agent modes (workflow phases are started from WorkflowToolbar) */}
-      {(selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && (
+      {/* New Tab Button - Show in multi-agent mode (workflow phases are started from WorkflowToolbar) */}
+      {selectedModeCategory === 'multi-agent' && (
         <button
           onClick={handleNewTab}
           data-testid="new-chat-button"
           className="flex items-center gap-1 px-2 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title={selectedModeCategory === 'multi-agent' ? 'New agent chat' : 'New chat'}
+          title="New agent chat"
         >
           <Plus className="w-4 h-4" />
-          <span className="text-xs">{selectedModeCategory === 'multi-agent' ? 'New Agent Chat' : 'New Chat'}</span>
+          <span className="text-xs">New Agent Chat</span>
         </button>
       )}
       
@@ -284,4 +295,3 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
     </div>
   )
 }
-

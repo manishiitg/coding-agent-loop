@@ -135,7 +135,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
 
       // Build tiered LLM config from multi-agent delegation tiers
       const tierConfig = activeTab?.config?.delegationTierConfig || llmStore.delegationTierConfig
-      const chatLLM = llmStore.getConfigForMode('chat').primaryConfig
+      const chatLLM = llmStore.getConfigForMode('multi-agent').primaryConfig
       const defaultLLM: AgentLLMConfig = { provider: chatLLM.provider as AgentLLMConfig['provider'], model_id: chatLLM.model_id }
       const toAgentLLM = (t: { provider: string; model_id: string }): AgentLLMConfig =>
         ({ provider: t.provider as AgentLLMConfig['provider'], model_id: t.model_id })
@@ -210,7 +210,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
     : mcpState.chatSelectedServers
   const activeSkills = currentTab?.config?.selectedSkills || []
   const activeTierConfig = currentTab?.config?.delegationTierConfig || llmStoreState.delegationTierConfig
-  const chatPrimaryLLM = llmStoreState.getConfigForMode('chat').primaryConfig
+  const chatPrimaryLLM = llmStoreState.getConfigForMode('multi-agent').primaryConfig
   const hasTierConfig = !!(activeTierConfig?.high || activeTierConfig?.medium || activeTierConfig?.low)
 
   // Helper to get short model name

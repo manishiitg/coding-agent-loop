@@ -207,9 +207,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const {
     agentMode,
     setCurrentQuery,
+    showWorkflowsOverview,
   } = useAppStore(useShallow(state => ({
     agentMode: state.agentMode,
     setCurrentQuery: state.setCurrentQuery,
+    showWorkflowsOverview: state.showWorkflowsOverview,
   })))
   
   const { selectedModeCategory, getAgentModeFromCategory } = useModeStore(useShallow(state => ({
@@ -278,15 +280,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   })
 
   // Determine which servers to use based on mode category
-  // CRITICAL: Workflow preset servers should ONLY be used in workflow mode, never leak into chat mode
+  // CRITICAL: Workflow preset servers should ONLY be used in workflow mode, never leak into multi-agent mode
   const effectiveServers = useMemo(() => {
     // For workflow mode, use preset servers
     if (selectedModeCategory === 'workflow') {
       return currentPresetServers.length > 0 ? currentPresetServers : selectedServers
     }
-    // For chat mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
-    // NEVER use currentPresetServers in chat mode - workflow preset state is isolated to workflow mode only
-    const isChatLike = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
+    // For multi-agent mode, ALWAYS use tab's selected servers from config (if available), otherwise fall back to global
+    // NEVER use currentPresetServers in multi-agent mode - workflow preset state is isolated to workflow mode only
+    const isChatLike = selectedModeCategory === 'multi-agent'
     const tabSelectedServers = (isChatLike && activeTab?.config)
       ? activeTab.config.selectedServers 
       : selectedServers
@@ -317,7 +319,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
     
     // Get workspace access setting from tab config (default: true)
-    const enableWorkspaceAccess = ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && activeTab?.config)
+    const enableWorkspaceAccess = (selectedModeCategory === 'multi-agent' && activeTab?.config)
       ? (activeTab.config.enableWorkspaceAccess ?? true)
       : true // Default to enabled for workflow mode or if no tab config
     
@@ -564,6 +566,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Computed values
   const isRequiredFolderSelected = useMemo(() => {
     if (selectedModeCategory !== 'workflow') return true; // No validation needed for other modes
+    if (activeTab?.metadata?.isOrganizationAssistant) return true
 
     // Workflow mode requires Workflow/ folder from preset
     if (selectedModeCategory === 'workflow') {
@@ -578,7 +581,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // State for preset selection overlay
   const [showPresetSelection, setShowPresetSelection] = useState(false)
-  const [pendingModeCategory, setPendingModeCategory] = useState<Exclude<ModeCategory, 'chat' | null> | null>(null)
+  const [pendingModeCategory, setPendingModeCategory] = useState<Exclude<ModeCategory, null> | null>(null)
   
   // State for session restoration loading
   const [isRestoringChatSessions, setIsRestoringChatSessions] = useState(false)
@@ -591,9 +594,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Handle mode selection from dropdown
   // Handle mode switching with preset selection for Workflow
   const handleModeSwitchWithPreset = (category: Exclude<ModeCategory, null>) => {
-    if (category === 'chat') {
-      // Chat mode doesn't need preset selection
-      // Clear any active presets when switching to chat mode
+    if (category === 'multi-agent') {
+      // Multi-agent mode doesn't need preset selection
+      // Clear any active presets when switching to multi-agent mode
       clearActivePreset('workflow')
       switchMode(category)
     } else {
@@ -1353,10 +1356,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const isCompletionLike = hasCompletionEvent || newEvents.some(e => e.type === 'background_agent_completed')
     if (isCompletionLike && hadWorkspaceActivityRef.current && isActivePresetTab !== false) {
       hadWorkspaceActivityRef.current = false
-      const isChatLikeMode = selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent'
+      const isChatLikeMode = selectedModeCategory === 'multi-agent'
       if (isChatLikeMode) {
-        // Auto-refresh workspace for chat modes so the file tree updates immediately
-        console.log('[Workspace] Auto-refreshing workspace (completion event + had workspace activity, chat mode)')
+        // Auto-refresh workspace for multi-agent mode so the file tree updates immediately
+        console.log('[Workspace] Auto-refreshing workspace (completion event + had workspace activity, multi-agent mode)')
         useWorkspaceStore.getState().fetchFiles()
       } else {
         // Workflow mode: just mark stale — workflow has its own debounced refresh logic
@@ -1716,8 +1719,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Runs once per page load to avoid duplicate restores from separate effects racing each other.
   useEffect(() => {
     if (globalHasRestored) return
-    // Only restore in chat / multi-agent modes (workflow handles its own restore)
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') return
+    // Only restore in multi-agent mode (workflow handles its own restore)
+    if (selectedModeCategory !== 'multi-agent') return
 
     const restoreAll = async () => {
       globalHasRestored = true
@@ -2014,7 +2017,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // Build file context
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
-    if ((selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') && currentTab?.config) {
+    if (selectedModeCategory === 'multi-agent' && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
     } else if (selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder) {
       const folderPath = activeWorkflowPreset.selectedFolder.filepath
@@ -2030,7 +2033,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       : query.trim()
 
     // Decrypt selected secrets for payload (passed separately, never in query text)
-    // Merge secrets from tab config (chat/multi-agent) and workflow preset
+      // Merge secrets from tab config (multi-agent) and workflow preset
     let decryptedSecrets: Array<{ name: string; value: string }> | undefined
     const tabSecretIds = currentTab?.config?.selectedSecrets || []
     const presetSecretIds = (selectedModeCategory === 'workflow' && activeWorkflowPreset)
@@ -2120,7 +2123,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     try {
       // Get active presets for the current mode
       const presetStore = useGlobalPresetStore.getState()
-      const chatPreset = correctAgentMode === 'simple' ? presetStore.getActivePreset('chat') : null
+      const chatPreset = correctAgentMode === 'simple' ? presetStore.getActivePreset('multi-agent') : null
       // Read workflow preset fresh from store (not from stale closure)
       // For workflow mode, always try to get the active preset regardless of selectedWorkflowPreset closure value
       const workflowPreset = (correctAgentMode === 'workflow' || selectedModeCategory === 'workflow')
@@ -2166,7 +2169,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Build LLM config
       const isMultiAgentMode = selectedModeCategory === 'multi-agent'
       const llmStore = useLLMStore.getState()
-      // For chat, multi-agent, and workflow phase chat: use tab's LLM if set (user may override)
+      // For multi-agent and workflow phase chat: use tab's LLM if set (user may override)
       const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
         && currentTab?.metadata?.phaseId
         && isChatCompatiblePhase(currentTab.metadata.phaseId)
@@ -2180,7 +2183,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         : null
       const baseLLMConfig = isWorkflowPhaseChat
         ? (currentTab?.config?.llmConfig || presetLLMConfig || llmStore.primaryConfig)
-        : ((selectedModeCategory === 'chat' || isMultiAgentMode) && currentTab?.config?.llmConfig)
+        : (isMultiAgentMode && currentTab?.config?.llmConfig)
           ? currentTab.config.llmConfig
           : llmStore.primaryConfig
       const tierConfig = llmStore.delegationTierConfig
@@ -2189,6 +2192,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         : baseLLMConfig
 
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(effectiveLLMConfig)
+
+      // DEBUG: browser config from current tab before payload build
+      console.log('[DEBUG browser tab config]', {
+        tabId: currentTab?.tabId,
+        modeCategory: selectedModeCategory,
+        browserMode: currentTab?.config?.browserMode,
+        enableBrowserAccess: currentTab?.config?.enableBrowserAccess,
+        useCdp: currentTab?.config?.useCdp,
+        cdpPort: currentTab?.config?.cdpPort,
+        selectedServers: currentTab?.config?.selectedServers,
+      })
 
       // Compute effective plan phase for multi-agent mode (mirrors ChatInput logic)
       let effectivePlanPhase: string | undefined
@@ -2251,6 +2265,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         agent_mode: requestPayload.agent_mode,
         preset_query_id: requestPayload.preset_query_id,
         phase_id: (requestPayload as any).phase_id,
+        enable_browser_access: requestPayload.enable_browser_access,
+        browser_mode: requestPayload.browser_mode,
+        cdp_port: requestPayload.cdp_port,
+        enabled_servers: requestPayload.enabled_servers,
       })
 
       // Mark auto-notification requests so backend treats them as synthetic turns
@@ -2335,13 +2353,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // This can happen if submitQuery promise never resolves or the finally block doesn't run.
         if (isProcessing && !currentIsStreaming && activeTab) {
           const lockKey = `queue_lock_${activeTab.tabId}`
-          const lastLockTime = (window as Record<string, unknown>)[lockKey] as number | undefined
+          const lockStore = window as unknown as Record<string, unknown>
+          const lastLockTime = lockStore[lockKey] as number | undefined
           if (!lastLockTime) {
-            ;(window as Record<string, unknown>)[lockKey] = Date.now()
+            lockStore[lockKey] = Date.now()
           } else if (Date.now() - lastLockTime > 10000) {
             console.warn(`[QUEUE_DEBUG] Force-releasing stuck lock after 10s for tab ${activeTab.tabId}`)
             useChatStore.getState().setTabConfig(activeTab.tabId, { isQueueProcessing: false })
-            delete (window as Record<string, unknown>)[lockKey]
+            delete lockStore[lockKey]
           }
         }
       }
@@ -2354,7 +2373,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Claim the store-level lock atomically before any async work.
     chatStore.setTabConfig(tabId, { isQueueProcessing: true })
     // Clear stuck-lock tracker
-    delete (window as Record<string, unknown>)[`queue_lock_${tabId}`]
+    const lockStore = window as unknown as Record<string, unknown>
+    delete lockStore[`queue_lock_${tabId}`]
 
     // Separate human messages from auto-notifications
     const AUTO_PREFIX = '[AUTO-NOTIFICATION]'
@@ -2549,7 +2569,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           )}
 
           {/* Show workflow explanation when in workflow mode but no preset selected */}
-          {selectedModeCategory === 'workflow' && (
+          {selectedModeCategory === 'workflow' && !activeTab?.metadata?.isOrganizationAssistant && (
             <WorkflowExplanation agentMode={correctAgentMode} selectedWorkflowPreset={selectedWorkflowPreset} />
           )}
 
@@ -2569,7 +2589,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               <ModeEmptyState modeCategory={selectedModeCategory} />
             )}
             {/* Phase Chat Help - Show for chat-compatible phases until AI has responded */}
-            {!activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
+            {!showWorkflowsOverview && !activeTab?.metadata?.isOrganizationAssistant && !activeTab?.isStreaming && isChatCompatiblePhase(activeTab?.metadata?.phaseId) && !displayEvents.some(e => e.type === 'unified_completion' || e.type === 'agent_end' || e.type === 'llm_generation_end') && (
               <PhaseChatEmptyState phaseId={activeTab!.metadata!.phaseId!} />
             )}
 
@@ -2640,4 +2660,3 @@ ChatArea.displayName = 'ChatArea'
 ChatArea.whyDidYouRender = true
 
 export default ChatArea
-

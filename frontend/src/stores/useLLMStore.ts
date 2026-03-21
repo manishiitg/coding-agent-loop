@@ -15,7 +15,7 @@ interface LLMState extends StoreActions {
   // LEGACY: kept for backward compatibility, use mode-specific configs instead
   agentConfig: AgentLLMConfiguration | null
 
-  // Mode-specific LLM configurations (chat vs workflow)
+  // Mode-specific LLM configurations (multi-agent vs workflow)
   chatPrimaryConfig: LLMConfiguration
   chatAgentConfig: AgentLLMConfiguration | null
   workflowPrimaryConfig: LLMConfiguration
@@ -93,7 +93,7 @@ interface LLMState extends StoreActions {
   setChatAgentConfig: (config: AgentLLMConfiguration | null) => void
   setWorkflowPrimaryConfig: (config: LLMConfiguration) => void
   setWorkflowAgentConfig: (config: AgentLLMConfiguration | null) => void
-  getConfigForMode: (mode: 'chat' | 'workflow') => { primaryConfig: LLMConfiguration; agentConfig: AgentLLMConfiguration | null }
+  getConfigForMode: (mode: 'multi-agent' | 'workflow') => { primaryConfig: LLMConfiguration; agentConfig: AgentLLMConfiguration | null }
   setOpenrouterConfig: (config: ExtendedLLMConfiguration) => void
   setBedrockConfig: (config: ExtendedLLMConfiguration) => void
   setOpenaiConfig: (config: ExtendedLLMConfiguration) => void

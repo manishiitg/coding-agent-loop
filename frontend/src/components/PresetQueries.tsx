@@ -60,9 +60,9 @@ interface PresetQueriesProps {
     if (preset) {
       // Guard against null/undefined selectedModeCategory and provide safe default
       const safeModeCategory = selectedModeCategory && 
-        ['chat', 'workflow'].includes(selectedModeCategory) 
-        ? selectedModeCategory as 'chat' | 'workflow'
-        : 'chat' // Safe default for initial setup or invalid values
+        ['multi-agent', 'workflow'].includes(selectedModeCategory)
+        ? selectedModeCategory as 'multi-agent' | 'workflow'
+        : 'multi-agent' // Safe default for initial setup or invalid values
       
       // Use the global store's applyPreset method for consistency
       const result = applyPreset(preset, safeModeCategory)

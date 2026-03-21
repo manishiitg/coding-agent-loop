@@ -36,6 +36,55 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const WORKFLOW_ROOT = 'Workflow'
+
+  const normalizePath = useCallback((path: string): string => {
+    return path.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')
+  }, [])
+
+  const getWorkflowDirectChildPath = useCallback((path: string): string | null => {
+    const normalized = normalizePath(path)
+    if (!normalized) return null
+
+    const relative = normalized.replace(/^workflow\//i, '')
+    if (relative === normalized) return null
+
+    const segments = relative.split('/').filter(Boolean)
+    if (segments.length !== 1) return null
+
+    return `${WORKFLOW_ROOT}/${segments[0]}`
+  }, [normalizePath])
+
+  const getWorkflowSelectableFolders = useCallback((inputFiles: PlannerFile[]): PlannerFile[] => {
+    const allFolders: PlannerFile[] = []
+    const walk = (nodes: PlannerFile[]) => {
+      for (const node of nodes) {
+        if (node.type === 'folder') {
+          allFolders.push(node)
+        }
+        if (node.children && node.children.length > 0) {
+          walk(node.children)
+        }
+      }
+    }
+    walk(inputFiles)
+
+    const deduped = new Map<string, PlannerFile>()
+    for (const folder of allFolders) {
+      const directChildPath = getWorkflowDirectChildPath(folder.filepath)
+      if (!directChildPath) continue
+      const key = directChildPath.toLowerCase()
+      if (!deduped.has(key)) {
+        deduped.set(key, {
+          ...folder,
+          filepath: directChildPath,
+          children: []
+        })
+      }
+    }
+
+    return Array.from(deduped.values()).sort((a, b) => a.filepath.localeCompare(b.filepath))
+  }, [getWorkflowDirectChildPath])
 
   // Focus search input when dialog opens
   useEffect(() => {
@@ -131,7 +180,16 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     setIsCreatingFolder(true)
     
     try {
-      await agentApi.createPlannerFolder(folderPath, commitMessage)
+      let targetPath = folderPath
+      if (agentMode === 'workflow') {
+        const directChildPath = getWorkflowDirectChildPath(folderPath)
+        if (!directChildPath) {
+          throw new Error(`Folder must be directly inside ${WORKFLOW_ROOT}/`)
+        }
+        targetPath = directChildPath
+      }
+
+      await agentApi.createPlannerFolder(targetPath, commitMessage)
       
       // Refresh the file list to show the new folder
       await fetchFiles()
@@ -150,7 +208,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     } finally {
       setIsCreatingFolder(false)
     }
-  }, [fetchFiles, agentMode, fetchWorkflowFolders])
+  }, [fetchFiles, agentMode, fetchWorkflowFolders, getWorkflowDirectChildPath])
 
   // Handle create folder dialog close
   const handleCreateFolderDialogClose = useCallback(() => {
@@ -164,6 +222,11 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     if (!agentMode || agentMode === 'simple') {
       // For simple mode, show all folders
       return files
+    }
+
+    if (agentMode === 'workflow') {
+      // Strictly allow only direct children of Workflow/
+      return getWorkflowSelectableFolders(files)
     }
 
     const targetPrefix = agentMode === 'workflow' ? 'Workflow/' : 'Tasks/'
@@ -215,7 +278,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     }
     
     return filterHierarchy(files)
-  }, [agentMode])
+  }, [agentMode, getWorkflowSelectableFolders])
 
   // Calculate fuzzy match score (how close the characters are together)
   const calculateFuzzyScore = (filepath: string, query: string): number => {
@@ -299,6 +362,11 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
     const expandedFoldersWithAuto = autoExpandRootFolders(agentModeFilteredFiles)
     
     if (!searchQuery.trim()) {
+      if (agentMode === 'workflow') {
+        setFilteredFolders(agentModeFilteredFiles)
+        return
+      }
+
       // Show hierarchical structure when no search, respecting expanded folders
       const flattened = flattenWithExpandedFolders(agentModeFilteredFiles, expandedFoldersWithAuto)
       setFilteredFolders(flattened)
@@ -342,8 +410,8 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
         }
         
         // For workflow mode, only allow direct subfolders of Workflow/ (1 level deep)
-        const relativePath = folder.filepath.substring(workflowPrefix.length)
-        if (relativePath.includes('/')) {
+        const directChildPath = getWorkflowDirectChildPath(folder.filepath)
+        if (!directChildPath) {
           return false
         }
       }
@@ -404,7 +472,7 @@ export const FolderSelectionDialog: React.FC<FolderSelectionDialogProps> = ({
 
     setFilteredFolders(sorted)
     setSelectedIndex(0) // Reset selection when filtering
-  }, [files, workflowFolders, searchQuery, expandedFolders, agentMode, filterFoldersByAgentMode])
+  }, [files, workflowFolders, searchQuery, expandedFolders, agentMode, filterFoldersByAgentMode, getWorkflowDirectChildPath])
 
   // Handle keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {

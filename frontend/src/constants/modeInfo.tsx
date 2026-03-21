@@ -12,19 +12,6 @@ export interface ModeInfo {
 }
 
 export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
-  'chat': {
-    icon: <MessageCircle className="w-16 h-16 text-blue-500" />,
-    title: 'Chat Mode',
-    description: 'Ask questions, brainstorm ideas, or have a natural dialogue with AI',
-    features: [
-      'Instant responses to questions',
-      'Natural conversation flow',
-      'Memory across the chat session',
-      'Simple reasoning mode'
-    ],
-    examples: [],
-    tips: []
-  },
   'workflow': {
     icon: <Workflow className="w-16 h-16 text-blue-500" />,
     title: 'Workflow Mode',
@@ -41,9 +28,10 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
   'multi-agent': {
     icon: <Users className="w-16 h-16 text-indigo-500" />,
     title: 'Multi Agent Chat',
-    description: 'Delegate complex tasks to a team of AI sub-agents with plan-driven coordination',
+    description: 'Delegate complex tasks to a team of AI sub-agents in autonomous spawn mode, with optional planning when needed',
     features: [
-      'Plan-driven delegation',
+      'Autonomous spawn delegation',
+      'Optional planner usage',
       'Multi-LLM tier support',
       'Auto tool mode per task',
       'Sub-agent tracking in Plans/ folder'

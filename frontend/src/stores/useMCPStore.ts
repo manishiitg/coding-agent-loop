@@ -15,7 +15,7 @@ interface MCPState extends StoreActions {
   // LEGACY: kept for backward compatibility, use mode-specific selections
   selectedServers: string[]
 
-  // Mode-specific server selections (chat vs workflow)
+  // Mode-specific server selections (multi-agent vs workflow)
   chatSelectedServers: string[]
   workflowSelectedServers: string[]
   
@@ -50,7 +50,7 @@ interface MCPState extends StoreActions {
   // Mode-specific server actions
   setChatSelectedServers: (servers: string[]) => void
   setWorkflowSelectedServers: (servers: string[]) => void
-  getServersForMode: (mode: 'chat' | 'workflow') => string[]
+  getServersForMode: (mode: 'multi-agent' | 'workflow') => string[]
   
   // Tool detail actions
   setExpandedServers: (servers: Set<string>) => void

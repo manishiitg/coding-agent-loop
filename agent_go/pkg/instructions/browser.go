@@ -44,6 +44,13 @@ You are controlling the **user's real Chrome browser** via Chrome DevTools Proto
 - Sessions **persist across tool calls** — you don't need to re-open pages between interactions
 - If a site requires login and the user is already logged in, just navigate directly to the target page
 
+**Connection behavior (important):**
+- CDP endpoint is already configured by the backend from the selected port.
+- Do **NOT** ask the user for a websocket debugger URL or run "curl localhost:9222/json/version".
+- In containerized runs, localhost points to the container, not the host browser.
+- When you describe or troubleshoot the endpoint, use host.docker.internal:<port> (Linux: host IP such as 172.17.0.1:<port>).
+- Do not suggest localhost:<port> for container-side agent_browser connectivity.
+
 **Best practices:**
 - Start with a **snapshot** to see the current page state before taking any action
 - Use **session="default"** unless you need multiple isolated sessions
@@ -68,6 +75,29 @@ You are controlling a **headless Chromium browser** running inside a container.
 - Take screenshots at key moments so the user can verify progress
 - Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
 - Use **session="default"** unless you need parallel browser instances
+`
+}
+
+// GetPlaywrightModeInstructions returns instructions specific to Playwright MCP mode.
+func GetPlaywrightModeInstructions() string {
+	return `
+## Browser Mode: Playwright (MCP Server)
+
+You are using the Playwright MCP tools (browser_* functions), not agent_browser.
+
+**Key behaviors:**
+- Use browser_snapshot to inspect the current page and discover element refs/selectors.
+- Prefer browser_click/browser_type/browser_press for interactions.
+- Use browser_screenshot when visual proof is needed.
+- Keep interactions deterministic: snapshot -> act -> snapshot.
+
+**File uploads:**
+- Use browser_file_upload with workspace-relative paths (e.g. "Downloads/file.pdf").
+- Do not construct absolute filesystem paths manually.
+
+**Best practices:**
+- Re-check page state after every navigation or major interaction.
+- If an element is missing, refresh snapshot before retrying.
 `
 }
 

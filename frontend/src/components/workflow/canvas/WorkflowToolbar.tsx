@@ -1576,7 +1576,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   if (isCurrentPhaseRunning && !isExecutionPhase) {
                     return (
                       <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin flex-shrink-0" />
                         <span className="flex-1 text-left truncate">
                           {currentPhaseDetails?.title || 'Running...'}
                         </span>
@@ -1587,7 +1586,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   
                   return (
                     <>
-                      <Play className="w-3.5 h-3.5 flex-shrink-0" />
                       <span className="flex-1 text-left truncate">
                         {currentPhaseDetails && !isExecutionPhase ? currentPhaseDetails.title : 'Select Phase'}
                       </span>

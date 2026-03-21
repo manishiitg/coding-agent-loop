@@ -2108,33 +2108,42 @@ func UploadFile(c *gin.Context) {
 	})
 }
 
-// sanitizeFilename converts a title to a safe filename
+// sanitizeFilename keeps the original casing/readability while replacing unsafe path characters.
 func sanitizeFilename(title string) string {
-	// Replace spaces with hyphens and remove special characters
-	filename := strings.ReplaceAll(title, " ", "-")
-	filename = strings.ReplaceAll(filename, "/", "-")
-	filename = strings.ReplaceAll(filename, "\\", "-")
-	filename = strings.ReplaceAll(filename, ":", "-")
-	filename = strings.ReplaceAll(filename, "*", "-")
-	filename = strings.ReplaceAll(filename, "?", "-")
-	filename = strings.ReplaceAll(filename, "\"", "-")
-	filename = strings.ReplaceAll(filename, "<", "-")
-	filename = strings.ReplaceAll(filename, ">", "-")
-	filename = strings.ReplaceAll(filename, "|", "-")
+	filename := strings.TrimSpace(title)
 
-	// Convert to lowercase
-	filename = strings.ToLower(filename)
+	// Replace path/invalid filesystem characters with '-'
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "-",
+		"<", "-",
+		">", "-",
+		"|", "-",
+	)
+	filename = replacer.Replace(filename)
 
-	// Remove multiple consecutive hyphens
+	// Remove ASCII control characters
+	filename = strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, filename)
+
+	// Collapse repeated dashes introduced by sanitization
 	for strings.Contains(filename, "--") {
 		filename = strings.ReplaceAll(filename, "--", "-")
 	}
 
-	// Remove leading/trailing hyphens
-	filename = strings.Trim(filename, "-")
+	// Trim leading/trailing dots/hyphens/spaces to avoid special path names
+	filename = strings.Trim(filename, " .-")
 
-	// Ensure it's not empty
-	if filename == "" {
+	// Avoid relative path special names
+	if filename == "" || filename == "." || filename == ".." {
 		filename = "untitled"
 	}
 
@@ -2495,5 +2504,4 @@ func isTextBasedFile(filename, contentType string) bool {
 	// If neither extension nor MIME type is recognized, default to false (reject)
 	return false
 }
-
 

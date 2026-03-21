@@ -1,14 +1,18 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Plus, X, Pencil, Trash2, UserCircle2, Workflow, CheckCircle2,
-  PlayCircle, AlertCircle, Clock, DollarSign, ChevronRight, Loader2
+  PlayCircle, AlertCircle, Clock, DollarSign, ChevronRight, Loader2, Calendar, FileText
 } from 'lucide-react'
 import { agentApi } from '../services/api'
-import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { schedulerApi } from '../api/scheduler'
+import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { Employee, RunFolderInfo, EvaluationReportsResponse, EvaluationReportEntry, StepProgress } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
+import SchedulePresetPopup from './SchedulePresetPopup'
+import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
+import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 
 // Color palette for employees
 const AVATAR_COLORS = [
@@ -25,6 +29,10 @@ interface WorkflowSummary {
   lastActive: string | null
   totalCost: number | null
   evalPercent: number | null
+  workspacePath: string | null
+  latestRunFolder: string | null
+  scheduleCount: number
+  nextScheduleAt: string | null
 }
 
 interface EmployeeWithWorkflows {
@@ -154,18 +162,34 @@ export const EmployeeDashboard: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [assigningWorkflow, setAssigningWorkflow] = useState<string | null>(null) // preset ID being assigned
+  const [schedulePreset, setSchedulePreset] = useState<WorkflowSummary | null>(null)
+  const [showAllSchedules, setShowAllSchedules] = useState(false)
+  const [logsState, setLogsState] = useState<{ workspacePath: string; runFolder: string } | null>(null)
 
-  const { getPresetsForMode, applyPreset } = usePresetApplication()
+  const { applyPreset } = usePresetApplication()
+  const refreshPresets = useGlobalPresetStore(s => s.refreshPresets)
   const { setModeCategory, selectedModeCategory } = useModeStore()
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [empResp, presets] = await Promise.all([
+      const [empResp] = await Promise.all([
         agentApi.listEmployees(),
-        Promise.resolve(getPresetsForMode('workflow')),
+        refreshPresets(),
       ])
+      const schedulesResp = await schedulerApi.listJobs({ entity_type: 'workflow' }).catch(() => ({ jobs: [], total: 0, limit: 0, offset: 0 }))
+
+      const presets = useGlobalPresetStore.getState().getPresetsForMode('workflow')
+      const scheduleByPreset = new Map<string, { count: number; nextRunAt: string | null }>()
+      for (const job of schedulesResp.jobs || []) {
+        const prev = scheduleByPreset.get(job.preset_query_id) || { count: 0, nextRunAt: null }
+        let nextRunAt = prev.nextRunAt
+        if (job.enabled && job.next_run_at) {
+          if (!nextRunAt || job.next_run_at < nextRunAt) nextRunAt = job.next_run_at
+        }
+        scheduleByPreset.set(job.preset_query_id, { count: prev.count + 1, nextRunAt })
+      }
 
       const emps = empResp.employees || []
       setEmployees(emps)
@@ -176,7 +200,19 @@ export const EmployeeDashboard: React.FC = () => {
         presets.map(async (preset) => {
           const wp = preset.selectedFolder?.filepath
           if (!wp) {
-            summaries.set(preset.id, { preset, latestStatus: 'unknown', totalRuns: 0, lastActive: null, totalCost: null, evalPercent: null })
+            const sched = scheduleByPreset.get(preset.id)
+            summaries.set(preset.id, {
+              preset,
+              latestStatus: 'unknown',
+              totalRuns: 0,
+              lastActive: null,
+              totalCost: null,
+              evalPercent: null,
+              workspacePath: null,
+              latestRunFolder: null,
+              scheduleCount: sched?.count || 0,
+              nextScheduleAt: sched?.nextRunAt || null,
+            })
             return
           }
           try {
@@ -187,9 +223,16 @@ export const EmployeeDashboard: React.FC = () => {
             const folders = wsState?.data?.run_folders || []
             let latestStatus = 'unknown'
             let lastActive: string | null = null
+            let latestRunFolder: string | null = null
+            let latestRunTime: string | null = null
             for (const f of folders) {
-              const t = f.progress?.last_updated || null
+              const t = f.metadata?.created_at || f.progress?.last_updated || null
               if (t && (!lastActive || t > lastActive)) lastActive = t
+              if (t && (!latestRunTime || t > latestRunTime)) {
+                latestRunTime = t
+                latestRunFolder = f.name
+                latestStatus = f.metadata?.status || 'unknown'
+              }
               const meta = f.metadata
               if (meta?.status === 'running') latestStatus = 'running'
               else if (meta?.status === 'completed' && latestStatus !== 'running') latestStatus = 'completed'
@@ -198,9 +241,33 @@ export const EmployeeDashboard: React.FC = () => {
             if (evalResp?.success && evalResp.aggregate && evalResp.aggregate.max_possible_score > 0) {
               evalPercent = Math.round((evalResp.aggregate.average_score / evalResp.aggregate.max_possible_score) * 100)
             }
-            summaries.set(preset.id, { preset, latestStatus, totalRuns: folders.length, lastActive, totalCost: null, evalPercent })
+            const sched = scheduleByPreset.get(preset.id)
+            summaries.set(preset.id, {
+              preset,
+              latestStatus,
+              totalRuns: folders.length,
+              lastActive,
+              totalCost: null,
+              evalPercent,
+              workspacePath: wp,
+              latestRunFolder,
+              scheduleCount: sched?.count || 0,
+              nextScheduleAt: sched?.nextRunAt || null,
+            })
           } catch {
-            summaries.set(preset.id, { preset, latestStatus: 'unknown', totalRuns: 0, lastActive: null, totalCost: null, evalPercent: null })
+            const sched = scheduleByPreset.get(preset.id)
+            summaries.set(preset.id, {
+              preset,
+              latestStatus: 'unknown',
+              totalRuns: 0,
+              lastActive: null,
+              totalCost: null,
+              evalPercent: null,
+              workspacePath: wp,
+              latestRunFolder: null,
+              scheduleCount: sched?.count || 0,
+              nextScheduleAt: sched?.nextRunAt || null,
+            })
           }
         })
       )
@@ -266,7 +333,7 @@ export const EmployeeDashboard: React.FC = () => {
       console.error('Failed to load employee dashboard:', err)
     }
     setLoading(false)
-  }, [getPresetsForMode])
+  }, [refreshPresets])
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -322,6 +389,13 @@ export const EmployeeDashboard: React.FC = () => {
         >
           <Plus className="w-3.5 h-3.5" />
           Add Employee
+        </button>
+        <button
+          onClick={() => setShowAllSchedules(true)}
+          className="ml-2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors"
+        >
+          <Calendar className="w-3.5 h-3.5" />
+          View Schedules
         </button>
       </div>
 
@@ -405,8 +479,40 @@ export const EmployeeDashboard: React.FC = () => {
                       {wf.totalRuns > 0 && (
                         <span className="text-[10px] text-gray-400 dark:text-gray-500">{wf.totalRuns} runs</span>
                       )}
+                      {wf.scheduleCount > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                          {wf.scheduleCount} schedule{wf.scheduleCount !== 1 ? 's' : ''}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3">
+                      {wf.latestRunFolder ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (wf.workspacePath) {
+                              setLogsState({ workspacePath: wf.workspacePath, runFolder: wf.latestRunFolder! })
+                            }
+                          }}
+                          className="flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
+                          title={`Latest output: ${wf.latestRunFolder}`}
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          {wf.latestRunFolder}
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-gray-400 dark:text-gray-500">No output yet</span>
+                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setSchedulePreset(wf)
+                        }}
+                        className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline px-1.5 py-0.5"
+                        title={wf.nextScheduleAt ? `Next run: ${formatScheduleTime(wf.nextScheduleAt)}` : 'Set schedule'}
+                      >
+                        {wf.nextScheduleAt ? `Next ${formatScheduleTime(wf.nextScheduleAt)}` : 'Schedule'}
+                      </button>
                       {wf.evalPercent !== null && (
                         <span className={`text-xs font-medium ${wf.evalPercent >= 80 ? 'text-green-600 dark:text-green-400' : wf.evalPercent >= 50 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
                           {wf.evalPercent}%
@@ -417,18 +523,27 @@ export const EmployeeDashboard: React.FC = () => {
                           {formatTimestamp(wf.lastActive)}
                         </span>
                       )}
-                      {/* Show assign dropdown for unassigned workflows */}
-                      {employee.id === '__unassigned__' && employees.length > 0 && (
+                      {/* Assignment dropdown for both unassigned and assigned workflows */}
+                      {employees.length > 0 && (
                         <div className="relative" onClick={e => e.stopPropagation()}>
                           <button
                             onClick={() => setAssigningWorkflow(assigningWorkflow === wf.preset.id ? null : wf.preset.id)}
                             className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline px-1.5 py-0.5"
                           >
-                            Assign
+                            {employee.id === '__unassigned__' ? 'Assign' : 'Reassign'}
                           </button>
                           {assigningWorkflow === wf.preset.id && (
                             <div className="absolute right-0 top-full mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10 py-1">
-                              {employees.filter(e => e.id !== '__unassigned__').map(emp => (
+                              {employee.id !== '__unassigned__' && (
+                                <button
+                                  onClick={() => handleAssign(wf.preset.id, null)}
+                                  className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700/70 text-gray-600 dark:text-gray-300"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>Unassign</span>
+                                </button>
+                              )}
+                              {employees.filter(e => e.id !== '__unassigned__' && e.id !== employee.id).map(emp => (
                                 <button
                                   key={emp.id}
                                   onClick={() => handleAssign(wf.preset.id, emp.id)}
@@ -463,6 +578,30 @@ export const EmployeeDashboard: React.FC = () => {
         onSave={editingEmployee ? handleUpdateEmployee : handleCreateEmployee}
         initial={editingEmployee ? { name: editingEmployee.name, avatar_color: editingEmployee.avatar_color, description: editingEmployee.description } : undefined}
       />
+
+      {schedulePreset && (
+        <SchedulePresetPopup
+          presetQueryId={schedulePreset.preset.id}
+          presetLabel={schedulePreset.preset.label}
+          entityType="workflow"
+          workspacePath={schedulePreset.workspacePath || undefined}
+          onClose={() => setSchedulePreset(null)}
+        />
+      )}
+
+      {showAllSchedules && (
+        <WorkflowScheduleRunsPanel onClose={() => setShowAllSchedules(false)} />
+      )}
+
+      {logsState && (
+        <ExecutionLogsPopup
+          isOpen
+          onClose={() => setLogsState(null)}
+          workspacePath={logsState.workspacePath}
+          runFolder={logsState.runFolder}
+          runFolders={[logsState.runFolder]}
+        />
+      )}
     </div>
   )
 }
@@ -480,6 +619,15 @@ function formatTimestamp(ts: string): string {
     if (diffHr < 24) return `${diffHr}h ago`
     if (diffDay < 7) return `${diffDay}d ago`
     return d.toLocaleDateString()
+  } catch {
+    return ts
+  }
+}
+
+function formatScheduleTime(ts: string): string {
+  try {
+    const d = new Date(ts)
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   } catch {
     return ts
   }

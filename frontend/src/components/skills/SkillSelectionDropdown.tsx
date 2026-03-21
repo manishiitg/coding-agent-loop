@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, Check, HelpCircle, Search } from 'lucide-react';
+import { Wand2, Check, HelpCircle, Search } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/checkbox';
 import { Card } from '../ui/Card';
@@ -95,7 +95,7 @@ export default function SkillSelectionDropdown({
                   : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
               } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
             >
-              <Sparkles className="w-4 h-4 flex-shrink-0" />
+              <Wand2 className="w-4 h-4 flex-shrink-0" />
               <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[80px] transition-all duration-200">
                 {getDisplayText()}
               </span>

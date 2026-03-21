@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { MessageCircle, Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays, GitBranch, LayoutList } from 'lucide-react'
+import { Workflow, Users, Building2, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays, GitBranch, SlidersHorizontal } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -10,46 +10,45 @@ import DelegationLogsPopup from './DelegationLogsPopup'
 import SchedulePresetPopup from './SchedulePresetPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import PlansManagerModal from './PlansManagerModal'
+import DelegationTierConfigModal from './DelegationTierConfigModal'
 import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip'
+import { useLLMStore } from '../stores'
 import { useMCPStore } from '../stores/useMCPStore'
 import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useRunningWorkflows } from '../stores/useRunningWorkflowsStore'
 import { useChatStore } from '../stores/useChatStore'
+import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
-    case 'chat':
-      return <MessageCircle className="w-3 h-3" />
     case 'workflow':
       return <Workflow className="w-3 h-3" />
     case 'multi-agent':
       return <Users className="w-3 h-3" />
     default:
-      return <MessageCircle className="w-3 h-3" />
+      return <Users className="w-3 h-3" />
   }
 }
 
 const getModeName = (category: string) => {
   switch (category) {
-    case 'chat':
-      return 'Chat Mode'
     case 'workflow':
       return 'Workflow Mode'
     case 'multi-agent':
-      return 'Multi Agent Chat'
+      return 'Chat'
     default:
-      return 'Chat Mode'
+      return 'Chat'
   }
 }
 
 const MODE_PILLS = [
   {
     key: 'multi-agent' as const,
-    label: 'Multi-Agent',
+    label: 'Chat',
     icon: Users,
     activeClasses: 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-200 dark:bg-indigo-500/20 dark:text-indigo-100 dark:ring-indigo-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
@@ -62,21 +61,26 @@ const MODE_PILLS = [
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
   {
-    key: 'chat' as const,
-    label: 'Chat',
-    icon: MessageCircle,
-    activeClasses: 'bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-200 dark:bg-blue-500/20 dark:text-blue-100 dark:ring-blue-500/40',
+    key: 'organization' as const,
+    label: 'Organization',
+    icon: Building2,
+    activeClasses: 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-100 dark:ring-emerald-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
 ] as const
 
+const shortModelName = (modelId: string): string => {
+  const name = modelId.split('/').pop() || modelId
+  return name.length > 18 ? `${name.slice(0, 18)}…` : name
+}
+
 /**
  * Global Mode & Preset Bar - always visible at the top level
- * Allows users to select mode (chat/workflow) and presets regardless of chat tabs
+ * Allows users to select mode (multi-agent/workflow) and presets regardless of active tabs
  */
 export const ModePresetBar: React.FC = () => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore()
-  const { setWorkspaceMinimized, agentMode } = useAppStore()
+  const { setWorkspaceMinimized, workspaceMinimized, agentMode } = useAppStore()
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
   const availableServers = React.useMemo(() =>
@@ -102,12 +106,12 @@ export const ModePresetBar: React.FC = () => {
   } = usePresetApplication()
 
   // Get active preset for current mode (for schedule popup, supports all modes)
-  const activePreset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+  const activePreset = getActivePreset(selectedModeCategory as 'workflow' | 'multi-agent')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const activePresetForSchedule = (getActivePreset as any)(selectedModeCategory) as ReturnType<typeof getActivePreset>
 
   // Get presets for current mode
-  const presetsForMode = getPresetsForMode(selectedModeCategory as 'chat' | 'workflow')
+  const presetsForMode = getPresetsForMode(selectedModeCategory as 'workflow' | 'multi-agent')
 
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
@@ -119,9 +123,24 @@ export const ModePresetBar: React.FC = () => {
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
+  const [showTierModal, setShowTierModal] = useState(false)
+  const [restoreWorkspaceAfterTierModal, setRestoreWorkspaceAfterTierModal] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
+  const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
+
+  const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow' | 'organization') => {
+    if (modeKey === 'organization') {
+      setModeCategory('workflow')
+      setShowWorkflowsOverview(true)
+      setWorkspaceMinimized(true)
+      return
+    }
+
+    setModeCategory(modeKey)
+    setShowWorkflowsOverview(false)
+  }, [setModeCategory, setShowWorkflowsOverview, setWorkspaceMinimized])
 
   // Fetch workflow schedule count for badge (filtered to current workflow)
   useEffect(() => {
@@ -157,6 +176,33 @@ export const ModePresetBar: React.FC = () => {
   const chatTabsForBadge = useChatStore(state => state.chatTabs)
   const tabSessionStatusForBadge = useChatStore(state => state.tabSessionStatus)
   const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
+  const workspaceFiles = useWorkspaceStore(state => state.files)
+
+  const hasPlansFolder = useMemo(() => {
+    return workspaceFiles.some(f => f.filepath === 'Plans' || f.filepath === 'Plans/' || f.filepath.startsWith('Plans/'))
+  }, [workspaceFiles])
+
+  const tierLines = useMemo(() => {
+    const lines: string[] = []
+    if (delegationTierConfig?.main) lines.push(`Main: ${shortModelName(delegationTierConfig.main.model_id)} (${delegationTierConfig.main.provider})`)
+    if (delegationTierConfig?.high) lines.push(`High: ${shortModelName(delegationTierConfig.high.model_id)} (${delegationTierConfig.high.provider})`)
+    if (delegationTierConfig?.medium) lines.push(`Medium: ${shortModelName(delegationTierConfig.medium.model_id)} (${delegationTierConfig.medium.provider})`)
+    if (delegationTierConfig?.low) lines.push(`Low: ${shortModelName(delegationTierConfig.low.model_id)} (${delegationTierConfig.low.provider})`)
+    return lines
+  }, [delegationTierConfig])
+
+  const openTierModal = useCallback(() => {
+    const shouldRestoreAfterClose = !workspaceMinimized
+    setRestoreWorkspaceAfterTierModal(shouldRestoreAfterClose)
+    if (shouldRestoreAfterClose) setWorkspaceMinimized(true)
+    setShowTierModal(true)
+  }, [workspaceMinimized, setWorkspaceMinimized])
+
+  const closeTierModal = useCallback(() => {
+    setShowTierModal(false)
+    if (restoreWorkspaceAfterTierModal) setWorkspaceMinimized(false)
+    setRestoreWorkspaceAfterTierModal(false)
+  }, [restoreWorkspaceAfterTierModal, setWorkspaceMinimized])
 
   const runningWorkflowCount = useMemo(() => {
     const seenSessionIds = new Set<string>()
@@ -186,7 +232,7 @@ export const ModePresetBar: React.FC = () => {
   useEffect(() => {
     if (showPresetSettings) {
       useCommandDialogStore.getState().closeDialog('presetSettings')
-      const preset = getActivePreset(selectedModeCategory as 'chat' | 'workflow')
+      const preset = getActivePreset(selectedModeCategory as 'workflow' | 'multi-agent')
       if (preset && customPresets.some(cp => cp.id === preset.id)) {
         setEditingPreset(preset as CustomPreset)
         setShowPresetModal(true)
@@ -197,15 +243,15 @@ export const ModePresetBar: React.FC = () => {
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
     // Determine the mode category based on the preset's agentMode
-    const presetModeCategory = preset.agentMode === 'workflow' ? 'workflow' : 'chat'
+    const presetModeCategory = preset.agentMode === 'workflow' ? 'workflow' : 'multi-agent'
 
     // If preset is for workflow mode, ensure we're in workflow mode
     if (presetModeCategory === 'workflow' && selectedModeCategory !== 'workflow') {
       setModeCategory('workflow')
     }
-    // If preset is for chat mode, ensure we're in chat mode
-    else if (presetModeCategory === 'chat' && selectedModeCategory !== 'chat') {
-      setModeCategory('chat')
+    // If preset is for simple mode, route to multi-agent category
+    else if (presetModeCategory === 'multi-agent' && selectedModeCategory !== 'multi-agent') {
+      setModeCategory('multi-agent')
     }
 
     // Apply the preset with the correct mode category
@@ -360,7 +406,9 @@ export const ModePresetBar: React.FC = () => {
             {/* Segmented control — single bordered container, active segment elevated */}
             <div className="flex items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5" role="tablist" aria-label="Select mode">
               {MODE_PILLS.map((mode) => {
-                const isActive = selectedModeCategory === mode.key
+                const isActive = mode.key === 'organization'
+                  ? showWorkflowsOverview
+                  : selectedModeCategory === mode.key && !showWorkflowsOverview
                 const Icon = mode.icon
                 return (
                   <button
@@ -368,7 +416,7 @@ export const ModePresetBar: React.FC = () => {
                     role="tab"
                     aria-selected={isActive}
                     aria-label={`Switch to ${mode.label} mode`}
-                    onClick={() => setModeCategory(mode.key)}
+                    onClick={() => handleModePillClick(mode.key)}
                     className={`relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
                       isActive ? mode.activeClasses : mode.inactiveClasses
                     }`}
@@ -488,7 +536,7 @@ export const ModePresetBar: React.FC = () => {
                                       setShowPresetDropdown(false)
                                     }}
                                     className={`flex-1 text-left p-2 rounded-md text-sm transition-colors ${
-                                      isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow')
+                                      isPresetActive(preset.id, selectedModeCategory as 'workflow' | 'multi-agent')
                                         ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
                                         : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
                                     }`}
@@ -504,7 +552,7 @@ export const ModePresetBar: React.FC = () => {
                                   {/* Edit/Duplicate/Delete buttons - only show for custom presets */}
                                   {customPresets.some(cp => cp.id === preset.id) && (
                                     <div className="flex gap-1">
-                                      {isPresetActive(preset.id, selectedModeCategory as 'chat' | 'workflow') && (
+                                      {isPresetActive(preset.id, selectedModeCategory as 'workflow' | 'multi-agent') && (
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation()
@@ -569,14 +617,41 @@ export const ModePresetBar: React.FC = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => setShowPlansManager(true)}
-                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                        onClick={openTierModal}
+                        className={`relative p-1 rounded-md transition-colors ${
+                          tierLines.length > 0
+                            ? 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600'
+                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
+                        }`}
                       >
-                        <GitBranch className="w-4 h-4" />
+                        <SlidersHorizontal className="w-4 h-4" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">Manage Plans</TooltipContent>
+                    <TooltipContent side="bottom">
+                      {tierLines.length > 0 ? (
+                        <div className="space-y-1 text-xs">
+                          {tierLines.map((line) => (
+                            <p key={line}>{line}</p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p>Configure delegation tiers (H/M/L)</p>
+                      )}
+                    </TooltipContent>
                   </Tooltip>
+                  {hasPlansFolder && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => setShowPlansManager(true)}
+                          className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                        >
+                          <GitBranch className="w-4 h-4" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom">Manage Plans</TooltipContent>
+                    </Tooltip>
+                  )}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -593,25 +668,6 @@ export const ModePresetBar: React.FC = () => {
 
               {selectedModeCategory === 'workflow' && (
                 <>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={() => {
-                          const next = !showWorkflowsOverview
-                          setShowWorkflowsOverview(next)
-                          if (next) setWorkspaceMinimized(true)
-                        }}
-                        className={`p-1 rounded-md transition-colors ${
-                          showWorkflowsOverview
-                            ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20'
-                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
-                        }`}
-                      >
-                        <LayoutList className="w-4 h-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">All workflows overview</TooltipContent>
-                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -640,20 +696,6 @@ export const ModePresetBar: React.FC = () => {
                     <TooltipContent side="bottom">Scheduled workflow runs</TooltipContent>
                   </Tooltip>
                 </>
-              )}
-
-              {selectedModeCategory === 'chat' && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => setShowCostsPopup(true)}
-                      className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                    >
-                      <DollarSign className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">Cost analysis</TooltipContent>
-                </Tooltip>
               )}
 
             </div>
@@ -700,7 +742,7 @@ export const ModePresetBar: React.FC = () => {
                   {[
                     ['Multi-Agent Mode', 'Ctrl+1'],
                     ['Workflow Mode', 'Ctrl+2'],
-                    ['Chat Mode', 'Ctrl+3'],
+                    ['Organization', 'Ctrl+3'],
                   ].map(([label, key]) => (
                     <div key={key} className="flex items-center justify-between py-1">
                       <span className="text-sm text-gray-600 dark:text-gray-300">{label}</span>
@@ -787,6 +829,11 @@ export const ModePresetBar: React.FC = () => {
         onClose={() => setShowDelegationLogs(false)}
       />
 
+      <DelegationTierConfigModal
+        isOpen={showTierModal}
+        onClose={closeTierModal}
+      />
+
       {/* Scheduled Workflow Runs Panel */}
       {showRunsPanel && (
         <WorkflowScheduleRunsPanel onClose={() => setShowRunsPanel(false)} />
@@ -797,7 +844,7 @@ export const ModePresetBar: React.FC = () => {
         <SchedulePresetPopup
           presetQueryId={activePresetForSchedule?.id ?? null}
           presetLabel={activePresetForSchedule?.label ?? ''}
-          entityType={selectedModeCategory === 'workflow' ? 'workflow' : 'chat'}
+          entityType={selectedModeCategory === 'workflow' ? 'workflow' : 'multi-agent'}
           workspacePath={activePresetForSchedule?.selectedFolder?.filepath}
           onClose={() => setShowSchedulePopup(false)}
         />

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"io"
 	"log"
 	"net"
@@ -17,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,7 +60,6 @@ import (
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 )
 
-
 // ServerCmd represents the server command
 var ServerCmd = &cobra.Command{
 	Use:   "server",
@@ -97,16 +96,16 @@ type ServerConfig struct {
 
 // ActiveSessionInfo represents an active session for page refresh recovery
 type ActiveSessionInfo struct {
-	SessionID      string    `json:"session_id"`
-	AgentMode      string    `json:"agent_mode"`
-	Status         string    `json:"status"` // "running", "paused", "completed"
-	LastActivity   time.Time `json:"last_activity"`
-	CreatedAt      time.Time `json:"created_at"`
-	Query          string    `json:"query,omitempty"`
-	LLMGuidance    string    `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
-	MemoryFolder   string    `json:"memory_folder,omitempty"` // Override memory folder (default: Plans/memories)
-	UserID         string    `json:"-"`                       // User ID for session isolation (not exposed in JSON)
-	IsSyntheticTurn bool     `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
+	SessionID       string    `json:"session_id"`
+	AgentMode       string    `json:"agent_mode"`
+	Status          string    `json:"status"` // "running", "paused", "completed"
+	LastActivity    time.Time `json:"last_activity"`
+	CreatedAt       time.Time `json:"created_at"`
+	Query           string    `json:"query,omitempty"`
+	LLMGuidance     string    `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
+	MemoryFolder    string    `json:"memory_folder,omitempty"` // Override memory folder (default: Plans/memories)
+	UserID          string    `json:"-"`                       // User ID for session isolation (not exposed in JSON)
+	IsSyntheticTurn bool      `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
 }
 
 // StreamingAPI represents the streaming API server
@@ -282,12 +281,14 @@ type QueryRequest struct {
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"` // Enable/disable workspace file access tools (nil = inherit default, true/false = explicit override)
 	// Browser automation access configuration
 	EnableBrowserAccess *bool `json:"enable_browser_access,omitempty"` // Enable/disable browser automation tool (nil = inherit default, true/false = explicit override)
+	// Explicit browser mode from frontend: none|headless|cdp|playwright|stealth
+	BrowserMode string `json:"browser_mode,omitempty"`
 	// Google Workspace access configuration
 	EnableGWSAccess *bool `json:"enable_gws_access,omitempty"` // Enable/disable Google Workspace CLI access (nil = inherit default, true/false = explicit override)
 	// CDP port for connecting to an existing Chrome browser (local mode only)
 	CdpPort *int `json:"cdp_port,omitempty"` // When set and > 0, connect to Chrome via CDP on this port instead of launching headless
 	// Image generation configuration
-	EnableImageGeneration *bool          `json:"enable_image_generation,omitempty"` // Enable image generation virtual tool
+	EnableImageGeneration *bool           `json:"enable_image_generation,omitempty"` // Enable image generation virtual tool
 	ImageGenConfig        *ImageGenConfig `json:"image_gen_config,omitempty"`        // Image generation provider configuration
 	// Selected skills to include in chat context
 	SelectedSkills []string `json:"selected_skills,omitempty"` // Array of skill folder names
@@ -336,7 +337,40 @@ func getCdpPort(req QueryRequest) int {
 	if req.CdpPort != nil {
 		return *req.CdpPort
 	}
+	// If frontend explicitly selected CDP mode but omitted a port, default to 9222.
+	// This avoids silently falling back to headless prompt/tool wiring.
+	if strings.EqualFold(strings.TrimSpace(req.BrowserMode), "cdp") {
+		return 9222
+	}
 	return 0
+}
+
+// getBrowserMode resolves effective browser mode with backward-compatible fallback.
+func getBrowserMode(req QueryRequest) string {
+	mode := strings.ToLower(strings.TrimSpace(req.BrowserMode))
+	switch mode {
+	case "none", "headless", "cdp", "playwright", "stealth":
+		return mode
+	}
+
+	enableBrowser := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+	if enableBrowser {
+		if getCdpPort(req) > 0 {
+			return "cdp"
+		}
+		return "headless"
+	}
+	for _, s := range req.EnabledServers {
+		if s == "camofox" {
+			return "stealth"
+		}
+	}
+	for _, s := range req.EnabledServers {
+		if s == "playwright" {
+			return "playwright"
+		}
+	}
+	return "none"
 }
 
 // CrossProviderFallback represents cross-provider fallback configuration
@@ -1915,7 +1949,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 	// Track active session for page refresh recovery (no observer needed)
 	api.trackActiveSession(sessionID, req.AgentMode, req.Query, currentUserID)
-	log.Printf("[QUERY] delegation_mode=%q plan_phase=%q session=%s llm_guidance_len=%d query=%q", req.DelegationMode, req.PlanPhase, sessionID, len(req.LLMGuidance), req.Query)
+	enableBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+	cdpPort := 0
+	if req.CdpPort != nil {
+		cdpPort = *req.CdpPort
+	}
+	log.Printf(
+		"[QUERY] delegation_mode=%q plan_phase=%q session=%s enable_browser_access=%v browser_mode=%q cdp_port=%d enabled_servers=%v llm_guidance_len=%d query=%q",
+		req.DelegationMode,
+		req.PlanPhase,
+		sessionID,
+		enableBrowserAccess,
+		getBrowserMode(req),
+		cdpPort,
+		req.EnabledServers,
+		len(req.LLMGuidance),
+		req.Query,
+	)
 	log.Printf("[LATENCY_DEBUG] T+%dms | Session setup complete | sessionID=%s", time.Since(startTime).Milliseconds(), sessionID)
 
 	// Create fresh agent for this request
@@ -2405,7 +2455,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Wire up live tool call query for workshop query_step_tools
 		workflowOrchestrator.SetToolCallQueryFunc(formatToolCallSummaries(api))
-
 
 		// Create a cancellable context for workflow execution using background context
 		// This prevents the workflow from being canceled when the HTTP request ends
@@ -3136,10 +3185,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
 					finalProvider = tierConfig.Main.Provider
 					finalModelID = tierConfig.Main.ModelID
+					fallbacks = convertTierFallbacksToAgentFallbacks(tierConfig.Main.Fallbacks, tierConfig.Main.Provider)
 					log.Printf("[DELEGATION] Orchestrator using main tier model: %s/%s", finalProvider, finalModelID)
 				} else if tierConfig.High != nil && tierConfig.High.Provider != "" && tierConfig.High.ModelID != "" {
 					finalProvider = tierConfig.High.Provider
 					finalModelID = tierConfig.High.ModelID
+					fallbacks = convertTierFallbacksToAgentFallbacks(tierConfig.High.Fallbacks, tierConfig.High.Provider)
 					log.Printf("[DELEGATION] Orchestrator using high tier model (main not set): %s/%s", finalProvider, finalModelID)
 				}
 			}
@@ -3193,7 +3244,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// In plan mode, only async tools are registered
 					preDiscovered = append(preDiscovered, "delegate", "query_agent", "terminate_agent", "list_agents")
 				} else if req.DelegationMode == "spawn" {
-					preDiscovered = append(preDiscovered, "delegate")
+					// Spawn mode remains lightweight, but planner tool stays available when needed.
+					preDiscovered = append(preDiscovered, "delegate", "create_delegation_plan")
 				}
 				if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
 					preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
@@ -3790,8 +3842,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 			} else {
-			log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
-		}
+				log.Printf("[WORKSPACE TOOLS] Skipping workspace tools registration (enable_workspace_access: false)")
+			}
 
 			// Register image generation tools if enabled
 			// NOTE: This is OUTSIDE the enableWorkspaceAccess block intentionally —
@@ -4197,16 +4249,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Add inline quick-start instructions for browser access
-			if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
+			browserMode := getBrowserMode(req)
+			switch browserMode {
+			case "cdp":
 				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
-				// Add mode-specific instructions (CDP vs headless)
-				if getCdpPort(req) > 0 {
-					underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
-					log.Printf("[BROWSER] Added CDP mode instructions to system prompt (port=%d)", getCdpPort(req))
-				} else {
-					underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
-					log.Printf("[BROWSER] Added headless mode instructions to system prompt")
-				}
+				underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
+				log.Printf("[BROWSER] Added CDP mode instructions to system prompt (port=%d)", getCdpPort(req))
+			case "headless":
+				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
+				underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
+				log.Printf("[BROWSER] Added headless mode instructions to system prompt")
+			case "playwright":
+				underlyingAgent.AppendSystemPrompt(browserinstructions.GetPlaywrightModeInstructions())
+				log.Printf("[BROWSER] Added Playwright mode instructions to system prompt")
+			case "stealth":
+				// Camofox-specific instruction block is appended below in browser upload section.
+				log.Printf("[BROWSER] Effective browser mode=stealth (camofox)")
+			default:
+				// no browser mode instructions
 			}
 
 			// Add inline quick-start instructions for GWS access
@@ -4686,7 +4746,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									var presetLLMConfig database.PresetLLMConfig
 									if jsonErr := json.Unmarshal(refreshPreset.LLMConfig, &presetLLMConfig); jsonErr == nil {
 										// Refresh LLM configs
-														learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+										learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 										phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 										workshopSession.UpdatePresetLLMConfigs(learnLLM, phaseLLM, nil)
 										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: learn=%v phase=%v",
@@ -5101,7 +5161,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// written once at the end of each query (not per-turn) to avoid bloating the DB.
 		if api.chatDB != nil && len(finalHistory) > 0 {
 			turnEvent := unifiedevents.NewConversationTurnEvent(
-				0, // turn number not critical for restoration
+				0,  // turn number not critical for restoration
 				"", // question not needed
 				len(finalHistory),
 				false, 0, nil,
@@ -5159,20 +5219,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseKey := workflowPhaseID // e.g. "workflow-builder", "planning"
 					modelUsage := &orchestrator.ModelTokenUsage{
 						Provider:         finalProvider,
-						InputTokens:     promptTokens,
-						OutputTokens:    completionTokens,
-						InputTokensM:    fmtM(promptTokens),
-						OutputTokensM:   fmtM(completionTokens),
-						CacheTokens:     cacheTokens,
-						CacheTokensM:    fmtM(cacheTokens),
+						InputTokens:      promptTokens,
+						OutputTokens:     completionTokens,
+						InputTokensM:     fmtM(promptTokens),
+						OutputTokensM:    fmtM(completionTokens),
+						CacheTokens:      cacheTokens,
+						CacheTokensM:     fmtM(cacheTokens),
 						ReasoningTokens:  reasoningTokens,
 						ReasoningTokensM: fmtM(reasoningTokens),
-						LLMCallCount:    llmCallCount,
-						InputCost:       inputCost,
-						OutputCost:      outputCost,
-						ReasoningCost:   reasoningCost,
-						CacheCost:       cacheCost,
-						TotalCost:       totalCost,
+						LLMCallCount:     llmCallCount,
+						InputCost:        inputCost,
+						OutputCost:       outputCost,
+						ReasoningCost:    reasoningCost,
+						CacheCost:        cacheCost,
+						TotalCost:        totalCost,
 					}
 
 					tokenFilePath := filepath.Join(wsRoot, workflowPhaseFolder, "token_usage.json")
@@ -7032,6 +7092,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		reasoningLevel = loadedTemplate.Frontmatter.DefaultReasoningLevel
 		log.Printf("[DELEGATION] Using template default reasoning_level: %s", reasoningLevel)
 	}
+	var tierFallbacks []agent.FallbackModel
 	if reasoningLevel != "" {
 		tierConfig := resolveDelegationTierConfig(parentReq.DelegationTierConfig)
 		if tierConfig != nil {
@@ -7054,6 +7115,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			if tierModel != nil && tierModel.Provider != "" && tierModel.ModelID != "" {
 				provider = llm.Provider(tierModel.Provider)
 				modelID = tierModel.ModelID
+				tierFallbacks = convertTierFallbacksToAgentFallbacks(tierModel.Fallbacks, tierModel.Provider)
 				log.Printf("[DELEGATION] Using tier %s model: %s/%s", reasoningLevel, tierModel.Provider, tierModel.ModelID)
 			}
 		}
@@ -7246,8 +7308,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			return preDiscovered
 		}(),
 		APIKeys:   apiKeys,
+		Fallbacks: tierFallbacks,
 		SessionID: subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
-		UserID:    subAgentUserID, // Per-user OAuth token isolation
+		UserID:    subAgentUserID,    // Per-user OAuth token isolation
 		// Context offloading: inherit from environment
 		LargeOutputThreshold: func() int {
 			if envVal := os.Getenv("LARGE_OUTPUT_THRESHOLD"); envVal != "" {
@@ -7465,12 +7528,15 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				log.Printf("[CAMOFOX] Added camofox-specific instructions to sub-agent")
 			}
 			// Add mode-specific instructions for sub-agents too
-			if hasBrowserAccess {
-				if getCdpPort(parentReq) > 0 {
-					underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
-				} else {
-					underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
-				}
+			switch getBrowserMode(parentReq) {
+			case "cdp":
+				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
+				underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
+			case "headless":
+				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
+				underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
+			case "playwright":
+				underlyingAgent.AppendSystemPrompt(browserinstructions.GetPlaywrightModeInstructions())
 			}
 			log.Printf("[BROWSER_UPLOAD] Added browser upload instructions to sub-agent (browser=%v, playwright=%v, camofox=%v)", hasBrowserAccess, hasPlaywright, hasCamofox)
 
@@ -7672,7 +7738,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 							log.Printf("[DELEGATION] Warning: Failed to register browser tool %s for sub-agent: %v", toolName, err)
 						}
 					}
-					}
+				}
 			}
 
 			// Register image generation tool for sub-agent if enabled in parent request
@@ -7693,36 +7759,36 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 					imgCfg.APIKey = parentReq.ImageGenConfig.APIKey
 				}
 				for _, toolDef := range []struct {
-				tool     func() llmtypes.Tool
-				executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-				category func() string
-			}{
-				{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-				{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-			} {
-				t := toolDef.tool()
-				exec := toolDef.executor(imgCfg)
-				var params map[string]interface{}
-				if t.Function.Parameters != nil {
-					paramsBytes, err := json.Marshal(t.Function.Parameters)
-					if err == nil {
-						json.Unmarshal(paramsBytes, &params)
+					tool     func() llmtypes.Tool
+					executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
+					category func() string
+				}{
+					{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
+					{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
+				} {
+					t := toolDef.tool()
+					exec := toolDef.executor(imgCfg)
+					var params map[string]interface{}
+					if t.Function.Parameters != nil {
+						paramsBytes, err := json.Marshal(t.Function.Parameters)
+						if err == nil {
+							json.Unmarshal(paramsBytes, &params)
+						}
+					}
+					if params != nil {
+						if err := underlyingAgent.RegisterCustomTool(
+							t.Function.Name,
+							t.Function.Description,
+							params,
+							exec,
+							toolDef.category(),
+						); err != nil {
+							log.Printf("[IMAGE GEN] Warning: Failed to register %s for sub-agent: %v", t.Function.Name, err)
+						} else {
+							log.Printf("[IMAGE GEN] Registered %s for sub-agent (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
+						}
 					}
 				}
-				if params != nil {
-					if err := underlyingAgent.RegisterCustomTool(
-						t.Function.Name,
-						t.Function.Description,
-						params,
-						exec,
-						toolDef.category(),
-					); err != nil {
-						log.Printf("[IMAGE GEN] Warning: Failed to register %s for sub-agent: %v", t.Function.Name, err)
-					} else {
-						log.Printf("[IMAGE GEN] Registered %s for sub-agent (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-					}
-				}
-			}
 			}
 
 			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
@@ -8605,6 +8671,58 @@ func (api *StreamingAPI) emitDelegationEndEvent(sessionID, delegationID string, 
 	log.Printf("[DELEGATION] Emitted delegation_end event for %s at depth %d (success: %v)", delegationID, depth, errorMsg == "")
 }
 
+func sanitizeTierModel(model *virtualtools.TierModel) *virtualtools.TierModel {
+	if model == nil || model.Provider == "" || model.ModelID == "" {
+		return nil
+	}
+	sanitized := &virtualtools.TierModel{
+		Provider:  strings.TrimSpace(model.Provider),
+		ModelID:   strings.TrimSpace(model.ModelID),
+		Fallbacks: nil,
+	}
+	if len(model.Fallbacks) > 0 {
+		for _, fb := range model.Fallbacks {
+			modelID := strings.TrimSpace(fb.ModelID)
+			if modelID == "" {
+				continue
+			}
+			sanitized.Fallbacks = append(sanitized.Fallbacks, virtualtools.TierModelFallback{
+				Provider: strings.TrimSpace(fb.Provider),
+				ModelID:  modelID,
+			})
+		}
+		if len(sanitized.Fallbacks) == 0 {
+			sanitized.Fallbacks = nil
+		}
+	}
+	return sanitized
+}
+
+func convertTierFallbacksToAgentFallbacks(fallbacks []virtualtools.TierModelFallback, defaultProvider string) []agent.FallbackModel {
+	if len(fallbacks) == 0 {
+		return nil
+	}
+	out := make([]agent.FallbackModel, 0, len(fallbacks))
+	for _, fb := range fallbacks {
+		modelID := strings.TrimSpace(fb.ModelID)
+		if modelID == "" {
+			continue
+		}
+		provider := strings.TrimSpace(fb.Provider)
+		if provider == "" {
+			provider = defaultProvider
+		}
+		out = append(out, agent.FallbackModel{
+			Provider: provider,
+			ModelID:  modelID,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // resolveDelegationTierConfig builds a DelegationTierConfig by merging:
 // 1. Frontend config (from QueryRequest) - highest priority
 // 2. Environment variables (DELEGATION_TIER_*) - fallback
@@ -8629,20 +8747,20 @@ func resolveDelegationTierConfig(frontendConfig *virtualtools.DelegationTierConf
 
 	// Override with frontend config (higher priority)
 	if frontendConfig != nil {
-		if frontendConfig.Main != nil && frontendConfig.Main.Provider != "" && frontendConfig.Main.ModelID != "" {
-			result.Main = frontendConfig.Main
+		if main := sanitizeTierModel(frontendConfig.Main); main != nil {
+			result.Main = main
 			hasAny = true
 		}
-		if frontendConfig.High != nil && frontendConfig.High.Provider != "" && frontendConfig.High.ModelID != "" {
-			result.High = frontendConfig.High
+		if high := sanitizeTierModel(frontendConfig.High); high != nil {
+			result.High = high
 			hasAny = true
 		}
-		if frontendConfig.Medium != nil && frontendConfig.Medium.Provider != "" && frontendConfig.Medium.ModelID != "" {
-			result.Medium = frontendConfig.Medium
+		if medium := sanitizeTierModel(frontendConfig.Medium); medium != nil {
+			result.Medium = medium
 			hasAny = true
 		}
-		if frontendConfig.Low != nil && frontendConfig.Low.Provider != "" && frontendConfig.Low.ModelID != "" {
-			result.Low = frontendConfig.Low
+		if low := sanitizeTierModel(frontendConfig.Low); low != nil {
+			result.Low = low
 			hasAny = true
 		}
 		// Pass through custom tiers from frontend (no env var equivalent)

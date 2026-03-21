@@ -36,6 +36,10 @@ interface OrchestratorAgentStartEventDisplayProps {
 
 export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStartEventDisplayProps> = ({ event, isCollapsed, eventCount, onToggleCollapse }) => {
   const { isExpanded: isInputsExpanded, toggle } = useExpandable(true)
+  const modeFlags = event as OrchestratorAgentStartEvent & {
+    use_code_execution_mode?: boolean
+    use_tool_search_mode?: boolean
+  }
 
   const formatTimestamp = (timestamp?: string) => {
     if (!timestamp) return '';
@@ -196,8 +200,8 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Started: {event.agent_name}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  {event.use_code_execution_mode && ' | Code Exec'}
-                  {event.use_tool_search_mode && ' | Tool Search'}
+                  {modeFlags.use_code_execution_mode && ' | Code Exec'}
+                  {modeFlags.use_tool_search_mode && ' | Tool Search'}
                   {' '}| Model: {getModelDisplayName(event.model_id, event.provider)} | Servers: {event.servers_count} | Max Turns: {event.max_turns}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                 </span>
@@ -312,4 +316,3 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
     </div>
   );
 };
-

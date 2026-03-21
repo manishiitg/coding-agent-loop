@@ -18,7 +18,6 @@ const ICON_OPTIONS = [
 ]
 
 const MODE_OPTIONS = [
-  { value: 'chat', label: 'Chat' },
   { value: 'multi-agent', label: 'Multi-Agent' },
   { value: 'workflow', label: 'Workflow' },
 ]

@@ -26,8 +26,8 @@ export default function PresetQueriesSection({
   // Store subscriptions
   const { selectedModeCategory } = useModeStore()
 
-  // Don't render anything for chat mode (presets are disabled for chat)
-  if (selectedModeCategory === 'chat') {
+  // Don't render anything for multi-agent mode (this section is workflow-only)
+  if (selectedModeCategory === 'multi-agent') {
     return null
   }
 

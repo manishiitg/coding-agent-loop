@@ -83,6 +83,8 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 		// Check if it's a merge conflict
 		outputStr := string(pullOutput)
 		if strings.Contains(outputStr, "CONFLICT") || strings.Contains(outputStr, "conflict") || strings.Contains(outputStr, "Automatic merge failed") {
+			// Abort the merge to leave the repo in a clean state
+			exec.Command("git", "-C", docsDir, "merge", "--abort").Run()
 			return fmt.Errorf("merge conflict: local and remote branches have conflicting changes")
 		}
 
@@ -142,6 +144,8 @@ func PullFromGitHub(docsDir, githubBranch string) error {
 
 						// Check for conflicts
 						if strings.Contains(string(mergeOutput), "CONFLICT") || strings.Contains(string(mergeOutput), "conflict") {
+							// Abort the merge to leave the repo in a clean state
+							exec.Command("git", "-C", docsDir, "merge", "--abort").Run()
 							rawError := strings.TrimSpace(string(mergeOutput))
 							return fmt.Errorf("merge conflict: local and remote branches have conflicting changes\nRaw error: %s", rawError)
 						}

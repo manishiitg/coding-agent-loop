@@ -108,6 +108,8 @@ export interface AgentQueryRequest {
   enable_workspace_access?: boolean // Enable/disable workspace file access tools (default: true)
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
+  // Explicit browser mode for prompt/runtime selection
+  browser_mode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'
   // Google Workspace access configuration
   enable_gws_access?: boolean // Enable/disable Google Workspace CLI access
   // CDP port for connecting to an existing Chrome browser (local mode only)
@@ -156,6 +158,7 @@ export interface DelegationTierConfig {
 export interface TierModel {
   provider: string
   model_id: string
+  fallbacks?: AgentLLMFallback[]
 }
 
 export interface CustomTierModel {

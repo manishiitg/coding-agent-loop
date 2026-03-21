@@ -148,7 +148,8 @@ function App() {
     sidebarMinimized,
     workspaceMinimized,
     setWorkspaceMinimized,
-    showWorkflowsOverview
+    showWorkflowsOverview,
+    setShowWorkflowsOverview
   } = useAppStore()
   
   const {
@@ -701,14 +702,14 @@ function App() {
     useWorkflowStore.getState().loadPhases()
   }, [])
   
-  // Create default tab on page load (only for chat mode, not workflow mode)
+  // Create default tab on page load (only for multi-agent mode, not workflow mode)
   // In workflow mode, tabs are created when user starts a phase/execution
   useEffect(() => {
     if (!hasCompletedInitialSetup) return
     
-    // Only create default tab for chat and multi-agent modes
+    // Only create default tab for multi-agent mode
     // (workflow tabs are created by WorkflowLayout)
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
+    if (selectedModeCategory !== 'multi-agent') {
       return
     }
     
@@ -742,8 +743,8 @@ function App() {
       )
       if (currentModeTabs.length === 0) {
         try {
-          const tabName = selectedModeCategory === 'multi-agent' ? 'Agent Chat 1' : 'Chat 1'
-          await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'chat' | 'workflow' | 'multi-agent' })
+          const tabName = 'Agent Chat 1'
+          await chatStore.createChatTab(tabName, { mode: selectedModeCategory as 'workflow' | 'multi-agent' })
         } catch (error) {
           console.error('Failed to create default tab:', error)
           // Reset flag on error so it can retry
@@ -799,9 +800,9 @@ function App() {
       return
     }
 
-    // For chat and multi-agent: select the first tab of the current mode
+    // For multi-agent: select the first tab of the current mode
     // if activeTabId is null, invalid, or belongs to a different mode
-    if (selectedModeCategory !== 'chat' && selectedModeCategory !== 'multi-agent') {
+    if (selectedModeCategory !== 'multi-agent') {
       return
     }
 
@@ -837,8 +838,8 @@ function App() {
           if (!result.success) {
             console.error('[APP] Failed to restore preset:', result.error)
           }
-        } else if (selectedModeCategory === 'chat' || selectedModeCategory === 'multi-agent') {
-          // For chat/multi-agent mode, if there's no active preset, clear any stale preset server state
+        } else if (selectedModeCategory === 'multi-agent') {
+          // For multi-agent mode, if there's no active preset, clear any stale preset server state
           // This prevents old preset servers from persisting when no preset is selected
           hasRestoredPresetRef.current = true
           const { setCurrentPresetServers } = useGlobalPresetStore.getState()
@@ -968,18 +969,21 @@ function App() {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('multi-agent')
+        setShowWorkflowsOverview(false)
       }
       // Ctrl/Cmd + 2 for Workflow mode
       if ((event.ctrlKey || event.metaKey) && event.key === '2') {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
         setModeCategory('workflow')
+        setShowWorkflowsOverview(false)
       }
-      // Ctrl/Cmd + 3 for Chat mode
+      // Ctrl/Cmd + 3 for Organization (employees/workflows overview)
       if ((event.metaKey || event.ctrlKey) && event.key === '3') {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
-        setModeCategory('chat')
+        setModeCategory('workflow')
+        setShowWorkflowsOverview(true)
       }
 
       // Ctrl/Cmd + 5 for sidebar minimize
@@ -1009,7 +1013,11 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, startNewChat])
+  }, [toggleSidebarMinimize, toggleWorkspaceMinimize, setAgentMode, setShowWorkflowsOverview, startNewChat])
+
+  useEffect(() => {
+    setWorkspaceMinimized(showWorkflowsOverview)
+  }, [showWorkflowsOverview, setWorkspaceMinimized])
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -1053,23 +1061,22 @@ function App() {
             />
             
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                {/* Both layouts stay mounted to preserve running state across mode switches.
-                    Only the active mode is visible; the other is hidden via CSS. */}
-                <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
-                  {showWorkflowsOverview ? (
-                    <WorkflowsOverviewPage />
-                  ) : (
+                <div className={showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                  <WorkflowsOverviewPage />
+                </div>
+                <div className={!showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                  <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
                     <WorkflowLayout
                       className="h-full"
                       onNewChat={startNewChat}
                     />
-                  )}
-                </div>
-                <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
-                  <ChatAreaWithObserverId
-                    ref={chatAreaRef}
-                    onNewChat={startNewChat}
-                  />
+                  </div>
+                  <div className={selectedModeCategory !== 'workflow' ? 'h-full' : 'hidden'}>
+                    <ChatAreaWithObserverId
+                      ref={chatAreaRef}
+                      onNewChat={startNewChat}
+                    />
+                  </div>
                 </div>
               </div>
 

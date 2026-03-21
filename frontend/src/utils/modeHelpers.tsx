@@ -1,4 +1,4 @@
-import { MessageCircle, Workflow, Settings } from 'lucide-react'
+import { Users, Workflow, Settings } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 /**
@@ -11,8 +11,8 @@ export const getModeIcon = (category: ModeCategory, className?: string) => {
   const defaultClassName = className || "w-6 h-6 text-blue-600"
   
   switch (category) {
-    case 'chat':
-      return <MessageCircle className={defaultClassName} />
+    case 'multi-agent':
+      return <Users className={defaultClassName} />
     case 'workflow':
       return <Workflow className={defaultClassName} />
     default:
@@ -27,8 +27,8 @@ export const getModeIcon = (category: ModeCategory, className?: string) => {
  */
 export const getModeName = (category: ModeCategory) => {
   switch (category) {
-    case 'chat':
-      return 'Chat Mode'
+    case 'multi-agent':
+      return 'Multi Agent Chat'
     case 'workflow':
       return 'Workflow Mode'
     default:
@@ -43,8 +43,8 @@ export const getModeName = (category: ModeCategory) => {
  */
 export const getModeDescription = (category: ModeCategory) => {
   switch (category) {
-    case 'chat':
-      return 'Quick conversations with AI'
+    case 'multi-agent':
+      return 'Autonomous multi-agent execution with optional planning'
     case 'workflow':
       return 'Todo-based execution with human verification'
     default:

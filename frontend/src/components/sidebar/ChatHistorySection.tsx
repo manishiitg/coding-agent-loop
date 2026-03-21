@@ -75,14 +75,14 @@ export default function ChatHistorySection({
     setLoading(true)
     setError(null)
     try {
-      // Use 'chat' as default mode for API call
-      const modeCategory = selectedModeCategory || 'chat'
+      // Use multi-agent as default for non-workflow mode
+      const modeCategory = selectedModeCategory || 'multi-agent'
       const allSessions = await getChatHistory(modeCategory, forceRefresh)
 
       // Filter by current mode: chat shows only chat, multi-agent shows only multi-agent
       const filteredSessions = allSessions.filter(s => {
         if ((s.agent_mode || '').toLowerCase() === 'workflow') return false
-        const isMultiAgent = s.config?.delegation_mode === 'plan'
+        const isMultiAgent = s.config?.delegation_mode === 'plan' || s.config?.delegation_mode === 'spawn'
         if (selectedModeCategory === 'multi-agent') return isMultiAgent
         return !isMultiAgent
       })
@@ -375,7 +375,7 @@ export default function ChatHistorySection({
                   </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {formatDate(session.last_activity || session.created_at)}
-                  {session.config?.delegation_mode === 'plan' ? (
+                  {session.config?.delegation_mode === 'plan' || session.config?.delegation_mode === 'spawn' ? (
                     <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
                       Multi Agent
                     </span>
@@ -476,11 +476,11 @@ export default function ChatHistorySection({
                   setLoadingMore(true)
                   setError(null)
                   try {
-                    const modeCategory = selectedModeCategory || 'chat'
+                    const modeCategory = selectedModeCategory || 'multi-agent'
                     const allSessions = await loadMoreChatHistory(modeCategory)
                     const filteredSessions = allSessions.filter(session => {
                       if ((session.agent_mode || '').toLowerCase() === 'workflow') return false
-                      const isMultiAgent = session.config?.delegation_mode === 'plan'
+                      const isMultiAgent = session.config?.delegation_mode === 'plan' || session.config?.delegation_mode === 'spawn'
                       if (selectedModeCategory === 'multi-agent') return isMultiAgent
                       return !isMultiAgent
                     })

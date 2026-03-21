@@ -119,7 +119,6 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       }
     } finally {
       setSyncing(false)
-      setIsPolling(true)
     }
   }
 
@@ -151,7 +150,6 @@ export default function GitSyncStatus({ onSync, isVisible = true }: GitSyncStatu
       }
     } finally {
       setSyncing(false)
-      setIsPolling(true)
     }
   }
 

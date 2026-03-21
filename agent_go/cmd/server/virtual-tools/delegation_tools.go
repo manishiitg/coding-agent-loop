@@ -141,16 +141,23 @@ func NewPlanTracker() *PlanTracker {
 
 // DelegationTierConfig holds provider/model for each reasoning tier
 type DelegationTierConfig struct {
-	Main   *TierModel                 `json:"main,omitempty"` // orchestrator/main agent model
-	High   *TierModel                 `json:"high,omitempty"`
-	Medium *TierModel                 `json:"medium,omitempty"`
-	Low    *TierModel                 `json:"low,omitempty"`
+	Main   *TierModel                  `json:"main,omitempty"` // orchestrator/main agent model
+	High   *TierModel                  `json:"high,omitempty"`
+	Medium *TierModel                  `json:"medium,omitempty"`
+	Low    *TierModel                  `json:"low,omitempty"`
 	Custom map[string]*CustomTierModel `json:"custom,omitempty"`
 }
 
 // TierModel represents a specific provider+model for a tier
 type TierModel struct {
-	Provider string `json:"provider"`
+	Provider  string              `json:"provider"`
+	ModelID   string              `json:"model_id"`
+	Fallbacks []TierModelFallback `json:"fallbacks,omitempty"`
+}
+
+// TierModelFallback represents an ordered fallback model for a delegation tier
+type TierModelFallback struct {
+	Provider string `json:"provider,omitempty"`
 	ModelID  string `json:"model_id"`
 }
 
@@ -180,11 +187,11 @@ type SkillSummary struct {
 
 // SubAgentTemplateSummary holds minimal info about a sub-agent template for the planner prompt
 type SubAgentTemplateSummary struct {
-	Name                  string   `json:"name"`
-	Description           string   `json:"description"`
-	FolderName            string   `json:"folder_name"`
-	DefaultReasoningLevel string   `json:"default_reasoning_level,omitempty"`
-	DefaultToolMode       string   `json:"default_tool_mode,omitempty"`
+	Name                  string `json:"name"`
+	Description           string `json:"description"`
+	FolderName            string `json:"folder_name"`
+	DefaultReasoningLevel string `json:"default_reasoning_level,omitempty"`
+	DefaultToolMode       string `json:"default_tool_mode,omitempty"`
 }
 
 // ExecuteDelegatedTaskFunc is the function signature for executing delegated tasks
@@ -206,7 +213,7 @@ type BGAgentHistoryEntry struct {
 type BGAgentToolCall struct {
 	ToolName string `json:"tool_name"`
 	Duration string `json:"duration,omitempty"` // e.g. "3s", "" if still running
-	Status   string `json:"status"`            // "running", "completed", "error"
+	Status   string `json:"status"`             // "running", "completed", "error"
 }
 
 type BGAgentInfo struct {
@@ -328,11 +335,11 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 					},
 				},
 				"required": func() []string {
-				if requireReasoningLevel {
-					return []string{"name", "instruction", "reasoning_level"}
-				}
-				return []string{"name", "instruction"}
-			}(),
+					if requireReasoningLevel {
+						return []string{"name", "instruction", "reasoning_level"}
+					}
+					return []string{"name", "instruction"}
+				}(),
 			}),
 		},
 	}
@@ -1606,4 +1613,3 @@ $MCP_API_URL and $MCP_API_TOKEN are pre-set environment variables — use them a
 **Important:** Whenever the instructions mention calling a tool like ` + "`delegate(instruction: \"...\")`" + `, ` + "`save_memory(content: \"...\")`" + `, or ` + "`human_questions(...)`" + `, translate that to the curl HTTP API pattern above. Do NOT attempt to call these as direct function calls — they will not be found.
 `
 }
-

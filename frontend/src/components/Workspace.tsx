@@ -19,6 +19,7 @@ import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useChatStore } from '../stores/useChatStore'
+import { useAppStore } from '../stores/useAppStore'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import {
   collectFolderPaths,
@@ -41,12 +42,13 @@ export default function Workspace({
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
   const { selectedModeCategory } = useModeStore()
+  const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const { getActiveTab, setTabConfig } = useChatStore()
   const { getActivePreset } = usePresetApplication()
   
-  // Get file context based on mode: chat mode uses tab config, workflow mode uses preset
+  // Get file context based on mode: multi-agent mode uses tab config, workflow mode uses preset
   const chatFileContext = useMemo(() => {
-    if (selectedModeCategory === 'chat') {
+    if (selectedModeCategory === 'multi-agent') {
       const activeTab = getActiveTab()
       return activeTab?.config?.fileContext || []
     } else if (selectedModeCategory === 'workflow') {
@@ -64,7 +66,7 @@ export default function Workspace({
   
   // Add file to context handler - mode-specific
   const addFileToContext = useCallback((file: { name: string; path: string; type: 'file' | 'folder' }) => {
-    if (selectedModeCategory === 'chat') {
+    if (selectedModeCategory === 'multi-agent') {
       const activeTab = getActiveTab()
       if (activeTab) {
         const currentContext = activeTab.config?.fileContext || []
@@ -249,7 +251,7 @@ export default function Workspace({
   
   // Track which workflow preset we've already auto-expanded to prevent re-expansion
   const autoExpandedWorkflowRef = useRef<string | null>(null)
-  // Track whether we've auto-expanded Chats/ for chat mode
+  // Track whether we've auto-expanded Chats/ for multi-agent mode
   const autoExpandedChatRef = useRef(false)
   // Track whether we've auto-expanded Plans/ for multi-agent mode
   const autoExpandedMultiAgentRef = useRef(false)
@@ -282,14 +284,21 @@ export default function Workspace({
     return null
   }, [activeWorkflowPreset])
 
+  const effectiveWorkflowFolderPath = useMemo(() => {
+    if (selectedModeCategory !== 'workflow') return null
+    if (showWorkflowsOverview) return null
+    return workflowFolderPath
+  }, [selectedModeCategory, showWorkflowsOverview, workflowFolderPath])
+
   // Determine which folder to pass to the API based on mode
   const activeFolder = useMemo(() => {
-    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
-      return workflowFolderPath
+    if (showWorkflowsOverview) return 'Workflow'
+    if (selectedModeCategory === 'workflow') {
+      if (effectiveWorkflowFolderPath) return effectiveWorkflowFolderPath
     }
-    // For chat mode and default, fetch root (Chats + skills are at root level)
+    // For multi-agent mode and default, fetch root (Chats + skills are at root level)
     return undefined
-  }, [selectedModeCategory, workflowFolderPath])
+  }, [showWorkflowsOverview, selectedModeCategory, effectiveWorkflowFolderPath])
 
   // Raw workspace axios instance
   const wsRawApi = workspaceApi
@@ -312,27 +321,21 @@ export default function Workspace({
     let result = filesToProcess
     
     // Only filter if we're in workflow mode and have a workflow folder path
-    // When in chat mode, show all files regardless of preset
-    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+    // When in multi-agent mode, show all files regardless of preset
+    if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       // Files are already scoped to the workflow folder by the API (folder param)
       // Just adjust filepaths to show workflow folder as root
-      result = adjustFilePathsRecursive(result, workflowFolderPath)
+      result = adjustFilePathsRecursive(result, effectiveWorkflowFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
       // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
       result = filesToProcess.filter(f => {
         const topFolder = f.filepath.split('/')[0]
         return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
-    } else if (selectedModeCategory === 'chat') {
-      // Chat mode: show Chats/, Downloads/, skills/ and subagents/ top-level folders
-      result = filesToProcess.filter(f => {
-        const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
-      })
     }
 
     return result
-  }, [selectedModeCategory, workflowFolderPath])
+  }, [selectedModeCategory, effectiveWorkflowFolderPath])
 
   // Fetch capabilities on mount
   useEffect(() => {
@@ -347,7 +350,7 @@ export default function Workspace({
     
     // In workflow mode, completely skip restore effect to let auto-expand handle it
     // This prevents any interference with the auto-expansion logic
-    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+    if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       return
     }
     
@@ -374,7 +377,7 @@ export default function Workspace({
       })
       setExpandedFolders(restoredExpanded)
     }
-  }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders, selectedModeCategory, workflowFolderPath])
+  }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders, selectedModeCategory, effectiveWorkflowFolderPath])
   
   // Function to scroll to highlighted file
   const scrollToHighlightedFile = useCallback((filepath: string) => {
@@ -403,14 +406,14 @@ export default function Workspace({
     if (typeof file === 'string') {
       const filepath = file
       // If we're not in workflow mode or don't have a workflow folder path, return as-is
-      if (selectedModeCategory !== 'workflow' || !workflowFolderPath) {
+      if (selectedModeCategory !== 'workflow' || !effectiveWorkflowFolderPath) {
         return filepath
       }
       
       // Check if the filepath has been adjusted (doesn't start with workflow folder path)
       // Use the utility function to reconstruct if needed
-      if (!isPathWithinFolder(filepath, workflowFolderPath)) {
-        return getOriginalPath(filepath, workflowFolderPath)
+      if (!isPathWithinFolder(filepath, effectiveWorkflowFolderPath)) {
+        return getOriginalPath(filepath, effectiveWorkflowFolderPath)
       }
       
       // If the filepath already starts with the workflow folder path, use it as-is
@@ -419,7 +422,7 @@ export default function Workspace({
     
     // If file is a PlannerFile object, use originalFilepath if available
     return file.originalFilepath || file.filepath
-  }, [selectedModeCategory, workflowFolderPath])
+  }, [selectedModeCategory, effectiveWorkflowFolderPath])
   
   // Legacy function name for backward compatibility
   const getFullFilePath = getOriginalFilePath
@@ -485,11 +488,11 @@ export default function Workspace({
 
   // Compute available iterations from the raw file tree (populated even from shallow fetch)
   const availableIterations = useMemo(() => {
-    if (selectedModeCategory !== 'workflow' || !workflowFolderPath) return []
-    const workflowItem = files.find(f => f.filepath.replace(/\/$/, '') === workflowFolderPath)
+    if (selectedModeCategory !== 'workflow' || !effectiveWorkflowFolderPath) return []
+    const workflowItem = files.find(f => f.filepath.replace(/\/$/, '') === effectiveWorkflowFolderPath)
     if (!workflowItem?.children) return []
     const runsFolder = workflowItem.children.find(c =>
-      c.filepath === workflowFolderPath + '/runs' || c.filepath === workflowFolderPath + '/runs/'
+      c.filepath === effectiveWorkflowFolderPath + '/runs' || c.filepath === effectiveWorkflowFolderPath + '/runs/'
     )
     if (!runsFolder?.children) return []
     return runsFolder.children
@@ -501,7 +504,7 @@ export default function Workspace({
         const numB = parseInt(b.match(/iteration-(\d+)/)?.[1] ?? '0')
         return numA - numB
       })
-  }, [files, selectedModeCategory, workflowFolderPath])
+  }, [files, selectedModeCategory, effectiveWorkflowFolderPath])
 
   const latestIteration = availableIterations[availableIterations.length - 1] ?? null
 
@@ -520,8 +523,8 @@ export default function Workspace({
     let result = files
 
     // Only filter if we're in workflow mode and have a workflow folder path
-    // When in chat mode, show all files regardless of preset
-    if (selectedModeCategory === 'workflow' && workflowFolderPath) {
+    // When in multi-agent mode, show all files regardless of preset
+    if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath) {
       // The API returns the workflow folder itself AND its children as flat top-level siblings.
       // e.g., [Workflow/codeanalysis, Workflow/codeanalysis/knowledgebase, Workflow/codeanalysis/learnings, ...]
       // The folder item (Workflow/codeanalysis) already has children nested inside it.
@@ -530,15 +533,15 @@ export default function Workspace({
       // and use only it (with its nested children) as the root of the tree.
       const workflowFolderItem = result.find(f => {
         const normalized = f.filepath.replace(/\/$/, '')
-        const normalizedTarget = workflowFolderPath.replace(/\/$/, '')
+        const normalizedTarget = effectiveWorkflowFolderPath.replace(/\/$/, '')
         return normalized === normalizedTarget
       })
       if (workflowFolderItem && workflowFolderItem.children && workflowFolderItem.children.length > 0) {
         // Use the folder as a single root with its proper nested children
-        result = adjustFilePathsRecursive([workflowFolderItem], workflowFolderPath)
+        result = adjustFilePathsRecursive([workflowFolderItem], effectiveWorkflowFolderPath)
       } else {
         // Fallback: no hierarchical folder found, adjust all items
-        result = adjustFilePathsRecursive(result, workflowFolderPath)
+        result = adjustFilePathsRecursive(result, effectiveWorkflowFolderPath)
       }
 
       // Filter runs/ to only show the selected/latest iteration (not all iterations)
@@ -551,19 +554,13 @@ export default function Workspace({
         const topFolder = f.filepath.split('/')[0]
         return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
-    } else if (selectedModeCategory === 'chat') {
-      // Chat mode: show Chats/, Downloads/, skills/ and subagents/ top-level folders
-      result = files.filter(f => {
-        const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
-      })
     }
 
     // Apply search filter
     result = filterFiles(result, searchQuery)
 
     return result
-  }, [files, workflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration])
+  }, [files, effectiveWorkflowFolderPath, searchQuery, selectedModeCategory, effectiveDisplayedIteration])
 
   // Refresh file tree from server (re-fetch all files so local filter can find them)
   const handleRefreshAndSearch = useCallback(async () => {
@@ -582,11 +579,11 @@ export default function Workspace({
   // opens ALL parent folders with no depth limit, overriding the maxLevel=3 cap from
   // the initial auto-expand. The relevant folders should already be open from the
   // auto-expand or run-folder expansion effects.
-  // In chat mode we still expand folders since there's no depth concern.
+  // In multi-agent mode we still expand folders since there's no depth concern.
   useEffect(() => {
     if (highlightedFile) {
       if (selectedModeCategory !== 'workflow') {
-        // Chat mode: expand folders to reveal the highlighted file
+        // Multi-agent mode: expand folders to reveal the highlighted file
         expandFoldersForFile(highlightedFile)
       }
 
@@ -600,9 +597,9 @@ export default function Workspace({
   // Automatically expand workspace folder when a workflow is first opened
   // Only runs once per workflow preset or mode switch to allow manual open/close afterward
   useEffect(() => {
-    if (selectedModeCategory === 'workflow' && workflowFolderPath && filteredFiles.length > 0) {
+    if (selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath && filteredFiles.length > 0) {
       // Check if we've already auto-expanded for this workflow preset
-      const workflowPresetId = activeWorkflowPreset?.id || workflowFolderPath
+      const workflowPresetId = activeWorkflowPreset?.id || effectiveWorkflowFolderPath
       
       // Only auto-expand if we haven't done it for this workflow yet
       if (autoExpandedWorkflowRef.current !== workflowPresetId) {
@@ -630,28 +627,30 @@ export default function Workspace({
       autoExpandedWorkflowRef.current = null
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModeCategory, workflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id])
+  }, [selectedModeCategory, effectiveWorkflowFolderPath, filteredFiles, expandFoldersToLevel, activeWorkflowPreset?.id])
 
-  // In chat mode, auto-expand Chats/ folder by default (skills/ stays closed)
+  // In multi-agent mode, auto-expand Chats/ folder by default (skills/ stays closed)
   useEffect(() => {
-    if (selectedModeCategory === 'chat' && filteredFiles.length > 0 && !autoExpandedChatRef.current) {
+    if (selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedChatRef.current) {
       const hasChatsFolder = filteredFiles.some(f => f.filepath === 'Chats' || f.filepath === 'Chats/')
       if (hasChatsFolder) {
         autoExpandedChatRef.current = true
         setExpandedFolders(new Set(['Chats']))
       }
-    } else if (selectedModeCategory !== 'chat') {
+    } else if (selectedModeCategory !== 'multi-agent') {
       autoExpandedChatRef.current = false
     }
   }, [selectedModeCategory, filteredFiles, setExpandedFolders])
 
-  // In multi-agent mode, auto-expand Plans/ folder by default
+  // In multi-agent mode, auto-expand Chats/ by default.
+  // Plans/ remains visible when it exists, but is no longer the default focus.
   useEffect(() => {
     if (selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedMultiAgentRef.current) {
+      const hasChatsFolder = filteredFiles.some(f => f.filepath === 'Chats' || f.filepath === 'Chats/')
       const hasPlansFolder = filteredFiles.some(f => f.filepath === 'Plans' || f.filepath === 'Plans/')
-      if (hasPlansFolder) {
+      if (hasChatsFolder || hasPlansFolder) {
         autoExpandedMultiAgentRef.current = true
-        setExpandedFolders(new Set(['Plans']))
+        setExpandedFolders(new Set([hasChatsFolder ? 'Chats' : 'Plans']))
       }
     } else if (selectedModeCategory !== 'multi-agent') {
       autoExpandedMultiAgentRef.current = false
@@ -661,7 +660,7 @@ export default function Workspace({
   // Use custom hook to handle iteration expansion logic
   useIterationExpansion({
     selectedModeCategory,
-    workflowFolderPath,
+    workflowFolderPath: effectiveWorkflowFolderPath,
     filteredFiles,
     selectedRunFolder,
     expandedFolders,
@@ -1661,7 +1660,7 @@ export default function Workspace({
       // If folderPath is provided from folder dropdown, it's already the original path
       // Otherwise, use the workflow preset's selected folder path
       // Only reconstruct if we're in workflow mode and the path might be adjusted
-      const fullPath = folderPath && selectedModeCategory === 'workflow' && workflowFolderPath
+      const fullPath = folderPath && selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath
         ? getOriginalFilePath(folderPath)
         : workspacePath
       const blob = await agentApi.exportWorkflowBackup(fullPath)
@@ -1736,7 +1735,7 @@ export default function Workspace({
       // If folderPath is provided from folder dropdown, it's already the original path
       // Otherwise, use the workflow preset's selected folder path
       // Only reconstruct if we're in workflow mode and the path might be adjusted
-      const fullPath = folderPath && selectedModeCategory === 'workflow' && workflowFolderPath
+      const fullPath = folderPath && selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath
         ? getOriginalFilePath(folderPath)
         : workspacePath
       
@@ -2017,7 +2016,7 @@ export default function Workspace({
               {/* Minimize button - Hidden in selection mode */}
               {!isSelectionMode && (
                 <div className="flex items-center gap-1">
-                  <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘5</span>
+                  <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -2030,7 +2029,7 @@ export default function Workspace({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+5)</p>
+                      <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+6)</p>
                     </TooltipContent>
                   </Tooltip>
                 </div>
@@ -2040,7 +2039,7 @@ export default function Workspace({
         )}
         
         {/* Workflow Filter Banner - Only show in workflow mode */}
-        {!minimized && selectedModeCategory === 'workflow' && workflowFolderPath && (
+        {!minimized && selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath && (
           <div className="mb-2 px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -2188,10 +2187,10 @@ export default function Workspace({
                 onFileRename={handleFileRename}
                 onFolderRename={handleFolderRename}
                 onFileDownload={handleFileDownload}
-                hideAddToChat={selectedModeCategory === 'workflow' && !!workflowFolderPath}
+                hideAddToChat={selectedModeCategory === 'workflow' && !!effectiveWorkflowFolderPath}
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackupClick}
-                workflowFolderPath={workflowFolderPath}
+                workflowFolderPath={effectiveWorkflowFolderPath}
                 isExporting={isExporting}
                 isImporting={isImporting}
                 importProgress={importProgress}

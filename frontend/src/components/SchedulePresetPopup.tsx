@@ -19,7 +19,7 @@ function describeCron(expr: string): string {
 interface SchedulePresetPopupProps {
   presetQueryId: string | null
   presetLabel: string
-  entityType?: 'workflow' | 'chat'
+  entityType?: 'workflow' | 'multi-agent'
   workspacePath?: string   // required to load variable groups
   onClose: () => void
 }
@@ -35,7 +35,7 @@ const QUICK_PICKS = [
 const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
   presetQueryId,
   presetLabel,
-  entityType = 'chat',
+  entityType = 'multi-agent',
   workspacePath,
   onClose,
 }) => {
@@ -55,6 +55,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
 
   const cronDescription = describeCron(cronExpr)
   const isValidCron = cronDescription !== ''
+  const schedulerEntityType = entityType === 'workflow' ? 'workflow' : 'chat'
 
   const allGroupsSelected = availableGroups.length > 0 && selectedGroupIds.length === availableGroups.length
   const hasGroupSelection = availableGroups.length === 0 || selectedGroupIds.length > 0
@@ -67,7 +68,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
     }
     setIsLoading(true)
 
-    const loadJobs = schedulerApi.listJobs({ entity_type: entityType })
+    const loadJobs = schedulerApi.listJobs({ entity_type: schedulerEntityType })
       .then((resp) => {
         const job = resp.jobs.find((j) => j.preset_query_id === presetQueryId) ?? null
         setExistingJob(job)
@@ -97,7 +98,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
     Promise.all([loadJobs, loadGroups])
       .catch(() => {})
       .finally(() => setIsLoading(false))
-  }, [presetQueryId, entityType, presetLabel, workspacePath])
+  }, [presetQueryId, schedulerEntityType, presetLabel, workspacePath])
 
   const toggleGroup = (groupId: string) => {
     setSelectedGroupIds((prev) => {
@@ -128,7 +129,7 @@ const SchedulePresetPopup: React.FC<SchedulePresetPopupProps> = ({
       } else {
         const req: CreateScheduledJobRequest = {
           name: jobName,
-          entity_type: entityType,
+          entity_type: schedulerEntityType,
           preset_query_id: presetQueryId,
           cron_expression: cronExpr,
           timezone: LOCAL_TIMEZONE,

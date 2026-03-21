@@ -57,6 +57,8 @@ const FEATURES = [
   { icon: Shield, label: 'Secrets', desc: 'Secure credentials' },
 ]
 
+type BuiltInTierKey = 'main' | 'high' | 'medium' | 'low'
+
 export default function DelegationTierConfigModal({ isOpen, onClose }: DelegationTierConfigModalProps) {
   const { availableLLMs, delegationTierConfig, setDelegationTierConfig } = useLLMStore()
 
@@ -64,6 +66,33 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
 
   const customTiers = delegationTierConfig?.custom ?? {}
   const customEntries = Object.entries(customTiers)
+
+  const updateConfig = (next: DelegationTierConfig | null) => {
+    setDelegationTierConfig(next)
+    syncTierConfigToActiveTab(next)
+  }
+
+  const updateBuiltInTier = (key: BuiltInTierKey, updater: (current?: TierModel) => TierModel | undefined) => {
+    const current = delegationTierConfig?.[key]
+    const nextTier = updater(current)
+    const nextConfig: DelegationTierConfig = { ...(delegationTierConfig ?? {}) }
+    if (!nextTier) {
+      delete nextConfig[key]
+    } else {
+      nextConfig[key] = nextTier
+    }
+    const finalConfig = hasAnyConfig(nextConfig) ? nextConfig : null
+    updateConfig(finalConfig)
+  }
+
+  const getAvailableFallbackOptions = (tierModel?: TierModel): LLMOption[] => {
+    if (!tierModel) return []
+    const existing = new Set((tierModel.fallbacks || []).map(f => `${f.provider}/${f.model_id}`))
+    return availableLLMs.filter(llm => {
+      if (llm.provider === tierModel.provider && llm.model === tierModel.model_id) return false
+      return !existing.has(`${llm.provider}/${llm.model}`)
+    })
+  }
 
   const handleAddCustomTier = () => {
     const base = 'custom-tier'
@@ -82,8 +111,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
       ...delegationTierConfig,
       custom: { ...customTiers, [slug]: newCustom },
     }
-    setDelegationTierConfig(newConfig)
-    syncTierConfigToActiveTab(newConfig)
+    updateConfig(newConfig)
   }
 
   const handleRemoveCustomTier = (slug: string) => {
@@ -94,8 +122,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
       custom: Object.keys(newCustom).length > 0 ? newCustom : undefined,
     }
     const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
-    setDelegationTierConfig(finalConfig)
-    syncTierConfigToActiveTab(finalConfig)
+    updateConfig(finalConfig)
   }
 
   const handleDescriptionChange = (slug: string, value: string) => {
@@ -107,8 +134,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
       ...delegationTierConfig,
       custom: newCustom,
     }
-    setDelegationTierConfig(newConfig)
-    syncTierConfigToActiveTab(newConfig)
+    updateConfig(newConfig)
   }
 
   // Regenerate slug from description on blur (first 4 words)
@@ -127,8 +153,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
       ...delegationTierConfig,
       custom: newCustom,
     }
-    setDelegationTierConfig(newConfig)
-    syncTierConfigToActiveTab(newConfig)
+    updateConfig(newConfig)
   }
 
   const handleCustomTierLLMSelect = (slug: string, llm: LLMOption) => {
@@ -139,8 +164,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
       ...delegationTierConfig,
       custom: { ...customTiers, [slug]: updatedTier },
     }
-    setDelegationTierConfig(newConfig)
-    syncTierConfigToActiveTab(newConfig)
+    updateConfig(newConfig)
   }
 
   return (
@@ -238,13 +262,51 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                 onLLMSelect={(llm: LLMOption) => {
                   const newTier: TierModel = { provider: llm.provider, model_id: llm.model }
                   const newConfig: DelegationTierConfig = { ...delegationTierConfig, main: newTier }
-                  setDelegationTierConfig(newConfig)
-                  syncTierConfigToActiveTab(newConfig)
+                  updateConfig(newConfig)
                 }}
                 inModal={true}
                 openDirection="down"
                 title="Select main agent model"
               />
+              {delegationTierConfig?.main && (
+                <div className="mt-2">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Fallbacks</div>
+                  {(delegationTierConfig.main.fallbacks || []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {(delegationTierConfig.main.fallbacks || []).map((fb, idx) => (
+                        <span key={`${fb.provider}-${fb.model_id}-${idx}`} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300">
+                          <span className="font-mono">{fb.provider}/{fb.model_id}</span>
+                          <button
+                            type="button"
+                            onClick={() => updateBuiltInTier('main', (current) => {
+                              if (!current) return current
+                              const nextFallbacks = (current.fallbacks || []).filter((_, i) => i !== idx)
+                              return { ...current, fallbacks: nextFallbacks.length > 0 ? nextFallbacks : undefined }
+                            })}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <LLMSelectionDropdown
+                    availableLLMs={getAvailableFallbackOptions(delegationTierConfig.main)}
+                    selectedLLM={null}
+                    onLLMSelect={(llm: LLMOption) => updateBuiltInTier('main', (current) => {
+                      if (!current) return current
+                      const nextFallbacks = [...(current.fallbacks || []), { provider: llm.provider, model_id: llm.model }]
+                      return { ...current, fallbacks: nextFallbacks }
+                    })}
+                    inModal={true}
+                    openDirection="down"
+                    title="Add main tier fallback"
+                    placeholder="+ Add fallback"
+                    disabled={getAvailableFallbackOptions(delegationTierConfig.main).length === 0}
+                  />
+                </div>
+              )}
             </div>
 
             <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">Sub-Agent Models</h3>
@@ -278,11 +340,7 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                       {tierModel && (
                         <button
                           onClick={() => {
-                            const newConfig: DelegationTierConfig = { ...delegationTierConfig }
-                            delete newConfig[key]
-                            const finalConfig = hasAnyConfig(newConfig) ? newConfig : null
-                            setDelegationTierConfig(finalConfig)
-                            syncTierConfigToActiveTab(finalConfig)
+                            updateBuiltInTier(key, () => undefined)
                           }}
                           className="text-xs text-red-400 hover:text-red-600"
                         >
@@ -294,15 +352,52 @@ export default function DelegationTierConfigModal({ isOpen, onClose }: Delegatio
                       availableLLMs={availableLLMs}
                       selectedLLM={selectedLLM}
                       onLLMSelect={(llm: LLMOption) => {
-                        const newTier: TierModel = { provider: llm.provider, model_id: llm.model }
-                        const newConfig: DelegationTierConfig = { ...delegationTierConfig, [key]: newTier }
-                        setDelegationTierConfig(newConfig)
-                        syncTierConfigToActiveTab(newConfig)
+                        const newTier: TierModel = { provider: llm.provider, model_id: llm.model, fallbacks: tierModel?.fallbacks }
+                        updateBuiltInTier(key, () => newTier)
                       }}
                       inModal={true}
                       openDirection="down"
                       title={`Select ${key} tier model`}
                     />
+                    {tierModel && (
+                      <div className="mt-2">
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Fallbacks</div>
+                        {(tierModel.fallbacks || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {(tierModel.fallbacks || []).map((fb, idx) => (
+                              <span key={`${fb.provider}-${fb.model_id}-${idx}`} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-gray-300">
+                                <span className="font-mono">{fb.provider}/{fb.model_id}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateBuiltInTier(key, (current) => {
+                                    if (!current) return current
+                                    const nextFallbacks = (current.fallbacks || []).filter((_, i) => i !== idx)
+                                    return { ...current, fallbacks: nextFallbacks.length > 0 ? nextFallbacks : undefined }
+                                  })}
+                                  className="text-gray-400 hover:text-red-500"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        <LLMSelectionDropdown
+                          availableLLMs={getAvailableFallbackOptions(tierModel)}
+                          selectedLLM={null}
+                          onLLMSelect={(llm: LLMOption) => updateBuiltInTier(key, (current) => {
+                            if (!current) return current
+                            const nextFallbacks = [...(current.fallbacks || []), { provider: llm.provider, model_id: llm.model }]
+                            return { ...current, fallbacks: nextFallbacks }
+                          })}
+                          inModal={true}
+                          openDirection="down"
+                          title={`Add ${key} tier fallback`}
+                          placeholder="+ Add fallback"
+                          disabled={getAvailableFallbackOptions(tierModel).length === 0}
+                        />
+                      </div>
+                    )}
                   </div>
                 )
               })}

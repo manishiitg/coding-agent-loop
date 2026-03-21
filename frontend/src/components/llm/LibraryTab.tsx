@@ -101,7 +101,7 @@ export function LibraryTab({ onSelect }: LibraryTabProps) {
     }
 
     // Create a new tab
-    const tabId = await createChatTab(`Test: ${llm.name}`, { mode: 'chat' })
+    const tabId = await createChatTab(`Test: ${llm.name}`, { mode: 'multi-agent' })
 
     // Generate dynamic filename
     const safeModelName = llm.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()

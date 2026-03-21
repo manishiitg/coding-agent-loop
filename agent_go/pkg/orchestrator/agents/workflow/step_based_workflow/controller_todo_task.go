@@ -136,8 +136,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	isLearningDetailLevelNone := stepConfig != nil && stepConfig.LearningDetailLevel == "none"
 	isLearningDisabled := isLearningDisabledStep || isLearningDetailLevelNone
 	learningFolderPath := getLearningFolderPathByStepID("", stepID, todoTaskStepPath, false)
-	orchestratorLearningFilePath := fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
-
 	// Track sub-agent results for context
 	var lastSubAgentResult string
 	var lastSubAgentName string
@@ -155,11 +153,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		}
 
 		// Reload orchestrator learnings each iteration (includes learnings saved during this run)
+		// Check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
 		var orchestratorLearningHistory string
 		if isLearningDisabled {
 			orchestratorLearningHistory = ""
 		} else {
+			orchestratorLearningFilePath := fmt.Sprintf("%s/SKILL.md", learningFolderPath)
 			orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
+			if err != nil {
+				// Fall back to legacy format
+				orchestratorLearningFilePath = fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
+				orchestratorLearnings, err = hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
+			}
 			if err == nil && orchestratorLearnings != "" {
 				orchestratorLearningHistory = fmt.Sprintf("## 📚 ORCHESTRATOR LEARNINGS\n\n%s", orchestratorLearnings)
 			}

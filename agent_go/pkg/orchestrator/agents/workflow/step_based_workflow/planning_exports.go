@@ -260,9 +260,7 @@ type WorkshopConfig struct {
 	CustomToolExecutors  map[string]interface{}
 	ToolCategories       map[string]string
 	LLMConfig            *orchestrator.LLMConfig
-	PresetLearningLLM    *AgentLLMConfig
-	PresetPhaseLLM       *AgentLLMConfig
-	PresetPlanImprovementLLM *AgentLLMConfig
+	PresetPhaseLLM *AgentLLMConfig
 	UseKnowledgebase     bool
 	LLMAllocationMode    string
 	TieredConfig         *TieredLLMConfig
@@ -347,11 +345,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		cfg.CustomTools,
 		cfg.CustomToolExecutors,
 		cfg.ToolCategories,
-		nil, // presetValidationLLM (LLM validation removed)
-		cfg.PresetLearningLLM,
 		cfg.PresetPhaseLLM,
-		nil, // presetAnonymizationLLM (deprecated)
-		cfg.PresetPlanImprovementLLM,
 		cfg.UseKnowledgebase,
 		cfg.TieredConfig,
 	)
@@ -494,12 +488,8 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 // UpdatePresetLLMConfigs refreshes the controller's preset LLM configs.
 // Called when reusing a cached workshop session to pick up any LLM config changes
 // the user made in the workflow editor since the session was first created.
-func (s *WorkshopChatSession) UpdatePresetLLMConfigs(
-	learningLLM, phaseLLM, planImprovementLLM *AgentLLMConfig,
-) {
-	s.controller.presetLearningLLM = learningLLM
+func (s *WorkshopChatSession) UpdatePresetLLMConfigs(phaseLLM *AgentLLMConfig) {
 	s.controller.presetPhaseLLM = phaseLLM
-	s.controller.presetPlanImprovementLLM = planImprovementLLM
 }
 
 // UpdateTieredConfig refreshes the controller's tiered LLM allocation config.
@@ -591,7 +581,6 @@ func RegisterWorkshopChatTools(
 	mcpAgent *mcpagent.Agent,
 	session *WorkshopChatSession,
 	logger loggerv2.Logger,
-	fullMode bool,
 ) {
 	iwm := &InteractiveWorkshopManager{
 		controller:        session.controller,
@@ -604,7 +593,7 @@ func RegisterWorkshopChatTools(
 		skillFuncs:             session.skillFuncs,
 		listAvailableSecrets:   session.listAvailableSecrets,
 	}
-	registerInteractiveWorkshopTools(iwm, mcpAgent, logger, fullMode)
+	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
 }
 
 // Close cancels all background goroutines for this workshop session.
@@ -684,11 +673,7 @@ func RegisterRunFullEvaluationTool(
 					cfg.CustomTools,
 					cfg.CustomToolExecutors,
 					cfg.ToolCategories,
-					nil, // presetValidationLLM
-					cfg.PresetLearningLLM,
 					cfg.PresetPhaseLLM,
-					nil, // presetAnonymizationLLM
-					cfg.PresetPlanImprovementLLM,
 					cfg.UseKnowledgebase,
 					cfg.TieredConfig,
 				)

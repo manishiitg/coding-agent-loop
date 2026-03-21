@@ -818,6 +818,22 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (debug_step, get_workflow_config, etc.) or read workspace files directly via shell commands.
 
+**Past Conversations (builder/):** Previous builder chat sessions are saved at ` + "`{{.WorkspacePath}}/builder/`" + ` as ` + "`session-{id}-conversation.json`" + `. Read these via execute_shell_command to recall context from past sessions when needed (e.g., ` + "`ls builder/ | tail -5`" + ` to see recent sessions, then ` + "`cat builder/{file} | python3 -c \"import json,sys; msgs=json.load(sys.stdin); [print(m['role'],m.get('content','')[:200]) for m in msgs[-10:]]\"`" + ` to read the last few messages).
+
+**Conversation Compression:** When there are more than 3 conversation files in ` + "`builder/`" + `, compress older ones into memory:
+1. List files: ` + "`ls -t builder/session-*.json`" + ` (sorted newest first)
+2. Keep the latest file (current/most recent session)
+3. For each older file, read it and extract a summary: key user requests, decisions made, issues found, and configuration changes
+4. Append the summary to ` + "`memory/memory.md`" + ` with date and user attribution:
+   ` + "```" + `
+   ## Builder Session 2026-03-20 (user: {name})
+   - User requested adding fallback LLMs for tier 2
+   - Debugged step-7 failure: root cause was pre-save artifact
+   - Updated workflow config: added MiniMax server
+   ` + "```" + `
+5. Delete the compressed conversation files: ` + "`rm builder/{old-file}.json`" + `
+Do this proactively at the start of a session when you notice many conversation files accumulating.
+
 **Workflow Memory (memory/):** You have a persistent memory system at ` + "`{{.WorkspacePath}}/memory/`" + `. All .md files in this folder are automatically loaded into your system prompt on every future session. Use this to build up workflow-specific knowledge across conversations.
 
 **When to save memory:**
@@ -825,6 +841,7 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 - When you discover important errors, gotchas, or workarounds during workflow execution that would be valuable in future runs
 - When the user expresses preferences about how this workflow should be managed (e.g., "always run step X before Y", "don't optimize step Z")
 - When debugging reveals root causes or environment-specific issues (e.g., "API rate-limits after 100 requests", "login fails if session cookie expires after 30 min")
+- After compressing old builder conversations (see above)
 
 **How to save:** Write to ` + "`memory/memory.md`" + ` using execute_shell_command or diff_patch_workspace_file. Append new entries rather than overwriting. Example:
 - ` + "`echo '\\n## Login requires 2FA\\nThe portal requires OTP verification after login. Always wait for the OTP step.' >> memory/memory.md`" + `
@@ -1451,7 +1468,7 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	// are registered inside registerInteractiveWorkshopTools for both full and HAE modes.
 
 	// Register custom workshop tools (execute_step, query_step, stop_step, update_step_config)
-	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger, true)
+	registerInteractiveWorkshopTools(iwm, mcpAgentRef, logger)
 
 	// Update code execution registry for CLI providers (claude-code, gemini-cli)
 	if agent.GetConfig().UseCodeExecutionMode {
@@ -1637,9 +1654,7 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 }
 
 // registerInteractiveWorkshopTools registers the custom workshop tools on the agent.
-// When fullMode is true (workflow-builder), all tools are registered including config/optimization/learning tools.
-// When fullMode is false (human-assisted-execution), only execution-related tools are registered.
-func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger, fullMode bool) {
+func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent *mcpagent.Agent, logger loggerv2.Logger) {
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
@@ -2457,8 +2472,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register stop_step tool: %v", err))
 	}
 
-	// === Builder-only tools (not registered for human-assisted-execution) ===
-	if fullMode {
+	// === Builder tools: config, optimization, learning ===
 
 	// Tool 4: update_step_config — update step_config.json for a specific step
 	if err := mcpAgent.RegisterCustomTool(
@@ -2959,7 +2973,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_step_config tool: %v", err))
 	}
 
-	} // end fullMode guard for update_step_config
 
 	// Tool 5: get_step_prompts — read saved system prompt + user message for a step run
 	if err := mcpAgent.RegisterCustomTool(
@@ -3174,8 +3187,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_step_prompts tool: %v", err))
 	}
 
-	// === Builder-only tools: analyze, learn, optimize, background tasks ===
-	if fullMode {
+	// === Tools: analyze, learn, optimize, background tasks ===
 
 	// Tool 6: analyze_step — analyze a step's config and suggest optimizations
 	if err := mcpAgent.RegisterCustomTool(
@@ -4136,7 +4148,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_step tool: %v", err))
 	}
 
-	} // end fullMode guard for analyze_step, generate_learnings, optimize_step
 
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
 	if err := mcpAgent.RegisterCustomTool(
@@ -4279,13 +4290,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_cost_summary tool: %v", err))
 	}
 
-	// === Builder-only tools: background tasks, LLM config, workflow config ===
-	if fullMode {
+	// === Tools: background tasks, LLM config, workflow config ===
 
 	// Tool: get_llm_config — show current LLM configuration (read-only)
 	if err := mcpAgent.RegisterCustomTool(
 		"get_llm_config",
-		"Show the current LLM configuration for the workflow and per-step overrides. Returns the preset-level defaults (execution, validation, learning, phase LLMs), tiered config if enabled, and any per-step LLM overrides from step_config.json.",
+		"Show the current LLM configuration for the workflow: tiered config (tier 1/2/3 with fallbacks), phase LLM, and any per-step LLM overrides from step_config.json.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -4294,30 +4304,27 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			var sb strings.Builder
 			sb.WriteString("## LLM Configuration\n\n")
 
-			// Show preset-level defaults (execution and learning only — validation is deprecated)
-			sb.WriteString("### Workflow Defaults (from preset)\n")
-			writeLLMEntry := func(label string, llm *AgentLLMConfig) {
-				if llm != nil {
-					sb.WriteString(fmt.Sprintf("- **%s**: %s/%s\n", label, llm.Provider, llm.ModelID))
-				} else {
-					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
-				}
-			}
-			writeLLMEntry("Learning LLM", iwm.controller.presetLearningLLM)
-
 			// Show tiered config if enabled
-			if iwm.controller.tierResolver != nil {
+			if iwm.controller.tierResolver != nil && iwm.controller.tierResolver.config != nil {
+				tc := iwm.controller.tierResolver.config
 				sb.WriteString("\n### Tiered LLM Config (active)\n")
-				// Use ResolveTier to show tier configs
-				if t1 := iwm.controller.tierResolver.ResolveTier(TierHigh); t1 != nil {
-					sb.WriteString(fmt.Sprintf("- **Tier 1** (high): %s/%s\n", t1.Primary.Provider, t1.Primary.ModelID))
+				writeTierWithFallbacks := func(label string, cfg *AgentLLMConfig) {
+					if cfg == nil {
+						return
+					}
+					sb.WriteString(fmt.Sprintf("- **%s**: %s/%s", label, cfg.Provider, cfg.ModelID))
+					if len(cfg.Fallbacks) > 0 {
+						fallbackStrs := make([]string, len(cfg.Fallbacks))
+						for i, fb := range cfg.Fallbacks {
+							fallbackStrs[i] = fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID)
+						}
+						sb.WriteString(fmt.Sprintf(" → fallbacks: %s", strings.Join(fallbackStrs, ", ")))
+					}
+					sb.WriteString("\n")
 				}
-				if t2 := iwm.controller.tierResolver.ResolveTier(TierMedium); t2 != nil {
-					sb.WriteString(fmt.Sprintf("- **Tier 2** (medium): %s/%s\n", t2.Primary.Provider, t2.Primary.ModelID))
-				}
-				if t3 := iwm.controller.tierResolver.ResolveTier(TierLow); t3 != nil {
-					sb.WriteString(fmt.Sprintf("- **Tier 3** (low): %s/%s\n", t3.Primary.Provider, t3.Primary.ModelID))
-				}
+				writeTierWithFallbacks("Tier 1 (high)", tc.Tier1)
+				writeTierWithFallbacks("Tier 2 (medium)", tc.Tier2)
+				writeTierWithFallbacks("Tier 3 (low)", tc.Tier3)
 			}
 
 			// Show per-step overrides from step_config.json
@@ -4364,7 +4371,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_llm_config tool: %v", err))
 	}
 
-	} // end if fullMode — builder-only tools (run_background_task, get_llm_config)
 
 	// Tool: update_variable — add, update, or delete variables
 	updateVariableSchema := getUpdateVariableSchema()
@@ -4781,11 +4787,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					sb.WriteString(fmt.Sprintf("- **%s**: (not set — uses LLM config default)\n", label))
 				}
 			}
-			writeLLMDefault("Learning LLM", ctrl.presetLearningLLM)
+			// Only show preset learning LLM when tiered mode is not active (tiered mode overrides it)
 			writeLLMDefault("Phase LLM", ctrl.presetPhaseLLM)
-			if ctrl.presetPlanImprovementLLM != nil {
-				writeLLMDefault("Plan Improvement LLM", ctrl.presetPlanImprovementLLM)
-			}
 
 			return sb.String(), nil
 		},
@@ -4794,8 +4797,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_workflow_config tool: %v", err))
 	}
 
-	// === Builder-only tool: update_workflow_config ===
-	if fullMode {
+	// === Tool: update_workflow_config ===
 	// Tool: update_workflow_config — add/remove MCP servers, skills, and secrets
 	if err := mcpAgent.RegisterCustomTool(
 		"update_workflow_config",
@@ -4832,6 +4834,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Secret names to remove/disable from the workflow",
+				},
+				"update_tier_fallbacks": map[string]interface{}{
+					"type":        "object",
+					"description": "Update fallback LLMs for tiered allocation. Keys: 'tier_1', 'tier_2', 'tier_3'. Value: array of {provider, model_id} objects. Use get_workflow_config or get_llm_config to see current config.",
+					"properties": map[string]interface{}{
+						"tier_1": map[string]interface{}{
+							"type":  "array",
+							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}}, "required": []string{"provider", "model_id"}},
+						},
+						"tier_2": map[string]interface{}{
+							"type":  "array",
+							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}}, "required": []string{"provider", "model_id"}},
+						},
+						"tier_3": map[string]interface{}{
+							"type":  "array",
+							"items": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"provider": map[string]interface{}{"type": "string"}, "model_id": map[string]interface{}{"type": "string"}}, "required": []string{"provider", "model_id"}},
+						},
+					},
 				},
 			},
 		},
@@ -5018,8 +5038,73 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				}
 			}
 
+			// --- Tier Fallbacks ---
+			if tierFallbacksRaw, ok := args["update_tier_fallbacks"]; ok && tierFallbacksRaw != nil {
+				if iwm.controller.tierResolver == nil || iwm.controller.tierResolver.config == nil {
+					sb.WriteString("\n### Tier Fallbacks\n⚠️ Tiered allocation is not enabled. Cannot update fallbacks.\n")
+				} else if tierMap, ok := tierFallbacksRaw.(map[string]interface{}); ok {
+					tc := iwm.controller.tierResolver.config
+					parseFallbacks := func(raw interface{}) []AgentLLMFallback {
+						arr, ok := raw.([]interface{})
+						if !ok {
+							return nil
+						}
+						var fbs []AgentLLMFallback
+						for _, item := range arr {
+							m, ok := item.(map[string]interface{})
+							if !ok {
+								continue
+							}
+							provider, _ := m["provider"].(string)
+							modelID, _ := m["model_id"].(string)
+							if provider != "" && modelID != "" {
+								fbs = append(fbs, AgentLLMFallback{Provider: provider, ModelID: modelID})
+							}
+						}
+						return fbs
+					}
+
+					tierChanged := false
+					for _, entry := range []struct {
+						key  string
+						tier **AgentLLMConfig
+						name string
+					}{
+						{"tier_1", &tc.Tier1, "Tier 1 (high)"},
+						{"tier_2", &tc.Tier2, "Tier 2 (medium)"},
+						{"tier_3", &tc.Tier3, "Tier 3 (low)"},
+					} {
+						if raw, exists := tierMap[entry.key]; exists {
+							fbs := parseFallbacks(raw)
+							if *entry.tier == nil {
+								sb.WriteString(fmt.Sprintf("⚠️ %s has no primary LLM configured, skipping fallback update.\n", entry.name))
+								continue
+							}
+							(*entry.tier).Fallbacks = fbs
+							tierChanged = true
+							sb.WriteString(fmt.Sprintf("- **%s**: %s/%s", entry.name, (*entry.tier).Provider, (*entry.tier).ModelID))
+							if len(fbs) > 0 {
+								fbStrs := make([]string, len(fbs))
+								for i, fb := range fbs {
+									fbStrs[i] = fmt.Sprintf("%s/%s", fb.Provider, fb.ModelID)
+								}
+								sb.WriteString(fmt.Sprintf(" → fallbacks: %s", strings.Join(fbStrs, ", ")))
+							} else {
+								sb.WriteString(" → fallbacks: (cleared)")
+							}
+							sb.WriteString("\n")
+						}
+					}
+					if tierChanged {
+						anyChanged = true
+						sb.WriteString("\n### Tier Fallbacks (updated)\n")
+						logger.Info("Updated tier fallback LLMs")
+					}
+				}
+			}
+
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets.", nil
+				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks.", nil
 			}
 
 			return sb.String(), nil
@@ -5028,10 +5113,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_workflow_config tool: %v", err))
 	}
-	} // end if fullMode — update_workflow_config
 
-	// === Builder-only schedule management tools ===
-	if fullMode {
+	// === Schedule management tools ===
 
 	// Tool: list_schedules — List all cron schedules for this workflow
 	if err := mcpAgent.RegisterCustomTool(
@@ -5286,10 +5369,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_schedule_runs tool: %v", err))
 	}
 
-	} // end if fullMode — schedule management tools
 
-	// === Builder-only skill management tools ===
-	if fullMode {
+	// === Skill management tools ===
 
 	// Tool: list_skills — List all available skills in the workspace
 	if err := mcpAgent.RegisterCustomTool(
@@ -5376,7 +5457,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register delete_skill tool: %v", err))
 	}
 
-	} // end if fullMode — skill management tools
 
 }
 

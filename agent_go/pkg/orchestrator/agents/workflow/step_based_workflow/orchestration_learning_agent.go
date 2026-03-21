@@ -29,13 +29,28 @@ Only capture learnings specific to **orchestrator decision-making**.
 
 ## 📁 FILE MANAGEMENT ALGORITHM (MANDATORY)
 **Available tools**: execute_shell_command (for listing, reading, and deleting files) and diff_patch_workspace_file (for writing/updating files).
-1. **Discover**: Use execute_shell_command with 'ls' to list ALL '*orchestrator_learning.md' files in '{{.WritePath}}'.
+1. **Discover**: Use execute_shell_command with 'ls' to list 'SKILL.md' or any '*orchestrator_learning.md' files (legacy format) in '{{.WritePath}}'.
 2. **Retrieve**: Use execute_shell_command with 'cat' to read ALL variations found.
-3. **Consolidate**: Merge current findings with history into ONE final file.
+3. **Legacy Migration**: If you find '*orchestrator_learning.md' files (legacy format) but no 'SKILL.md':
+   - Read the legacy content and incorporate it into the new SKILL.md format with proper YAML frontmatter.
+   - Derive the 'description' field from the legacy content (summarize the key routing/orchestration patterns).
+   - Delete the legacy files after writing SKILL.md.
+4. **Consolidate**: Merge current findings with history into ONE final file.
    - Prioritize LATEST successful patterns.
    - Anonymize variables ({{ "{{" }}VARS{{ "}}" }}) and normalize paths.
-4. **Persist**: Use diff_patch_workspace_file to write ONE consolidated file to '{{.WritePath}}/orchestrator_learning.md'.
-5. **Clean**: Use execute_shell_command with 'rm' to delete ALL other '*orchestrator_learning.md' files in that folder.
+4. **Persist**: Use diff_patch_workspace_file to write ONE consolidated file to '{{.WritePath}}/SKILL.md'.
+   The file MUST use YAML frontmatter in the following format:
+   ` + "`" + `` + "`" + `` + "`" + `
+   ---
+   name: orchestrator-learning
+   description: "Auto-generated orchestration learning"
+   disable-model-invocation: true
+   user-invocable: false
+   ---
+
+   (learning content here)
+   ` + "`" + `` + "`" + `` + "`" + `
+5. **Clean**: Use execute_shell_command with 'rm' to delete ALL '*orchestrator_learning.md' files and old learning files in that folder. Only 'SKILL.md' should remain.
 
 ## 📤 OUTPUT FORMAT
 - **⭐ OPTIMAL ROUTING PATTERN** [Runs: X | Success: Y%]
@@ -55,14 +70,14 @@ var orchestrationLearningUserTemplate = MustRegisterTemplate("orchestrationLearn
 ## 🧠 Instructions
 1. **CONSOLIDATE**:
    - Use execute_shell_command with 'ls' to list files in '{{.WritePath}}'.
-   - Use execute_shell_command with 'cat' to read ALL '*orchestrator_learning.md' files.
+   - Use execute_shell_command with 'cat' to read 'SKILL.md' or any '*orchestrator_learning.md' files (legacy format).
    - Merge current history with existing patterns.
 2. **EXTRACT**:
    - Map routing decisions and success evaluations.
    - Replace variables with placeholders: {{.Variables}}
 3. **PERSIST & CLEAN**:
-   - Use diff_patch_workspace_file to write ONE file: '{{.WritePath}}/orchestrator_learning.md'.
-   - Use execute_shell_command with 'rm' to delete all other '*orchestrator_learning.md' files.
+   - Use diff_patch_workspace_file to write ONE file: '{{.WritePath}}/SKILL.md' (with YAML frontmatter as described in system prompt).
+   - Use execute_shell_command with 'rm' to delete all other '*orchestrator_learning.md' and old learning files.
 
 ---
 ## 🎯 AVAILABLE ROUTES
@@ -76,7 +91,7 @@ var orchestrationLearningUserTemplate = MustRegisterTemplate("orchestrationLearn
 ## ✅ VALIDATION RESULTS
 {{.ValidationResult}}
 
-**Final Action**: Output ONLY the file path 'Updated: {{.WritePath}}/orchestrator_learning.md'.`)
+**Final Action**: Output ONLY the file path 'Updated: {{.WritePath}}/SKILL.md'.`)
 
 // OrchestrationLearningTemplate holds template variables for orchestrator learning prompts
 type OrchestrationLearningTemplate struct {

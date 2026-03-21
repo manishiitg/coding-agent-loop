@@ -99,11 +99,7 @@ type StepBasedWorkflowOrchestrator struct {
 	executionOptions *ExecutionOptions
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetValidationLLM      *AgentLLMConfig // Default for validation agents
-	presetLearningLLM        *AgentLLMConfig // Default for learning agents
-	presetPhaseLLM           *AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-	presetAnonymizationLLM   *AgentLLMConfig // Default for anonymization agent
-	presetPlanImprovementLLM *AgentLLMConfig // Default for plan improvement agent
+	presetPhaseLLM *AgentLLMConfig // Default for all phase agents (planning, evaluation, plan improvement, etc.)
 
 	// Temporary LLM overrides (highest priority, from ExecutionOptions)
 	// Only applies to execution agents (not validation or learning agents) for all steps during this execution
@@ -166,11 +162,7 @@ func NewStepBasedWorkflowOrchestrator(
 	customTools []llmtypes.Tool,
 	customToolExecutors map[string]interface{},
 	toolCategories map[string]string, // NEW: tool category map
-	presetValidationLLM *AgentLLMConfig, // Optional preset default for validation agents
-	presetLearningLLM *AgentLLMConfig, // Optional preset default for learning agents
 	presetPhaseLLM *AgentLLMConfig, // Optional preset default for all phase agents
-	presetAnonymizationLLM *AgentLLMConfig, // Optional preset default for anonymization agent
-	presetPlanImprovementLLM *AgentLLMConfig, // Optional preset default for plan improvement agent
 	useKnowledgebase bool, // Whether to create and reference knowledgebase folder (default: true)
 	tieredConfig *TieredLLMConfig, // Tiered LLM config (nil when not using tiered allocation)
 ) (*StepBasedWorkflowOrchestrator, error) {
@@ -217,11 +209,7 @@ func NewStepBasedWorkflowOrchestrator(
 		BaseOrchestrator:         baseOrchestrator,
 		sessionID:                workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
 		workflowID:               fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
-		presetValidationLLM:      presetValidationLLM,
-		presetLearningLLM:        presetLearningLLM,
-		presetPhaseLLM:           presetPhaseLLM,
-		presetAnonymizationLLM:   presetAnonymizationLLM,
-		presetPlanImprovementLLM: presetPlanImprovementLLM,
+		presetPhaseLLM: presetPhaseLLM,
 		useKnowledgebase:         useKnowledgebase,
 	}
 

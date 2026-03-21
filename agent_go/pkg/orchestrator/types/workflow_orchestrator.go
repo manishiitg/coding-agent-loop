@@ -120,11 +120,8 @@ type WorkflowOrchestrator struct {
 	// Base orchestrator for common functionality
 	*orchestrator.BaseOrchestrator
 
-	// Preset-level agent defaults (used when step config doesn't specify)
-	presetLearningLLM             *step_based_workflow.AgentLLMConfig // Default for learning agents
-	presetPhaseLLM                *step_based_workflow.AgentLLMConfig // Default for all phase agents (planning, anonymization, plan improvement, etc.)
-	presetPlanImprovementLLM      *step_based_workflow.AgentLLMConfig // Default for plan improvement agent
-	presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig // Default for plan tool optimization agent
+	// Preset-level agent defaults
+	presetPhaseLLM *step_based_workflow.AgentLLMConfig // Default for all phase agents
 
 	// Preset-level feature toggles
 	useKnowledgebase bool // Whether to create and reference knowledgebase folder (default: true)
@@ -313,19 +310,9 @@ func NewWorkflowOrchestrator(
 		return nil, fmt.Errorf("failed to create base orchestrator: %w", err)
 	}
 
-	// Extract agent-specific defaults from preset LLM config
-	var presetLearningLLM, presetPhaseLLM, presetPlanImprovementLLM, presetPlanToolOptimizationLLM *step_based_workflow.AgentLLMConfig
+	// Extract phase LLM from preset config
+	var presetPhaseLLM *step_based_workflow.AgentLLMConfig
 	if presetLLMConfig != nil {
-		if presetLLMConfig.LearningLLM != nil && presetLLMConfig.LearningLLM.Provider != "" && presetLLMConfig.LearningLLM.ModelID != "" {
-			presetLearningLLM = convertDBAgentLLMConfig(presetLLMConfig.LearningLLM)
-		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
-			// Fall back to legacy single default for learning
-			presetLearningLLM = &step_based_workflow.AgentLLMConfig{
-				Provider: presetLLMConfig.Provider,
-				ModelID:  presetLLMConfig.ModelID,
-			}
-		}
-		// Extract phase LLM (used by all phase agents: planning, anonymization, plan improvement, etc.)
 		if presetLLMConfig.PhaseLLM != nil && presetLLMConfig.PhaseLLM.Provider != "" && presetLLMConfig.PhaseLLM.ModelID != "" {
 			presetPhaseLLM = convertDBAgentLLMConfig(presetLLMConfig.PhaseLLM)
 		} else if presetLLMConfig.Provider != "" && presetLLMConfig.ModelID != "" {
@@ -335,9 +322,6 @@ func NewWorkflowOrchestrator(
 				ModelID:  presetLLMConfig.ModelID,
 			}
 		}
-		// Note: Plan improvement and plan tool optimization are phase agents - they use presetPhaseLLM
-		// (not learning LLM). The presetPlanImprovementLLM and presetPlanToolOptimizationLLM fields
-		// are kept for backward compatibility but should NOT be populated from learning LLM.
 	}
 
 	// Extract tiered LLM allocation config
@@ -392,13 +376,10 @@ func NewWorkflowOrchestrator(
 
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
-		BaseOrchestrator:              baseOrchestrator,
-		presetLearningLLM:             presetLearningLLM,
-		presetPhaseLLM:                presetPhaseLLM,
-		presetPlanImprovementLLM:      presetPlanImprovementLLM,
-		presetPlanToolOptimizationLLM: presetPlanToolOptimizationLLM,
-		useKnowledgebase:              useKnowledgebase,
-		tieredConfig:                  tieredConfig,
+		BaseOrchestrator: baseOrchestrator,
+		presetPhaseLLM:   presetPhaseLLM,
+		useKnowledgebase: useKnowledgebase,
+		tieredConfig:     tieredConfig,
 	}
 
 	return wo, nil
@@ -506,11 +487,7 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
-		nil, // presetValidationLLM (LLM validation removed)
-		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
-		nil, // presetAnonymizationLLM (deprecated)
-		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase,
 		wo.tieredConfig,
 	)
@@ -688,11 +665,7 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
 		wo.ToolCategories,
-		nil, // presetValidationLLM (LLM validation removed)
-		wo.presetLearningLLM,
 		wo.presetPhaseLLM,
-		nil,
-		wo.presetPlanImprovementLLM,
 		wo.useKnowledgebase, // Feature toggle for knowledgebase
 		wo.tieredConfig,     // Tiered LLM config
 	)
@@ -796,14 +769,10 @@ func (wo *WorkflowOrchestrator) runHumanControlledPlanning(ctx context.Context, 
 		wo.GetContextAwareBridge(),
 		wo.WorkspaceTools,
 		wo.WorkspaceToolExecutors,
-		wo.ToolCategories,     // NEW: Pass category map
-		nil, // presetValidationLLM (LLM validation removed)
-		wo.presetLearningLLM,
+		wo.ToolCategories,
 		wo.presetPhaseLLM,
-		nil, // presetAnonymizationLLM (deprecated, no longer used)
-		wo.presetPlanImprovementLLM,
-		wo.useKnowledgebase, // Feature toggle for knowledgebase
-		wo.tieredConfig,     // Tiered LLM config
+		wo.useKnowledgebase,
+		wo.tieredConfig,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)

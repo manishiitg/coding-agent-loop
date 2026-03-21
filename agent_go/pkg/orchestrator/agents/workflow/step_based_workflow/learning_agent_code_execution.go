@@ -23,12 +23,14 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
 
 ## CRITICAL CODING PRINCIPLES
 1. **Task-Specific ONLY**: Only save code that solves *this specific problem*.
-2. **Exclude General Bloat**:
+2. **Explain the WHY**: For each code pattern, explain *why* it works — what makes it the right approach. Instead of just saving the code, add a brief comment on why this library/method was chosen over alternatives.
+3. **Keep it lean**: Remove code patterns that aren't pulling their weight. If a previously saved script was superseded by a better one, drop the old one. One excellent script is better than three mediocre alternatives.
+4. **Exclude General Bloat**:
    - No syntax error patterns (general programming knowledge).
    - No internal infra scripts unless they are part of the core logic.
    - No execute_shell_command mechanics (timeout) — focus on the code content.
-3. **Extraction Checklist**:
-   - **Best Code**: Complete, runnable code with imports and logic. Preserve the original language used (Python, bash, etc.).
+5. **Extraction Checklist**:
+   - **Best Code**: Complete, runnable code with imports and logic. Preserve the original language used (Python, bash, etc.). If the same helper script was independently written across runs, bundle it as a reusable file in 'code/'.
    - **Variable Handling**: Replace hardcoded values (IDs, regions) with template variables (e.g., '{{ "{{" }}AWS_ACCOUNT_ID{{ "}}" }}').
    - **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' (Python) or '$MCP_API_URL' and '$MCP_API_TOKEN' (bash/curl) for per-tool HTTP endpoints — never hardcode URLs or tokens.
    - **Step Path**: Note the step execution path used so future runs know where to write output.
@@ -40,15 +42,42 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
 **Existing learnings pre-loaded (skip discovery/retrieval):**
 {{.ExistingLearningsContent}}
 {{else}}
-1. **Discover**: Use execute_shell_command with 'ls' on '{{.WritePath}}'. Identify all '*_learning.md' files. Also check '{{.CodePath}}' for existing code files.
+1. **Discover**: Use execute_shell_command with 'ls' on '{{.WritePath}}'. Identify existing 'SKILL.md' or any '*_learning.md' files (legacy format). Also check '{{.CodePath}}' for existing code files.
 2. **Retrieve**: Use execute_shell_command with 'cat' to read all identified files.
 {{end}}
 3. **Optional - Check Execution Logs**: If you need more context about actual code execution, read execution logs from '{{.ExecutionLogsPath}}' (if available).
-4. **Consolidate**: Merge new execution patterns with history. Prune old/inefficient code. Keep ONLY the latest/best code file.
+4. **Legacy Migration**: If you find '*_learning.md' files (legacy format) but no 'SKILL.md':
+   - Read the legacy content and incorporate it into the new SKILL.md format with proper YAML frontmatter.
+   - Derive the 'description' field from the legacy content (summarize the key code patterns/approaches).
+   - Delete the legacy files after writing SKILL.md.
+5. **Consolidate**:
+{{if .IsSuccess}}
+   - Merge new execution patterns with history. Prune old/inefficient code. Keep ONLY the latest/best code file.
+   - Mark the optimal code pattern that led to validation passing.
+{{else}}
+   - Analyze why the code execution failed validation. Document the root cause clearly.
+   - Preserve existing successful code patterns from history — do NOT discard what worked before.
+   - Add the failure pattern with specific details on what went wrong and how to fix it.
+{{end}}
 5. **Persist**:
-   - Use diff_patch_workspace_file to write ONE consolidated learning file to '{{.WritePath}}/{{.StepTitle}}_learning.md'.
+   - Use diff_patch_workspace_file to write ONE consolidated learning file to '{{.WritePath}}/SKILL.md'.
+     The file MUST use YAML frontmatter in the following format:
+     ` + "`" + `` + "`" + `` + "`" + `
+     ---
+     name: {{.StepTitle}}
+     description: "<YOU MUST WRITE THIS: 1-2 sentence summary of the optimal code approach and key pitfalls>"
+     disable-model-invocation: true
+     user-invocable: false{{if .AllowedTools}}
+     allowed-tools:{{range .AllowedToolsList}}
+       - {{.}}{{end}}{{end}}
+     ---
+
+     (learning content here)
+     ` + "`" + `` + "`" + `` + "`" + `
+     **IMPORTANT**: The 'description' field is critical — it determines when this skill gets loaded. Write a specific summary that covers WHAT the optimal code approach is AND common pitfalls with root causes. Example: "Use Python requests with batch POST to /api/records; avoid urllib which lacks timeout handling and causes failures on payloads >5MB."
    - Save the best code to '{{.CodePath}}/' with an appropriate filename and extension (e.g., '.py' for Python, '.sh' for bash, '.go' for Go).
-6. **Clean Up**: Use execute_shell_command with 'rm' to delete all other learning/code files in these folders.
+   - Reference code files using relative paths from SKILL.md (e.g., 'code/main.py', not absolute paths).
+6. **Clean Up**: Use execute_shell_command with 'rm' to delete all other '*_learning.md' files and old learning files in these folders. Only 'SKILL.md' should remain.
 
 **Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
 
@@ -57,7 +86,7 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
 1. **OPTIMAL**: [Pattern Name]
    - **Language**: Python/Bash/Other
    - **Why**: Brief reason (e.g., "Best error handling").
-   - **Source**: Path to saved code file.
+   - **Source**: Relative path to saved code file (e.g., 'code/main.py', 'code/fetch.sh').
    - **Output Schema**: Document JSON structure of created files.
 
 ### FAILURES TO AVOID
@@ -67,7 +96,7 @@ var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# C
 
 ## FINAL ACTION
 After cleanup, output ONLY the file path:
-'Updated: {{.WritePath}}/{{.StepTitle}}_learning.md'
+'Updated: {{.WritePath}}/SKILL.md'
 Do not add summaries or talkative reports.`)
 
 var learningCodeUserTemplate = MustRegisterTemplate("learningCodeUser", `# Code Pattern Extraction Task
@@ -188,6 +217,25 @@ func (agent *WorkflowCodeExecutionLearningAgent) learningSystemPromptProcessorCo
 	executionLogsPath := templateVars["ExecutionLogsPath"]
 	existingLearningsContent := templateVars["ExistingLearningsContent"]
 
+	// Determine learning trigger (success or failure)
+	learningTrigger := templateVars["LearningTrigger"]
+	if learningTrigger == "" {
+		learningTrigger = "success"
+	}
+	isSuccess := learningTrigger == "success"
+
+	// Build allowed tools list from template vars
+	allowedToolsStr := templateVars["AllowedTools"]
+	var allowedToolsList []string
+	if allowedToolsStr != "" {
+		for _, tool := range strings.Split(allowedToolsStr, ",") {
+			tool = strings.TrimSpace(tool)
+			if tool != "" {
+				allowedToolsList = append(allowedToolsList, tool)
+			}
+		}
+	}
+
 	var result strings.Builder
 	if err := learningCodeSystemTemplate.Execute(&result, map[string]interface{}{
 		"WritePath":                writePath,
@@ -195,6 +243,9 @@ func (agent *WorkflowCodeExecutionLearningAgent) learningSystemPromptProcessorCo
 		"StepTitle":                stepTitle,
 		"ExecutionLogsPath":        executionLogsPath,
 		"ExistingLearningsContent": existingLearningsContent,
+		"IsSuccess":                isSuccess,
+		"AllowedTools":             len(allowedToolsList) > 0,
+		"AllowedToolsList":         allowedToolsList,
 	}); err != nil {
 		return "Error executing learning code system prompt template: " + err.Error()
 	}

@@ -220,7 +220,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       )}
 
       {/* Completed Streaming Text - preserved intermediate output from generation */}
-      {completedStreamingText && !currentStreamingText && (
+      {/* Hide when content is identical to finalResponse (no value in showing duplicate) */}
+      {completedStreamingText && !currentStreamingText && completedStreamingText.trim() !== finalResponse?.trim() && (
         <details className="min-w-0 group" open={selectedModeCategory === 'workflow'}>
           <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
             Thinking

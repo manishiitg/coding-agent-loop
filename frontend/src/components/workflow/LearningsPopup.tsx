@@ -18,8 +18,6 @@ interface LearningsPopupProps {
 interface LearningMetadata {
   step_id?: string
   successful_runs_simple?: number
-  successful_runs_medium?: number
-  successful_runs_complex?: number
   last_turn_count?: number
   auto_locked_at?: string
   auto_lock_reason?: string
@@ -38,14 +36,9 @@ function getLockThreshold(metadata: LearningMetadata | null): number {
   return metadata?.lock_threshold ?? 0
 }
 
-// Get total successful runs count (sum of all complexity categories)
-// The threshold is still based on the determined complexity, but the count is the total across all categories
 function getSuccessfulRuns(metadata: LearningMetadata | null): number {
   if (!metadata) return 0
-  // Sum all successful runs across all complexity categories
-  return (metadata.successful_runs_simple || 0) + 
-         (metadata.successful_runs_medium || 0) + 
-         (metadata.successful_runs_complex || 0)
+  return metadata.successful_runs_simple || 0
 }
 
 // Check if learnings folder exists
@@ -63,8 +56,6 @@ function hasLearningsFolder(
   const hasLearningData = 
     metadata.step_id !== undefined ||
     metadata.successful_runs_simple !== undefined ||
-    metadata.successful_runs_medium !== undefined ||
-    metadata.successful_runs_complex !== undefined ||
     metadata.last_turn_count !== undefined ||
     metadata.auto_locked_at !== undefined ||
     metadata.auto_lock_reason !== undefined ||
@@ -402,6 +393,14 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
             codeContent = codeResponse.data.content
             console.log('[LearningsPopup] Code content loaded, length:', codeContent.length)
           }
+        }
+      }
+
+      // Strip YAML frontmatter from SKILL.md files (---\n...\n---)
+      if (mdContent && mdContent.startsWith('---')) {
+        const endIndex = mdContent.indexOf('\n---', 3)
+        if (endIndex !== -1) {
+          mdContent = mdContent.slice(endIndex + 4).trim()
         }
       }
 

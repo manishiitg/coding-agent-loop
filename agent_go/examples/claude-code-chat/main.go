@@ -229,7 +229,7 @@ func run(ctx context.Context, log loggerv2.Logger) error {
 
 	// Print tool index at startup so we can verify custom tools are included
 	fmt.Fprintf(os.Stderr, "\n=== Tool Index (UseCodeExecutionMode=%v) ===\n", agent.UseCodeExecutionMode)
-	if sp := agent.SystemPrompt; sp != "" {
+	if sp := agent.GetSystemPrompt(); sp != "" {
 		if start := strings.Index(sp, "```json\n"); start != -1 {
 			jsonStart := start + 8
 			if end := strings.Index(sp[jsonStart:], "\n```"); end != -1 {
@@ -756,7 +756,7 @@ func handleCommand(input string, history *[]llm.MessageContent, agent *mcpagent.
 		// Extract and print the tool index JSON from the system prompt.
 		// The tool index is embedded inside <available_tools>...</available_tools>
 		// with a ```json code block containing the actual JSON.
-		sp := agent.SystemPrompt
+		sp := agent.GetSystemPrompt()
 		start := strings.Index(sp, "<available_tools>")
 		end := strings.Index(sp, "</available_tools>")
 		if start == -1 || end == -1 {

@@ -109,12 +109,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// We check cumulative successful runs across all complexities
 	metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
 	if err == nil && metadata != nil {
-		totalSuccessfulLearnings := metadata.SuccessfulRunsSimple + metadata.SuccessfulRunsMedium + metadata.SuccessfulRunsComplex
-		if totalSuccessfulLearnings >= 3 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", totalSuccessfulLearnings, learningPathIdentifier))
+		if metadata.SuccessfulRunsSimple >= 3 {
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", metadata.SuccessfulRunsSimple, learningPathIdentifier))
 			// Skip learning but record turnCount (without incrementing counters)
 			// This effectively "locks" success learning but keeps the step unlocked for failure learning
-			_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", totalSuccessfulLearnings))
+			_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", metadata.SuccessfulRunsSimple))
 			return nil
 		}
 	} else if err != nil {
@@ -200,6 +199,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// reducing costs by 70-90% while preserving essential patterns (write operations, recent messages).
 	formattedHistory := shared.FormatHistoryForLearningAggressive(executionHistory)
 
+	// Build allowed tools string from step's effective tools
+	effectiveTools := hcpo.getEffectiveToolsForStep(step)
+
 	successLearningTemplateVars := map[string]string{
 		"StepTitle":           step.GetTitle(),
 		"StepDescription":     step.GetDescription(),
@@ -210,6 +212,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
+		"LearningTrigger":     "success",
+		"AllowedTools":        strings.Join(effectiveTools, ", "),
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ [DEBUG] runSuccessLearningPhase: Template variables map created"))
 
@@ -514,6 +518,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		validationResultJSON = []byte(fmt.Sprintf("Validation failed to marshal: %v", err))
 	}
 
+	// Build allowed tools string from step's effective tools
+	effectiveToolsFailure := hcpo.getEffectiveToolsForStep(step)
+
 	// Prepare template variables for failure learning agent
 	// Use interface methods instead of direct field access to support all step types (RegularPlanStep, EvaluationStep, etc.)
 	failureLearningTemplateVars := map[string]string{
@@ -530,6 +537,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		"ValidationResult":    string(validationResultJSON),
 		"CurrentObjective":    hcpo.GetObjective(),
 		"LearningDetailLevel": learningDetailLevel, // Pass learning detail preference
+		"LearningTrigger":     "failure",
+		"AllowedTools":        strings.Join(effectiveToolsFailure, ", "),
 	}
 
 	// Add step-specific paths (always enabled)
@@ -813,9 +822,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatStepLearningFilesAsHistory(lear
 		if i > 0 {
 			result.WriteString("\n---\n\n")
 		}
+
+		// For SKILL.md files, extract name from frontmatter and strip it from content
+		displayName := filename
+		displayContent := content
+		if filename == "SKILL.md" && strings.HasPrefix(content, "---") {
+			displayName, displayContent = extractSkillLearningContent(content)
+		}
+
 		// Make it very clear this is the file content, already loaded
-		result.WriteString(fmt.Sprintf("### 📄 File: `%s` (content already loaded below)\n\n", filename))
-		result.WriteString(content)
+		result.WriteString(fmt.Sprintf("### 📄 Skill: `%s` (content already loaded below)\n\n", displayName))
+		result.WriteString(displayContent)
 		result.WriteString("\n")
 		filePaths = append(filePaths, filename)
 	}
@@ -823,25 +840,56 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatStepLearningFilesAsHistory(lear
 	return result.String(), filePaths
 }
 
+// extractSkillLearningContent parses SKILL.md YAML frontmatter and returns (name, body).
+// If parsing fails, returns the filename and full content unchanged.
+func extractSkillLearningContent(content string) (string, string) {
+	// Find the closing frontmatter delimiter
+	rest := content[3:] // Skip opening ---
+	endIndex := strings.Index(rest, "\n---")
+	if endIndex == -1 {
+		return "SKILL.md", content
+	}
+
+	frontmatterYAML := strings.TrimSpace(rest[:endIndex])
+	body := strings.TrimSpace(rest[endIndex+4:]) // Skip \n---
+
+	// Extract name from frontmatter (simple line-based parse to avoid import)
+	name := "SKILL.md"
+	for _, line := range strings.Split(frontmatterYAML, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "name:") {
+			name = strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			name = strings.Trim(name, "\"'")
+			break
+		}
+	}
+
+	return name, body
+}
+
 // getExistingLearningFilePath checks if an existing learning file exists for the given step
 // Returns the RELATIVE file path if it exists, empty string otherwise
+// Checks for SKILL.md first (new format), then falls back to legacy {StepTitle}_learning.md
 func (hcpo *StepBasedWorkflowOrchestrator) getExistingLearningFilePath(ctx context.Context, stepNumber int, stepTitle string) string {
-	// Resolve variables in step title
-	resolvedTitle := ResolveVariables(stepTitle, hcpo.variableValues)
-
 	// Use RELATIVE path - workspace functions auto-prepend workspacePath
 	// getLearningsBasePath returns "evaluation/learnings" or "learnings" based on isEvaluationMode
 	learningsBase := hcpo.getLearningsBasePath()
 	learningsBasePath := fmt.Sprintf("%s/step-%d", learningsBase, stepNumber)
 
-	// Construct the expected file path
+	// Check for new SKILL.md format first
+	skillFilePath := filepath.Join(learningsBasePath, "SKILL.md")
+	_, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, skillFilePath)
+	if err == nil {
+		return skillFilePath
+	}
+
+	// Fall back to legacy format: {StepTitle}_learning.md
+	resolvedTitle := ResolveVariables(stepTitle, hcpo.variableValues)
 	learningFileName := fmt.Sprintf("%s_learning.md", resolvedTitle)
 	expectedFilePath := filepath.Join(learningsBasePath, learningFileName)
 
-	// Try to read the file to check if it exists
-	_, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, expectedFilePath)
+	_, err = hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, expectedFilePath)
 	if err == nil {
-		// File exists, return the RELATIVE path
 		return expectedFilePath
 	}
 

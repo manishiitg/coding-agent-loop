@@ -439,6 +439,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // CRITICAL: Also sync to store so buildExecutionOptions can access it
       setVariablesManifestInStore(manifest)
       setIsLoadingVariables(false)
+
+      // Auto-select first enabled group if no group is currently selected
+      const wfStore = useWorkflowStore.getState()
+      if (manifest?.groups && manifest.groups.length > 0 && wfStore.selectedGroupIds.length === 0) {
+        const firstEnabled = manifest.groups.find(g => g.enabled)
+        if (firstEnabled) {
+          wfStore.setSelectedGroupIds([firstEnabled.group_id])
+        }
+      }
     } else if (!isLoadingWorkspaceState) {
       setVariablesManifest(null)
       setVariablesManifestInStore(null)

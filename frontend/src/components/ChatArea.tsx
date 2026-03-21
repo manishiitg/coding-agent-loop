@@ -1009,6 +1009,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Track recently notified workshop agent names to prevent duplicate notifications
   // (retries emit multiple orchestrator_agent_end events with the same agent name)
   const notifiedWorkshopAgentsRef = useRef<Set<string>>(new Set())
+  // Skip auto-notifications until the first user-initiated message is sent.
+  // On page load/SSE reconnect, old events are backfilled and would trigger 100+ stale notifications.
+  const hasUserSentMessageRef = useRef(false)
 
   // Reusable event processing logic — shared by both SSE and polling paths.
   // Takes an events response (same shape from SSE or REST) and a tab, then processes
@@ -1203,7 +1206,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Auto-notify chat agent when a workshop step or sub-agent completes.
       // Workshop wrapper events (workshop-step-*) and sub-agent events within workshop steps
       // (detected by workshop- correlation_id) both trigger notifications.
-      if (event.type === 'orchestrator_agent_end' && tab) {
+      if (event.type === 'orchestrator_agent_end' && tab && hasUserSentMessageRef.current) {
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
         const isWorkshopWrapper = agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task'
         // Sub-agents within workshop steps have workshop_step_id in metadata (set by ContextAwareEventBridge)
@@ -1395,7 +1398,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Step status coloring on the canvas is not needed during chat — it only matters in execution mode.
     if (selectedModeCategory === 'workflow' && isActivePresetTab && tabViewMode !== 'summary') {
       for (const event of response.events as PollingEvent[]) {
-        if (event.type === 'todo_task_step_completed') {
+        if (event.type === 'todo_task_step_completed' && hasUserSentMessageRef.current) {
           const eventData = event.data as Record<string, unknown> | undefined
           const todoStepData = (eventData?.data as Record<string, unknown>) || eventData
           const stepTitle = todoStepData?.step_title as string | undefined
@@ -1981,6 +1984,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Wrapper function to submit query with the current local query
   const submitQueryWithQuery = useCallback(async (query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean }) => {
+    // Mark that user has interacted — enables auto-notifications
+    // (prevents stale notifications from SSE backfill on page load)
+    hasUserSentMessageRef.current = true
+
     // Prevent double submission: if already submitting, ignore
     if (isSubmittingQueryRef.current) {
       console.warn('[ChatArea] Blocked duplicate submitQueryWithQuery call', { query: query.substring(0, 50) })

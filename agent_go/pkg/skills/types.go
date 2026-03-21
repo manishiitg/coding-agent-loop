@@ -2,11 +2,16 @@ package skills
 
 // SkillFrontmatter represents the YAML frontmatter in SKILL.md
 type SkillFrontmatter struct {
-	Name         string   `yaml:"name" json:"name"`
-	Description  string   `yaml:"description" json:"description"`
-	ArgumentHint string   `yaml:"argument-hint,omitempty" json:"argument_hint,omitempty"`
-	AllowedTools []string `yaml:"allowed-tools,omitempty" json:"allowed_tools,omitempty"`
-	Model        string   `yaml:"model,omitempty" json:"model,omitempty"`
+	Name                   string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Description            string   `yaml:"description" json:"description"`
+	ArgumentHint           string   `yaml:"argument-hint,omitempty" json:"argument_hint,omitempty"`
+	AllowedTools           []string `yaml:"allowed-tools,omitempty" json:"allowed_tools,omitempty"`
+	Model                  string   `yaml:"model,omitempty" json:"model,omitempty"`
+	DisableModelInvocation bool     `yaml:"disable-model-invocation,omitempty" json:"disable_model_invocation,omitempty"`
+	UserInvocable          *bool    `yaml:"user-invocable,omitempty" json:"user_invocable,omitempty"`
+	Effort                 string   `yaml:"effort,omitempty" json:"effort,omitempty"`
+	Context                string   `yaml:"context,omitempty" json:"context,omitempty"`
+	Agent                  string   `yaml:"agent,omitempty" json:"agent,omitempty"`
 }
 
 // Skill represents a complete skill with parsed content

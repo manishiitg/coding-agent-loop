@@ -1,11 +1,14 @@
 # Tasks
 ## Pending
-- [ ] post_process_quality: Run the quality checker after all precedents tests are complete.
-- [ ] post_process_performance: Update performance baselines after testing is complete.
-- [ ] post_process_github: Create/update GitHub issues and post the QA run summary.
-- [ ] post_process_reports: Generate the per-page and global QA reports.
+- [ ] task_1: Read HDFC credentials from Google Sheet
+- [ ] task_2: Log in to HDFC Bank
+- [ ] task_3: Download current and previous financial year statements
+- [ ] task_4: Process and upload statements
+- [ ] task_5: Verify statement integrity
+- [ ] task_6: Update bank balance
+- [ ] task_7: Update all formulas
+- [ ] task_8: Close browser
+- [ ] task_9: Aggregate step outputs into final_automation_status.json
 ## In Progress
-- [~] execute_precedents_batches: Run all pending precedents test cases in batch order, updating `knowledgebase/test-cases/precedents_cases.md` and per-batch results files.
 ## Completed
-- [x] batch_planner: Build `knowledgebase/testing/batch_plan.json` for all pending precedents cases.
 ## Removed

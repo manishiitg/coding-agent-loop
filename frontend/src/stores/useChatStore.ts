@@ -1053,10 +1053,14 @@ export const useChatStore = create<ChatState>()(
           delete newStreamingStatus[sessionId]
           const newLastIdx = { ...state.lastStreamingChunkIndex }
           delete newLastIdx[sessionId]
-          // Preserve completed streaming text so it stays visible after generation ends
+          // Preserve completed streaming text so it stays visible after generation ends.
+          // APPEND to existing (don't replace) so multiple thinking rounds accumulate.
           const newCompletedStreamingText = { ...state.completedStreamingText }
           if (currentText) {
-            newCompletedStreamingText[sessionId] = currentText
+            const existing = newCompletedStreamingText[sessionId]
+            newCompletedStreamingText[sessionId] = existing
+              ? existing + '\n\n---\n\n' + currentText
+              : currentText
           }
           return { streamingText: newStreamingText, streamingStatus: newStreamingStatus, lastStreamingChunkIndex: newLastIdx, completedStreamingText: newCompletedStreamingText }
         })

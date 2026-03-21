@@ -793,9 +793,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		"workspace": true, "workspace_basic": true, "workspace_browser": true,
 		"workspace_advanced": true, "workspace_git": true, "workspace_image_gen": true,
 		"workspace_image_edit": true, "human": true,
+		"workflow": true,
 	}
 	virtualToolCategories := map[string]bool{
-		"workflow": true, "memory": true,
+		"memory": true,
 	}
 	routeMCPRequest := func(w http.ResponseWriter, r *http.Request, server, tool string) {
 		// Normalize: hyphens to underscores for category lookup
@@ -4318,7 +4319,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[CUSTOM TOOLS] Warning: Failed to update code execution registry: %v", err)
 			}
 
-			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.SystemPrompt), req.LLMGuidance != "" || llmGuidance != "")
+			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.GetSystemPrompt()), req.LLMGuidance != "" || llmGuidance != "")
 
 			// Add CLI-specific human tool override when using CLI-based providers.
 			// This covers delegation tools, memory tools, and human interaction tools —
@@ -4589,9 +4590,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Generate phase-specific system prompt (dispatches by phaseId)
 				phaseSystemPrompt := todo_creation_human.PhaseChatSystemPrompt(workflowPhaseID, phaseTemplateVars)
 
-				// Override the agent's system prompt and clear appended prompts
-				underlyingAgent.SystemPrompt = phaseSystemPrompt
-				underlyingAgent.AppendedSystemPrompts = nil
+				// Override the agent's system prompt — use SetSystemPrompt to properly set tracking flags
+				// so that rebuildSystemPromptWithUpdatedToolStructure preserves this prompt
+				underlyingAgent.ClearAppendedSystemPrompts()
+				underlyingAgent.SetSystemPrompt(phaseSystemPrompt)
 				log.Printf("[WORKFLOW_PHASE] Overrode system prompt (%d chars) for phase=%s", len(phaseSystemPrompt), workflowPhaseID)
 
 				// Append secrets to the phase agent's system prompt so it knows what's available
@@ -4649,7 +4651,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					if evalSession != nil {
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger, true)
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger)
 						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for evaluation-builder (execute_step, query_step, generate_learnings, run_full_evaluation, etc.)")
 					}
@@ -4746,11 +4748,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									var presetLLMConfig database.PresetLLMConfig
 									if jsonErr := json.Unmarshal(refreshPreset.LLMConfig, &presetLLMConfig); jsonErr == nil {
 										// Refresh LLM configs
-										learnLLM := workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
 										phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-										workshopSession.UpdatePresetLLMConfigs(learnLLM, phaseLLM, nil)
-										log.Printf("[WORKFLOW_PHASE] Refreshed LLM configs: learn=%v phase=%v",
-											learnLLM != nil, phaseLLM != nil)
+										workshopSession.UpdatePresetLLMConfigs(phaseLLM)
+										log.Printf("[WORKFLOW_PHASE] Refreshed phase LLM config: %v", phaseLLM != nil)
 
 										// Refresh tiered LLM allocation config
 										if presetLLMConfig.TieredConfig != nil {
@@ -4823,7 +4823,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// Wire bgAgentRegistry notifier so todo task sub-agents auto-notify the main agent.
 						// Called every request (safe: always rebuilds the chain, no duplicates).
 						workshopSession.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger, true)
+						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools (execute_step, query_step, stop_step, list_steps, etc.)")
 					}
 
@@ -9292,13 +9292,9 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				if jsonErr := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); jsonErr != nil {
 					log.Printf("[WORKSHOP] Failed to parse preset LLM config: %v", jsonErr)
 				} else {
-					// Extract all preset LLMs (same extraction as workflow_orchestrator.go)
-					cfg.PresetLearningLLM = workshopExtractLLM(presetLLMConfig.LearningLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+					// Extract preset phase LLM
 					cfg.PresetPhaseLLM = workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-					// Plan improvement uses phase LLM (not a separate config)
-
-					log.Printf("[WORKSHOP] LLM configs: learn=%v phase=%v",
-						cfg.PresetLearningLLM != nil, cfg.PresetPhaseLLM != nil)
+					log.Printf("[WORKSHOP] LLM config: phase=%v", cfg.PresetPhaseLLM != nil)
 
 					// Knowledgebase toggle
 					if presetLLMConfig.UseKnowledgebase != nil {

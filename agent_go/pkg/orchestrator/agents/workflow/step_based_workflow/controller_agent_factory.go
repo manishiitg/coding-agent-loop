@@ -975,21 +975,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		if err == nil {
 			shouldUseTempLLM := false
 			reason := ""
-			if metadata.LastTurnCount < 100 {
-				if metadata.SuccessfulRunsSimple >= 2 {
-					shouldUseTempLLM = true
-					reason = fmt.Sprintf("stability threshold reached 50%% (Simple: %d/3)", metadata.SuccessfulRunsSimple)
-				}
-			} else if metadata.LastTurnCount <= 200 {
-				if metadata.SuccessfulRunsMedium >= 3 {
-					shouldUseTempLLM = true
-					reason = fmt.Sprintf("stability threshold reached 50%% (Medium: %d/5)", metadata.SuccessfulRunsMedium)
-				}
-			} else {
-				if metadata.SuccessfulRunsComplex >= 5 {
-					shouldUseTempLLM = true
-					reason = fmt.Sprintf("stability threshold reached 50%% (Complex: %d/10)", metadata.SuccessfulRunsComplex)
-				}
+			if metadata.SuccessfulRunsSimple >= 2 {
+				shouldUseTempLLM = true
+				reason = fmt.Sprintf("stability threshold reached (%d successful runs)", metadata.SuccessfulRunsSimple)
 			}
 			if shouldUseTempLLM && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
 				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Learning agent using cheaper tempLLM (%s/%s): %s",
@@ -1035,21 +1023,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		return llmConfig
 	}
 
-	// ── 5. PRESET ────────────────────────────────────────────────────────────
-	if hcpo.presetLearningLLM != nil && hcpo.presetLearningLLM.Provider != "" && hcpo.presetLearningLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset default learning LLM: %s/%s",
-			hcpo.presetLearningLLM.Provider, hcpo.presetLearningLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetLearningLLM.Provider,
-				ModelID:  hcpo.presetLearningLLM.ModelID,
-			},
-			Fallbacks: convertAgentFallbacks(hcpo.presetLearningLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys,
-		}
-	}
-
-	err := fmt.Errorf("no valid LLM configuration found for learning agent (step %s): tempLLM, step config, tiered mode, and preset are all empty/unavailable", stepPath)
+	err := fmt.Errorf("no valid LLM configuration found for learning agent (step %s): tempLLM, step config, and tiered mode are all empty/unavailable", stepPath)
 	hcpo.GetLogger().Error("❌ "+err.Error(), err)
 	return nil
 }

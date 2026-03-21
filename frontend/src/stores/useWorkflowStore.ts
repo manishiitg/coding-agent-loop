@@ -607,8 +607,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           set({ runFolders: sorted, isLoadingRunFolders: false })
 
-          // Validate current selection
+          // Auto-select latest iteration if no selection exists
           const currentSelection = get().selectedRunFolder
+          if (!currentSelection && sorted.length > 0) {
+            const latest = sorted[0].name
+            set({ selectedRunFolder: latest })
+            try {
+              localStorage.setItem(SELECTED_RUN_FOLDER_KEY, latest)
+            } catch { /* ignore */ }
+            get().loadProgress(workspacePath, latest)
+          }
+
+          // Validate current selection
           if (currentSelection && !sorted.some(f => f.name === currentSelection)) {
             // Check if the selection looks like a valid iteration folder (e.g., "iteration-3")
             // This handles the case where a folder was just created but hasn't appeared in the list yet

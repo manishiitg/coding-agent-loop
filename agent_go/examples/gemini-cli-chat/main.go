@@ -224,7 +224,7 @@ func run(ctx context.Context, log loggerv2.Logger) error {
 
 	// Print tool index at startup
 	fmt.Fprintf(os.Stderr, "\n=== Tool Index (UseCodeExecutionMode=%v) ===\n", agent.UseCodeExecutionMode)
-	if sp := agent.SystemPrompt; sp != "" {
+	if sp := agent.GetSystemPrompt(); sp != "" {
 		if start := strings.Index(sp, "```json\n"); start != -1 {
 			jsonStart := start + 8
 			if end := strings.Index(sp[jsonStart:], "\n```"); end != -1 {
@@ -770,7 +770,7 @@ func handleCommand(input string, history *[]llm.MessageContent, agent *mcpagent.
 		}
 		return true, false
 	case "/index":
-		sp := agent.SystemPrompt
+		sp := agent.GetSystemPrompt()
 		start := strings.Index(sp, "<available_tools>")
 		end := strings.Index(sp, "</available_tools>")
 		if start == -1 || end == -1 {

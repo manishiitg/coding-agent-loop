@@ -17,49 +17,30 @@ type DetectionHistoryEntry struct {
 	Confidence     float64 `json:"confidence"`
 }
 
-// ConsolidationHistoryEntry represents a single consolidation operation result
-type ConsolidationHistoryEntry struct {
-	Iteration          int    `json:"iteration"`
-	Timestamp          string `json:"timestamp"`
-	FilesConsolidated  int    `json:"files_consolidated,omitempty"`
-	FilesDeleted       int    `json:"files_deleted,omitempty"`
-	PatternsMerged     int    `json:"patterns_merged,omitempty"`
-	PatternsUpdated    int    `json:"patterns_updated,omitempty"`
-	OptimalPathsMarked int    `json:"optimal_paths_marked,omitempty"`
-	UnreliableMarked   int    `json:"unreliable_marked,omitempty"`
-	ConsolidatedFile   string `json:"consolidated_file,omitempty"`
-	// Note: Output and NewLearningContent removed - learning content is stored in files, not metadata
-}
-
 // LearningMetadata represents the learning metadata stored per step
 type LearningMetadata struct {
-	StepID                   string                      `json:"step_id"`
-	StepPath                 string                      `json:"step_path"`
-	StepHash                 string                      `json:"step_hash,omitempty"`                // SHA256 of step definition
-	LearningContentHash      string                      `json:"learning_content_hash,omitempty"`    // SHA256 of learning file contents — if changed, force exploration mode
-	TotalIterations          int                         `json:"total_iterations"`
-	ConsecutiveNoNewLearning int                         `json:"consecutive_no_new_learning"` // Legacy - keeping for backward compatibility
-	SuccessfulRunsSimple     int                         `json:"successful_runs_simple"`      // Count of successful runs (used for auto-lock threshold)
-	SuccessfulRunsMedium     int                         `json:"successful_runs_medium"`      // Legacy - kept for backward compatibility
-	SuccessfulRunsComplex    int                         `json:"successful_runs_complex"`     // Legacy - kept for backward compatibility
-	LastTurnCount            int                         `json:"last_turn_count"`             // Last recorded TurnCount
-	LastExecutionLLM         string                      `json:"last_execution_llm,omitempty"` // The LLM used for the last execution (associated with last_turn_count)
-	LastLearningLLM          string                      `json:"last_learning_llm,omitempty"` // The LLM used for the last learning cycle
-	LastLearningDetectedAt   string                      `json:"last_learning_detected_at,omitempty"`
-	LastDetectionReasoning   string                      `json:"last_detection_reasoning,omitempty"`
-	LastDetectionConfidence  float64                     `json:"last_detection_confidence,omitempty"`
-	DetectionHistory         []DetectionHistoryEntry     `json:"detection_history,omitempty"`
-	ConsolidationHistory     []ConsolidationHistoryEntry `json:"consolidation_history,omitempty"`
-	LastConsolidationAt      string                      `json:"last_consolidation_at,omitempty"`
+	StepID              string                  `json:"step_id"`
+	StepPath            string                  `json:"step_path"`
+	StepHash            string                  `json:"step_hash,omitempty"`             // SHA256 of step definition
+	LearningContentHash string                  `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
+	TotalIterations     int                     `json:"total_iterations"`
+	SuccessfulRunsSimple int                    `json:"successful_runs_simple"` // Count of successful runs (used for auto-lock threshold)
+	LastTurnCount       int                     `json:"last_turn_count"`        // Last recorded TurnCount
+	LastExecutionLLM    string                  `json:"last_execution_llm,omitempty"`
+	LastLearningLLM     string                  `json:"last_learning_llm,omitempty"`
+	// Detection tracking
+	LastLearningDetectedAt string               `json:"last_learning_detected_at,omitempty"`
+	LastDetectionReasoning string               `json:"last_detection_reasoning,omitempty"`
+	LastDetectionConfidence float64             `json:"last_detection_confidence,omitempty"`
+	DetectionHistory       []DetectionHistoryEntry `json:"detection_history,omitempty"`
 	// Auto-lock information
-	AutoLockedAt      string `json:"auto_locked_at,omitempty"`      // Timestamp when auto-lock was triggered
-	AutoLockReason    string `json:"auto_lock_reason,omitempty"`    // Reason: "threshold_reached", "maximum_learnings", etc.
-	AutoLockIteration int    `json:"auto_lock_iteration,omitempty"` // Iteration number when auto-lock was triggered
+	AutoLockedAt      string `json:"auto_locked_at,omitempty"`
+	AutoLockReason    string `json:"auto_lock_reason,omitempty"`
+	AutoLockIteration int    `json:"auto_lock_iteration,omitempty"`
 	// Auto-unlock information
-	AutoUnlockedAt      string `json:"auto_unlocked_at,omitempty"`      // Timestamp when auto-unlock was triggered
-	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`    // Reason: "validation_failed", "decision_step_false", "plan_changed"
-	AutoUnlockIteration int    `json:"auto_unlock_iteration,omitempty"` // Iteration number when auto-unlock was triggered
-	// Note: LastConsolidationOutput removed - learning content is stored in files, not metadata
+	AutoUnlockedAt      string `json:"auto_unlocked_at,omitempty"`
+	AutoUnlockReason    string `json:"auto_unlock_reason,omitempty"`
+	AutoUnlockIteration int    `json:"auto_unlock_iteration,omitempty"`
 }
 
 // getLearningsBasePath returns the correct learnings base path based on evaluation mode
@@ -120,20 +101,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	if err != nil {
 		// Metadata doesn't exist - create new
 		metadata = LearningMetadata{
-			StepID:                   learningPathIdentifier,
-			StepPath:                 stepPath,
-			TotalIterations:          0,
-			ConsecutiveNoNewLearning: 0,
+			StepID:          learningPathIdentifier,
+			StepPath:        stepPath,
+			TotalIterations: 0,
 		}
 	} else {
 		// Parse existing metadata
 		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata: %v (creating new)", err))
 			metadata = LearningMetadata{
-				StepID:                   learningPathIdentifier,
-				StepPath:                 stepPath,
-				TotalIterations:          0,
-				ConsecutiveNoNewLearning: 0,
+				StepID:          learningPathIdentifier,
+				StepPath:        stepPath,
+				TotalIterations: 0,
 			}
 		}
 	}
@@ -141,9 +120,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Initialize slices if nil
 	if metadata.DetectionHistory == nil {
 		metadata.DetectionHistory = []DetectionHistoryEntry{}
-	}
-	if metadata.ConsolidationHistory == nil {
-		metadata.ConsolidationHistory = []ConsolidationHistoryEntry{}
 	}
 
 	// Update common fields
@@ -164,10 +140,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	}
 
 	if hasNewLearning {
-		metadata.ConsecutiveNoNewLearning = 0
 		metadata.LastLearningDetectedAt = time.Now().Format(time.RFC3339)
-	} else {
-		metadata.ConsecutiveNoNewLearning++
 	}
 	metadata.LastDetectionReasoning = reasoning
 	metadata.LastDetectionConfidence = confidence
@@ -315,24 +288,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateUnlockMetadata(
 	if err != nil {
 		// Metadata doesn't exist - create new
 		metadata = LearningMetadata{
-			StepID:                   fmt.Sprintf("step-%d", stepIndex+1),
-			StepPath:                 stepPath,
-			TotalIterations:          0,
-			ConsecutiveNoNewLearning: 0,
-			DetectionHistory:         []DetectionHistoryEntry{},
-			ConsolidationHistory:     []ConsolidationHistoryEntry{},
+			StepID:           fmt.Sprintf("step-%d", stepIndex+1),
+			StepPath:         stepPath,
+			TotalIterations:  0,
+			DetectionHistory: []DetectionHistoryEntry{},
 		}
 	} else {
 		// Parse existing metadata
 		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata: %v (creating new)", err))
 			metadata = LearningMetadata{
-				StepID:                   fmt.Sprintf("step-%d", stepIndex+1),
-				StepPath:                 stepPath,
-				TotalIterations:          0,
-				ConsecutiveNoNewLearning: 0,
-				DetectionHistory:         []DetectionHistoryEntry{},
-				ConsolidationHistory:     []ConsolidationHistoryEntry{},
+				StepID:           fmt.Sprintf("step-%d", stepIndex+1),
+				StepPath:         stepPath,
+				TotalIterations:  0,
+				DetectionHistory: []DetectionHistoryEntry{},
 			}
 		}
 	}
@@ -340,11 +309,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateUnlockMetadata(
 	// Initialize DetectionHistory if nil (for backward compatibility)
 	if metadata.DetectionHistory == nil {
 		metadata.DetectionHistory = []DetectionHistoryEntry{}
-	}
-
-	// Initialize ConsolidationHistory if nil (for backward compatibility)
-	if metadata.ConsolidationHistory == nil {
-		metadata.ConsolidationHistory = []ConsolidationHistoryEntry{}
 	}
 
 	// Update unlock information
@@ -453,7 +417,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsAndResetMetadata(
 		// Metadata exists - reset counter
 		var metadata LearningMetadata
 		if err := json.Unmarshal([]byte(content), &metadata); err == nil {
-			metadata.ConsecutiveNoNewLearning = 0
 			metadataJSON, marshalErr := json.MarshalIndent(metadata, "", "  ")
 			if marshalErr == nil {
 				if writeErr := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); writeErr == nil {

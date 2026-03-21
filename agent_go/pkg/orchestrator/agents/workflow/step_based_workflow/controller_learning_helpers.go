@@ -95,6 +95,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) CalculateStepHash(step PlanStepInterf
 	return hex.EncodeToString(hash[:])
 }
 
+// getEffectiveToolsForStep returns the list of effective MCP server/tool names for a step.
+// Uses the same resolution logic as CalculateStepHash: step-level filtered by workflow cap, or workflow defaults.
+func (hcpo *StepBasedWorkflowOrchestrator) getEffectiveToolsForStep(step PlanStepInterface) []string {
+	agentConfigs := getAgentConfigs(step)
+	workflowServers := hcpo.GetSelectedServers()
+
+	var result []string
+	if agentConfigs != nil && len(agentConfigs.SelectedTools) > 0 {
+		result = filterToolsByWorkflow(agentConfigs.SelectedTools, workflowServers)
+	} else if agentConfigs != nil && len(agentConfigs.SelectedServers) > 0 {
+		result = filterServersByWorkflow(agentConfigs.SelectedServers, workflowServers)
+	} else {
+		result = workflowServers
+	}
+
+	sort.Strings(result)
+	return result
+}
+
 // CheckAndResetStepHash checks if the step definition has changed and resets learnings if it has.
 // This is the "Step Hash Guard" described in learnings_architecture.md.
 // Steps with learning_mode "human_assisted" skip this check — human-curated learnings
@@ -275,9 +294,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetLearningMetadata(
 	metadata.StepPath = stepPath
 	metadata.StepHash = newHash
 	metadata.SuccessfulRunsSimple = 0
-	metadata.SuccessfulRunsMedium = 0
-	metadata.SuccessfulRunsComplex = 0
-	metadata.ConsecutiveNoNewLearning = 0 // Also reset legacy counter
 
 	// Clear auto-lock info to prevent UI from showing "Locked (Auto)" state
 	// The UI checks if AutoLockedAt is set to determine if it's auto-locked

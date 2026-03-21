@@ -520,7 +520,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveExecutionConversationLogs(
 	var capturedSystemPrompt string
 	if executionAgent != nil {
 		if ba := executionAgent.GetBaseAgent(); ba != nil && ba.Agent() != nil {
-			capturedSystemPrompt = ba.Agent().SystemPrompt
+			capturedSystemPrompt = ba.Agent().GetSystemPrompt()
 		}
 	}
 	promptsPath := fmt.Sprintf("%s/%s-prompts.json", logDir, filenameBase)
@@ -1193,16 +1193,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				keepLearningFull = false
 
 				if metadata != nil {
-					// Check thresholds: Simple >= 2, Medium >= 3, Complex >= 5
+					// Switch to exploitation mode after 2 successful runs
 					if metadata.SuccessfulRunsSimple >= 2 {
 						keepLearningFull = true
-						keepLearningFullSource = "dynamic (simple threshold met)"
-					} else if metadata.SuccessfulRunsMedium >= 3 {
-						keepLearningFull = true
-						keepLearningFullSource = "dynamic (medium threshold met)"
-					} else if metadata.SuccessfulRunsComplex >= 5 {
-						keepLearningFull = true
-						keepLearningFullSource = "dynamic (complex threshold met)"
+						keepLearningFullSource = fmt.Sprintf("dynamic (threshold met: %d successful runs)", metadata.SuccessfulRunsSimple)
 					} else {
 						keepLearningFullSource = "dynamic (exploration phase)"
 					}

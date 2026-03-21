@@ -197,6 +197,22 @@ func ExecuteShellCommand(c *gin.Context) {
 		cmd.Env = security.BuildSafeEnvironment()
 	}
 
+	// Check browser session limits for agent-browser commands (both direct and via code exec)
+	if browserLimitMsg := CheckBrowserSessionLimit(req.Command, req.ExtraEnv); browserLimitMsg != "" {
+		c.JSON(http.StatusOK, models.APIResponse[models.ExecuteShellResponse]{
+			Success: true,
+			Message: "Command executed successfully",
+			Data: models.ExecuteShellResponse{
+				Stdout:          browserLimitMsg,
+				Stderr:          "",
+				ExitCode:        1,
+				ExecutionTimeMs: 0,
+				Command:         fullCommand,
+			},
+		})
+		return
+	}
+
 	// Inject whitelisted extra env vars (MCP_* and SECRET_* prefixed)
 	// This applies to both isolated and non-isolated execution paths
 	extraEnvCount := 0

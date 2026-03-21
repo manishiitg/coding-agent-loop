@@ -5,6 +5,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent-builder-go/agent_go/pkg/browser"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // GetWorkspaceBrowserToolCategory returns the category name for workspace browser tools
@@ -20,6 +21,12 @@ func CreateWorkspaceBrowserTools() []llmtypes.Tool {
 // CreateWorkspaceBrowserToolExecutors creates the execution functions for workspace browser tools
 // An optional cdpPort can be passed to connect to an existing Chrome via CDP instead of launching headless.
 func CreateWorkspaceBrowserToolExecutors(cdpPort ...int) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
+	return CreateWorkspaceBrowserToolExecutorsWithSession("", cdpPort...)
+}
+
+// CreateWorkspaceBrowserToolExecutorsWithSession creates browser tool executors with chat session tracking.
+// sessionID is the chat/workflow session ID — used to enforce per-session browser limits.
+func CreateWorkspaceBrowserToolExecutorsWithSession(sessionID string, cdpPort ...int) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
 
 	// Wire up the browser executor from the pkg/browser package
@@ -29,7 +36,14 @@ func CreateWorkspaceBrowserToolExecutors(cdpPort ...int) map[string]func(ctx con
 		opts = append(opts, browser.WithCdpPort(cdpPort[0]))
 	}
 	browserExecutor := browser.NewExecutor(browserClient, opts...)
-	executors["agent_browser"] = browserExecutor.HandleAgentBrowser
+
+	// Wrap executor to inject chat session ID into context
+	executors["agent_browser"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if sessionID != "" {
+			ctx = context.WithValue(ctx, common.ChatSessionIDKey, sessionID)
+		}
+		return browserExecutor.HandleAgentBrowser(ctx, args)
+	}
 
 	return executors
 }

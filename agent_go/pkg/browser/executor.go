@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -64,6 +65,64 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if !ok || session == "" {
 		return "", fmt.Errorf("session is required")
 	}
+
+	// Get chat/workflow session ID from context (if available)
+	chatSessionID := ""
+	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok {
+		chatSessionID = sid
+	}
+
+	// Track headless browser sessions to prevent unbounded growth.
+	// CDP mode connects to user's real browser — no tracking needed.
+	isHeadless := e.CdpPort <= 0
+	tracker := GetSessionTracker()
+
+	if isHeadless {
+		isOpenCommand := command == "open" || command == "goto" || command == "navigate"
+
+		if isOpenCommand {
+			// Check per-chat session limit — return error if exceeded
+			if limitMsg := tracker.CheckLimits(session, chatSessionID); limitMsg != "" {
+				log.Printf("[BROWSER_TRACKER] LIMIT EXCEEDED: browser=%q chat=%q command=%q active=%d global=%d",
+					session, chatSessionID, command, tracker.CountForChat(chatSessionID), tracker.Count())
+				return limitMsg, nil // Return as tool output, not error — LLM can read and react
+			}
+
+			// Check global limit — auto-evict oldest if needed
+			if tracker.Count() >= MaxBrowserSessionsGlobal {
+				oldest := tracker.GetOldestSession()
+				if oldest != "" && oldest != session {
+					log.Printf("[BROWSER_TRACKER] Global limit (%d) reached, auto-closing oldest: %q",
+						MaxBrowserSessionsGlobal, oldest)
+					closeArgs := []string{"--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+						"--args", "--disable-blink-features=AutomationControlled",
+						"--session", oldest, "close", "--json"}
+					_, closeErr := e.Client.ExecuteCommand(ctx, closeArgs, &ExecuteOptions{Timeout: 10 * time.Second})
+					if closeErr != nil {
+						log.Printf("[BROWSER_TRACKER] Failed to auto-close session %q: %v", oldest, closeErr)
+					}
+					tracker.Remove(oldest)
+				}
+			}
+
+			log.Printf("[BROWSER_TRACKER] Opening browser: browser=%q chat=%q (chat_count=%d, global=%d)",
+				session, chatSessionID, tracker.CountForChat(chatSessionID), tracker.Count())
+		}
+
+		// Track the session
+		tracker.Touch(session, chatSessionID)
+
+		// Log every command for debugging
+		log.Printf("[BROWSER_TRACKER] Command: browser=%q chat=%q cmd=%q (chat_count=%d, global=%d)",
+			session, chatSessionID, command, tracker.CountForChat(chatSessionID), tracker.Count())
+
+		// If closing, remove from tracker
+		if command == "close" || command == "quit" || command == "exit" {
+			log.Printf("[BROWSER_TRACKER] Closing browser: browser=%q chat=%q", session, chatSessionID)
+			defer tracker.Remove(session)
+		}
+	}
+
 	cmdArgs = append(cmdArgs, "--session", session)
 
 	// Add the command
@@ -102,8 +161,8 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 
 	// Execute via client
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, &ExecuteOptions{
-		Timeout:         timeout,
-		FolderGuard:     folderGuard,
+		Timeout:          timeout,
+		FolderGuard:      folderGuard,
 		WorkingDirectory: workingDir,
 	})
 	if err != nil {

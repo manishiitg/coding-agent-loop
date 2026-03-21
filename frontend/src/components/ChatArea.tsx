@@ -1086,6 +1086,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const eventsBeforeFilter = response.events as PollingEvent[]
     const newEvents: PollingEvent[] = []
     let hasCompletionEvent = false
+    const tabViewMode = tab ? (chatStore.getTab(tab.tabId)?.viewMode ?? 'detailed') : 'detailed'
 
     // Check if we already have a frontend-created user message for this session
     // (prevents duplicate user messages when backend also emits user_message)
@@ -1322,6 +1323,22 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         useWorkspaceStore.getState().processWorkspaceEvent(event)
       }
 
+      // PERF: In summary mode, skip sub-agent inner events (tool calls, LLM events) from tabEvents.
+      // These are grouped inside agent cards and never shown at the top level,
+      // but adding them triggers the full render cascade on every batch.
+      // In detailed mode, include everything for full drill-down.
+      if (tabViewMode === 'summary' && isSubAgentEvent
+        && event.type !== 'orchestrator_agent_start'
+        && event.type !== 'orchestrator_agent_end'
+        && event.type !== 'todo_task_step_completed'
+        && event.type !== 'todo_task_route_selected'
+        && event.type !== 'todo_task_item_created'
+        && event.type !== 'todo_task_item_updated'
+        && event.type !== 'todo_task_item_completed'
+        && event.type !== 'step_progress_updated') {
+        continue
+      }
+
       newEvents.push(event)
     }
     // PERF FIX: Mark workspace as stale instead of auto-fetching.
@@ -1369,63 +1386,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // canvas node updates (running/completed/failed colors) in summary mode, and each
     // setStepStatus/handleBatchGroup call triggers workflowStore state updates which
     // cascade into React Flow node re-renders.
-    const tabViewMode = tab ? (useChatStore.getState().getTab(tab.tabId)?.viewMode ?? 'detailed') : 'detailed'
+    // PERF: Removed step_progress_updated / batch_group_start/end processing from chat events.
+    // These were calling setStepStatus/handleBatchGroupStart which update workflowStore →
+    // trigger usePlanToFlow → full Dagre layout recomputation for ALL canvas nodes on every event.
+    // Step status coloring on the canvas is not needed during chat — it only matters in execution mode.
     if (selectedModeCategory === 'workflow' && isActivePresetTab && tabViewMode !== 'summary') {
-      const workflowStore = useWorkflowStore.getState()
       for (const event of response.events as PollingEvent[]) {
-        if (event.type === 'batch_group_start') {
-          const eventData = event.data as Record<string, unknown> | undefined
-          const batchGroupStartData = (eventData?.data as Record<string, unknown>) || eventData
-          const groupId = batchGroupStartData?.group_id as string | undefined
-          const runFolder = batchGroupStartData?.run_folder as string | undefined
-          const workspacePath = batchGroupStartData?.workspace_path as string | undefined
-          const groupIndex = batchGroupStartData?.group_index as number | undefined
-          const totalGroups = batchGroupStartData?.total_groups as number | undefined
-          if (groupId && runFolder) {
-            workflowStore.handleBatchGroupStart(groupId, runFolder, workspacePath, groupIndex, totalGroups)
-          }
-        }
-        if (event.type === 'batch_group_end') {
-          const eventData = event.data as Record<string, unknown> | undefined
-          const batchGroupEndData = (eventData?.data as Record<string, unknown>) || eventData
-          const groupId = batchGroupEndData?.group_id as string | undefined
-          const success = batchGroupEndData?.success as boolean | undefined
-          const remainingGroups = batchGroupEndData?.remaining_groups as number | undefined
-          if (groupId) {
-            workflowStore.handleBatchGroupEnd(groupId, success, remainingGroups)
-          }
-        }
-        if (event.type === 'step_progress_updated') {
-          const eventData = event.data as Record<string, unknown> | undefined
-          const stepProgressData = (eventData?.data as Record<string, unknown>) || eventData
-          const stepId = stepProgressData?.current_step_id as string | undefined
-          const status = stepProgressData?.status as string | undefined
-          if (stepId && status) {
-            if (status === 'start') {
-              workflowStore.setCurrentStepId(stepId)
-              workflowStore.setStepStatus(stepId, 'running')
-            } else if (status === 'end') {
-              workflowStore.setStepStatus(stepId, 'completed')
-            } else if (status === 'failed') {
-              workflowStore.setStepStatus(stepId, 'failed')
-            }
-          }
-          const groupId = stepProgressData?.group_id as string | undefined
-          const groupIndex = stepProgressData?.group_index as number | undefined
-          const totalGroups = stepProgressData?.total_groups as number | undefined
-          const runFolder = stepProgressData?.run_folder as string | undefined
-          if (groupId && totalGroups !== undefined && totalGroups > 0) {
-            workflowStore.handleBatchGroupStart(groupId, runFolder || '', undefined, groupIndex, totalGroups)
-          }
-        }
         if (event.type === 'todo_task_step_completed') {
           const eventData = event.data as Record<string, unknown> | undefined
           const todoStepData = (eventData?.data as Record<string, unknown>) || eventData
-          const stepId = todoStepData?.step_id as string | undefined
           const stepTitle = todoStepData?.step_title as string | undefined
-          if (stepId) {
-            workflowStore.setStepStatus(stepId, 'completed')
-          }
           if (tab && stepTitle && isChatCompatiblePhase(tab.metadata?.phaseId)) {
             const dedupeKey = `${stepTitle}::todo-step`
             if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {

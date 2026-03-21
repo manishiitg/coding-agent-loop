@@ -58,7 +58,7 @@ const tabEventIdSets = new Map<string, Set<string>>()
 // Instead of updating zustand state on every SSE event (10-50/sec),
 // buffer events and flush at most every BATCH_INTERVAL_MS.
 // This reduces render cascades (ChatArea → EventHierarchy) by ~10-50x.
-const BATCH_INTERVAL_MS = 100
+const BATCH_INTERVAL_MS = 200 // 200ms batching — balances render frequency vs responsiveness
 const _eventBatchBuffers = new Map<string, PollingEvent[]>()
 const _eventBatchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 

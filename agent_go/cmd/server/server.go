@@ -2187,7 +2187,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// Add browser tools to the available tools pool
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(req))
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
 
 					allTools = append(allTools, browserTools...)
 					for name, executor := range browserExecutors {
@@ -2200,7 +2200,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							toolCategories[tool.Function.Name] = browserCategory
 						}
 					}
-					log.Printf("[WORKFLOW] Added browser tools (enable_browser_access: true)")
+					log.Printf("[WORKFLOW] Added browser tools (enable_browser_access: true, sessionID=%s)", sessionID)
 
 					// Auto-add agent-browser skill if not already selected
 					hasAgentBrowserSkill := false
@@ -3734,7 +3734,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Register browser tool if browser access is enabled
 				if enableBrowserAccess {
 					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(req))
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
@@ -7635,7 +7635,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// Register browser tools if enabled
 			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(parentReq))
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(parentReq))
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 				browserExtraFolders := []string{}
@@ -9142,7 +9142,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			if preset.EnableBrowserAccess {
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutors(getCdpPort(req))
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
 
 				allTools = append(allTools, browserTools...)
 				for name, executor := range browserExecutors {

@@ -34,6 +34,9 @@ const (
 	//   - plan mode  → "Plans"  (wrapExecutorsWithPlanFolderGuard)
 	//   - chat mode  → "Chats"  (wrapExecutorsWithChatModeFolderGuard)
 	DefaultWorkingDirKey ContextKey = "default_working_dir"
+	// ChatSessionIDKey is the context key for the chat/workflow session ID.
+	// Used by browser session tracker to limit concurrent browsers per session.
+	ChatSessionIDKey ContextKey = "chat_session_id"
 )
 
 // PerUserFolders are folders isolated per-user in the workspace.

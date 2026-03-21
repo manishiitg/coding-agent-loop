@@ -3067,12 +3067,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 </a>
                                 <ol className="text-xs text-gray-400 list-decimal list-inside space-y-0.5">
                                   <li>Double-click the zip to unzip.</li>
-                                  <li>Move &quot;Chrome CDP.app&quot; to Applications (e.g. drag to Applications in Finder).</li>
-                                  <li>Open &quot;Chrome CDP&quot; from Spotlight (⌘+Space) or LaunchPad.</li>
-                                  <li>A new Chrome window will open with CDP on port {cdpPort}. Then click Check Connection above.</li>
+                                  <li>Double-click <strong>launch_chrome_cdp.command</strong> — if blocked, right-click → Open → Open.</li>
+                                  <li>A Terminal window opens and Chrome launches with CDP on port {cdpPort}.</li>
+                                  <li>Then click Check Connection above.</li>
                                 </ol>
                                 <p className="text-xs text-amber-400/90 mt-1.5">
-                                  If macOS says &quot;package is damaged&quot;, run in Terminal: <code className="bg-gray-950 px-1 rounded font-mono text-[11px]">xattr -c &apos;~/Downloads/Chrome CDP.app&apos;</code> (or use the path where you put the app), then open the app again. Or right-click the app → Open.
+                                  The <code className="bg-gray-950 px-1 rounded font-mono text-[11px]">.command</code> file is a plain shell script — no install needed. If macOS blocks it, right-click → Open → Open to allow it once.
                                 </p>
                               </div>
                             )}

@@ -997,11 +997,12 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                             </a>
                             <ol className="text-xs text-gray-500 dark:text-gray-400 list-decimal list-inside space-y-0.5">
                               <li>Double-click the zip to unzip.</li>
-                              <li>Move &quot;Chrome CDP.app&quot; to Applications, then open it from Spotlight or LaunchPad.</li>
+                              <li>Double-click <strong>launch_chrome_cdp.command</strong> — if blocked, right-click → Open → Open.</li>
+                              <li>A Terminal window opens and Chrome launches with CDP enabled.</li>
                               <li>Click Check Connection above to verify.</li>
                             </ol>
                             <p className="text-xs text-amber-600 dark:text-amber-400/90 mt-1.5">
-                              If macOS says &quot;package is damaged&quot;, run in Terminal: <code className="bg-gray-100 dark:bg-gray-950 px-1 rounded font-mono text-[11px]">xattr -c &apos;~/Downloads/Chrome CDP.app&apos;</code> or right-click the app → Open.
+                              The <code className="bg-gray-100 dark:bg-gray-950 px-1 rounded font-mono text-[11px]">.command</code> file is a plain shell script — no install needed. If macOS blocks it, right-click → Open → Open to allow it once.
                             </p>
                           </div>
                         )}

@@ -58,6 +58,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
    - **Writing output files**: Use the full path: `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
    - **Reading dependencies from other steps**: Use paths relative to workflow root in your code: `+"`"+`{{.WorkspacePath}}/step-N/file.json`+"`"+`.
    - **MCP tool calls**: Use HTTP requests to per-tool endpoints via `+"`"+`os.environ["MCP_API_URL"]`+"`"+` and `+"`"+`os.environ["MCP_API_TOKEN"]`+"`"+`.
+   - **Shell variable quoting**: In curl/bash, use DOUBLE quotes for headers containing env vars: `+"`"+`-H "Authorization: Bearer $MCP_API_TOKEN"`+"`"+`. Single quotes prevent variable expansion.
    - **Environment variables**: Workflow variables and secrets are available in shell commands via `+"`"+`os.environ`+"`"+` (Python) or `+"`"+`$VAR`+"`"+` (bash):
      - Workflow variables are prefixed with `+"`"+`VAR_`+"`"+` (e.g., variable `+"`"+`API_URL`+"`"+` → `+"`"+`os.environ["VAR_API_URL"]`+"`"+`)
      - Secrets are available directly by name (e.g., `+"`"+`os.environ["MY_SECRET"]`+"`"+`)

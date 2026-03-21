@@ -128,62 +128,22 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
   //     → flattenedItems rebuilds (tree walk + tool-call grouping)
   //       → Virtuoso diffs all items
   // By returning the previous ref when output hasn't changed, this entire chain becomes a no-op.
-  // --- PERF: Incremental event processing refs ---
-  // These refs persist across renders to enable O(K) incremental updates instead of O(N) full reprocessing.
-  //
-  // displayEventsRef: cached output array from last computation (used for ref-stability check)
-  // flattenedItemsRef: cached flattened list (used for ref-stability to skip Virtuoso re-diff)
-  // processedCountRef: tracks how many events we've already filtered, so next call only processes new ones
-  //   - events: number of items in `events` prop last time we processed
-  //   - older: number of items in `loadedOlderEvents` last time (if this changes, full reset needed)
-  // seenIdsRef: persistent Set of event IDs we've already seen (for dedup without rebuilding each time)
-  //
-  // INVARIANT: events are append-only from SSE. If events shrink (cleanup) or older events change,
-  // we detect this and do a full reset (clear all refs, reprocess from scratch).
-  // BUG RISK: if events are modified in-place (not append-only), the incremental logic will miss them.
-  // In that case, add a full-reset condition or switch back to O(N) processing.
   const displayEventsRef = useRef<PollingEvent[]>([]);
   const flattenedItemsRef = useRef<FlattenedItem[]>([]);
-  const processedCountRef = useRef<{ events: number; older: number }>({ events: 0, older: 0 });
-  const seenIdsRef = useRef<Set<string>>(new Set());
 
-  // INCREMENTAL displayEvents computation:
-  // Normal case (append): only filter NEW events since last call → O(K) where K = new events per batch (1-5)
-  // Reset case (cleanup/older change): full reprocess → O(N) where N = all events
+  // Merge loaded older events with current events — single-pass filter
   const displayEvents = useMemo(() => {
+    // Avoid spread when loadedOlderEvents is empty (common case)
+    const source = loadedOlderEvents.length > 0
+      ? [...loadedOlderEvents, ...events]
+      : events;
+
     const HIDDEN_STREAMING = new Set(['streaming_start', 'streaming_chunk', 'streaming_end']);
     const HIDDEN_DELEGATION_TOOLS = new Set(['delegate', 'confirm_plan_execution', 'query_agent', 'terminate_agent', 'list_agents']);
 
-    // --- STEP 1: Detect if we need a full reset or can do incremental append ---
-    // olderChanged: user loaded older events (scroll up) → need to merge + re-sort everything
-    // eventsShrank: cleanup trimmed old events → our cached result is stale, need full reprocess
-    const olderChanged = loadedOlderEvents.length !== processedCountRef.current.older
-    const eventsShrank = events.length < processedCountRef.current.events
-
-    // Full reset: clear all caches and reprocess from scratch
-    if (olderChanged || eventsShrank) {
-      processedCountRef.current = { events: 0, older: loadedOlderEvents.length }
-      seenIdsRef.current = new Set()
-      displayEventsRef.current = []
-    }
-
-    // --- STEP 2: Determine which events to process ---
-    // startIdx = number of events already processed. We only need to filter events[startIdx..]
-    // For full reset: startIdx=0, process everything
-    // For incremental: startIdx=lastCount, process only new tail events
-    const startIdx = processedCountRef.current.events
-    const source = loadedOlderEvents.length > 0 && olderChanged
-      ? [...loadedOlderEvents, ...events]       // full reset with older: merge all
-      : startIdx === 0 ? events                  // full reset without older: process all events
-        : events.slice(startIdx)                  // incremental: only process new events since last call
-
-    // --- STEP 3: Build result array ---
-    // Incremental: copy cached result and append new filtered events
-    // Full reset: start with empty array
-    const seenIds = seenIdsRef.current
-    const result = displayEventsRef.current.length > 0 && !olderChanged && !eventsShrank
-      ? [...displayEventsRef.current]  // copy existing cached result, will append new
-      : [] as PollingEvent[]           // fresh start
+    // Single-pass: dedup + all filter conditions at once
+    const seenIds = new Set<string>();
+    const result: PollingEvent[] = [];
 
     for (let i = 0; i < source.length; i++) {
       const event = source[i];
@@ -233,18 +193,11 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       result.push(event);
     }
 
-    // --- STEP 5: Sort (only on full reset) ---
-    // SSE events arrive in timestamp order, so incremental appends are already sorted.
-    // Only sort when we did a full reprocess (older events merged or cleanup reset).
-    // BUG RISK: if SSE ever delivers out-of-order events, incremental path skips sort.
-    // Symptom: events appear in wrong order. Fix: remove the `if` guard to always sort.
-    if (olderChanged || eventsShrank) {
-      result.sort((a, b) => {
-        const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
-        const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
-        return timeA - timeB;
-      });
-    }
+    result.sort((a, b) => {
+      const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
+      const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
+      return timeA - timeB;
+    });
 
     // When a conversation_resumed separator exists, drop all events before AND including it.
     // This hides old restored events so the user sees only the new conversation.
@@ -253,17 +206,8 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       result.splice(0, resumeIdx + 1);
     }
 
-    // --- STEP 6: Update processed count for next incremental call ---
-    // This tells the next invocation where to start processing (skip already-processed events)
-    processedCountRef.current = { events: events.length, older: loadedOlderEvents.length }
-
-    // --- STEP 7: Ref-stability check ---
-    // If the output array hasn't changed (same length + same first/last IDs), return the
-    // previous array ref. This prevents downstream memos (eventTree, flattenedItems) from
-    // recomputing when only non-display events were added (e.g., sub-agent tool calls filtered out).
-    // BUG RISK: if two different arrays happen to have same length + same first/last IDs but
-    // different middle content, this would incorrectly return stale data. In practice this
-    // can't happen because events are append-only with unique IDs.
+    // REF-STABILITY: Return previous array ref when output hasn't changed,
+    // preventing downstream cascade (eventTree → flattenedItems → Virtuoso).
     const returnStable = (arr: PollingEvent[]): PollingEvent[] => {
       const prev = displayEventsRef.current;
       if (

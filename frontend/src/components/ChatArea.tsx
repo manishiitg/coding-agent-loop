@@ -1424,9 +1424,32 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const chatStore = useChatStore.getState()
     const actualSessionId = (msg as unknown as Record<string, unknown>).session_id as string || sid
 
+    // PERF: Early drop of sub-agent inner events in summary mode.
+    // With many parallel background agents (5-10+), the SSE floods with tool_call, llm_generation
+    // events that are ultimately filtered out by processEventsResponse. Dropping them here
+    // avoids all downstream processing (streaming checks, correlation ID parsing, store updates).
+    const tab = Object.values(chatStore.chatTabs).find(t => t.sessionId === actualSessionId) || null
+    const isSummaryMode = tab ? (chatStore.getTab(tab.tabId)?.viewMode ?? 'detailed') === 'summary' : false
+    const incomingEvents = isSummaryMode
+      ? msg.events.filter(event => {
+          const agentEvent = event.data as Record<string, unknown> | undefined
+          const innerData = agentEvent?.data as Record<string, unknown> | undefined
+          const cid = (event as unknown as Record<string, unknown>).correlation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id
+          const isSubAgent = typeof cid === 'string' && (cid.startsWith('delegation-') || cid.startsWith('workshop-'))
+          if (!isSubAgent) return true // main agent events always pass
+          // Only keep wrapper events and status events for sub-agents
+          const t = event.type
+          return t === 'orchestrator_agent_start' || t === 'orchestrator_agent_end'
+            || t === 'streaming_start' || t === 'streaming_end'
+            || t === 'todo_task_step_completed' || t === 'todo_task_route_selected'
+            || t === 'todo_task_item_created' || t === 'todo_task_item_updated'
+            || t === 'todo_task_item_completed' || t === 'step_progress_updated'
+        })
+      : msg.events
+
     // Separate streaming events (immediate) from non-streaming events (batched)
     const nonStreamingEvents: PollingEvent[] = []
-    for (const event of msg.events) {
+    for (const event of incomingEvents) {
       if (event.type === 'streaming_start' || event.type === 'streaming_chunk' || event.type === 'streaming_end') {
         // Process streaming events immediately for real-time text display
         const agentEvent = event.data as Record<string, unknown> | undefined
@@ -2306,6 +2329,22 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Uses !isStreaming instead of isCompleted because workshop step goroutines
     // may still be running in the background after the main agent turn finishes.
     if (currentIsStreaming || !activeTab || isProcessing || queuedMessages.length === 0) {
+      if (queuedMessages.length > 0) {
+        console.log(`[QUEUE_DEBUG] Not processing: isStreaming=${currentIsStreaming} hasTab=${!!activeTab} isProcessing=${isProcessing} queueLen=${queuedMessages.length}`)
+        // SAFETY: If lock is stuck (isProcessing=true) for more than 10 seconds, force-release it.
+        // This can happen if submitQuery promise never resolves or the finally block doesn't run.
+        if (isProcessing && !currentIsStreaming && activeTab) {
+          const lockKey = `queue_lock_${activeTab.tabId}`
+          const lastLockTime = (window as Record<string, unknown>)[lockKey] as number | undefined
+          if (!lastLockTime) {
+            ;(window as Record<string, unknown>)[lockKey] = Date.now()
+          } else if (Date.now() - lastLockTime > 10000) {
+            console.warn(`[QUEUE_DEBUG] Force-releasing stuck lock after 10s for tab ${activeTab.tabId}`)
+            useChatStore.getState().setTabConfig(activeTab.tabId, { isQueueProcessing: false })
+            delete (window as Record<string, unknown>)[lockKey]
+          }
+        }
+      }
       return
     }
 
@@ -2313,8 +2352,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const chatStore = useChatStore.getState()
 
     // Claim the store-level lock atomically before any async work.
-    // All ChatArea instances share this lock via the store.
     chatStore.setTabConfig(tabId, { isQueueProcessing: true })
+    // Clear stuck-lock tracker
+    delete (window as Record<string, unknown>)[`queue_lock_${tabId}`]
 
     // Separate human messages from auto-notifications
     const AUTO_PREFIX = '[AUTO-NOTIFICATION]'

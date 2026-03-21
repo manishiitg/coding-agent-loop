@@ -48,6 +48,7 @@ interface WorkflowCanvasProps {
   onCreatePlan?: () => void
   showChatArea?: boolean
   onToggleChatArea?: () => void
+  toolbarOnly?: boolean  // When true, only render the toolbar (skip React Flow canvas for performance)
   className?: string
 }
 
@@ -69,6 +70,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   onCreatePlan,
   showChatArea = false,
   onToggleChatArea,
+  toolbarOnly = false,
   className = ''
 }, ref) => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null)
@@ -79,6 +81,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
   // Store current viewport state (x, y, zoom) to preserve it during refresh
   const viewportStateRef = React.useRef<{ x: number; y: number; zoom: number } | null>(null)
+  const viewportSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get workflow mode and layout direction
   const workflowMode = useWorkflowStore(state => state.workflowMode)
@@ -91,6 +94,21 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       ? `workflow-viewport-${workspacePath}-${workflowMode}`
       : `workflow-viewport-default-${workflowMode}`
   }, [workspacePath, workflowMode])
+
+  // PERF: Debounced viewport change handler — saves to localStorage at most once per 500ms
+  // instead of on every pixel of pan/zoom (which was causing excessive localStorage writes)
+  const onViewportChange = React.useCallback((viewport: { x: number; y: number; zoom: number }) => {
+    viewportStateRef.current = { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
+    if (hasInitializedView.current) {
+      if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current)
+      viewportSaveTimerRef.current = setTimeout(() => {
+        try {
+          const storageKey = getViewportStorageKey()
+          localStorage.setItem(storageKey, JSON.stringify(viewportStateRef.current))
+        } catch { /* ignore */ }
+      }, 500)
+    }
+  }, [getViewportStorageKey])
 
   // Get workflow layout file path
   const getLayoutFilePath = React.useCallback(() => {
@@ -348,7 +366,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Highlight execution folder in workspace when selectedRunFolder changes
   // This ensures workspace shows the correct group folder during multi-group execution
-  const { highlightFile, fetchFiles } = useWorkspaceStore()
+  const { highlightFile } = useWorkspaceStore()
   const prevSelectedRunFolderRef = useRef<string | null>(null)
   useEffect(() => {
     // Reset ref if selectedRunFolder is cleared
@@ -356,16 +374,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       prevSelectedRunFolderRef.current = null
       return
     }
-    
+
     // Only highlight if selectedRunFolder actually changed and is valid
     if (selectedRunFolder !== prevSelectedRunFolderRef.current && workspacePath) {
       prevSelectedRunFolderRef.current = selectedRunFolder
-      
+
       // Construct execution folder path
       const executionPath = `${workspacePath}/runs/${selectedRunFolder}/execution`
 
-      // Refresh files scoped to the workflow folder to ensure the execution folder exists in the tree
-      fetchFiles(workspacePath || undefined).then(() => {
+      // PERF: Use getState() to avoid fetchFiles reference changes triggering this effect
+      useWorkspaceStore.getState().fetchFiles(workspacePath || undefined).then(() => {
         // Small delay to ensure files are loaded before highlighting
         setTimeout(() => {
           highlightFile(executionPath)
@@ -376,7 +394,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         highlightFile(executionPath)
       })
     }
-  }, [selectedRunFolder, workspacePath, highlightFile, fetchFiles])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRunFolder, workspacePath, highlightFile])
 
   // Load plan data (Plan Mode)
   const planData = usePlanData(workflowMode === 'plan' ? workspacePath : null)
@@ -2214,8 +2233,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         selectedStepIds={selectedStepIds}
       />
 
-      {/* React Flow Canvas with Sidebar */}
-      <div className="flex-1 relative flex">
+      {/* React Flow Canvas with Sidebar — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
+      {toolbarOnly ? null : <div className="flex-1 relative flex">
         <div className={`flex-1 transition-all duration-300 ${
           selectedNode
             ? (showChatArea ? 'mr-[50vw]' : (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]'))
@@ -2239,25 +2258,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           panOnScroll
           selectionKeyCode="Shift"
           selectionMode={SelectionMode.Partial}
-          onViewportChange={(viewport) => {
-            // Track viewport state to preserve it during refresh
-            const viewportState = {
-              x: viewport.x,
-              y: viewport.y,
-              zoom: viewport.zoom
-            }
-            viewportStateRef.current = viewportState
-
-            // Save to localStorage (only after initial view has been set)
-            if (hasInitializedView.current) {
-              try {
-                const storageKey = getViewportStorageKey()
-                localStorage.setItem(storageKey, JSON.stringify(viewportState))
-              } catch (error) {
-                console.error('[WorkflowCanvas] Failed to save viewport to localStorage:', error)
-              }
-            }
-          }}
+          // PERF: Only render nodes visible in the viewport (React Flow virtualization).
+          // Reduces SVG node count significantly for large workflows.
+          onlyRenderVisibleElements
+          onViewportChange={onViewportChange}
           nodeTypes={nodeTypes}
           fitView={false}
           fitViewOptions={{ padding: 0.1, minZoom: 1.0, maxZoom: 1.5 }}
@@ -2332,7 +2336,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             showChatArea={showChatArea}
           />
         )}
-      </div>
+      </div>}
 
     </div>
   )

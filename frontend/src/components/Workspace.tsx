@@ -717,13 +717,18 @@ export default function Workspace({
   // (which can be slow with many iterations). The selected/latest iteration is loaded separately.
   useEffect(() => {
     if (!minimized) {
+      // PERF: Use getState() to avoid re-running this effect when fetchFiles reference changes.
+      // fetchFiles is a zustand store function — its reference changes on every store update,
+      // which would cause this effect to re-run and re-fetch on every render.
+      const { fetchFiles: fetch } = useWorkspaceStore.getState()
       if (selectedModeCategory === 'workflow') {
-        fetchFiles(activeFolder, { maxDepth: 1 })
+        fetch(activeFolder, { maxDepth: 1 })
       } else {
-        fetchFiles(activeFolder)
+        fetch(activeFolder)
       }
     }
-  }, [activeFolder, fetchFiles, minimized, selectedModeCategory])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFolder, minimized, selectedModeCategory])
 
   // Check if a file is a viewable binary format (xlsx, docx, pdf) that we can render
   const isViewableBinaryFile = (fileName: string): boolean => {

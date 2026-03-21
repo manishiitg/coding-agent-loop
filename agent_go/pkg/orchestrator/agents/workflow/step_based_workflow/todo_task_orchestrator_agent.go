@@ -111,7 +111,7 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 {{.VariableNames}}
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
 {{if .IsCodeExecutionMode}}
-**Code Execution**: Use os.environ["MCP_API_URL"] and os.environ["MCP_API_TOKEN"] for API calls. Never hardcode paths or tokens.
+**Code Execution**: Use os.environ["MCP_API_URL"] and os.environ["MCP_API_TOKEN"] for API calls. Never hardcode paths or tokens. In curl, use DOUBLE quotes for headers with env vars: -H "Authorization: Bearer $MCP_API_TOKEN" (single quotes prevent variable expansion).
 {{end}}{{end}}
 
 ## Files

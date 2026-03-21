@@ -663,34 +663,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         )
         console.warn('[DEBUG preset_query_id] Active workflow sessions:', activeWorkflowSessions.length)
 
-        // 2. Get recent workflow execution sessions for this preset from the database
-        //    Only fetch 'workflow' mode (builder chats are saved to workspace files)
-        //    Try preset_query_id filter first (fast), then fall back to client-side filtering
-        let dbSessions: import('../../services/api-types').ChatHistorySummary[] = []
-        try {
-          console.warn('[DEBUG preset_query_id] Querying DB for preset:', activePresetId)
-          // Only fetch workflow_phase sessions (builder, evaluation-builder, etc.)
-          // Old 'workflow' execution sessions should not be auto-restored — they create
-          // empty "Execute" tabs when opening a workflow for the first time.
-          const directWorkflow = await agentApi.getChatSessions(10, 0, activePresetId, 'workflow_phase')
-          dbSessions = directWorkflow.sessions || []
-          console.warn('[DEBUG preset_query_id] Direct DB results:', dbSessions.length)
-
-          // If direct filter returned nothing, fall back to client-side filtering
-          // (for older sessions where preset_query_id column is empty)
-          if (dbSessions.length === 0) {
-            console.warn('[DEBUG preset_query_id] No direct match, trying fallback (200 sessions)...')
-            const allResp = await agentApi.getChatSessions(200, 0, undefined, 'workflow')
-            console.warn('[DEBUG preset_query_id] Fallback fetched', allResp.sessions?.length, 'workflow sessions')
-            dbSessions = (allResp.sessions || []).filter(s => {
-              const wfMeta = (s.config as any)?.workflow_metadata
-              return wfMeta?.preset_id === activePresetId
-            })
-          }
-          console.warn('[DEBUG preset_query_id] DB: found', dbSessions.length, 'sessions for preset')
-        } catch (err) {
-          console.warn('[WorkflowReconnect] Failed to fetch sessions from DB:', err)
-        }
+        // 2. Skip DB session restore — only active (running) sessions should auto-create tabs.
+        //    Old completed sessions from DB were creating unwanted tabs every time you
+        //    open a workflow. Workflow builder conversations are saved to workspace files,
+        //    not restored from DB sessions.
+        const dbSessions: import('../../services/api-types').ChatHistorySummary[] = []
 
         // Build a combined list — active sessions first, then recent DB sessions (deduped)
         const activeSessionIds = new Set(activeWorkflowSessions.map(s => s.session_id))
@@ -1043,8 +1020,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     <div className={`flex flex-col h-full ${className}`}>
       {/* Main Content */}
       <div className="flex-1 flex min-h-0 relative">
-        {/* Canvas - main area, shrinks when ChatArea is shown */}
-        <div className={`flex-1 min-w-0 transition-all duration-300 ${showChatArea ? (chatAreaExpanded ? 'w-1/4' : 'w-1/2') : ''}`}>
+        {/* Canvas - main area, unmounted when chat is expanded to avoid rendering 1000+ SVG nodes.
+            When chat is expanded, canvas is hidden but toolbar still shows above the chat panel. */}
+        <div className={`${showChatArea && chatAreaExpanded ? 'w-full' : 'flex-1 min-w-0'} transition-all duration-300 ${showChatArea && !chatAreaExpanded ? 'w-1/2' : ''}`}>
           <WorkflowCanvas
             ref={canvasRef}
             workspacePath={workspacePath}
@@ -1053,6 +1031,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             onStartPhase={handleStartPhase}
             onCreatePlan={onCreatePlan || handleCreatePlan}
             showChatArea={showChatArea}
+            toolbarOnly={showChatArea && chatAreaExpanded}
             onToggleChatArea={() => {
               const newShow = !showChatArea
               if (newShow) {

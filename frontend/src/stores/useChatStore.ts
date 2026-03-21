@@ -67,7 +67,6 @@ function _flushEventBatch(sessionId: string) {
   const buffer = _eventBatchBuffers.get(sessionId)
   if (!buffer || buffer.length === 0) return
   _eventBatchBuffers.delete(sessionId)
-  // Call the real addTabEvents on the store
   useChatStore.getState()._addTabEventsImmediate(sessionId, buffer)
 }
 

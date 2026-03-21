@@ -2201,13 +2201,9 @@ export const useChatStore = create<ChatState>()(
               removedCount++
               continue
             }
-            // Drop workflow execution tabs (mode=workflow without phaseId) — these are
-            // old "Execute" tabs that show as empty when reopening a workflow.
-            // Only workflow_phase tabs (workflow-builder, evaluation-builder, etc.) should persist.
-            if (tab.metadata?.mode === 'workflow' && !tab.metadata?.phaseId) {
-              removedCount++
-              continue
-            }
+            // Note: we previously dropped workflow tabs without phaseId here,
+            // but this was too aggressive — it removed valid builder tabs from older sessions.
+            // Stale tabs are handled by the 24-hour age check above.
             freshTabs[tabId] = tab
           }
           if (removedCount > 0) {

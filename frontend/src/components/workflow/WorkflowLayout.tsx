@@ -808,6 +808,31 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           setShowChatArea(true)
         }
 
+        // 6. If no tabs were created/restored, check if ANY workflow tabs exist for this preset.
+        //    If not, auto-create a default "Workflow Builder" tab so the user sees something.
+        if (!lastTabId) {
+          const store = useChatStore.getState()
+          const existingWorkflowTabs = Object.values(store.chatTabs).filter(t =>
+            t.metadata?.mode === 'workflow' && t.metadata?.presetQueryId === activePresetId
+          )
+          if (existingWorkflowTabs.length === 0) {
+            console.warn('[DEBUG preset_query_id] No workflow tabs found, creating default Workflow Builder tab')
+            const defaultTabId = await createChatTab('Workflow Builder', {
+              mode: 'workflow',
+              phaseId: 'workflow-builder',
+              phaseName: 'Workflow Builder',
+              presetQueryId: activePresetId
+            })
+            switchTab(defaultTabId)
+            setShowChatArea(true)
+          } else {
+            // Tabs exist (from localStorage), make sure chat is visible and switch to the latest
+            const latest = existingWorkflowTabs.sort((a, b) => b.createdAt - a.createdAt)[0]
+            switchTab(latest.tabId)
+            setShowChatArea(true)
+          }
+        }
+
         console.warn('[DEBUG preset_query_id] Done — restored', sessionsToActuallyRestore.length, 'new tabs')
       } catch (error) {
         console.warn('[DEBUG preset_query_id] Error:', error)

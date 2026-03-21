@@ -143,6 +143,12 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
     sessionId,
   })
 
+  // Check if events already contain a completion event (to avoid showing duplicate "Thinking" text)
+  const hasCompletionEvent = React.useMemo(
+    () => events.some(e => e.type === 'unified_completion' || e.type === 'llm_generation_end'),
+    [events]
+  )
+
   // Memoize markdown components to avoid re-creating on every render
   const markdownComponents = React.useMemo(() => getMarkdownComponents(compact), [compact])
 
@@ -220,8 +226,8 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
       )}
 
       {/* Completed Streaming Text - preserved intermediate output from generation */}
-      {/* Hide when content is identical to finalResponse (no value in showing duplicate) */}
-      {completedStreamingText && !currentStreamingText && completedStreamingText.trim() !== finalResponse?.trim() && (
+      {/* Hide when content is identical to finalResponse or when a unified_completion event already shows the result */}
+      {completedStreamingText && !currentStreamingText && completedStreamingText.trim() !== finalResponse?.trim() && !hasCompletionEvent && (
         <details className="min-w-0 group" open={selectedModeCategory === 'workflow'}>
           <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
             Thinking

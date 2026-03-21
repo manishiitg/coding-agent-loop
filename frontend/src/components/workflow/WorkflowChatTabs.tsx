@@ -180,14 +180,13 @@ export const WorkflowChatTabs: React.FC = () => {
 
   // Filter to only show workflow tabs for the active preset (have sessionId or isStreaming)
   const activeWorkflowTabs = useMemo(() => {
-    return Object.values(chatTabs)
-      .filter(tab =>
-        tab.metadata?.mode === 'workflow' &&
-        (tab.sessionId || tab.isStreaming) &&
-        // Strict preset match — only show tabs explicitly tagged with the current preset
-        tab.metadata?.presetQueryId === activePresetId
-      )
-      .sort((a, b) => a.createdAt - b.createdAt)
+    const allTabs = Object.values(chatTabs)
+    const matched = allTabs.filter(tab =>
+      tab.metadata?.mode === 'workflow' &&
+      // Match by preset ID, or include tabs without preset ID (legacy/untagged tabs)
+      (!tab.metadata?.presetQueryId || tab.metadata.presetQueryId === activePresetId)
+    )
+    return matched.sort((a, b) => a.createdAt - b.createdAt)
   }, [chatTabs, activePresetId])
 
   // Skip auto-close on initial mount

@@ -792,13 +792,6 @@ If structural changes are needed (add/remove steps), ask the user to switch to B
 - Check validation logs: cat runs/{run_folder}/logs/{step}/*.json
 
 **DO NOT run steps in debug mode.** Debug mode is for analysis only. If you need to re-run, ask the user to switch to Optimize or Build mode.
-{{else}}
-**RUN MODE** — All steps are optimized. Execute and report results.
-- Run steps with execute_step(step_id) using default skip_learning=true — learnings are already locked
-- Report results concisely
-- If a step fails or produces incorrect output, reset its optimized flag (update_step_config(step_id, optimized=false)) and investigate
-- Do NOT make structural changes to the plan in this mode
-- If issues require optimization, tell the user you are switching to optimize mode
 {{else if eq .WorkshopMode "eval"}}
 **EVAL MODE** — Build and run evaluation plans to measure workflow quality.
 
@@ -814,6 +807,13 @@ If structural changes are needed (add/remove steps), ask the user to switch to B
 - Learnings: evaluation/learnings/{stepID}/
 
 Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design and scoring. Switch to Build mode for workflow changes.
+{{else}}
+**RUN MODE** — All steps are optimized. Execute and report results.
+- Run steps with execute_step(step_id) using default skip_learning=true — learnings are already locked
+- Report results concisely
+- If a step fails or produces incorrect output, reset its optimized flag (update_step_config(step_id, optimized=false)) and investigate
+- Do NOT make structural changes to the plan in this mode
+- If issues require optimization, tell the user you are switching to optimize mode
 {{end}}
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (debug_step, get_workflow_config, etc.) or read workspace files directly via shell commands.

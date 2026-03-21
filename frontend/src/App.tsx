@@ -178,56 +178,99 @@ function App() {
       const tabs = Object.values(chatState.chatTabs)
       const workflowTabs = tabs.filter(t => t.metadata?.mode === 'workflow')
       const streamingTabs = tabs.filter(t => t.isStreaming)
-      const sseCount = Object.keys(chatState.sseConnections).length
+      const sseConns = chatState.sseConnections
+      const sseCount = Object.keys(sseConns).length
 
       let totalEvents = 0
-      const eventDetails: Array<{ session: string; tab: string; events: number; mode: string; preset: string }> = []
+      let totalEventBytes = 0
+      const eventDetails: Array<{ session: string; tab: string; events: number; evtSizeKB: number; mode: string; preset: string; streaming: boolean; hasSSE: boolean }> = []
       for (const tab of tabs) {
         if (tab.sessionId) {
-          const count = (chatState.tabEvents[tab.sessionId] || []).length
+          const events = chatState.tabEvents[tab.sessionId] || []
+          const count = events.length
+          const sizeEstimate = JSON.stringify(events).length
           totalEvents += count
+          totalEventBytes += sizeEstimate
           if (count > 0) {
             eventDetails.push({
               session: tab.sessionId.slice(0, 8),
               tab: tab.name.slice(0, 25),
               events: count,
+              evtSizeKB: Math.round(sizeEstimate / 1024),
               mode: tab.metadata?.mode || '?',
-              preset: (tab.metadata?.presetQueryId || '').slice(0, 8)
+              preset: (tab.metadata?.presetQueryId || '').slice(0, 8),
+              streaming: tab.isStreaming,
+              hasSSE: !!sseConns[tab.sessionId]
             })
           }
         }
       }
 
-      const lsSize = Math.round((localStorage.getItem('chat-store') || '').length / 1024)
-
-      // Measure React render pressure — count renders over 3 seconds
-      const renderKey = '__perfRenderCount'
-      if (!(window as any)[renderKey]) {
-        (window as any)[renderKey] = 0
-        const origCreateElement = (window as any).__origCE || null
-        if (!origCreateElement) {
-          // Can't patch React.createElement in production — skip render counting
+      // Streaming text sizes
+      const streamingTextSizes: Array<{ session: string; sizeKB: number; chars: number }> = []
+      let totalStreamingBytes = 0
+      for (const [sid, text] of Object.entries(chatState.streamingText)) {
+        if (text && text.length > 0) {
+          const size = text.length * 2 // approx bytes (UTF-16)
+          totalStreamingBytes += size
+          streamingTextSizes.push({ session: sid.slice(0, 8), sizeKB: Math.round(size / 1024), chars: text.length })
         }
       }
 
-      // Measure zustand subscription count
+      // SSE connection details
+      const sseDetails: Array<{ session: string; tab: string }> = []
+      for (const [sid, _conn] of Object.entries(sseConns)) {
+        const tab = tabs.find(t => t.sessionId === sid)
+        sseDetails.push({ session: sid.slice(0, 8), tab: tab?.name?.slice(0, 25) || '(orphan!)' })
+      }
+      // Detect orphan SSE connections (no matching tab)
+      const orphanSSE = sseDetails.filter(s => s.tab === '(orphan!)')
+
+      // Orphan tabEvents (no matching tab)
+      const tabSessionIds = new Set(tabs.map(t => t.sessionId).filter(Boolean))
+      const orphanEvents: Array<{ session: string; events: number; sizeKB: number }> = []
+      for (const [sid, events] of Object.entries(chatState.tabEvents)) {
+        if (!tabSessionIds.has(sid)) {
+          orphanEvents.push({ session: sid.slice(0, 8), events: events.length, sizeKB: Math.round(JSON.stringify(events).length / 1024) })
+        }
+      }
+
+      // localStorage sizes
       const storeKeys = ['chat-store', 'workflow-store', 'global-preset-storage', 'mode-store', 'mcp-store']
       const storageSizes: Record<string, number> = {}
+      let totalLSBytes = 0
       for (const key of storeKeys) {
         const val = localStorage.getItem(key)
-        if (val) storageSizes[key] = Math.round(val.length / 1024)
+        if (val) {
+          storageSizes[key] = Math.round(val.length / 1024)
+          totalLSBytes += val.length
+        }
       }
 
       // Memory usage (if available)
       const mem = (performance as any).memory
       const memInfo = mem ? {
-        usedHeap: `${Math.round(mem.usedJSHeapSize / 1024 / 1024)} MB`,
-        totalHeap: `${Math.round(mem.totalJSHeapSize / 1024 / 1024)} MB`,
-        limit: `${Math.round(mem.jsHeapSizeLimit / 1024 / 1024)} MB`
-      } : 'N/A (use Chrome-based browser)'
+        usedHeap: Math.round(mem.usedJSHeapSize / 1024 / 1024),
+        totalHeap: Math.round(mem.totalJSHeapSize / 1024 / 1024),
+        limit: Math.round(mem.jsHeapSizeLimit / 1024 / 1024)
+      } : null
 
-      // DOM node count
+      // DOM node count + breakdown of heavy subtrees
       const domNodes = document.querySelectorAll('*').length
+      const domBreakdown: Array<{ selector: string; nodes: number }> = []
+      const selectors = ['[class*="chat"]', '[class*="event"]', '[class*="message"]', '[class*="editor"]', '[class*="monaco"]', 'svg', 'pre', 'code']
+      for (const sel of selectors) {
+        try {
+          const count = document.querySelectorAll(sel).length
+          if (count > 50) domBreakdown.push({ selector: sel, nodes: count })
+        } catch { /* ignore invalid selectors */ }
+      }
+
+      // Active timers/intervals estimate
+      // Check for event listeners on window
+      const eventListenerCount = typeof (window as any).getEventListeners === 'function'
+        ? Object.values((window as any).getEventListeners(window) as Record<string, unknown[]>).reduce((sum: number, arr) => sum + (arr as unknown[]).length, 0)
+        : 'N/A (use DevTools)'
 
       // Long task detection — start monitoring
       if (!(window as any).__longTaskObserver) {
@@ -237,7 +280,7 @@ function App() {
           const observer = new PerformanceObserver((list) => {
             for (const entry of list.getEntries()) {
               longTasks.push({ duration: Math.round(entry.duration), time: new Date().toLocaleTimeString() })
-              if (longTasks.length > 50) longTasks.shift()
+              if (longTasks.length > 100) longTasks.shift()
             }
           })
           observer.observe({ entryTypes: ['longtask'] })
@@ -247,22 +290,116 @@ function App() {
       const longTasks = ((window as any).__longTasks || []) as Array<{ duration: number; time: string }>
       const recentLongTasks = longTasks.slice(-10)
 
-      console.table(eventDetails)
+      // Frame rate measurement — start if not already running
+      if (!(window as any).__fpsSamples) {
+        const fpsSamples: number[] = [];
+        (window as any).__fpsSamples = fpsSamples
+        let lastTime = performance.now()
+        let frameCount = 0
+        const measureFPS = () => {
+          frameCount++
+          const now = performance.now()
+          if (now - lastTime >= 1000) {
+            fpsSamples.push(frameCount)
+            if (fpsSamples.length > 30) fpsSamples.shift()
+            frameCount = 0
+            lastTime = now
+          }
+          requestAnimationFrame(measureFPS)
+        }
+        requestAnimationFrame(measureFPS)
+      }
+      const fpsSamples = (window as any).__fpsSamples as number[]
+      const avgFPS = fpsSamples.length > 0 ? Math.round(fpsSamples.reduce((a, b) => a + b, 0) / fpsSamples.length) : 'measuring...'
+      const minFPS = fpsSamples.length > 0 ? Math.min(...fpsSamples) : 'measuring...'
+
+      // --- OUTPUT ---
+      console.log('%c === PERF DIAGNOSTICS ===', 'color: cyan; font-weight: bold; font-size: 14px')
+
+      // Memory
+      if (memInfo) {
+        const usedPct = Math.round((memInfo.usedHeap / memInfo.limit) * 100)
+        const memColor = usedPct > 80 ? 'red' : usedPct > 50 ? 'orange' : 'green'
+        console.log(`%c Memory: ${memInfo.usedHeap} MB / ${memInfo.totalHeap} MB (limit: ${memInfo.limit} MB) [${usedPct}% used]`, `color: ${memColor}; font-weight: bold`)
+      } else {
+        console.log('Memory: N/A (use Chrome-based browser)')
+      }
+
+      // FPS
+      const fpsColor = (typeof avgFPS === 'number' && avgFPS < 30) ? 'red' : (typeof avgFPS === 'number' && avgFPS < 50) ? 'orange' : 'green'
+      console.log(`%c FPS: avg=${avgFPS}, min=${minFPS} (last ${fpsSamples.length}s)`, `color: ${fpsColor}; font-weight: bold`)
+
+      // Tabs & SSE
+      console.log(`\nTabs: ${tabs.length} total (${workflowTabs.length} workflow, ${streamingTabs.length} streaming)`)
+      console.log(`SSE connections: ${sseCount}${orphanSSE.length > 0 ? ` ⚠️ ${orphanSSE.length} ORPHAN` : ''}`)
+      if (orphanSSE.length > 0) {
+        console.log('%c Orphan SSE connections (no tab):', 'color: red; font-weight: bold')
+        console.table(orphanSSE)
+      }
+
+      // Events
+      console.log(`\nEvents in memory: ${totalEvents} across ${eventDetails.length} sessions (~${Math.round(totalEventBytes / 1024)} KB)`)
+      if (eventDetails.length > 0) {
+        // Sort by event count descending to show biggest first
+        eventDetails.sort((a, b) => b.events - a.events)
+        console.table(eventDetails)
+      }
+
+      // Orphan events
+      if (orphanEvents.length > 0) {
+        console.log(`%c Orphan tabEvents (no matching tab): ${orphanEvents.length} sessions, ${orphanEvents.reduce((s, o) => s + o.events, 0)} events`, 'color: red; font-weight: bold')
+        console.table(orphanEvents)
+      }
+
+      // Streaming text
+      if (streamingTextSizes.length > 0) {
+        console.log(`\nStreaming text buffers: ${streamingTextSizes.length} active (~${Math.round(totalStreamingBytes / 1024)} KB)`)
+        console.table(streamingTextSizes)
+      }
+
+      // DOM
+      const domColor = domNodes > 10000 ? 'red' : domNodes > 5000 ? 'orange' : 'green'
+      console.log(`%c \nDOM nodes: ${domNodes}`, `color: ${domColor}; font-weight: bold`)
+      if (domBreakdown.length > 0) {
+        console.table(domBreakdown)
+      }
+
+      // Long tasks
+      console.log(`\nLong tasks (>50ms): ${longTasks.length} total`)
       if (recentLongTasks.length > 0) {
-        console.log('%c Long Tasks (>50ms):', 'color: red; font-weight: bold')
+        const avgDuration = Math.round(recentLongTasks.reduce((s, t) => s + t.duration, 0) / recentLongTasks.length)
+        const maxDuration = Math.max(...recentLongTasks.map(t => t.duration))
+        console.log(`  Recent ${recentLongTasks.length}: avg=${avgDuration}ms, max=${maxDuration}ms`)
         console.table(recentLongTasks)
       }
-      console.log(`
-=== PERF DIAGNOSTICS ===
-Tabs: ${tabs.length} total (${workflowTabs.length} workflow, ${streamingTabs.length} streaming)
-SSE connections: ${sseCount}
-Events in memory: ${totalEvents} across ${eventDetails.length} sessions
-DOM nodes: ${domNodes}
-Memory: ${typeof memInfo === 'string' ? memInfo : `${memInfo.usedHeap} / ${memInfo.totalHeap} (limit: ${memInfo.limit})`}
-Long tasks (>50ms): ${longTasks.length} total, ${recentLongTasks.length} recent
-localStorage sizes: ${Object.entries(storageSizes).map(([k, v]) => `${k}: ${v}KB`).join(', ')}
-========================`)
-      console.log('%c Tip: Run perfDiag() again after interacting to see new long tasks', 'color: gray; font-style: italic')
+
+      // localStorage
+      console.log(`\nlocalStorage: ${Math.round(totalLSBytes / 1024)} KB total`)
+      console.table(storageSizes)
+
+      // Window event listeners
+      console.log(`\nWindow event listeners: ${eventListenerCount}`)
+
+      // Summary warnings
+      const warnings: string[] = []
+      if (memInfo && memInfo.usedHeap > memInfo.limit * 0.8) warnings.push(`Heap at ${Math.round((memInfo.usedHeap / memInfo.limit) * 100)}% of limit!`)
+      if (domNodes > 10000) warnings.push(`${domNodes} DOM nodes — UI will lag`)
+      if (totalEvents > 5000) warnings.push(`${totalEvents} events in memory — consider clearing old tabs`)
+      if (orphanSSE.length > 0) warnings.push(`${orphanSSE.length} orphan SSE connections leaking`)
+      if (orphanEvents.length > 0) warnings.push(`${orphanEvents.reduce((s, o) => s + o.events, 0)} orphan events in memory (no tab)`)
+      if (totalStreamingBytes > 5 * 1024 * 1024) warnings.push(`${Math.round(totalStreamingBytes / 1024 / 1024)} MB in streaming text buffers`)
+      if (totalLSBytes > 5 * 1024 * 1024) warnings.push(`localStorage is ${Math.round(totalLSBytes / 1024 / 1024)} MB — may cause slow persistence`)
+      if (typeof avgFPS === 'number' && avgFPS < 30) warnings.push(`FPS avg=${avgFPS} — UI is janky`)
+
+      if (warnings.length > 0) {
+        console.log('%c \n⚠️  WARNINGS:', 'color: red; font-weight: bold; font-size: 13px')
+        warnings.forEach(w => console.log(`%c  • ${w}`, 'color: red'))
+      } else {
+        console.log('%c \n✅ No obvious issues detected', 'color: green; font-weight: bold')
+      }
+
+      console.log('%c ========================', 'color: cyan; font-weight: bold')
+      console.log('%c Tip: Run perfDiag() again after interacting to see trends', 'color: gray; font-style: italic')
     }
     return () => { delete window.perfDiag }
   }, [])

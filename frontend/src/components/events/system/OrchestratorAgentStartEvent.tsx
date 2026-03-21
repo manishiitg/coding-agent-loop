@@ -44,36 +44,58 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
 
   const hasInputData = event.input_data && Object.keys(event.input_data).length > 0;
 
+  const agentType = (event as unknown as { agent_type?: string })?.agent_type
+  const isWorkshopStep = agentType?.startsWith('workshop-')
+  const isBackgroundAgent = agentType === 'workshop-background-task'
+
   const getLabel = () => {
-    const t = (event as unknown as { agent_type?: string })?.agent_type
-    if (t === 'planning') return 'Planning Agent'
-    if (t === 'execution') return 'Execution Agent'
-    if (t === 'validation') return 'Validation Agent'
-    if (t === 'organizer') return 'Organizer Agent'
-    if (t === 'plan_breakdown') return 'Plan Breakdown Agent'
-    if (t === 'conditional') return 'Conditional LLM'
+    if (agentType === 'workshop-step-execution') return 'Step Execution'
+    if (agentType === 'workshop-step-learning') return 'Learning Agent'
+    if (agentType === 'workshop-step-debug') return 'Optimization Agent'
+    if (agentType === 'workshop-background-task') return 'Background Task'
+    if (agentType === 'todo_planner_execution') return 'Sub-Agent'
+    if (agentType === 'generic_execution') return 'Generic Agent'
+    if (agentType === 'todo_task_orchestrator') return 'Todo Orchestrator'
+    if (agentType === 'planning') return 'Planning Agent'
+    if (agentType === 'execution') return 'Execution Agent'
+    if (agentType === 'validation') return 'Validation Agent'
+    if (agentType === 'organizer') return 'Organizer Agent'
+    if (agentType === 'plan_breakdown') return 'Plan Breakdown Agent'
+    if (agentType === 'conditional') return 'Conditional LLM'
     return 'Agent'
   }
 
   const getAgentIcon = () => {
-    const t = (event as unknown as { agent_type?: string })?.agent_type
-    if (t === 'plan_breakdown') return '🔍'
-    if (t === 'planning') return '📋'
-    if (t === 'execution') return '⚡'
-    if (t === 'validation') return '✅'
-    if (t === 'organizer') return '🗂️'
-    if (t === 'conditional') return '🔀'
+    if (agentType === 'workshop-step-execution') return '▶️'
+    if (agentType === 'workshop-step-learning') return '📚'
+    if (agentType === 'workshop-step-debug') return '🔧'
+    if (agentType === 'workshop-background-task') return '⏳'
+    if (agentType === 'todo_planner_execution') return '⚡'
+    if (agentType === 'generic_execution') return '⚡'
+    if (agentType === 'todo_task_orchestrator') return '📋'
+    if (agentType === 'plan_breakdown') return '🔍'
+    if (agentType === 'planning') return '📋'
+    if (agentType === 'execution') return '⚡'
+    if (agentType === 'validation') return '✅'
+    if (agentType === 'organizer') return '🗂️'
+    if (agentType === 'conditional') return '🔀'
     return '🤖'
   }
 
   const getAgentColor = () => {
-    const t = (event as unknown as { agent_type?: string })?.agent_type
-    if (t === 'plan_breakdown') return 'emerald'
-    if (t === 'planning') return 'blue'
-    if (t === 'execution') return 'purple'
-    if (t === 'validation') return 'emerald'
-    if (t === 'organizer') return 'orange'
-    if (t === 'conditional') return 'indigo'
+    if (agentType === 'workshop-step-execution') return 'cyan'
+    if (agentType === 'workshop-step-learning') return 'amber'
+    if (agentType === 'workshop-step-debug') return 'orange'
+    if (agentType === 'workshop-background-task') return 'slate'
+    if (agentType === 'todo_planner_execution') return 'purple'
+    if (agentType === 'generic_execution') return 'purple'
+    if (agentType === 'todo_task_orchestrator') return 'indigo'
+    if (agentType === 'plan_breakdown') return 'emerald'
+    if (agentType === 'planning') return 'blue'
+    if (agentType === 'execution') return 'purple'
+    if (agentType === 'validation') return 'emerald'
+    if (agentType === 'organizer') return 'orange'
+    if (agentType === 'conditional') return 'indigo'
     return 'yellow'
   }
 
@@ -122,6 +144,30 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
           textSecondary: 'text-indigo-600 dark:text-indigo-400',
           hover: 'hover:text-indigo-800 dark:hover:text-indigo-200'
         };
+      case 'cyan':
+        return {
+          bg: 'bg-cyan-950/30 dark:bg-cyan-950/30',
+          border: 'border-cyan-800 dark:border-cyan-800',
+          text: 'text-cyan-400 dark:text-cyan-400',
+          textSecondary: 'text-cyan-500 dark:text-cyan-500',
+          hover: 'hover:text-cyan-300 dark:hover:text-cyan-300'
+        };
+      case 'amber':
+        return {
+          bg: 'bg-amber-950/30 dark:bg-amber-950/30',
+          border: 'border-amber-800 dark:border-amber-800',
+          text: 'text-amber-400 dark:text-amber-400',
+          textSecondary: 'text-amber-500 dark:text-amber-500',
+          hover: 'hover:text-amber-300 dark:hover:text-amber-300'
+        };
+      case 'slate':
+        return {
+          bg: 'bg-slate-900/40 dark:bg-slate-900/40',
+          border: 'border-slate-700 dark:border-slate-700',
+          text: 'text-slate-300 dark:text-slate-300',
+          textSecondary: 'text-slate-400 dark:text-slate-400',
+          hover: 'hover:text-slate-200 dark:hover:text-slate-200'
+        };
       default:
         return {
           bg: 'bg-yellow-50 dark:bg-yellow-900/20',
@@ -137,7 +183,7 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   const hasExpandableContent = event.objective || (event.input_data && event.input_data.context) || hasInputData;
 
   return (
-    <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200`}>
+    <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200 ${isWorkshopStep ? 'border-l-4 ml-2' : ''}`}>
       {/* Header with single-line layout */}
       <div className="flex items-center justify-between gap-3">
         {/* Left side: Icon and main content */}

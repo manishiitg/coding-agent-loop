@@ -177,6 +177,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["StepSummary"] = templateVars["StepSummary"]
 		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
 		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
+		templateData["PlanJSON"] = "" // Intentionally empty — agent reads plan.json on demand via shell command
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
 		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
 		// the agent reads them on demand via execute_shell_command.
@@ -185,9 +186,14 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 
 	var result strings.Builder
 	if err := tmpl.Execute(&result, templateData); err != nil {
-		return "Error executing phase chat system prompt template: " + err.Error()
+		panic(fmt.Sprintf("[FATAL] Phase chat system prompt template failed for phase=%q: %v — this means the LLM will receive no system prompt. Fix the template or templateData.", phaseId, err))
 	}
-	return result.String()
+	rendered := result.String()
+	// Guard against empty or suspiciously short prompts — the workshop template should be 10K+ chars
+	if len(rendered) < 1000 {
+		panic(fmt.Sprintf("[FATAL] Phase chat system prompt for phase=%q is only %d chars (expected 10000+). Template likely has missing variables or rendering issues.", phaseId, len(rendered)))
+	}
+	return rendered
 }
 
 // SchedulerCallbacks provides schedule CRUD operations via callbacks from server.go.

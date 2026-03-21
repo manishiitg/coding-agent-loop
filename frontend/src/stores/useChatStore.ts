@@ -54,6 +54,51 @@ const MAX_EVENTS = MAX_EVENTS_TO_PROCESS
 // Lives outside zustand state so mutating it doesn't trigger re-renders.
 const tabEventIdSets = new Map<string, Set<string>>()
 
+// --- Micro-batching for addTabEvents ---
+// Instead of updating zustand state on every SSE event (10-50/sec),
+// buffer events and flush at most every BATCH_INTERVAL_MS.
+// This reduces render cascades (ChatArea → EventHierarchy) by ~10-50x.
+const BATCH_INTERVAL_MS = 100
+const _eventBatchBuffers = new Map<string, PollingEvent[]>()
+const _eventBatchTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function _flushEventBatch(sessionId: string) {
+  _eventBatchTimers.delete(sessionId)
+  const buffer = _eventBatchBuffers.get(sessionId)
+  if (!buffer || buffer.length === 0) return
+  _eventBatchBuffers.delete(sessionId)
+  // Call the real addTabEvents on the store
+  useChatStore.getState()._addTabEventsImmediate(sessionId, buffer)
+}
+
+function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
+  // Check if any event is "important" (completion, error, human feedback) — flush immediately
+  const hasImportant = events.some(e => {
+    const t = e.type
+    return t === 'unified_completion' || t === 'conversation_end' || t === 'workflow_end' ||
+      t === 'agent_error' || t === 'conversation_error' || t === 'orchestrator_error' ||
+      t === 'request_human_feedback' || t === 'blocking_human_feedback' ||
+      t === 'orchestrator_end' || t === 'agent_end'
+  })
+
+  const existing = _eventBatchBuffers.get(sessionId)
+  if (existing) {
+    existing.push(...events)
+  } else {
+    _eventBatchBuffers.set(sessionId, [...events])
+  }
+
+  if (hasImportant) {
+    // Flush immediately for important events
+    const timer = _eventBatchTimers.get(sessionId)
+    if (timer) clearTimeout(timer)
+    _flushEventBatch(sessionId)
+  } else if (!_eventBatchTimers.has(sessionId)) {
+    // Schedule flush
+    _eventBatchTimers.set(sessionId, setTimeout(() => _flushEventBatch(sessionId), BATCH_INTERVAL_MS))
+  }
+}
+
 // Helper function to identify important events that should always be retained
 // These events provide critical context and should not be removed during cleanup
 const shouldRetainEvent = (event: PollingEvent): boolean => {
@@ -324,6 +369,7 @@ interface ChatState extends StoreActions {
   streamingText: Record<string, string>  // sessionId → accumulated streaming text (response content only)
   streamingStatus: Record<string, string>  // sessionId → latest status/heartbeat message (⏳/⚠️ messages)
   lastStreamingChunkIndex: Record<string, number>  // sessionId → last processed chunk_index (dedup guard)
+  completedStreamingText: Record<string, string>  // sessionId → preserved streaming text after generation completes
 
   // Sub-agent streaming text accumulation (per delegation)
   delegationStreamingText: Record<string, string>  // delegationId → accumulated streaming text
@@ -347,6 +393,7 @@ interface ChatState extends StoreActions {
       getTabEvents: (sessionId: string) => PollingEvent[]
       addTabEvent: (sessionId: string, event: PollingEvent) => void
       addTabEvents: (sessionId: string, events: PollingEvent[]) => void
+      _addTabEventsImmediate: (sessionId: string, events: PollingEvent[]) => void
       setTabEvents: (sessionId: string, events: PollingEvent[]) => void
       clearTabEvents: (sessionId: string) => void
       cleanupTabEvents: (sessionId: string, keepCount: number) => void
@@ -491,6 +538,7 @@ export const useChatStore = create<ChatState>()(
       streamingText: {},
       streamingStatus: {},
       lastStreamingChunkIndex: {},
+      completedStreamingText: {},
 
       // Sub-agent streaming text accumulation (per delegation)
       delegationStreamingText: {},
@@ -610,9 +658,15 @@ export const useChatStore = create<ChatState>()(
         })
       },
       
+      // Public API: micro-batched — buffers events and flushes every 100ms
+      // to reduce render cascades from 10-50/sec to ~10/sec
       addTabEvents: (sessionId: string, events: PollingEvent[]) => {
+        addTabEventsBatched(sessionId, events)
+      },
+
+      // Internal: immediate store update (called by the batch flush)
+      _addTabEventsImmediate: (sessionId: string, events: PollingEvent[]) => {
         set((state) => {
-          console.time(`[PERF] addTabEvents-inner (${events.length} incoming, ${(state.tabEvents[sessionId] || []).length} existing)`)
           const currentEvents = state.tabEvents[sessionId] || []
 
           // Use persistent event ID index (O(1) lookup instead of rebuilding Set each call)
@@ -635,10 +689,6 @@ export const useChatStore = create<ChatState>()(
             idSet!.add(event.id)
             return true
           })
-
-          // Log dedup stats — helps identify if dedup is doing heavy work
-          const dupCount = events.length - uniqueNewEvents.length
-          console.log(`[Events] addTabEvents: incoming=${events.length} new=${uniqueNewEvents.length} dupes=${dupCount} existing=${currentEvents.length} idSetSize=${idSet.size} session=${sessionId.slice(0, 8)}`)
 
           // PERF: Skip state update entirely when no new events — avoids creating a new
           // array reference which would cascade re-renders through ChatArea → EventHierarchy.
@@ -686,7 +736,6 @@ export const useChatStore = create<ChatState>()(
             }
           }
 
-          console.timeEnd(`[PERF] addTabEvents-inner (${events.length} incoming, ${currentEvents.length} existing)`)
           return updates
         })
       },
@@ -936,17 +985,24 @@ export const useChatStore = create<ChatState>()(
         set((state) => {
           let lastIndex = state.lastStreamingChunkIndex[sessionId] ?? -1
           let currentText = state.streamingText[sessionId] || ''
+          let clearCompleted = false
 
           // Auto-reset if we see chunk 0 or 1 (start of new generation)
           if (chunkIndex === 0 || chunkIndex === 1) {
              lastIndex = -1
              currentText = ''
+             clearCompleted = true
           }
 
           // Deduplicate: skip chunks already processed (handles concurrent poll overlap)
           if (chunkIndex >= 0 && chunkIndex <= lastIndex) {
             return state
           }
+
+          // Build completedStreamingText update if needed
+          const completedUpdate = clearCompleted
+            ? (() => { const c = { ...state.completedStreamingText }; delete c[sessionId]; return c })()
+            : state.completedStreamingText
 
           // Route heartbeat/status messages (⏳/⚠️ Gemini) to streamingStatus instead of streamingText
           const isStatusMessage = chunk.includes('⏳') || chunk.includes('⚠️ Gemini')
@@ -959,7 +1015,8 @@ export const useChatStore = create<ChatState>()(
               lastStreamingChunkIndex: {
                 ...state.lastStreamingChunkIndex,
                 [sessionId]: chunkIndex
-              }
+              },
+              ...(clearCompleted ? { completedStreamingText: completedUpdate } : {})
             }
           }
 
@@ -976,7 +1033,8 @@ export const useChatStore = create<ChatState>()(
             lastStreamingChunkIndex: {
               ...state.lastStreamingChunkIndex,
               [sessionId]: chunkIndex
-            }
+            },
+            ...(clearCompleted ? { completedStreamingText: completedUpdate } : {})
           }
         })
       },
@@ -989,12 +1047,18 @@ export const useChatStore = create<ChatState>()(
         }
         set((state) => {
           const newStreamingText = { ...state.streamingText }
+          const currentText = newStreamingText[sessionId]
           delete newStreamingText[sessionId]
           const newStreamingStatus = { ...state.streamingStatus }
           delete newStreamingStatus[sessionId]
           const newLastIdx = { ...state.lastStreamingChunkIndex }
           delete newLastIdx[sessionId]
-          return { streamingText: newStreamingText, streamingStatus: newStreamingStatus, lastStreamingChunkIndex: newLastIdx }
+          // Preserve completed streaming text so it stays visible after generation ends
+          const newCompletedStreamingText = { ...state.completedStreamingText }
+          if (currentText) {
+            newCompletedStreamingText[sessionId] = currentText
+          }
+          return { streamingText: newStreamingText, streamingStatus: newStreamingStatus, lastStreamingChunkIndex: newLastIdx, completedStreamingText: newCompletedStreamingText }
         })
       },
 
@@ -1180,10 +1244,11 @@ export const useChatStore = create<ChatState>()(
           streamingText: {},
           streamingStatus: {},
           lastStreamingChunkIndex: {},
+          completedStreamingText: {},
           delegationStreamingText: {},
           lastDelegationChunkIndex: {}
         })
-        
+
         // Clear the requiresNewChat flag after successful chat reset
         useAppStore.getState().clearRequiresNewChat()
       },

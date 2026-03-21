@@ -1082,8 +1082,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     if (response.events.length === 0) return
 
-    console.time(`[PERF] processEventsResponse (${response.events.length} events, session=${actualSessionId.slice(0, 8)})`)
-
     // --- Event filtering & processing ---
     const eventsBeforeFilter = response.events as PollingEvent[]
     const newEvents: PollingEvent[] = []
@@ -1094,7 +1092,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const existingEvents = chatStore.getTabEvents(actualSessionId)
     const hasFrontendUserMessage = existingEvents.some(e => e.type === 'user_message' && e.id?.startsWith('user-message-'))
 
-    console.time(`[PERF] event-filter-loop (${eventsBeforeFilter.length} events)`)
     for (const event of eventsBeforeFilter) {
       const agentEvent = event.data as Record<string, unknown> | undefined
       const innerData = agentEvent?.data as Record<string, unknown> | undefined
@@ -1327,8 +1324,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       newEvents.push(event)
     }
-    console.timeEnd(`[PERF] event-filter-loop (${eventsBeforeFilter.length} events)`)
-
     // PERF FIX: Mark workspace as stale instead of auto-fetching.
     //
     // PROBLEM: Previously called fetchFiles() here, which fetches the entire workspace tree
@@ -1376,7 +1371,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // cascade into React Flow node re-renders.
     const tabViewMode = tab ? (useChatStore.getState().getTab(tab.tabId)?.viewMode ?? 'detailed') : 'detailed'
     if (selectedModeCategory === 'workflow' && isActivePresetTab && tabViewMode !== 'summary') {
-      console.time(`[PERF] workflow-event-loop (${response.events.length} events)`)
       const workflowStore = useWorkflowStore.getState()
       for (const event of response.events as PollingEvent[]) {
         if (event.type === 'batch_group_start') {
@@ -1443,7 +1437,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           }
         }
       }
-      console.timeEnd(`[PERF] workflow-event-loop (${response.events.length} events)`)
     }
 
     // Store events — skip for non-active preset tabs to reduce zustand updates
@@ -1451,11 +1444,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (tab && isActivePresetTab && newEvents.length > 0) {
       const finalTab = chatStore.getTab(tab.tabId)
       if (!finalTab) return
-      console.time(`[PERF] addTabEvents (${newEvents.length} events)`)
       addTabEvents(actualSessionId, newEvents)
-      console.timeEnd(`[PERF] addTabEvents (${newEvents.length} events)`)
     }
-    console.timeEnd(`[PERF] processEventsResponse (${response.events.length} events, session=${actualSessionId.slice(0, 8)})`)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getTabEvents, setTabLastEventIndex, setLastEventIndex, addTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, selectedModeCategory])
 

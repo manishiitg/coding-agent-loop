@@ -51,6 +51,7 @@ export const SUMMARY_MODE_EVENTS = new Set([
   'step_progress_updated',
   'batch_group_start',
   'batch_group_end',
+  'pre_validation_completed',
 
   // Workflow lifecycle
   'workflow_start',

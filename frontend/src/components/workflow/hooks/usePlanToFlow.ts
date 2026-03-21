@@ -2660,7 +2660,6 @@ export function usePlanToFlow(
       const GAP = 60
       const SUB_AGENT_GAP = 20
       
-      console.log(`[SubAgent Positioning] Processing ${parentNode.id} (${layoutDirection}) at ${Math.round(parentNode.position.x)},${Math.round(parentNode.position.y)} with ${subAgentIndices.length} subs`)
 
       if (layoutDirection === 'LR') {
         // LR layout: Horizontal row BELOW parent
@@ -2710,7 +2709,6 @@ export function usePlanToFlow(
         const subAgentX = parentNode.position.x + parentDimensions.width + GAP
         const startY = parentNode.position.y + (parentDimensions.height - totalHeight) / 2
         
-        console.log(`[SubAgent Positioning] TB: ParentWidth=${parentDimensions.width}, GAP=${GAP}, SubAgentX=${subAgentX}, StartY=${startY}`)
 
         let currentY = startY
         subAgentIndices.forEach((subAgentIndex) => {

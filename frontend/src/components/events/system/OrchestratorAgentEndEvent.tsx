@@ -22,6 +22,9 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
 
   const getLabel = () => {
     const t = (event as unknown as { agent_type?: string })?.agent_type
+    if (t === 'todo_planner_execution') return 'Sub-Agent'
+    if (t === 'generic_execution') return 'Generic Agent'
+    if (t === 'todo_task_orchestrator') return 'Todo Orchestrator'
     if (t === 'planning') return 'Planning Agent'
     if (t === 'execution') return 'Execution Agent'
     if (t === 'validation') return 'Validation Agent'
@@ -119,7 +122,6 @@ export const OrchestratorAgentEndEventDisplay: React.FC<OrchestratorAgentEndEven
               <div className={`text-sm font-medium ${colors.text}`}>
                 {getLabel()} Completed: {event.agent_name}{' '}
                 <span className={`text-xs font-normal ${colors.textSecondary}`}>
-                  | Duration: {formatDuration(event.duration || 0)}
                   {event.step_index !== undefined && ` | Step: ${event.step_index}`}
                   {event.iteration !== undefined && ` | Iteration: ${event.iteration}`}
                   {/* Token usage summary - check if token fields exist */}

@@ -119,6 +119,9 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
   const currentStreamingStatus = useChatStore(state =>
     sessionId ? state.streamingStatus[sessionId] || '' : ''
   )
+  const completedStreamingText = useChatStore(state =>
+    sessionId ? state.completedStreamingText[sessionId] || '' : ''
+  )
 
   // CRITICAL: Always use prop events - never fall back to global events to prevent cross-tab mixing
   // Events should always be passed from ChatArea (which uses tab-specific events)
@@ -212,6 +215,22 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Completed Streaming Text - preserved intermediate output from generation */}
+      {completedStreamingText && !currentStreamingText && (
+        <details className="min-w-0 group">
+          <summary className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300 select-none`}>
+            Thinking
+          </summary>
+          <div className="mt-1 border-l-2 border-gray-200 dark:border-gray-700 pl-2">
+            <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[9px]' : 'text-[10px]'} opacity-75`}>
+              <ReactMarkdown components={markdownComponents}>
+                {completedStreamingText}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </details>
       )}
 
       {/* Final Response Display */}

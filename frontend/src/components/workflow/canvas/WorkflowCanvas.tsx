@@ -1742,29 +1742,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   React.useEffect(() => {
     const lastCompletedStepId = stepProgress?.last_completed_step_id
 
-    console.log('[WorkflowCanvas] completedStepIndices effect triggered:', {
-      hasSteps: !!plan?.steps,
-      stepsLength: plan?.steps?.length,
-      completedIndicesLength: completedStepIndices.length,
-      completedStepIndices,
-      lastCompletedStepId,
-      prevRef: prevCompletedIndicesRef.current
-    })
-
-    if (completedStepIndices.length === 0) {
-      console.log('[WorkflowCanvas] Skipping - no completed indices')
-      return
-    }
+    if (completedStepIndices.length === 0) return
 
     // Check if completedStepIndices actually changed
     const indicesStr = JSON.stringify(completedStepIndices) + '|' + (lastCompletedStepId || '')
-    if (indicesStr === prevCompletedIndicesRef.current) {
-      console.log('[WorkflowCanvas] Skipping - indices unchanged')
-      return // No actual changes, skip update
-    }
+    if (indicesStr === prevCompletedIndicesRef.current) return
     prevCompletedIndicesRef.current = indicesStr
-
-    console.log('[WorkflowCanvas] Syncing node status from completedStepIndices:', completedStepIndices)
 
     // Build a map of step IDs that should be marked as completed
     const completedStepIds = new Set<string>()
@@ -1772,7 +1755,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // If we have last_completed_step_id directly from the event, use it
     if (lastCompletedStepId) {
       completedStepIds.add(lastCompletedStepId)
-      console.log('[WorkflowCanvas] Using last_completed_step_id directly:', lastCompletedStepId)
     }
 
     // Also map indices to IDs if plan is available (for all completed steps, not just the last one)
@@ -1782,21 +1764,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           const step = plan.steps[index]
           if (step?.id) {
             completedStepIds.add(step.id)
-            console.log('[WorkflowCanvas] Mapped index', index, 'to stepId:', step.id)
           }
         }
       }
     }
 
-    console.log('[WorkflowCanvas] completedStepIds:', Array.from(completedStepIds))
-
-    if (completedStepIds.size === 0) {
-      console.log('[WorkflowCanvas] No step IDs found, skipping')
-      return
-    }
+    if (completedStepIds.size === 0) return
 
     setNodes(nds => {
-      console.log('[WorkflowCanvas] Updating nodes, total nodes:', nds.length)
       let hasUpdates = false
       const updatedNodes = nds.map(node => {
         if (node.type === 'step' || node.type === 'conditional' || node.type === 'loop' || node.type === 'decision') {
@@ -1804,9 +1779,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           const stepId = nodeData?.step?.id || node.id
           const currentStatus = nodeData?.status
 
-          // If this step is in completedStepIds and not already marked completed, update it
           if (completedStepIds.has(stepId) && currentStatus !== 'completed') {
-            console.log('[WorkflowCanvas] Updating node', node.id, 'stepId:', stepId, 'from', currentStatus, 'to completed')
             hasUpdates = true
             return {
               ...node,
@@ -1820,7 +1793,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         return node
       })
 
-      console.log('[WorkflowCanvas] hasUpdates:', hasUpdates)
       return hasUpdates ? updatedNodes : nds
     })
   }, [completedStepIndices, stepProgress?.last_completed_step_id, plan, setNodes])

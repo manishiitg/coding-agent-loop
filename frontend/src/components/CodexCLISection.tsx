@@ -14,6 +14,7 @@ const CODEX_CLI_MODELS = [
   { id: 'gpt-5.4', label: 'GPT-5.4 — Flagship', description: '1M context, strongest reasoning' },
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini — Fast', description: '400K context, fast and affordable' },
   { id: 'gpt-5.3-codex', label: 'GPT-5.3-Codex — Coding', description: '400K context, industry-leading code' },
+  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3-Codex-Spark — Ultra Fast', description: '400K context, ultra-fast coding responses' },
 ]
 
 export function CodexCLISection({ onPublished }: CodexCLISectionProps) {

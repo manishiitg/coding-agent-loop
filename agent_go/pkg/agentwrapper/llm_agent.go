@@ -15,6 +15,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	"github.com/manishiitg/mcpagent/toolcalllog"
 
 	agentlogger "mcp-agent-builder-go/agent_go/pkg/logger"
 
@@ -837,6 +838,7 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		// until the full response is ready.
 		streamedAny := false
 		streamedChunks := 0
+
 		w.mu.Lock()
 		prevCallback := w.agent.StreamingCallback
 		w.agent.StreamingCallback = func(chunk llmtypes.StreamChunk) {
@@ -859,6 +861,12 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		w.mu.Unlock()
 		w.logger.Info("[STREAMING] Real-time streaming callback installed")
 
+		// Clear any stale tool call records from a previous cancelled run for this session
+		// so we only capture calls from the current run.
+		if w.config.SessionID != "" {
+			toolcalllog.Clear(w.config.SessionID)
+		}
+
 		// Restore previous callback on exit
 		defer func() {
 			w.mu.Lock()
@@ -877,8 +885,81 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 		// Get conversation history and execute
 		messages := w.GetHistory()
 
+		w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] AskWithHistory starting | history_msgs=%d", len(messages)))
+
 		// Execute the request with the agent
 		response, updatedMessages, err := w.agent.AskWithHistory(ctx, messages)
+
+		// Fetch completed tool calls recorded at the HTTP execution level.
+		// These are written by executor/handlers.go when a tool finishes — independent of
+		// whether the CLI subprocess was still alive to receive the result.
+		var httpCompletedCalls []toolcalllog.CompletedCall
+		if w.config.SessionID != "" {
+			httpCompletedCalls = toolcalllog.GetAndClear(w.config.SessionID)
+		}
+
+		w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] AskWithHistory returned | err=%v updated_msgs=%d input_msgs=%d http_tools_captured=%d",
+			err, len(updatedMessages), len(messages), len(httpCompletedCalls)))
+
+		// Always save updated messages, even on cancellation.
+		// For API providers (Anthropic, Bedrock, etc.), conversation.go appends completed
+		// tool call results to messages before returning on cancel — so updatedMessages may
+		// contain valuable tool results that ran before the cancellation. Discarding them
+		// would cause the model to re-run those tools on the next request.
+		// For CLI providers (claude-code, codex-cli), updatedMessages equals the input
+		// messages (the CLI manages its own tool loop internally) — we reconstruct the
+		// tool history from cliCompletedToolCalls below instead.
+		if len(updatedMessages) > 0 {
+			w.mu.Lock()
+			historyBefore := len(w.history)
+			w.history = updatedMessages
+
+			// For CLI providers: rebuild history from tool calls recorded at the HTTP level.
+			// These are captured by executor/handlers.go when a tool finishes — even if the
+			// CLI subprocess was killed before it received the result back.
+			if len(httpCompletedCalls) > 0 {
+				// Use plain-text summary instead of structured ToolCall/ToolCallResponse
+				// ContentParts. CLI providers (claude-code, codex-cli) serialize ToolCall and
+				// ChatMessageTypeTool to null in their input stream, causing "choice.Content is
+				// empty" errors. A text summary in a normal AI message is universally serializable.
+				var sb strings.Builder
+				sb.WriteString("[Cancelled run context — tools executed before cancellation:\n")
+				for _, tc := range httpCompletedCalls {
+					w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] HTTP tool reconstructed: id=%s name=%s args_len=%d result_len=%d",
+						tc.ID, tc.Name, len(tc.ArgsJSON), len(tc.Result)))
+					result := tc.Result
+					if len(result) > 5000 {
+						result = result[:5000] + "...[truncated]"
+					}
+					sb.WriteString(fmt.Sprintf("- %s(%s) → %s\n", tc.Name, tc.ArgsJSON, result))
+				}
+				sb.WriteString("]")
+				w.history = append(w.history, llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: sb.String()}},
+				})
+				w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] Reconstructed %d HTTP-level tool calls into history (text summary) | msgs_before=%d msgs_after=%d",
+					len(httpCompletedCalls), historyBefore, len(w.history)))
+			}
+
+			// Fix dangling user message: if the conversation was cancelled before the model
+			// produced any response, history ends with a user message and no assistant reply.
+			// Appending the next user message would create two consecutive user messages,
+			// which is invalid for Anthropic-style APIs and confuses CLI providers.
+			// Add a synthetic assistant acknowledgement so the history stays valid.
+			last := w.history[len(w.history)-1]
+			if err != nil && last.Role == llmtypes.ChatMessageTypeHuman {
+				w.logger.Info("[CANCEL_DEBUG] History ends with dangling user message — appending synthetic assistant reply")
+				w.history = append(w.history, llmtypes.MessageContent{
+					Role:  llmtypes.ChatMessageTypeAI,
+					Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "[Request cancelled — no response generated]"}},
+				})
+			}
+			w.logger.Info(fmt.Sprintf("[CANCEL_DEBUG] History saved | final_msgs=%d err=%v", len(w.history), err))
+			w.mu.Unlock()
+		} else {
+			w.logger.Info("[CANCEL_DEBUG] updatedMessages is empty — history NOT updated")
+		}
 
 		if err != nil {
 			w.logger.Error("AskWithHistory failed", err)
@@ -900,8 +981,10 @@ func (w *LLMAgentWrapper) StreamWithEvents(ctx context.Context, prompt string) (
 			return
 		}
 
-		// Update the agent's history with the updated messages from the conversation
-		// Always update - messages may have been summarized (fewer) or expanded (more)
+		// Update the agent's history with the updated messages from the conversation.
+		// Also handles the case where messages were summarized (fewer) or expanded (more).
+		// Note: history may already be set above (cancellation path), but we overwrite here
+		// on success to ensure the definitive post-run state is captured.
 		w.mu.Lock()
 		w.history = updatedMessages
 		w.mu.Unlock()

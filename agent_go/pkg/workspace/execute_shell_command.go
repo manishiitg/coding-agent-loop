@@ -5,9 +5,41 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"sync"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
+
+// Global session → working directory map.
+// Set by server.go when a session is created, read by execute_shell_command.
+// This avoids the need for session-aware executor instances — one global executor
+// looks up the working directory per-session at call time.
+var (
+	sessionWorkingDirs   = make(map[string]string)
+	sessionWorkingDirsMu sync.RWMutex
+)
+
+// SetSessionWorkingDir sets the default working directory for a session.
+func SetSessionWorkingDir(sessionID, dir string) {
+	sessionWorkingDirsMu.Lock()
+	defer sessionWorkingDirsMu.Unlock()
+	sessionWorkingDirs[sessionID] = dir
+	log.Printf("[SHELL] Set default working dir for session %s: %s", sessionID, dir)
+}
+
+// ClearSessionWorkingDir removes the working directory for a session.
+func ClearSessionWorkingDir(sessionID string) {
+	sessionWorkingDirsMu.Lock()
+	defer sessionWorkingDirsMu.Unlock()
+	delete(sessionWorkingDirs, sessionID)
+}
+
+// getSessionWorkingDir looks up the default working directory for a session.
+func getSessionWorkingDir(sessionID string) string {
+	sessionWorkingDirsMu.RLock()
+	defer sessionWorkingDirsMu.RUnlock()
+	return sessionWorkingDirs[sessionID]
+}
 
 type ExecuteShellCommandParams struct {
 	Command          string             `json:"command"`
@@ -95,20 +127,26 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		params.Timeout = &noTimeout
 	}
 
-	// Set default working directory: client field > ExtraEnv hint > empty (workspace root)
+	// Set default working directory:
+	// Priority: param > session map > client field > ExtraEnv > empty (workspace root)
 	if params.WorkingDirectory == "" {
-		if c.DefaultWorkingDir != "" {
-			params.WorkingDirectory = c.DefaultWorkingDir
-			log.Printf("[SHELL_DEBUG] Using DefaultWorkingDir: %s", c.DefaultWorkingDir)
-		} else if dir, ok := c.ExtraEnv["_DEFAULT_WORKING_DIR"]; ok && dir != "" {
-			params.WorkingDirectory = dir
-			log.Printf("[SHELL_DEBUG] Using ExtraEnv _DEFAULT_WORKING_DIR: %s", dir)
-		} else {
-			log.Printf("[SHELL_DEBUG] No default working dir set (DefaultWorkingDir=%q, ExtraEnv keys=%v)", c.DefaultWorkingDir, func() []string {
-				keys := make([]string, 0, len(c.ExtraEnv))
-				for k := range c.ExtraEnv { keys = append(keys, k) }
-				return keys
-			}())
+		// 1. Check global session → working dir map (set by server.go per-session)
+		sessionID := ""
+		if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
+			sessionID = sid
+		}
+		if sessionID != "" {
+			if dir := getSessionWorkingDir(sessionID); dir != "" {
+				params.WorkingDirectory = dir
+			}
+		}
+		// 2. Fallback to client-level defaults
+		if params.WorkingDirectory == "" {
+			if c.DefaultWorkingDir != "" {
+				params.WorkingDirectory = c.DefaultWorkingDir
+			} else if dir, ok := c.ExtraEnv["_DEFAULT_WORKING_DIR"]; ok && dir != "" {
+				params.WorkingDirectory = dir
+			}
 		}
 	}
 

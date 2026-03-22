@@ -2042,6 +2042,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
 	workflowPhaseID := req.PhaseID
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
+	_ = workflowPhaseFolder   // used later in the function
 	if isWorkflowPhase {
 		log.Printf("[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
 		if req.PresetQueryID == "" {
@@ -2721,9 +2722,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Set default working directory for workflow shell commands
 			if workflowWorkspacePath != "" {
-				if envRef := workflowOrchestrator.GetWorkspaceEnvRef(); envRef != nil {
-					envRef["_DEFAULT_WORKING_DIR"] = workflowWorkspacePath
-				}
+				workspace.SetSessionWorkingDir(sessionID, workflowWorkspacePath)
 			}
 
 			// Update run_metadata.json with LLM config before execution starts
@@ -3700,10 +3699,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					additionalFolders = append(additionalFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, "Plans", additionalFolders...)
-					// Set default working directory for plan mode shell commands
-					if workspaceEnv != nil {
-						workspaceEnv["_DEFAULT_WORKING_DIR"] = "Plans/"
-					}
+					workspace.SetSessionWorkingDir(sessionID, "Plans/")
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied Plans/ folder restriction (additional: %v)", additionalFolders)
 				} else {
 					extraFolders := []string{}
@@ -3715,10 +3711,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					extraFolders = append(extraFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
-					// Set default working directory for chat mode shell commands
-					if workspaceEnv != nil {
-						workspaceEnv["_DEFAULT_WORKING_DIR"] = "Chats/"
-					}
+					workspace.SetSessionWorkingDir(sessionID, "Chats/")
 					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
 				}
 
@@ -4416,6 +4409,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW_PHASE] WARNING: No workspace path found for phase=%s preset=%s - using default_workspace", workflowPhaseID, req.PresetQueryID)
 					phaseWorkspacePath = "default_workspace"
 				}
+				// Set default shell working directory for this session.
+				// The global map is read by execute_shell_command at call time.
+				if phaseWorkspacePath != "" && phaseWorkspacePath != "default_workspace" {
+					workspace.SetSessionWorkingDir(sessionID, phaseWorkspacePath)
+				}
 
 				// Create workspace client for reading plan.json and variables.json
 				phaseWSClient := workspace.NewClient(
@@ -4915,31 +4913,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			underlyingAgent.AddEventListener(dbEventObserver)
 			log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
 
-			// Replace agent's internal tool executors with session-aware versions.
-			// The agent was created with raw executors from agentConfig. The session-aware
-			// executors (with ExtraEnv containing _DEFAULT_WORKING_DIR, secrets, etc.)
-			// were created separately. Replace them so all providers (API, CLI, Gemini)
-			// get the correct working directory and env vars.
-			if req.AgentMode == "workflow_phase" {
-				log.Printf("[WORKSHOP_DEBUG] Looking up workshop session for %s (agentMode=%s)", sessionID, req.AgentMode)
-				if cached, ok := api.workshopChatSessions.Load(sessionID); ok {
-					log.Printf("[WORKSHOP_DEBUG] Found cached session, type=%T", cached)
-					if ws, ok := cached.(*todo_creation_human.WorkshopChatSession); ok {
-						if wsCfg := ws.GetConfig(); wsCfg != nil {
-							count := 0
-							for name, exec := range wsCfg.CustomToolExecutors {
-								if fn, ok := exec.(func(context.Context, map[string]interface{}) (string, error)); ok {
-									underlyingAgent.ReplaceCustomToolExecutor(name, fn)
-									count++
-								}
-							}
-							if count > 0 {
-								log.Printf("[WORKSHOP] Replaced %d agent tool executors with session-aware versions (session=%s)", count, sessionID)
-							}
-						}
-					}
-				}
-			}
 		} else {
 			log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
 		}
@@ -5040,7 +5013,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Inject user ID into the agent context for per-user folder isolation
 		// This allows workspace tools to route per-user folders correctly
 		agentCtx = context.WithValue(agentCtx, common.UserIDKey, currentUserID)
-		log.Printf("[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q into agentCtx", currentUserID)
+		agentCtx = context.WithValue(agentCtx, common.ChatSessionIDKey, sessionID)
+		log.Printf("[USER_ID_DEBUGGING] Main agent: injected UserIDKey=%q, ChatSessionIDKey=%q into agentCtx", currentUserID, sessionID)
 
 		// Store the cancel function for potential cancellation
 		api.agentCancelMux.Lock()
@@ -7666,10 +7640,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 				additionalFolders = append(additionalFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, additionalFolders...)
-				// Set default working directory for sub-agent shell commands
-				if subAgentEnv != nil {
-					subAgentEnv["_DEFAULT_WORKING_DIR"] = planFolder + "/"
-				}
+				workspace.SetSessionWorkingDir(sessionID, planFolder+"/")
 				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
 			} else {
 				extraFolders := []string{}
@@ -7681,10 +7652,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 				extraFolders = append(extraFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
-				// Set default working directory for sub-agent shell commands (chat mode)
-				if subAgentEnv != nil {
-					subAgentEnv["_DEFAULT_WORKING_DIR"] = "Chats/"
-				}
+				workspace.SetSessionWorkingDir(sessionID, "Chats/")
 			}
 
 			// Register workspace tools
@@ -9416,7 +9384,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	cfg.WorkspaceEnvRef = workspaceEnv
 	// Set default working directory for workshop shell commands
 	if workspacePath != "" {
-		workspaceEnv["_DEFAULT_WORKING_DIR"] = workspacePath
+		workspace.SetSessionWorkingDir(sessionID, workspacePath)
 	}
 	log.Printf("[WORKSHOP] Replaced workspace executors with session-aware versions (sessionID=%q, secrets=%d)", sessionID, len(secretEnvVars))
 

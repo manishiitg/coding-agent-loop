@@ -112,16 +112,6 @@ Use this access to create and update custom skills. You can read other folders t
 	return instructions
 }
 
-// GetBrowserUploadInstructions delegates to the shared instructions package.
-func GetBrowserUploadInstructions() string {
-	return browserinstructions.GetBrowserUploadInstructions()
-}
-
-// GetCamofoxInstructions delegates to the shared instructions package.
-func GetCamofoxInstructions() string {
-	return browserinstructions.GetCamofoxInstructions()
-}
-
 // buildSkillPrompt builds the system prompt section for selected skills
 // It provides paths to skills and instructions for the agent to discover them using workspace tools
 func buildSkillPrompt(selectedSkills []string, workspaceAPIURL ...string) string {
@@ -551,11 +541,6 @@ func buildLearningsSummary(client *skills.WorkspaceAPIClient, wsPath string) str
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// getBrowserQuickStartInstructions returns inline instructions for using the agent-browser tool.
-func getBrowserQuickStartInstructions() string {
-	return browserinstructions.GetAgentBrowserQuickStartInstructions()
 }
 
 // getGWSQuickStartInstructions returns inline instructions for using Google Workspace via the gws CLI.

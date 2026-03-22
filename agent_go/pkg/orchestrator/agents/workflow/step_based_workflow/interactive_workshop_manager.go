@@ -725,7 +725,10 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 ## 🎯 CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILD{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else}}RUN{{end}}
 {{if eq .WorkshopMode "builder"}}
 **BUILD MODE** — Focus on designing and building the workflow. Get steps to work correctly.
-- Add, remove, reorder, and configure steps freely
+- **Do NOT create steps until the plan is fully clear.** The user may be exploring, testing ideas, or not yet ready to commit to a plan. First discuss the approach, ask clarifying questions, and confirm the plan with the user. Only create steps after the user explicitly confirms the plan or asks you to create/add steps.
+- When the user describes what they want, respond with a proposed plan (step breakdown, types, context flow) and ask for confirmation before creating any steps in plan.json
+- If the user is just asking questions, brainstorming, or exploring possibilities, engage in discussion — do NOT jump to creating steps
+- Add, remove, reorder, and configure steps freely once the plan is confirmed
 - Test steps to verify they produce correct output — use execute_step(step_id) with default skip_learning=true for fast iteration
 - Set up servers, tools, and context dependencies
 - Do NOT worry about optimization yet — the workflow structure may still change
@@ -858,7 +861,7 @@ Use ` + "`cat planning/plan.json`" + ` for full step details (descriptions, vali
 {{if eq .WorkshopMode "builder"}}
 ## 📐 PLAN DESIGN — From Requirements to Steps
 
-When a user describes what they want to automate, follow this process to design the plan.
+When a user describes what they want to automate, follow this process to design the plan. **Present the plan to the user and get explicit confirmation before creating any steps.** The user may be exploring or testing ideas — do not assume they are ready to commit to a workflow structure.
 
 ### Step 1: Identify the Core Actions
 Break the user's requirement into **concrete actions** — things an agent must actually DO (navigate, extract, write, validate, etc.). Each action that produces a distinct output or changes state is a candidate for a step.
@@ -1489,31 +1492,38 @@ func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, temp
 	}
 
 	// Append browser instructions if browser tools are available in this workflow
-	hasBrowser := false
+	browserCfg := instructions.BrowserConfig{
+		CdpPort: iwm.controller.GetCdpPort(),
+	}
 	for _, sk := range iwm.controller.GetSelectedSkills() {
 		if sk == "agent-browser" {
-			hasBrowser = true
+			browserCfg.HasAgentBrowser = true
 			break
 		}
 	}
-	if !hasBrowser {
-		for _, s := range iwm.controller.GetSelectedServers() {
-			if s == "playwright" || s == "camofox" {
-				hasBrowser = true
-				break
-			}
+	for _, s := range iwm.controller.GetSelectedServers() {
+		if s == "playwright" {
+			browserCfg.HasPlaywright = true
+		}
+		if s == "camofox" {
+			browserCfg.HasCamofox = true
 		}
 	}
-	if hasBrowser {
+	if browserPromptStr := instructions.BuildBrowserInstructions(browserCfg); browserPromptStr != "" {
 		systemPrompt.WriteString("\n\n")
-		systemPrompt.WriteString(instructions.GetAgentBrowserQuickStartInstructions())
-		systemPrompt.WriteString(instructions.GetBrowserUploadInstructions())
-		if iwm.controller.GetCdpPort() > 0 {
-			systemPrompt.WriteString(instructions.GetCdpModeInstructions())
-		} else {
-			systemPrompt.WriteString(instructions.GetHeadlessModeInstructions())
+		systemPrompt.WriteString(browserPromptStr)
+		logger.Info(fmt.Sprintf("🌐 Added browser instructions to workflow builder system prompt (playwright=%v, camofox=%v, agent-browser=%v)",
+			browserCfg.HasPlaywright, browserCfg.HasCamofox, browserCfg.HasAgentBrowser))
+	}
+
+	// Append GWS instructions if gws server is enabled
+	for _, s := range iwm.controller.GetSelectedServers() {
+		if s == "gws" {
+			systemPrompt.WriteString("\n\n")
+			systemPrompt.WriteString(instructions.GetGWSQuickStartInstructions())
+			logger.Info("📧 Added GWS quick-start instructions to workflow builder system prompt")
+			break
 		}
-		logger.Info("🌐 Added browser instructions to workflow builder system prompt")
 	}
 
 	// Append secrets to system prompt so the workshop agent knows what's available
@@ -5879,6 +5889,7 @@ When you finish, summarize what you did and any important findings.
 {{.SkillPrompt}}
 {{.SecretPrompt}}
 {{.BrowserPrompt}}
+{{.GWSPrompt}}
 {{.CustomInstructions}}
 `)
 
@@ -6100,16 +6111,28 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		secretPrompt = BuildWorkflowSecretPrompt(effectiveSecrets)
 	}
 
-	browserPrompt := ""
+	bgBrowserCfg := instructions.BrowserConfig{CdpPort: iwm.controller.GetCdpPort()}
 	for _, s := range config.ServerNames {
-		if s == "playwright" || s == "camofox" {
-			browserPrompt = "You have access to browser automation tools."
-			break
+		if s == "playwright" {
+			bgBrowserCfg.HasPlaywright = true
+		}
+		if s == "camofox" {
+			bgBrowserCfg.HasCamofox = true
 		}
 	}
 	for _, skill := range effectiveSkills {
 		if skill == "agent-browser" {
-			browserPrompt = "You have access to browser automation tools via the agent_browser tool."
+			bgBrowserCfg.HasAgentBrowser = true
+			break
+		}
+	}
+	browserPrompt := instructions.BuildBrowserInstructions(bgBrowserCfg)
+
+	// GWS instructions
+	gwsPrompt := ""
+	for _, s := range config.ServerNames {
+		if s == "gws" {
+			gwsPrompt = instructions.GetGWSQuickStartInstructions()
 			break
 		}
 	}
@@ -6134,6 +6157,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		"SkillPrompt":        skillPrompt,
 		"SecretPrompt":       secretPrompt,
 		"BrowserPrompt":      browserPrompt,
+		"GWSPrompt":          gwsPrompt,
 		"CustomInstructions": customInstructions,
 	}
 

@@ -41,7 +41,7 @@ interface GlobalPresetState {
   refreshPresets: () => Promise<void>
   addPreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<CustomPreset | null>
   updatePreset: (id: string, label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[]) => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean) => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, enableContextEditing?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => Promise<CustomPreset | null>
   deletePreset: (id: string) => Promise<void>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
   updatePredefinedServerSelection: (presetId: string, selectedServers: string[]) => void
@@ -230,6 +230,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
               enableContextSummarization: preset.enable_context_summarization !== undefined ? preset.enable_context_summarization : true,
               enableContextEditing: preset.enable_context_editing !== undefined ? preset.enable_context_editing : false,
               enableBrowserAccess: preset.enable_browser_access ?? false,
+              browserMode: (preset.browser_mode as CustomPreset['browserMode']) || undefined,
               employee_id: preset.employee_id || undefined,
             }
           })
@@ -547,7 +548,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, enableContextSummarization, useToolSearchMode, enableBrowserAccess, enableContextEditing, selectedSecrets, selectedGlobalSecretNames, camofoxHeaded, browserMode) => {
         // Apply workflow-specific default for tool search mode
         // When agentMode is 'workflow' and useToolSearchMode is not explicitly provided, default to true
         const effectiveToolSearchMode = useToolSearchMode !== undefined ? useToolSearchMode : (agentMode === 'workflow')
@@ -610,6 +611,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Include browser access if provided
             if (enableBrowserAccess !== undefined) {
               request.enable_browser_access = enableBrowserAccess
+            }
+
+            // Include browser mode if provided (source of truth for browser type)
+            if (browserMode) {
+              request.browser_mode = browserMode
             }
 
             // Include context editing if provided
@@ -696,6 +702,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Include browser access if provided
             if (enableBrowserAccess !== undefined) {
               request.enable_browser_access = enableBrowserAccess
+            }
+
+            // Include browser mode if provided (source of truth for browser type)
+            if (browserMode) {
+              request.browser_mode = browserMode
             }
 
             // Include context editing if provided

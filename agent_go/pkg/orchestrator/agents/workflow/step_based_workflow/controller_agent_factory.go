@@ -11,7 +11,6 @@ import (
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
-	browserinstructions "mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
@@ -1190,72 +1189,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		return nil, fmt.Errorf("mcp agent is nil after creation for %s - this should never happen", agentName)
 	}
 
-	// Add skill prompt if skills are selected (uses effectiveSkills from folder guard setup above)
-	if len(effectiveSkills) > 0 {
-		skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator)
-		if skillPrompt != "" {
-			mcpAgent.AppendSystemPrompt(skillPrompt)
-			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill prompt to execution agent (%d skills): %v", len(effectiveSkills), effectiveSkills))
-		}
-	}
-
-	// Browser isolation: for agent-browser skill, inject system prompt with unique session name
-	if isolatedSessionID, ok := ctx.Value(virtualtools.SubAgentIsolatedSessionIDKey).(string); ok && isolatedSessionID != "" {
-		for _, skill := range effectiveSkills {
-			if skill == "agent-browser" {
-				mcpAgent.AppendSystemPrompt(fmt.Sprintf(
-					"## Browser Isolation\nYou have an isolated browser session. When using the agent_browser tool, use session name %q instead of \"default\" to avoid sharing browser state with other agents.",
-					isolatedSessionID,
-				))
-				hcpo.GetLogger().Info("Added browser isolation guidance to sub-agent system prompt for agent-browser")
-				break
-			}
-		}
-	}
-
-	// Add secrets to execution agent's system prompt
-	effectiveSecrets := GetEffectiveSecrets(hcpo.BaseOrchestrator)
-	if len(effectiveSecrets) > 0 {
-		secretPrompt := BuildWorkflowSecretPrompt(effectiveSecrets)
-		if secretPrompt != "" {
-			mcpAgent.AppendSystemPrompt(secretPrompt)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔐 Added secret prompt to execution agent (%d secrets)", len(effectiveSecrets)))
-		}
-	}
-
-	// Add browser instructions if browser tools are available
-	hasPlaywrightServer := false
-	hasCamofoxServer := false
-	hasAgentBrowserSkill := false
-	for _, s := range config.ServerNames {
-		if s == "playwright" {
-			hasPlaywrightServer = true
-		}
-		if s == "camofox" {
-			hasCamofoxServer = true
-		}
-	}
-	for _, skill := range effectiveSkills {
-		if skill == "agent-browser" {
-			hasAgentBrowserSkill = true
-		}
-	}
-	if hasPlaywrightServer || hasCamofoxServer || hasAgentBrowserSkill {
-		mcpAgent.AppendSystemPrompt(browserinstructions.GetBrowserUploadInstructions())
-		hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added browser upload instructions to execution agent (playwright=%v, camofox=%v, agent-browser=%v)", hasPlaywrightServer, hasCamofoxServer, hasAgentBrowserSkill))
-		// Add CDP/headless mode-specific instructions
-		if hcpo.GetCdpPort() > 0 {
-			mcpAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
-			hcpo.GetLogger().Info(fmt.Sprintf("🌐 Added CDP mode instructions to execution agent (port=%d)", hcpo.GetCdpPort()))
-		} else {
-			mcpAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
-			hcpo.GetLogger().Info("🌐 Added headless mode instructions to execution agent")
-		}
-	}
-	if hasCamofoxServer {
-		mcpAgent.AppendSystemPrompt(browserinstructions.GetCamofoxInstructions())
-		hcpo.GetLogger().Info("🦊 Added camofox-specific instructions to execution agent")
-	}
+	// Inject supplementary prompts (skills, browser isolation, secrets, browser instructions)
+	isolatedSessionID, _ := ctx.Value(virtualtools.SubAgentIsolatedSessionIDKey).(string)
+	hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, isolatedSessionID)
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, isCodeExecutionMode); err != nil {
@@ -1535,6 +1471,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	// Note: Folder guard paths are already set on orchestrator, but we need to apply them to the agent
 	if err := hcpo.applyPostSetupToAgent(agent, agentName, false); err != nil {
 		return nil, fmt.Errorf("failed to apply post-setup to conditional agent: %w", err)
+	}
+
+	// Inject supplementary prompts (skills, secrets, browser instructions)
+	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
+	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
+		if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
+			hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, "")
+		}
 	}
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Created conditional agent using standard factory pattern: %s (step %d, phase %s)", agentName, step+1, phase))
@@ -1855,19 +1799,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		return nil, fmt.Errorf("failed to apply post-setup to todo task orchestrator agent: %w", err)
 	}
 
-	// Add skill prompt if skills are selected
+	// Inject supplementary prompts (skills, secrets, browser instructions)
 	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
-	if len(effectiveSkills) > 0 {
-		baseAgent := agent.GetBaseAgent()
-		if baseAgent != nil {
-			mcpAgent := baseAgent.Agent()
-			if mcpAgent != nil {
-				skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator)
-				if skillPrompt != "" {
-					mcpAgent.AppendSystemPrompt(skillPrompt)
-					hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill prompt to todo task orchestrator agent (%d skills): %v", len(effectiveSkills), effectiveSkills))
-				}
-			}
+	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
+		if mcpAgent := baseAgent.Agent(); mcpAgent != nil {
+			hcpo.appendSupplementaryPrompts(ctx, mcpAgent, config, effectiveSkills, "")
 		}
 	}
 

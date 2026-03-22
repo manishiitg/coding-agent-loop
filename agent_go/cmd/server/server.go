@@ -374,6 +374,27 @@ func getBrowserMode(req QueryRequest) string {
 	return "none"
 }
 
+// buildChatBrowserConfig resolves the browser configuration from a QueryRequest
+// into the standardized BrowserConfig used by BuildBrowserInstructions.
+func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig {
+	cfg := browserinstructions.BrowserConfig{
+		CdpPort: getCdpPort(req),
+	}
+	hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
+	if hasBrowserAccess {
+		cfg.HasAgentBrowser = true
+	}
+	for _, s := range req.EnabledServers {
+		switch s {
+		case "playwright":
+			cfg.HasPlaywright = true
+		case "camofox":
+			cfg.HasCamofox = true
+		}
+	}
+	return cfg
+}
+
 // CrossProviderFallback represents cross-provider fallback configuration
 type CrossProviderFallback struct {
 	Provider string   `json:"provider"`
@@ -4259,25 +4280,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// Add inline quick-start instructions for browser access
-			browserMode := getBrowserMode(req)
-			switch browserMode {
-			case "cdp":
-				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
-				underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
-				log.Printf("[BROWSER] Added CDP mode instructions to system prompt (port=%d)", getCdpPort(req))
-			case "headless":
-				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
-				underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
-				log.Printf("[BROWSER] Added headless mode instructions to system prompt")
-			case "playwright":
-				underlyingAgent.AppendSystemPrompt(browserinstructions.GetPlaywrightModeInstructions())
-				log.Printf("[BROWSER] Added Playwright mode instructions to system prompt")
-			case "stealth":
-				// Camofox-specific instruction block is appended below in browser upload section.
-				log.Printf("[BROWSER] Effective browser mode=stealth (camofox)")
-			default:
-				// no browser mode instructions
+			// Add browser instructions (upload + mode-specific) using standardized builder
+			chatBrowserCfg := buildChatBrowserConfig(req)
+			if chatBrowserPrompt := browserinstructions.BuildBrowserInstructions(chatBrowserCfg); chatBrowserPrompt != "" {
+				underlyingAgent.AppendSystemPrompt(chatBrowserPrompt)
+				log.Printf("[BROWSER] Added browser instructions to system prompt (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",
+					chatBrowserCfg.HasPlaywright, chatBrowserCfg.HasCamofox, chatBrowserCfg.HasAgentBrowser, chatBrowserCfg.CdpPort > 0)
 			}
 
 			// Add inline quick-start instructions for GWS access
@@ -4352,6 +4360,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Two conditions trigger this: headless browser (agent_browser) or Playwright MCP.
 			// The system prompt tells the LLM to use workspace-relative paths; the transformer
 			// then resolves those to absolute host paths before they reach Playwright MCP.
+			// [BROWSER_UPLOAD] Register file path transformer for browser file uploads.
+			// Browser instructions (upload + mode-specific) are already injected above via BuildBrowserInstructions.
 			hasBrowserAccess := req.EnableBrowserAccess != nil && *req.EnableBrowserAccess
 			hasPlaywright := false
 			hasCamofox := false
@@ -4364,13 +4374,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if hasBrowserAccess || hasPlaywright || hasCamofox {
-				underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
-				if hasCamofox {
-					underlyingAgent.AppendSystemPrompt(GetCamofoxInstructions())
-					log.Printf("[CAMOFOX] Added camofox-specific instructions (session persistence, downloads)")
-				}
-				log.Printf("[BROWSER_UPLOAD] Added browser upload instructions (browser=%v, playwright=%v, camofox=%v)", hasBrowserAccess, hasPlaywright, hasCamofox)
-
 				// Register transformer on the agent (primary path for LLM-driven tool calls).
 				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
 				// the HTTP /api/mcp/execute handler. Without this, the transformer never fires.
@@ -4627,8 +4630,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				underlyingAgent.SetSystemPrompt(phaseSystemPrompt)
 				log.Printf("[WORKFLOW_PHASE] Overrode system prompt (%d chars) for phase=%s", len(phaseSystemPrompt), workflowPhaseID)
 
-				// Append secrets to the phase agent's system prompt so it knows what's available
-				if workflowPhaseID == "workflow-builder" {
+				// Re-append supplementary prompts after system prompt override
+				// (ClearAppendedSystemPrompts above wiped browser/GWS/secrets instructions)
+				if workflowPhaseID == "workflow-builder" || workflowPhaseID == "evaluation-builder" {
+					// Secrets
 					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 					if len(phaseSecrets) > 0 {
 						entries := make([]orchestrator.SecretEntry, len(phaseSecrets))
@@ -4639,6 +4644,58 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						if secretPrompt != "" {
 							underlyingAgent.AppendSystemPrompt(secretPrompt)
 							log.Printf("[WORKFLOW_PHASE] Appended %d secrets to %s system prompt", len(entries), workflowPhaseID)
+						}
+					}
+
+					// Browser + GWS instructions from preset config
+					// The preset determines browser mode, not req.EnableBrowserAccess (which is false for workflow_phase)
+					if req.PresetQueryID != "" {
+						presetCtx2, presetCancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+						presetForBrowser, presetErr2 := api.chatDB.GetPresetQuery(presetCtx2, req.PresetQueryID)
+						presetCancel2()
+						if presetErr2 == nil && presetForBrowser != nil {
+							// Resolve browser mode: prefer BrowserMode field, fall back to legacy EnableBrowserAccess
+							effectiveBrowserMode := presetForBrowser.BrowserMode
+							if effectiveBrowserMode == "" && presetForBrowser.EnableBrowserAccess {
+								effectiveBrowserMode = "headless" // Legacy preset without browser_mode
+							}
+
+							// Build browser config from preset's browser mode
+							phaseBrowserCfg := browserinstructions.BrowserConfig{}
+							switch effectiveBrowserMode {
+							case "cdp":
+								phaseBrowserCfg.HasAgentBrowser = true
+								phaseBrowserCfg.CdpPort = 9222 // Default CDP port (stored in preset, not req)
+							case "headless":
+								phaseBrowserCfg.HasAgentBrowser = true
+							case "playwright":
+								phaseBrowserCfg.HasPlaywright = true
+							case "stealth":
+								phaseBrowserCfg.HasCamofox = true
+							}
+							// Also check selectedServers for playwright/camofox (may be set independently)
+							for _, s := range selectedServers {
+								switch s {
+								case "playwright":
+									phaseBrowserCfg.HasPlaywright = true
+								case "camofox":
+									phaseBrowserCfg.HasCamofox = true
+								}
+							}
+							if phaseBrowserPrompt := browserinstructions.BuildBrowserInstructions(phaseBrowserCfg); phaseBrowserPrompt != "" {
+								underlyingAgent.AppendSystemPrompt(phaseBrowserPrompt)
+								log.Printf("[WORKFLOW_PHASE] Appended browser instructions to %s (mode=%s, playwright=%v, camofox=%v, agent-browser=%v)",
+									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasPlaywright, phaseBrowserCfg.HasCamofox, phaseBrowserCfg.HasAgentBrowser)
+							}
+
+							// GWS instructions (check if gws server is in selected servers)
+							for _, s := range selectedServers {
+								if s == "gws" {
+									underlyingAgent.AppendSystemPrompt(browserinstructions.GetGWSQuickStartInstructions())
+									log.Printf("[WORKFLOW_PHASE] Appended GWS instructions to %s", workflowPhaseID)
+									break
+								}
+							}
 						}
 					}
 				}
@@ -7540,9 +7597,23 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		underlyingAgent.AppendSystemPrompt(virtualtools.GetMemoryInstructions(subAgentMemFolder))
 		log.Printf("[DELEGATION] Added memory instructions to sub-agent")
 
-		// [BROWSER_UPLOAD] Same browser upload setup as the parent chat agent (see ~line 4600).
+		// [BROWSER] Add browser instructions using standardized builder (same as parent chat agent).
 		// Sub-agents need their own transformer registration because each Agent instance has
 		// its own toolArgTransformers map — the parent's transformer doesn't propagate.
+		subBrowserCfg := buildChatBrowserConfig(parentReq)
+		if subBrowserPrompt := browserinstructions.BuildBrowserInstructions(subBrowserCfg); subBrowserPrompt != "" {
+			underlyingAgent.AppendSystemPrompt(subBrowserPrompt)
+			log.Printf("[BROWSER] Added browser instructions to sub-agent (playwright=%v, camofox=%v, agent-browser=%v, cdp=%v)",
+				subBrowserCfg.HasPlaywright, subBrowserCfg.HasCamofox, subBrowserCfg.HasAgentBrowser, subBrowserCfg.CdpPort > 0)
+		}
+
+		// [GWS] Add GWS quick-start instructions to sub-agent (same as parent)
+		if parentReq.EnableGWSAccess != nil && *parentReq.EnableGWSAccess {
+			underlyingAgent.AppendSystemPrompt(browserinstructions.GetGWSQuickStartInstructions())
+			log.Printf("[GWS] Added GWS quick-start instructions to sub-agent")
+		}
+
+		// Register file path transformer for browser file uploads on sub-agent
 		hasBrowserAccess := parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess
 		hasPlaywright := false
 		hasCamofox := false
@@ -7555,25 +7626,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 		}
 		if hasBrowserAccess || hasPlaywright || hasCamofox {
-			underlyingAgent.AppendSystemPrompt(GetBrowserUploadInstructions())
-			if hasCamofox {
-				underlyingAgent.AppendSystemPrompt(GetCamofoxInstructions())
-				log.Printf("[CAMOFOX] Added camofox-specific instructions to sub-agent")
-			}
-			// Add mode-specific instructions for sub-agents too
-			switch getBrowserMode(parentReq) {
-			case "cdp":
-				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
-				underlyingAgent.AppendSystemPrompt(browserinstructions.GetCdpModeInstructions())
-			case "headless":
-				underlyingAgent.AppendSystemPrompt(getBrowserQuickStartInstructions())
-				underlyingAgent.AppendSystemPrompt(browserinstructions.GetHeadlessModeInstructions())
-			case "playwright":
-				underlyingAgent.AppendSystemPrompt(browserinstructions.GetPlaywrightModeInstructions())
-			}
-			log.Printf("[BROWSER_UPLOAD] Added browser upload instructions to sub-agent (browser=%v, playwright=%v, camofox=%v)", hasBrowserAccess, hasPlaywright, hasCamofox)
-
-			// Register transformer on the sub-agent (same logic as parent, separate instance)
 			wsAbsPath, err := filepath.Abs("../workspace-docs/_users/default")
 			if err == nil {
 				underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {

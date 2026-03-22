@@ -1,5 +1,37 @@
 package instructions
 
+// BrowserConfig holds the resolved browser state for prompt generation.
+type BrowserConfig struct {
+	HasPlaywright   bool
+	HasCamofox      bool
+	HasAgentBrowser bool
+	CdpPort         int // >0 means CDP mode, 0 means headless
+}
+
+// BuildBrowserInstructions returns the complete browser system prompt
+// (upload + mode-specific) for the given config, or "" if no browser tool is active.
+func BuildBrowserInstructions(cfg BrowserConfig) string {
+	if !cfg.HasPlaywright && !cfg.HasCamofox && !cfg.HasAgentBrowser {
+		return ""
+	}
+
+	result := GetBrowserUploadInstructions()
+
+	if cfg.HasPlaywright {
+		result += "\n" + GetPlaywrightModeInstructions()
+	} else if cfg.HasCamofox {
+		result += "\n" + GetCamofoxInstructions()
+	} else if cfg.CdpPort > 0 {
+		result += "\n" + GetAgentBrowserQuickStartInstructions()
+		result += "\n" + GetCdpModeInstructions()
+	} else {
+		result += "\n" + GetAgentBrowserQuickStartInstructions()
+		result += "\n" + GetHeadlessModeInstructions()
+	}
+
+	return result
+}
+
 // GetBrowserUploadInstructions returns system prompt instructions for browser file upload.
 // Appended to the agent's system prompt when browser access or Playwright is active.
 // Tells the LLM to use workspace-relative paths (e.g. "Downloads/file.pdf") — these are

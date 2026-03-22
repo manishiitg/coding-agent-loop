@@ -346,7 +346,8 @@ type PresetQuery struct {
 	SelectedSkills       string          `json:"selected_skills" db:"selected_skills"`                 // JSON array of skill folder names
 	SelectedSecrets              string          `json:"selected_secrets" db:"selected_secrets"`                                       // JSON array of secret IDs
 	SelectedGlobalSecretNames    string          `json:"selected_global_secret_names" db:"selected_global_secret_names"`               // JSON array of global secret names (NULL=all)
-	EnableBrowserAccess          bool            `json:"enable_browser_access" db:"enable_browser_access"`                             // Browser automation access
+	EnableBrowserAccess          bool            `json:"enable_browser_access" db:"enable_browser_access"`                             // Deprecated: use BrowserMode instead. TODO: remove once frontend migrated.
+	BrowserMode                  string          `json:"browser_mode" db:"browser_mode"`                                               // Browser mode: none|headless|cdp|playwright|stealth (source of truth)
 	IsPredefined         bool            `json:"is_predefined" db:"is_predefined"`
 	EmployeeID           sql.NullString  `json:"employee_id" db:"employee_id"`
 	CreatedAt            time.Time       `json:"created_at" db:"created_at"`
@@ -372,6 +373,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		SelectedSecrets           string          `json:"selected_secrets"`
 		SelectedGlobalSecretNames *string         `json:"selected_global_secret_names,omitempty"`
 		EnableBrowserAccess       bool            `json:"enable_browser_access"`
+		BrowserMode               string          `json:"browser_mode"`
 		IsPredefined         bool            `json:"is_predefined"`
 		EmployeeID           *string         `json:"employee_id,omitempty"`
 		CreatedAt            time.Time       `json:"created_at"`
@@ -391,6 +393,7 @@ func (p PresetQuery) MarshalJSON() ([]byte, error) {
 		SelectedSkills:       p.SelectedSkills,
 		SelectedSecrets:      p.SelectedSecrets,
 		EnableBrowserAccess:  p.EnableBrowserAccess,
+		BrowserMode:          p.BrowserMode,
 		IsPredefined:         p.IsPredefined,
 		CreatedAt:            p.CreatedAt,
 		UpdatedAt:            p.UpdatedAt,
@@ -428,7 +431,8 @@ type CreatePresetQueryRequest struct {
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
 	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`                  // Secret IDs for workflow
 	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"`      // Global secret names (nil=all, []=none)
-	EnableBrowserAccess       bool             `json:"enable_browser_access,omitempty"`              // Browser automation access
+	EnableBrowserAccess       bool             `json:"enable_browser_access,omitempty"`              // Deprecated: use BrowserMode. TODO: remove once frontend migrated.
+	BrowserMode               string           `json:"browser_mode,omitempty"`                       // Browser mode: none|headless|cdp|playwright|stealth
 	IsPredefined              bool             `json:"is_predefined,omitempty"`
 }
 
@@ -567,7 +571,8 @@ type UpdatePresetQueryRequest struct {
 	SelectedSkills       []string         `json:"selected_skills,omitempty"`         // Skill folder names for workflow
 	SelectedSecrets           []string         `json:"selected_secrets,omitempty"`                  // Secret names for workflow
 	SelectedGlobalSecretNames *[]string        `json:"selected_global_secret_names,omitempty"`      // Global secret names (nil=all, []=none)
-	EnableBrowserAccess       *bool            `json:"enable_browser_access,omitempty"`              // Browser automation access (pointer to allow false value)
+	EnableBrowserAccess       *bool            `json:"enable_browser_access,omitempty"`              // Deprecated: use BrowserMode. TODO: remove once frontend migrated.
+	BrowserMode               string           `json:"browser_mode,omitempty"`                       // Browser mode: none|headless|cdp|playwright|stealth
 }
 
 // Validate validates the UpdatePresetQueryRequest

@@ -19,7 +19,8 @@ export interface CustomPreset {
   preDiscoveredTools?: string[]; // Tools always available without searching
   enableContextSummarization?: boolean; // Enable context summarization
   enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
-  enableBrowserAccess?: boolean; // Browser automation access
+  enableBrowserAccess?: boolean; // Deprecated: use browserMode
+  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'; // Browser mode (source of truth)
   camofoxHeaded?: boolean; // Show visible browser window for stealth mode
   employee_id?: string; // Assigned employee ID
 }
@@ -40,7 +41,8 @@ export interface PredefinedPreset {
   preDiscoveredTools?: string[]; // Tools always available without searching
   enableContextSummarization?: boolean; // Enable context summarization
   enableContextEditing?: boolean; // Enable context editing (dynamic context reduction)
-  enableBrowserAccess?: boolean; // Browser automation access
+  enableBrowserAccess?: boolean; // Deprecated: use browserMode
+  browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'; // Browser mode (source of truth)
   camofoxHeaded?: boolean; // Show visible browser window for stealth mode
   employee_id?: string; // Assigned employee ID
 }

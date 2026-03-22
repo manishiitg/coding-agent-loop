@@ -22,7 +22,7 @@ import type { LLMOption } from '../types/llm';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean) => void;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'simple' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, enableContextSummarization?: boolean, useToolSearchMode?: boolean, enableBrowserAccess?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, camofoxHeaded?: boolean, browserMode?: 'none' | 'headless' | 'cdp' | 'playwright' | 'stealth') => void;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -243,20 +243,22 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       // For workflow presets, default to true if not explicitly set
       setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : true); // Default true for workflow
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
-      // Derive browser mode from preset data
-      const presetServers = editingPreset.selectedServers || [];
-      if (presetServers.includes('camofox')) {
-        setBrowserModeState('stealth');
-      } else if (presetServers.includes('playwright')) {
-        setBrowserModeState('playwright');
-      } else if (editingPreset.enableBrowserAccess && editingPreset.selectedServers?.includes('cdp')) {
-        setBrowserModeState('cdp');
-        setUseCdp(true);
-      } else if (editingPreset.enableBrowserAccess) {
-        // Check if CDP was enabled (useCdp was stored via enableBrowserAccess + cdp detection)
-        setBrowserModeState('headless');
+      // Load browser mode: prefer explicit browserMode, fall back to legacy derivation
+      if (editingPreset.browserMode && editingPreset.browserMode !== 'none') {
+        setBrowserModeState(editingPreset.browserMode);
+        if (editingPreset.browserMode === 'cdp') setUseCdp(true);
       } else {
-        setBrowserModeState('none');
+        // Legacy fallback for presets saved before browserMode was added
+        const presetServers = editingPreset.selectedServers || [];
+        if (presetServers.includes('camofox')) {
+          setBrowserModeState('stealth');
+        } else if (presetServers.includes('playwright')) {
+          setBrowserModeState('playwright');
+        } else if (editingPreset.enableBrowserAccess) {
+          setBrowserModeState('headless');
+        } else {
+          setBrowserModeState('none');
+        }
       }
       setCamofoxHeaded(editingPreset.camofoxHeaded !== false); // Default true
       // Load agent-specific configs if available
@@ -431,7 +433,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         enableBrowserAccess, // Browser automation access
         selectedSecrets, // Secret IDs for injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
-        browserMode === 'stealth' ? camofoxHeaded : undefined // Camofox headed mode
+        browserMode === 'stealth' ? camofoxHeaded : undefined, // Camofox headed mode
+        browserMode // Browser mode: none|headless|cdp|playwright|stealth
       );
       onClose();
     }

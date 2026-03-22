@@ -810,7 +810,8 @@ export interface PresetQuery {
   selected_global_secret_names?: string; // JSON string of global secret names (null=all)
   enable_context_summarization?: boolean; // Enable context summarization
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
-  enable_browser_access?: boolean; // Browser automation access
+  enable_browser_access?: boolean; // Deprecated: use browser_mode. Browser automation access
+  browser_mode?: string; // Browser mode: none|headless|cdp|playwright|stealth
   is_predefined: boolean;
   employee_id?: string; // Assigned employee ID
   created_at: string;
@@ -834,7 +835,8 @@ export interface CreatePresetQueryRequest {
   selected_global_secret_names?: string[]; // Global secret names (null=all, []=none)
   enable_context_summarization?: boolean; // Enable context summarization
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
-  enable_browser_access?: boolean; // Browser automation access
+  enable_browser_access?: boolean; // Deprecated: use browser_mode
+  browser_mode?: string; // Browser mode: none|headless|cdp|playwright|stealth
   is_predefined?: boolean;
 }
 
@@ -854,7 +856,8 @@ export interface UpdatePresetQueryRequest {
   selected_global_secret_names?: string[]; // Global secret names (null=all, []=none)
   enable_context_summarization?: boolean; // Enable context summarization
   enable_context_editing?: boolean; // Enable context editing (dynamic context reduction)
-  enable_browser_access?: boolean; // Browser automation access
+  enable_browser_access?: boolean; // Deprecated: use browser_mode
+  browser_mode?: string; // Browser mode: none|headless|cdp|playwright|stealth
 }
 
 export interface ListPresetQueriesResponse {

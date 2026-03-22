@@ -954,7 +954,7 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	var selectedGlobalSecretNamesStr sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.EmployeeID, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {

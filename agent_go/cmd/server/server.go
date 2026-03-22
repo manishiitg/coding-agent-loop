@@ -4914,6 +4914,32 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[DATABASE DEBUG] Added in-memory event observer for session %s", sessionID)
 			underlyingAgent.AddEventListener(dbEventObserver)
 			log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
+
+			// Replace agent's internal tool executors with session-aware versions.
+			// The agent was created with raw executors from agentConfig. The session-aware
+			// executors (with ExtraEnv containing _DEFAULT_WORKING_DIR, secrets, etc.)
+			// were created separately. Replace them so all providers (API, CLI, Gemini)
+			// get the correct working directory and env vars.
+			if req.AgentMode == "workflow_phase" {
+				log.Printf("[WORKSHOP_DEBUG] Looking up workshop session for %s (agentMode=%s)", sessionID, req.AgentMode)
+				if cached, ok := api.workshopChatSessions.Load(sessionID); ok {
+					log.Printf("[WORKSHOP_DEBUG] Found cached session, type=%T", cached)
+					if ws, ok := cached.(*todo_creation_human.WorkshopChatSession); ok {
+						if wsCfg := ws.GetConfig(); wsCfg != nil {
+							count := 0
+							for name, exec := range wsCfg.CustomToolExecutors {
+								if fn, ok := exec.(func(context.Context, map[string]interface{}) (string, error)); ok {
+									underlyingAgent.ReplaceCustomToolExecutor(name, fn)
+									count++
+								}
+							}
+							if count > 0 {
+								log.Printf("[WORKSHOP] Replaced %d agent tool executors with session-aware versions (session=%s)", count, sessionID)
+							}
+						}
+					}
+				}
+			}
 		} else {
 			log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
 		}

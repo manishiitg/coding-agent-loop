@@ -99,8 +99,16 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	if params.WorkingDirectory == "" {
 		if c.DefaultWorkingDir != "" {
 			params.WorkingDirectory = c.DefaultWorkingDir
+			log.Printf("[SHELL_DEBUG] Using DefaultWorkingDir: %s", c.DefaultWorkingDir)
 		} else if dir, ok := c.ExtraEnv["_DEFAULT_WORKING_DIR"]; ok && dir != "" {
 			params.WorkingDirectory = dir
+			log.Printf("[SHELL_DEBUG] Using ExtraEnv _DEFAULT_WORKING_DIR: %s", dir)
+		} else {
+			log.Printf("[SHELL_DEBUG] No default working dir set (DefaultWorkingDir=%q, ExtraEnv keys=%v)", c.DefaultWorkingDir, func() []string {
+				keys := make([]string, 0, len(c.ExtraEnv))
+				for k := range c.ExtraEnv { keys = append(keys, k) }
+				return keys
+			}())
 		}
 	}
 

@@ -233,6 +233,11 @@ type WorkshopChatSession struct {
 	workshopNotifier SubAgentNotifier
 }
 
+// GetConfig returns the workshop config (for accessing session-aware executors, etc.)
+func (s *WorkshopChatSession) GetConfig() *WorkshopConfig {
+	return s.config
+}
+
 // SetExtraSubAgentNotifier chains a server-supplied notifier (e.g. bgAgentRegistry)
 // with the workshop's own notifier. Safe to call on every request — always rebuilds
 // the chain so there are no duplicates.
@@ -468,6 +473,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	registry := NewWorkshopStepRegistry()
 	wsn := &workshopSubAgentNotifier{registry: registry}
 	controller.SetSubAgentNotifier(wsn)
+
 
 	return &WorkshopChatSession{
 		controller:        controller,

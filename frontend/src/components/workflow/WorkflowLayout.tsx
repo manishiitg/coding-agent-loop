@@ -863,8 +863,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return
     }
 
-    // Check if preset actually changed
+    // Check if preset actually changed (not just deps like selectedRunFolder/stepProgress)
     if (previousPresetIdRef.current !== activePresetId && activePresetId) {
+      // Update ref immediately so dep-only re-fires don't re-enter this block
+      previousPresetIdRef.current = activePresetId
+
       const chatStore = useChatStore.getState()
       const chatTabs = chatStore.chatTabs
 
@@ -888,12 +891,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       } else {
         // Clear activeTabId so the old preset's tab events don't bleed into the new preset's view
         useChatStore.setState({ activeTabId: null })
-        setShowChatArea(false)
+        // Respect restored per-preset showChatArea — don't force-close if it was open
+        const restoredShowChatArea = useWorkflowStore.getState().showChatArea
+        if (!restoredShowChatArea) {
+          setShowChatArea(false)
+        }
       }
+    } else {
+      // Update the ref for non-preset-change re-fires (dep changes only)
+      previousPresetIdRef.current = activePresetId
     }
-
-    // Update the ref for next comparison
-    previousPresetIdRef.current = activePresetId
   }, [activePresetId, customPresets, predefinedPresets, minimizeWorkflow, selectedRunFolder, stepProgress, setShowChatArea])
 
   // Note: Query submission is now handled via chatAreaCallbackRef when ChatArea mounts

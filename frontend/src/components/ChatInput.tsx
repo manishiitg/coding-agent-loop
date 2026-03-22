@@ -24,7 +24,10 @@ import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 
 function WorkshopModeToggle() {
-  const workshopMode = useWorkflowStore(state => state.workshopMode)
+  const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const workshopMode = useWorkflowStore(state =>
+    (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
+  )
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
   const modes = [
     { id: 'builder' as const, label: 'Build', title: 'Build — design workflow' },
@@ -69,7 +72,7 @@ import { useAppStore, useMCPStore, useLLMStore, useChatStore } from '../stores'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
-import { usePresetApplication } from '../stores/useGlobalPresetStore'
+import { usePresetApplication, useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { skillsApi } from '../api/skills'
@@ -1079,7 +1082,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Lazy-load skills when ! popup opens (always re-fetch to pick up new skills)
   useEffect(() => {
-    console.log(DBG + ' showSkillPopup changed:', showSkillPopup)
+    // console.log(DBG + ' showSkillPopup changed:', showSkillPopup)
     if (showSkillPopup) {
       setSkillsLoading(true)
       skillsApi.listSkills()
@@ -1091,7 +1094,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             seen.add(s.folder_name)
             return true
           })
-          console.log(DBG + ' skills loaded:', raw.length, '→ deduplicated:', unique.length)
+          // console.log(DBG + ' skills loaded:', raw.length, '→ deduplicated:', unique.length)
           setAllSkills(unique)
         })
         .catch((err: unknown) => { console.error(DBG + ' skills load error:', err) })
@@ -1283,13 +1286,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     else if (lastExclamationIndex >= 0 && closestTrigger === exclamationDistance) {
       const textAfterExcl = textBeforeCursor.substring(lastExclamationIndex + 1)
       const hasValidExcl = textAfterExcl === '' || textAfterExcl.match(/^[a-zA-Z0-9_-]*$/)
-      console.log(DBG + ' ! trigger — textAfterExcl:', JSON.stringify(textAfterExcl), 'hasValidExcl:', hasValidExcl)
+      // console.log(DBG + ' ! trigger — textAfterExcl:', JSON.stringify(textAfterExcl), 'hasValidExcl:', hasValidExcl)
 
       if (hasValidExcl) {
         setExclamationPosition(lastExclamationIndex)
         setSkillPopupSearchQuery(textAfterExcl)
         setShowSkillPopup(true)
-        console.log(DBG + ' ! trigger — setSkillPopupSearchQuery:', JSON.stringify(textAfterExcl))
+        // console.log(DBG + ' ! trigger — setSkillPopupSearchQuery:', JSON.stringify(textAfterExcl))
         setShowCommandDialog(false)
         setShowFileDialog(false)
         setShowWorkflowDialog(false)
@@ -1395,7 +1398,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     } else {
       // Close all dialogs if none is active
-      console.log(DBG + ' no trigger matched — closing all popups. textBeforeCursor:', JSON.stringify(textBeforeCursor), 'closestTrigger:', closestTrigger)
+      // console.log(DBG + ' no trigger matched — closing all popups. textBeforeCursor:', JSON.stringify(textBeforeCursor), 'closestTrigger:', closestTrigger)
       setShowFileDialog(false)
       setAtPosition(-1)
       setFileSearchQuery('')

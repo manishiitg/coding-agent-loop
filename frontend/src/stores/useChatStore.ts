@@ -77,7 +77,8 @@ function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
     return t === 'unified_completion' || t === 'conversation_end' || t === 'workflow_end' ||
       t === 'agent_error' || t === 'conversation_error' || t === 'orchestrator_error' ||
       t === 'request_human_feedback' || t === 'blocking_human_feedback' ||
-      t === 'orchestrator_end' || t === 'agent_end'
+      t === 'orchestrator_end' || t === 'agent_end' ||
+      t === 'user_message' || t === 'conversation_resumed'
   })
 
   const existing = _eventBatchBuffers.get(sessionId)

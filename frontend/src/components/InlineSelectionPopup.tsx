@@ -51,7 +51,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 
   // Sync external search query (from typing after ! in textarea) into local input
   useEffect(() => {
-    console.log(`${DBG} externalSearchQuery changed:`, externalSearchQuery, 'isOpen:', isOpen)
+    // console.log(`${DBG} externalSearchQuery changed:`, externalSearchQuery, 'isOpen:', isOpen)
     if (isOpen) {
       setLocalQuery(externalSearchQuery)
     }
@@ -59,12 +59,12 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 
   // Auto-focus search input when popup opens; reset on close
   useEffect(() => {
-    console.log(`${DBG} isOpen changed:`, isOpen, 'items count:', items.length)
+    // console.log(`${DBG} isOpen changed:`, isOpen, 'items count:', items.length)
     if (isOpen) {
       setSelectedIndex(0)
       setTimeout(() => {
         const focused = searchInputRef.current?.focus()
-        console.log(`${DBG} focused input:`, !!searchInputRef.current)
+        // console.log(`${DBG} focused input:`, !!searchInputRef.current)
       }, 50)
     } else {
       setLocalQuery('')
@@ -74,12 +74,12 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
 
   // Log items changes
   useEffect(() => {
-    console.log(`${DBG} items updated, count:`, items.length, items.map(i => i.name))
+    // console.log(`${DBG} items updated, count:`, items.length, items.map(i => i.name))
   }, [items])
 
   // Filter items synchronously (useMemo, no render-cycle delay)
   const filteredItems = useMemo(() => {
-    console.log(`${DBG} filtering — localQuery: "${localQuery}", items:`, items.length)
+    // console.log(`${DBG} filtering — localQuery: "${localQuery}", items:`, items.length)
     if (!localQuery.trim()) return items
 
     const query = localQuery.toLowerCase().trim()
@@ -101,7 +101,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
       return a.name.localeCompare(b.name)
     })
 
-    console.log(`${DBG} filtered result:`, filtered.length, filtered.map(i => i.name))
+    // console.log(`${DBG} filtered result:`, filtered.length, filtered.map(i => i.name))
     return filtered
   }, [localQuery, items])
 
@@ -129,14 +129,14 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       const items = filteredItemsRef.current
       const idx = selectedIndexRef.current
-      console.log(`${DBG} keydown: "${e.key}", filteredItems: ${items.length}, selectedIndex: ${idx}`)
+      // console.log(`${DBG} keydown: "${e.key}", filteredItems: ${items.length}, selectedIndex: ${idx}`)
 
       if (e.key === 'Escape') {
         e.preventDefault()
         onCloseRef.current()
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        console.log(`${DBG} Enter — toggling:`, items[idx]?.id)
+        // console.log(`${DBG} Enter — toggling:`, items[idx]?.id)
         if (items.length > 0 && idx >= 0 && idx < items.length) {
           onToggleItemRef.current(items[idx].id)
         }
@@ -148,7 +148,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
         setSelectedIndex(prev => Math.max(prev - 1, 0))
       }
     }
-    console.log(`${DBG} registered keydown listener`)
+    // console.log(`${DBG} registered keydown listener`)
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
@@ -185,7 +185,7 @@ export const InlineSelectionPopup: React.FC<InlineSelectionPopupProps> = ({
                 e.stopPropagation()
                 const items = filteredItemsRef.current
                 const idx = selectedIndexRef.current
-                console.log(`${DBG} input Enter — toggling:`, items[idx]?.id)
+                // console.log(`${DBG} input Enter — toggling:`, items[idx]?.id)
                 if (items.length > 0 && idx >= 0 && idx < items.length) {
                   onToggleItemRef.current(items[idx].id)
                 }

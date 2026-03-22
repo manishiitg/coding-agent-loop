@@ -48,6 +48,88 @@ export interface WorkflowChatTab {
   createdAt: number  // Timestamp for ordering
 }
 
+// Per-preset workflow state — isolated so switching presets doesn't cross-contaminate
+export interface PresetWorkflowState {
+  selectedRunFolder: string | null
+  stepProgress: StepProgress | null
+  stepProgressFolder: string | null
+  activePhase: string | null
+  showChatArea: boolean
+  chatAreaExpanded: boolean
+  workflowWorkspaceView: WorkflowWorkspaceView
+  workflowWorkspaceSelectionTouched: boolean
+  workflowChatTabs: Record<string, WorkflowChatTab>
+  activeWorkflowTabId: string | null
+  selectedGroupIds: string[]
+  currentRunningGroupId: string | null
+  currentStepId: string | null
+  stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+  batchProgress: {
+    isActive: boolean
+    totalGroups: number
+    currentGroupIndex: number
+    currentGroupId: string | null
+    completedCount: number
+    failedCount: number
+    remainingCount: number
+    startTime: number | null
+  } | null
+  selectedExecutionMode: ExecutionModeType
+  selectedStartPoint: number
+  selectedBranchStep: {
+    parentStepIndex: number
+    branchType: 'if_true' | 'if_false'
+    branchStepIndex: number
+  } | null
+}
+
+function createDefaultPresetState(): PresetWorkflowState {
+  return {
+    selectedRunFolder: null,
+    stepProgress: null,
+    stepProgressFolder: null,
+    activePhase: null,
+    showChatArea: false,
+    chatAreaExpanded: true,
+    workflowWorkspaceView: null,
+    workflowWorkspaceSelectionTouched: false,
+    workflowChatTabs: {},
+    activeWorkflowTabId: null,
+    selectedGroupIds: [],
+    currentRunningGroupId: null,
+    currentStepId: null,
+    stepStatusMap: new Map(),
+    batchProgress: null,
+    selectedExecutionMode: 'with_learning',
+    selectedStartPoint: 0,
+    selectedBranchStep: null,
+  }
+}
+
+// Snapshot current flat fields into a PresetWorkflowState object
+function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
+  return {
+    selectedRunFolder: state.selectedRunFolder,
+    stepProgress: state.stepProgress,
+    stepProgressFolder: state.stepProgressFolder,
+    activePhase: state.activePhase,
+    showChatArea: state.showChatArea,
+    chatAreaExpanded: state.chatAreaExpanded,
+    workflowWorkspaceView: state.workflowWorkspaceView,
+    workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
+    workflowChatTabs: state.workflowChatTabs,
+    activeWorkflowTabId: state.activeWorkflowTabId,
+    selectedGroupIds: state.selectedGroupIds,
+    currentRunningGroupId: state.currentRunningGroupId,
+    currentStepId: state.currentStepId,
+    stepStatusMap: new Map(state.stepStatusMap),
+    batchProgress: state.batchProgress,
+    selectedExecutionMode: state.selectedExecutionMode,
+    selectedStartPoint: state.selectedStartPoint,
+    selectedBranchStep: state.selectedBranchStep,
+  }
+}
+
 interface WorkflowStore {
   // === CONSTANTS (loaded once from API) ===
   phases: WorkflowPhase[]
@@ -96,6 +178,8 @@ interface WorkflowStore {
 
   // Track current preset ID to detect page reload vs preset switch
   _currentPresetId: string | null
+  // Per-preset state map — saves/restores state when switching between workflows
+  _presetStates: Record<string, PresetWorkflowState>
 
   // Selected group IDs for execution (multi-select)
   selectedGroupIds: string[] // Array of group IDs to execute
@@ -136,6 +220,7 @@ interface WorkflowStore {
   // === WORKFLOW MODE STATE ===
   workflowMode: 'plan' | 'eval'
   workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval'
+  workshopModeByPreset: Record<string, 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval'>
   setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => void
   evaluationPlan: EvaluationPlan | null
   evaluationStepProgress: StepProgress | null
@@ -428,6 +513,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Track current preset ID to detect page reload vs preset switch
       _currentPresetId: null as string | null,
+      _presetStates: {} as Record<string, PresetWorkflowState>,
 
       // Selected group IDs (persists across page refreshes via localStorage)
       // Now stored in combined format: { groupIds: [...], runFolder: "..." }
@@ -478,7 +564,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // UI state
       activePhase: null,
       showChatArea: false,
-      chatAreaExpanded: false,
+      chatAreaExpanded: true,
       workflowWorkspaceView: null,
       workflowWorkspaceSelectionTouched: false,
       // Layout direction (persists across page refreshes via localStorage)
@@ -501,7 +587,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // === Workflow Mode State ===
       workflowMode: 'plan',
       workshopMode: 'builder' as const,
-      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => set({ workshopMode: mode }),
+      workshopModeByPreset: {},
+      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => {
+        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+        set((state) => ({
+          workshopMode: mode,
+          workshopModeByPreset: presetId
+            ? { ...state.workshopModeByPreset, [presetId]: mode }
+            : state.workshopModeByPreset,
+        }))
+      },
       evaluationPlan: null,
       evaluationStepProgress: null,
       isLoadingEvaluationPlan: false,
@@ -1046,7 +1141,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
           run_mode: state.selectedRunFolder ? 'use_same_run' : 'create_new_runs_always',
           selected_run_folder: resolvedRunFolder,
           execution_strategy: executionStrategy,
-          workshop_mode: state.workshopMode,
+          workshop_mode: (() => {
+            const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+            return (presetId && state.workshopModeByPreset[presetId]) || state.workshopMode
+          })(),
         }
 
         // Include resume_from_step for regular step resuming
@@ -2053,6 +2151,25 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const isSamePreset = storedPresetId === presetId
 
         try {
+          const currentState = get()
+          const oldPresetId = currentState._currentPresetId
+
+          // If already on this preset, skip — avoids resetting state when
+          // WorkflowModeHandler re-applies the same preset on mount/effect
+          if (oldPresetId === presetId) {
+            return
+          }
+
+          // Save current flat state into the old preset's slot before switching
+          // This preserves all execution state (progress, groups, phase, etc.) so it's
+          // restored when the user switches back to this workflow.
+          if (oldPresetId && oldPresetId !== presetId) {
+            const snapshot = snapshotPresetState(currentState)
+            set((state) => ({
+              _presetStates: { ...state._presetStates, [oldPresetId]: snapshot }
+            }))
+          }
+
           // If switching to the SAME preset (page reload), preserve localStorage
           if (isSamePreset) {
             // Just reset workflow context but preserve selection - localStorage will be restored by loadSavedSettings
@@ -2072,40 +2189,46 @@ export const useWorkflowStore = create<WorkflowStore>()(
             return
           }
 
-          // Start with context reset values (workflow-specific data that must be cleared)
-          const stateUpdate: Partial<WorkflowStore> = {
+          // Restore saved state for the new preset, or use defaults
+          const savedState = currentState._presetStates[presetId]
+          const restored = savedState ?? createDefaultPresetState()
+
+          // Apply restored per-preset state to flat fields + reset API-loaded context
+          set({
             // Reset workflow context (loaded from API, not per-preset)
             runFolders: [],
-            stepProgress: null,
             variablesManifest: null,
-            currentRunningGroupId: null,
-            currentStepId: null,
-            stepStatusMap: new Map(),
-            batchProgress: null,
-            workflowChatTabs: {},
-            activeWorkflowTabId: null,
-            // Defaults for user-selectable settings
-            selectedRunFolder: null,
-            selectedExecutionMode: 'with_learning',
-            selectedStartPoint: 0,
-            selectedBranchStep: null,
-            selectedGroupIds: [],
-            activePhase: null,
-            workflowWorkspaceView: null,
-            workflowWorkspaceSelectionTouched: false,
+            // Restore per-preset state
+            selectedRunFolder: restored.selectedRunFolder,
+            stepProgress: restored.stepProgress,
+            stepProgressFolder: restored.stepProgressFolder,
+            activePhase: restored.activePhase,
+            showChatArea: restored.showChatArea,
+            chatAreaExpanded: restored.chatAreaExpanded,
+            workflowWorkspaceView: restored.workflowWorkspaceView,
+            workflowWorkspaceSelectionTouched: restored.workflowWorkspaceSelectionTouched,
+            workflowChatTabs: restored.workflowChatTabs,
+            activeWorkflowTabId: restored.activeWorkflowTabId,
+            selectedGroupIds: restored.selectedGroupIds,
+            currentRunningGroupId: restored.currentRunningGroupId,
+            currentStepId: restored.currentStepId,
+            stepStatusMap: new Map(restored.stepStatusMap),
+            batchProgress: restored.batchProgress,
+            selectedExecutionMode: restored.selectedExecutionMode,
+            selectedStartPoint: restored.selectedStartPoint,
+            selectedBranchStep: restored.selectedBranchStep,
             _currentPresetId: presetId
-          }
+          } as Partial<WorkflowStore>)
 
-          // Single set() call - resets context with defaults
-          set(stateUpdate as Partial<WorkflowStore>)
-
-          // Clear group-related localStorage only when switching to a DIFFERENT preset
-          try {
-            localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
-            localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
-            localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
-          } catch (error) {
-            console.error('[WorkflowStore] Failed to clear group localStorage on preset switch:', error)
+          // Only clear localStorage when there's no saved state (first time visiting this preset)
+          if (!savedState) {
+            try {
+              localStorage.removeItem(SELECTED_GROUP_IDS_KEY)
+              localStorage.removeItem(CURRENT_RUNNING_GROUP_ID_KEY)
+              localStorage.removeItem(SELECTED_RUN_FOLDER_KEY)
+            } catch (error) {
+              console.error('[WorkflowStore] Failed to clear group localStorage on preset switch:', error)
+            }
           }
         } catch (error) {
           console.error('[WorkflowStore] Failed to switch preset:', error)

@@ -475,6 +475,7 @@ export default function Workspace({
   // Iteration display filter — which iteration to show in the workspace
   // Gets selectedRunFolder from workflow store early (also used at line ~569 via hook)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
+  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const [workspaceDisplayedIteration, setWorkspaceDisplayedIteration] = useState<string | null>(null)
   const [showIterationDropdown, setShowIterationDropdown] = useState(false)
 
@@ -2147,6 +2148,7 @@ export default function Workspace({
                         key={iter}
                         onClick={() => {
                           setWorkspaceDisplayedIteration(iter)
+                          setSelectedRunFolder(iter)
                           setShowIterationDropdown(false)
                         }}
                         className={`w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 ${

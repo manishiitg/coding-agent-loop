@@ -41,11 +41,11 @@ export function useIterationExpansion({
     }
 
     // Only run if selectedRunFolder actually changed (not when expandedFolders changes)
+    // Also retry if the previous attempt didn't find the matching iteration in the tree
+    // (can happen due to race between Zustand and React state updates)
     if (lastProcessedRunFolderRef.current === selectedRunFolder) {
       return
     }
-
-    lastProcessedRunFolderRef.current = selectedRunFolder
 
     // Find all iteration folders in the filtered tree
     const allIterationFolders = findIterationFolders(filteredFiles)
@@ -87,52 +87,59 @@ export function useIterationExpansion({
 
     // Collapse all iteration folders, then expand only the selected one
     // Also expand parent folders needed to show the selected iteration
-    if (matchingIterationPath) {
-      newExpanded.add(matchingIterationPath)
+    if (!matchingIterationPath) {
+      // Don't mark as processed — retry when filteredFiles updates
+      // (handles race between Zustand and React state updates)
+      return
+    }
 
-      // Preserve any manually expanded folders that are children of the selected iteration
-      // This allows users to manually expand group folders within the selected iteration
-      const selectedIterationBase = matchingIterationPath.split('/').slice(0, 2).join('/') // e.g., "runs/iteration-10"
-      for (const folder of currentExpanded) {
-        // If this folder is a child of the selected iteration, preserve it
-        if (folder.startsWith(selectedIterationBase + '/') && folder !== matchingIterationPath) {
-          newExpanded.add(folder)
+    // Mark as processed only after successful match
+    lastProcessedRunFolderRef.current = selectedRunFolder
+
+    newExpanded.add(matchingIterationPath)
+
+    // Preserve any manually expanded folders that are children of the selected iteration
+    // This allows users to manually expand group folders within the selected iteration
+    const selectedIterationBase = matchingIterationPath.split('/').slice(0, 2).join('/') // e.g., "runs/iteration-10"
+    for (const folder of currentExpanded) {
+      // If this folder is a child of the selected iteration, preserve it
+      if (folder.startsWith(selectedIterationBase + '/') && folder !== matchingIterationPath) {
+        newExpanded.add(folder)
+      }
+    }
+
+    // Check if this is a group path (e.g., "iteration-10/group-1" or "iteration-10/production")
+    // If so, also expand the parent iteration folder to show all groups
+    // A group path is any nested folder under iteration
+    const isGroupPath = selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
+    if (isGroupPath) {
+      // Extract parent iteration folder (e.g., "iteration-10" from "iteration-10/group-1")
+      const parentIterationName = selectedRunFolder.split('/')[0]
+      const parentIterationPath = selectedIterationPath.startsWith('runs/')
+        ? `runs/${parentIterationName}`
+        : parentIterationName
+
+      // Find the parent iteration folder in the file tree (not just in allIterationFolders)
+      // This is needed because when groups exist, backend only returns group folders, not parent
+      const parentIterationFolder =
+        findFolderInTree(filteredFiles, parentIterationPath) ||
+        findFolderInTree(filteredFiles, `runs/${parentIterationName}`) ||
+        findFolderInTree(filteredFiles, parentIterationName)
+
+      if (parentIterationFolder) {
+        // Use the actual filepath from the tree (may have different format)
+        const parentPathToExpand = parentIterationFolder.filepath || parentIterationFolder.originalFilepath
+        if (parentPathToExpand) {
+          newExpanded.add(parentPathToExpand)
         }
       }
+    }
 
-      // Check if this is a group path (e.g., "iteration-10/group-1" or "iteration-10/production")
-      // If so, also expand the parent iteration folder to show all groups
-      // A group path is any nested folder under iteration
-      const isGroupPath = selectedRunFolder.includes('/') && selectedRunFolder.split('/').length === 2
-      if (isGroupPath) {
-        // Extract parent iteration folder (e.g., "iteration-10" from "iteration-10/group-1")
-        const parentIterationName = selectedRunFolder.split('/')[0]
-        const parentIterationPath = selectedIterationPath.startsWith('runs/')
-          ? `runs/${parentIterationName}`
-          : parentIterationName
-
-        // Find the parent iteration folder in the file tree (not just in allIterationFolders)
-        // This is needed because when groups exist, backend only returns group folders, not parent
-        const parentIterationFolder =
-          findFolderInTree(filteredFiles, parentIterationPath) ||
-          findFolderInTree(filteredFiles, `runs/${parentIterationName}`) ||
-          findFolderInTree(filteredFiles, parentIterationName)
-
-        if (parentIterationFolder) {
-          // Use the actual filepath from the tree (may have different format)
-          const parentPathToExpand = parentIterationFolder.filepath || parentIterationFolder.originalFilepath
-          if (parentPathToExpand) {
-            newExpanded.add(parentPathToExpand)
-          }
-        }
-      }
-
-      // Also expand parent folders (e.g., "runs" if needed)
-      const pathParts = matchingIterationPath.split('/')
-      for (let i = 1; i < pathParts.length; i++) {
-        const parentPath = pathParts.slice(0, i).join('/')
-        newExpanded.add(parentPath)
-      }
+    // Also expand parent folders (e.g., "runs" if needed)
+    const pathParts = matchingIterationPath.split('/')
+    for (let i = 1; i < pathParts.length; i++) {
+      const parentPath = pathParts.slice(0, i).join('/')
+      newExpanded.add(parentPath)
     }
 
     // Only update if something changed

@@ -1173,15 +1173,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Auto-notify chat agent when a workshop step or sub-agent completes.
       // Workshop wrapper events (workshop-step-*) and sub-agent events within workshop steps
       // (detected by workshop- correlation_id) both trigger notifications.
-      if (event.type === 'orchestrator_agent_end' && tab && hasUserSentMessageRef.current) {
+      if (event.type === 'orchestrator_agent_end' && tab) {
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
+        if (!hasUserSentMessageRef.current) {
+          console.log('[AUTO-NOTIF DEBUG] orchestrator_agent_end skipped — hasUserSentMessage=false', { agentType })
+        }
         const isWorkshopWrapper = agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task'
         // Sub-agents within workshop steps have workshop_step_id in metadata (set by ContextAwareEventBridge)
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
         const workshopStepId = metadata?.workshop_step_id as string | undefined
         const isWorkshopSubAgent = !isWorkshopWrapper && !!workshopStepId
           && (agentType === 'todo_planner_execution' || agentType === 'generic_execution' || agentType === 'todo_task_orchestrator')
-        if (isWorkshopWrapper || isWorkshopSubAgent) {
+        if ((isWorkshopWrapper || isWorkshopSubAgent) && hasUserSentMessageRef.current) {
           const agentName = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'unknown') as string
           const success = (innerData?.success ?? agentEvent?.success) as boolean
           const result = (innerData?.result ?? agentEvent?.result ?? '') as string
@@ -1220,7 +1223,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               // A step can complete without throwing an error but still report STATUS: FAILED in the result
               const resultIndicatesFailure = success && result && /STATUS:\s*FAILED|FAILED:|FAILURE:/i.test(result)
               // Use frontend workshop mode (from UI toggle) — more reliable than backend auto-detection
-              const workshopMode = useWorkflowStore.getState().workshopMode || (inputData?.workshop_mode ?? '') as string
+              const wfState = useWorkflowStore.getState()
+              const workshopMode = (() => {
+                const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+                return (presetId && wfState.workshopModeByPreset[presetId]) || wfState.workshopMode
+              })() || (inputData?.workshop_mode ?? '') as string
               const isStepOptimized = inputData?.step_optimized === 'true'
 
               // Determine if this is a sub-agent within a todo task (vs a top-level step)
@@ -1363,8 +1370,27 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // These were calling setStepStatus/handleBatchGroupStart which update workflowStore →
     // trigger usePlanToFlow → full Dagre layout recomputation for ALL canvas nodes on every event.
     // Step status coloring on the canvas is not needed during chat — it only matters in execution mode.
-    if (selectedModeCategory === 'workflow' && isActivePresetTab && tabViewMode !== 'summary') {
+    // Queue auto-notifications for step completions in workflow mode.
+    // Runs for ALL presets (not just active) and all view modes (including summary) so
+    // background workflows still queue notifications on their own tabs — they'll be sent
+    // when the user switches back or when the LLM turn ends.
+    if (selectedModeCategory === 'workflow') {
+      // Debug: log all event types to see if todo_task_step_completed events arrive
+      const eventTypes = (response.events as PollingEvent[]).map(e => e.type)
+      const uniqueTypes = [...new Set(eventTypes)]
+      if (uniqueTypes.length > 0 && uniqueTypes.some(t => t?.includes('todo') || t?.includes('agent_end') || t?.includes('step'))) {
+        console.log('[AUTO-NOTIF DEBUG] Relevant events in batch:', uniqueTypes.filter(t => t?.includes('todo') || t?.includes('agent_end') || t?.includes('step') || t?.includes('completion')))
+      }
       for (const event of response.events as PollingEvent[]) {
+        if (event.type === 'todo_task_step_completed') {
+          console.log('[AUTO-NOTIF DEBUG] todo_task_step_completed received', {
+            hasUserSentMessage: hasUserSentMessageRef.current,
+            tabId: tab?.tabId,
+            phaseId: tab?.metadata?.phaseId,
+            isChatCompatible: tab ? isChatCompatiblePhase(tab.metadata?.phaseId) : false,
+            stepTitle: ((event.data as Record<string, unknown>)?.data as Record<string, unknown>)?.step_title ?? (event.data as Record<string, unknown>)?.step_title,
+          })
+        }
         if (event.type === 'todo_task_step_completed' && hasUserSentMessageRef.current) {
           const eventData = event.data as Record<string, unknown> | undefined
           const todoStepData = (eventData?.data as Record<string, unknown>) || eventData
@@ -1382,9 +1408,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
-    // Store events — skip for non-active preset tabs to reduce zustand updates
-    // Background preset events are dropped (SSE will backfill when switching back)
-    if (tab && isActivePresetTab && newEvents.length > 0) {
+    // Store events for ALL tabs with active SSE connections, including background presets.
+    // Why: Background workflows keep SSE alive while running (see tabsWithActiveSessions).
+    // Their events must be stored so they're visible when the user switches back — otherwise
+    // tool calls, step completions, and agent outputs that arrived while viewing another
+    // workflow would be permanently lost. UI side effects (workspace refresh, canvas updates,
+    // auto-notifications) are still gated on isActivePresetTab above.
+    if (tab && newEvents.length > 0) {
       const finalTab = chatStore.getTab(tab.tabId)
       if (!finalTab) return
       addTabEvents(actualSessionId, newEvents)
@@ -1787,14 +1817,21 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
       
-      // Workflow tabs: only keep SSE alive for the active preset's tabs.
-      // Background preset tabs don't need SSE — their events aren't rendered and
-      // each connection + state update adds overhead that slows the UI.
-      // When switching back, SSE reconnects and backfills from EventStore.
+      // Workflow tabs: always keep SSE alive for the active preset.
+      // For background presets, keep SSE alive ONLY if still running (streaming or bg agents).
+      // Why: When the user runs two workflows and switches between them, disconnecting SSE
+      // for the background workflow would cause events to be lost — the frontend wouldn't
+      // receive tool calls, completions, or progress updates that happen while viewing
+      // the other workflow. Idle/completed background workflows disconnect to save resources.
       if (tab.metadata?.mode === 'workflow') {
         const activeWfPreset = useGlobalPresetStore.getState().activePresetIds.workflow
         const isActivePreset = !tab.metadata?.presetQueryId || tab.metadata.presetQueryId === activeWfPreset
-        return isActivePreset
+        if (isActivePreset) return true
+        // Background preset: keep SSE alive only while actively running
+        const bgTab = chatStore.getTab(tab.tabId)
+        const bgStreaming = bgTab?.isStreaming ?? tab.isStreaming
+        const bgRunning = bgTab?.hasRunningBgAgents ?? false
+        return bgStreaming || bgRunning
       }
 
       // Skip completed sessions (definitely done) — unless bg agents are still running
@@ -1989,16 +2026,20 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (!resolved) return
     const { tab: currentTab, sessionId: tabSessionId } = resolved
 
-    // Build file context
+    // Build file context — read preset fresh from store to avoid stale closure
+    // when switching between workflows (the closure's activeWorkflowPreset may lag behind)
+    const freshWorkflowPreset = (selectedModeCategory === 'workflow')
+      ? useGlobalPresetStore.getState().getActivePreset('workflow')
+      : null
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
     if (selectedModeCategory === 'multi-agent' && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
-    } else if (selectedModeCategory === 'workflow' && activeWorkflowPreset?.selectedFolder) {
-      const folderPath = activeWorkflowPreset.selectedFolder.filepath
+    } else if (selectedModeCategory === 'workflow' && freshWorkflowPreset?.selectedFolder) {
+      const folderPath = freshWorkflowPreset.selectedFolder.filepath
       effectiveFileContext = [{
         name: folderPath.split('/').pop() || folderPath,
         path: folderPath,
-        type: (activeWorkflowPreset.selectedFolder.type || 'folder') as 'file' | 'folder'
+        type: (freshWorkflowPreset.selectedFolder.type || 'folder') as 'file' | 'folder'
       }]
     }
 
@@ -2010,8 +2051,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Merge secrets from tab config (multi-agent) and workflow preset
     let decryptedSecrets: Array<{ name: string; value: string }> | undefined
     const tabSecretIds = currentTab?.config?.selectedSecrets || []
-    const presetSecretIds = (selectedModeCategory === 'workflow' && activeWorkflowPreset)
-      ? ((activeWorkflowPreset as CustomPreset).selectedSecrets || [])
+    const presetSecretIds = (selectedModeCategory === 'workflow' && freshWorkflowPreset)
+      ? ((freshWorkflowPreset as CustomPreset).selectedSecrets || [])
       : []
     const selectedSecretIds = [...new Set([...tabSecretIds, ...presetSecretIds])]
     if (selectedSecretIds.length > 0) {

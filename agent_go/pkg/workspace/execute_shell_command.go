@@ -74,7 +74,7 @@ type ExecuteShellCommandParams struct {
 	WorkingDirectory string             `json:"working_directory,omitempty"`
 	Timeout          *int               `json:"timeout,omitempty"`
 	UseShell         *bool              `json:"use_shell,omitempty"`
-	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"`
+	FolderGuard      *FolderGuardConfig `json:"folder_guard,omitempty"` // Set internally — never from LLM args
 	ExtraEnv         map[string]string  `json:"extra_env,omitempty"`
 }
 
@@ -90,58 +90,6 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 	} else {
 		log.Printf("[SHELL_DEBUG] Client.ExtraEnv is EMPTY")
 	}
-	// Populate folder guard configuration from context or client.
-	// Two context key systems exist:
-	//   1. Chat/plan/prototype modes: FolderGuardAllowedWriteFolderKey (from server.go wrappers)
-	//   2. Workflow mode: FolderGuardWritePathsKey + FolderGuardReadPathsKey (from orchestrator)
-	if params.FolderGuard == nil {
-		// Read paths from context (shared by both systems)
-		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
-
-		if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
-			// System 1: chat/plan/prototype mode
-			// Merge: ctxReads + allowedWrites (write paths must always be readable
-			// so the isolator creates mount points for them in step 4)
-			readPaths := allowedWrites
-			if hasCtxReads && len(ctxReads) > 0 {
-				readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
-			}
-			params.FolderGuard = &FolderGuardConfig{
-				Enabled:    true,
-				WritePaths: allowedWrites,
-				ReadPaths:  readPaths,
-			}
-			log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, params.Command)
-		} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
-			// System 2: workflow orchestrator
-			// Merge: ctxReads + ctxWrites (write paths must always be readable
-			// so the isolator creates mount points for them in step 4)
-			readPaths := ctxWrites
-			if hasCtxReads && len(ctxReads) > 0 {
-				readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
-			}
-			params.FolderGuard = &FolderGuardConfig{
-				Enabled:    true,
-				WritePaths: ctxWrites,
-				ReadPaths:  readPaths,
-			}
-			log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, params.Command)
-		} else if c.FolderGuard != nil && c.FolderGuard.Enabled {
-			// Fallback to client-level folder guard — context had NO folder guard keys.
-			// This means the wrapper (wrapExecutorsWithPlanFolderGuard / wrapExecutorsWithChatModeFolderGuard)
-			// did NOT inject context values. This happens when the executor is called from a code path
-			// that bypasses the wrapper (e.g., a stale registry entry or an unwrapped executor).
-			params.FolderGuard = c.FolderGuard
-			log.Printf("[FOLDER_GUARD_RESOLVE] FALLBACK to client-level guard: URL=%s ReadPaths=%v WritePaths=%v BlockedPaths=%v cmd=%s",
-				c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, params.Command)
-		} else {
-			log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, params.Command)
-		}
-	} else {
-		log.Printf("[FOLDER_GUARD_RESOLVE] params.FolderGuard already set (explicit): URL=%s ReadPaths=%v WritePaths=%v cmd=%s",
-			c.BaseURL, params.FolderGuard.ReadPaths, params.FolderGuard.WritePaths, params.Command)
-	}
-
 	// Always use shell execution - removed from tool definition to simplify LLM interface
 	useShell := true
 	params.UseShell = &useShell
@@ -174,10 +122,12 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		}
 	}
 
-	// Set folder guard from session config if not already set from context.
-	// This ensures CLI/Gemini providers (which bypass the Go folder guard wrapper)
-	// still get Isolator sandboxing with the correct read/write paths.
-	if params.FolderGuard == nil && sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+	// Populate folder guard configuration for the Isolator.
+	// params.FolderGuard is never set by callers — it's always nil on entry.
+	// Priority: session config > context keys > client-level fallback.
+	if sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+		// Session config: set by SetSessionFolderGuard() — highest priority.
+		// Covers CLI/Gemini providers that bypass the Go folder guard context wrappers.
 		readPaths := sessionCfg.WritePaths
 		if len(sessionCfg.ReadPaths) > 0 {
 			readPaths = deduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
@@ -188,6 +138,39 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			ReadPaths:  readPaths,
 		}
 		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, params.Command)
+	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+		// Context System 1: chat/plan/prototype mode
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+		readPaths := allowedWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = deduplicateStrings(append(ctxReads, allowedWrites...))
+		}
+		params.FolderGuard = &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: allowedWrites,
+			ReadPaths:  readPaths,
+		}
+		log.Printf("[FOLDER_GUARD_RESOLVE] System1 (chat/plan/prototype): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, allowedWrites, readPaths, params.Command)
+	} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
+		// Context System 2: workflow orchestrator
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+		readPaths := ctxWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = deduplicateStrings(append(ctxReads, ctxWrites...))
+		}
+		params.FolderGuard = &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: ctxWrites,
+			ReadPaths:  readPaths,
+		}
+		log.Printf("[FOLDER_GUARD_RESOLVE] System2 (workflow): URL=%s WritePaths=%v ReadPaths=%v cmd=%s", c.BaseURL, ctxWrites, readPaths, params.Command)
+	} else if c.FolderGuard != nil && c.FolderGuard.Enabled {
+		// Client-level fallback — no session config, no context keys.
+		params.FolderGuard = c.FolderGuard
+		log.Printf("[FOLDER_GUARD_RESOLVE] FALLBACK to client-level guard: URL=%s ReadPaths=%v WritePaths=%v BlockedPaths=%v cmd=%s",
+			c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, params.Command)
+	} else {
+		log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, params.Command)
 	}
 
 	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN, SECRET_*)

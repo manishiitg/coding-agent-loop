@@ -2720,9 +2720,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] No execution options provided in request - req.ExecutionOptions is nil")
 			}
 
-			// Set default working directory for workflow shell commands
+			// Set default working directory and folder guard for workflow shell commands
 			if workflowWorkspacePath != "" {
 				workspace.SetSessionWorkingDir(sessionID, workflowWorkspacePath)
+				workspace.SetSessionFolderGuard(sessionID,
+					[]string{workflowWorkspacePath},
+					[]string{workflowWorkspacePath},
+				)
 			}
 
 			// Update run_metadata.json with LLM config before execution starts
@@ -3700,6 +3704,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					additionalFolders = append(additionalFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, "Plans", additionalFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "Plans/")
+					workspace.SetSessionFolderGuard(sessionID,
+						append([]string{"Plans/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
+						[]string{"Plans/"},
+					)
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied Plans/ folder restriction (additional: %v)", additionalFolders)
 				} else {
 					extraFolders := []string{}
@@ -3712,6 +3720,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					extraFolders = append(extraFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "Chats/")
+					workspace.SetSessionFolderGuard(sessionID,
+						append([]string{"Chats/", "Downloads/", "Plans/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
+						append([]string{"Chats/", "Downloads/"}, extraFolders...),
+					)
 					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
 				}
 
@@ -4413,6 +4425,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// The global map is read by execute_shell_command at call time.
 				if phaseWorkspacePath != "" && phaseWorkspacePath != "default_workspace" {
 					workspace.SetSessionWorkingDir(sessionID, phaseWorkspacePath)
+					// Restrict shell commands to the workflow folder via Isolator
+					workspace.SetSessionFolderGuard(sessionID,
+						[]string{phaseWorkspacePath, "Chats", "Plans", "skills", "subagents", "Downloads"},
+						[]string{phaseWorkspacePath},
+					)
 				}
 
 				// Create workspace client for reading plan.json and variables.json
@@ -7641,6 +7658,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				additionalFolders = append(additionalFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, planFolder, additionalFolders...)
 				workspace.SetSessionWorkingDir(sessionID, planFolder+"/")
+				workspace.SetSessionFolderGuard(sessionID,
+					append([]string{planFolder + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
+					append([]string{planFolder + "/"}, additionalFolders...),
+				)
 				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
 			} else {
 				extraFolders := []string{}
@@ -7653,6 +7674,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				extraFolders = append(extraFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, "Chats/")
+				workspace.SetSessionFolderGuard(sessionID,
+					append([]string{"Chats/", "Downloads/", "Plans/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
+					append([]string{"Chats/", "Downloads/"}, extraFolders...),
+				)
 			}
 
 			// Register workspace tools
@@ -9382,10 +9407,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		allExecutors[name] = executor
 	}
 	cfg.WorkspaceEnvRef = workspaceEnv
-	// Set default working directory for workshop shell commands
-	if workspacePath != "" {
-		workspace.SetSessionWorkingDir(sessionID, workspacePath)
-	}
+	// Working directory and folder guard are set per-request in handleQuery (line ~4415)
+	// via workspace.SetSessionWorkingDir/SetSessionFolderGuard, not here.
 	log.Printf("[WORKSHOP] Replaced workspace executors with session-aware versions (sessionID=%q, secrets=%d)", sessionID, len(secretEnvVars))
 
 	cfg.CustomTools = allTools

@@ -10,35 +10,63 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
-// Global session → working directory map.
+// Global session → shell config map.
 // Set by server.go when a session is created, read by execute_shell_command.
 // This avoids the need for session-aware executor instances — one global executor
-// looks up the working directory per-session at call time.
+// looks up the config per-session at call time.
+// Covers: working directory, folder guard (read/write paths for Isolator sandboxing).
 var (
-	sessionWorkingDirs   = make(map[string]string)
-	sessionWorkingDirsMu sync.RWMutex
+	sessionShellConfigs   = make(map[string]*SessionShellConfig)
+	sessionShellConfigsMu sync.RWMutex
 )
+
+// SessionShellConfig holds per-session shell execution settings.
+type SessionShellConfig struct {
+	WorkingDir string   // Default working directory (relative to workspace-docs)
+	ReadPaths  []string // Folder guard read paths for Isolator
+	WritePaths []string // Folder guard write paths for Isolator
+}
 
 // SetSessionWorkingDir sets the default working directory for a session.
 func SetSessionWorkingDir(sessionID, dir string) {
-	sessionWorkingDirsMu.Lock()
-	defer sessionWorkingDirsMu.Unlock()
-	sessionWorkingDirs[sessionID] = dir
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.WorkingDir = dir
 	log.Printf("[SHELL] Set default working dir for session %s: %s", sessionID, dir)
 }
 
-// ClearSessionWorkingDir removes the working directory for a session.
-func ClearSessionWorkingDir(sessionID string) {
-	sessionWorkingDirsMu.Lock()
-	defer sessionWorkingDirsMu.Unlock()
-	delete(sessionWorkingDirs, sessionID)
+// SetSessionFolderGuard sets the folder guard read/write paths for a session.
+// The Isolator uses these to sandbox shell commands — restricting filesystem access.
+func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.ReadPaths = readPaths
+	cfg.WritePaths = writePaths
+	log.Printf("[SHELL] Set folder guard for session %s: read=%v write=%v", sessionID, readPaths, writePaths)
 }
 
-// getSessionWorkingDir looks up the default working directory for a session.
-func getSessionWorkingDir(sessionID string) string {
-	sessionWorkingDirsMu.RLock()
-	defer sessionWorkingDirsMu.RUnlock()
-	return sessionWorkingDirs[sessionID]
+// ClearSessionShellConfig removes all shell config for a session.
+func ClearSessionShellConfig(sessionID string) {
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	delete(sessionShellConfigs, sessionID)
+}
+
+// getSessionShellConfig looks up the shell config for a session.
+func getSessionShellConfig(sessionID string) *SessionShellConfig {
+	sessionShellConfigsMu.RLock()
+	defer sessionShellConfigsMu.RUnlock()
+	return sessionShellConfigs[sessionID]
 }
 
 type ExecuteShellCommandParams struct {
@@ -127,27 +155,39 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		params.Timeout = &noTimeout
 	}
 
+	// Look up per-session shell config (working dir + folder guard)
+	sessionID := ""
+	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
+		sessionID = sid
+	}
+	sessionCfg := getSessionShellConfig(sessionID)
+
 	// Set default working directory:
-	// Priority: param > session map > client field > ExtraEnv > empty (workspace root)
+	// Priority: param > session config > client field > ExtraEnv > empty (workspace root)
 	if params.WorkingDirectory == "" {
-		// 1. Check global session → working dir map (set by server.go per-session)
-		sessionID := ""
-		if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
-			sessionID = sid
+		if sessionCfg != nil && sessionCfg.WorkingDir != "" {
+			params.WorkingDirectory = sessionCfg.WorkingDir
+		} else if c.DefaultWorkingDir != "" {
+			params.WorkingDirectory = c.DefaultWorkingDir
+		} else if dir, ok := c.ExtraEnv["_DEFAULT_WORKING_DIR"]; ok && dir != "" {
+			params.WorkingDirectory = dir
 		}
-		if sessionID != "" {
-			if dir := getSessionWorkingDir(sessionID); dir != "" {
-				params.WorkingDirectory = dir
-			}
+	}
+
+	// Set folder guard from session config if not already set from context.
+	// This ensures CLI/Gemini providers (which bypass the Go folder guard wrapper)
+	// still get Isolator sandboxing with the correct read/write paths.
+	if params.FolderGuard == nil && sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+		readPaths := sessionCfg.WritePaths
+		if len(sessionCfg.ReadPaths) > 0 {
+			readPaths = deduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
 		}
-		// 2. Fallback to client-level defaults
-		if params.WorkingDirectory == "" {
-			if c.DefaultWorkingDir != "" {
-				params.WorkingDirectory = c.DefaultWorkingDir
-			} else if dir, ok := c.ExtraEnv["_DEFAULT_WORKING_DIR"]; ok && dir != "" {
-				params.WorkingDirectory = dir
-			}
+		params.FolderGuard = &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: sessionCfg.WritePaths,
+			ReadPaths:  readPaths,
 		}
+		log.Printf("[FOLDER_GUARD_RESOLVE] SessionConfig: session=%s WritePaths=%v ReadPaths=%v cmd=%s", sessionID, sessionCfg.WritePaths, readPaths, params.Command)
 	}
 
 	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN, SECRET_*)

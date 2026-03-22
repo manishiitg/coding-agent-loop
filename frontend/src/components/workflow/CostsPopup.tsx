@@ -84,6 +84,52 @@ interface IterationCosts {
   } | null
 }
 
+type TokenUsageModel = TokenUsageFile['by_model'][string]
+
+interface PhaseTokenUsageFile {
+  created_at: string
+  updated_at: string
+  by_model: Record<string, TokenUsageModel>
+  by_phase_and_model?: Record<string, Record<string, TokenUsageModel>>
+}
+
+interface PhaseCostSummary {
+  totalCost: number
+  totalInputTokens: number
+  totalOutputTokens: number
+  totalTokens: number
+  totalLLMCalls: number
+  totalCacheReadTokens: number
+  totalCacheWriteTokens: number
+  totalReasoningTokens: number
+  phaseCosts: Array<{
+    phaseID: string
+    phaseTitle: string
+    totalCost: number
+    inputTokens: number
+    outputTokens: number
+    llmCalls: number
+  }>
+}
+
+const formatPhaseTitle = (phaseID: string) => {
+  const phaseTitles: Record<string, string> = {
+    'workflow-builder': 'Workflow Builder',
+    planning: 'Planning',
+    'plan-improvement': 'Plan Improvement',
+    'evaluation-builder': 'Evaluation Builder',
+    'output-builder': 'Output Builder'
+  }
+
+  if (phaseTitles[phaseID]) return phaseTitles[phaseID]
+
+  return phaseID
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 const CostsPopup: React.FC<CostsPopupProps> = ({
   isOpen,
   onClose,
@@ -93,6 +139,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 }) => {
   const [loading, setLoading] = useState(false)
   const [iterationCosts, setIterationCosts] = useState<IterationCosts[]>([])
+  const [phaseCostSummary, setPhaseCostSummary] = useState<PhaseCostSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expandedIterations, setExpandedIterations] = useState<Set<string>>(new Set())
   const [expandedCostModels, setExpandedCostModels] = useState<Set<string>>(new Set())
@@ -304,12 +351,75 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     }
   }
 
+  const calculatePhaseCostSummary = (tokenUsage: PhaseTokenUsageFile | null): PhaseCostSummary | null => {
+    if (!tokenUsage?.by_model) return null
+
+    let totalCost = 0
+    let totalInputTokens = 0
+    let totalOutputTokens = 0
+    let totalLLMCalls = 0
+    let totalCacheReadTokens = 0
+    let totalCacheWriteTokens = 0
+    let totalReasoningTokens = 0
+
+    Object.values(tokenUsage.by_model).forEach(usage => {
+      totalCost += usage.total_cost_usd || 0
+      totalInputTokens += usage.input_tokens || 0
+      totalOutputTokens += usage.output_tokens || 0
+      totalLLMCalls += usage.llm_call_count || 0
+      totalCacheReadTokens += usage.cache_read_tokens || usage.cache_tokens || 0
+      totalCacheWriteTokens += usage.cache_write_tokens || 0
+      totalReasoningTokens += usage.reasoning_tokens || 0
+    })
+
+    const phaseCosts = Object.entries(tokenUsage.by_phase_and_model || {})
+      .map(([phaseID, modelMap]) => {
+        let cost = 0
+        let inputTokens = 0
+        let outputTokens = 0
+        let llmCalls = 0
+
+        Object.values(modelMap).forEach(usage => {
+          cost += usage.total_cost_usd || 0
+          inputTokens += usage.input_tokens || 0
+          outputTokens += usage.output_tokens || 0
+          llmCalls += usage.llm_call_count || 0
+        })
+
+        return {
+          phaseID,
+          phaseTitle: formatPhaseTitle(phaseID),
+          totalCost: cost,
+          inputTokens,
+          outputTokens,
+          llmCalls
+        }
+      })
+      .sort((a, b) => {
+        if (b.totalCost !== a.totalCost) return b.totalCost - a.totalCost
+        return a.phaseTitle.localeCompare(b.phaseTitle)
+      })
+
+    return {
+      totalCost,
+      totalInputTokens,
+      totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      totalLLMCalls,
+      totalCacheReadTokens,
+      totalCacheWriteTokens,
+      totalReasoningTokens,
+      phaseCosts
+    }
+  }
+
   // Load costs for all iterations
   useEffect(() => {
-    if (isOpen && workspacePath && runFolders.length > 0) {
+    if (isOpen && workspacePath) {
       loadAllCosts()
     } else {
       setIterationCosts([])
+      setPhaseCostSummary(null)
       setError(null)
       setExpandedIterations(new Set())
       setExpandedCostModels(new Set())
@@ -331,12 +441,22 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
   }, [isOpen, selectedRunFolder, iterationCosts])
 
   const loadAllCosts = async () => {
-    if (!workspacePath || runFolders.length === 0) return
+    if (!workspacePath) return
 
     setLoading(true)
     setError(null)
     try {
+      let nextPhaseCostSummary: PhaseCostSummary | null = null
       const costs: IterationCosts[] = []
+
+      try {
+        const phaseData = await agentApi.getCosts(workspacePath, '')
+        nextPhaseCostSummary = calculatePhaseCostSummary(
+          (phaseData.token_usage as unknown as PhaseTokenUsageFile) ?? null
+        )
+      } catch (err) {
+        console.warn('Failed to load workflow builder costs:', err)
+      }
       
       // Load costs for each iteration/group
       for (const runFolder of runFolders) {
@@ -380,6 +500,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
       })
 
       setIterationCosts(costs)
+      setPhaseCostSummary(nextPhaseCostSummary)
 
       // Auto-expand selected run folder if provided
       if (selectedRunFolder && costs.some(c => c.runFolder === selectedRunFolder)) {
@@ -485,6 +606,16 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
     }
   }, [iterationCosts])
 
+  const overallSummary = useMemo(() => {
+    if (!aggregateSummary && !phaseCostSummary) return null
+
+    return {
+      totalCost: (aggregateSummary?.totalCost || 0) + (phaseCostSummary?.totalCost || 0),
+      totalTokens: (aggregateSummary?.totalTokens || 0) + (phaseCostSummary?.totalTokens || 0),
+      totalIterations: aggregateSummary?.totalIterations || 0
+    }
+  }, [aggregateSummary, phaseCostSummary])
+
   if (!isOpen) return null
 
   return (
@@ -498,19 +629,26 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
               Cost Analysis
             </h2>
             <div className="flex items-center gap-4 mt-1">
-              {aggregateSummary && (
+              {overallSummary && (
                 <div className="flex items-center gap-3 text-xs">
                   <div className="flex items-center gap-1.5 text-green-600 dark:text-green-400 font-medium">
                     <DollarSign className="w-3.5 h-3.5" />
-                    {formatUSD(aggregateSummary.totalCost)}
+                    {formatUSD(overallSummary.totalCost)}
                   </div>
                   <div className="flex items-center gap-1.5 text-muted-foreground">
                     <Coins className="w-3.5 h-3.5" />
-                    {formatTokens(aggregateSummary.totalTokens)} tokens
+                    {formatTokens(overallSummary.totalTokens)} tokens
                   </div>
-                  <div className="text-muted-foreground">
-                    {aggregateSummary.totalIterations} iteration{aggregateSummary.totalIterations !== 1 ? 's' : ''}
-                  </div>
+                  {aggregateSummary && (
+                    <div className="text-muted-foreground">
+                      {aggregateSummary.totalIterations} iteration{aggregateSummary.totalIterations !== 1 ? 's' : ''}
+                    </div>
+                  )}
+                  {phaseCostSummary && (
+                    <div className="text-amber-600 dark:text-amber-400 font-medium">
+                      Builder {formatUSD(phaseCostSummary.totalCost)}
+                    </div>
+                  )}
                 </div>
               )}
               <button
@@ -549,7 +687,7 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                 Retry
               </button>
             </div>
-          ) : iterationCosts.length === 0 ? (
+          ) : iterationCosts.length === 0 && !phaseCostSummary ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <DollarSign className="w-12 h-12 mb-3 opacity-50" />
               <p>No cost data found.</p>
@@ -557,6 +695,102 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
             </div>
           ) : (
             <div className="space-y-6">
+              {/* Workflow Builder / Phase Costs */}
+              {phaseCostSummary && (
+                <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground mb-1 flex items-center gap-2">
+                        <DollarSign className="w-4 h-4 text-amber-500" />
+                        Workflow Builder Costs
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Costs captured outside run folders, including workflow builder and other phase-only sessions.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-amber-100 dark:bg-amber-900/30 rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Builder Total</div>
+                      <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+                        {formatUSD(phaseCostSummary.totalCost)}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {formatTokens(phaseCostSummary.totalTokens)} tokens
+                      </div>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Workflow Builder</div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {formatUSD(phaseCostSummary.phaseCosts.find(phase => phase.phaseID === 'workflow-builder')?.totalCost)}
+                      </div>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">LLM Calls</div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {phaseCostSummary.totalLLMCalls.toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div className="bg-card border border-border rounded-lg p-3">
+                      <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Tracked Phases</div>
+                      <div className="text-2xl font-bold text-foreground">
+                        {phaseCostSummary.phaseCosts.length}
+                      </div>
+                    </div>
+                  </div>
+
+                  {phaseCostSummary.phaseCosts.length > 0 && (
+                    <div className="mt-4 overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-muted-foreground border-b border-border pb-2">
+                            <th className="text-left font-medium pb-2">Phase</th>
+                            <th className="text-right font-medium pb-2">Calls</th>
+                            <th className="text-right font-medium pb-2">Tokens</th>
+                            <th className="text-right font-medium pb-2">Cost</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {phaseCostSummary.phaseCosts.map(phase => (
+                            <tr key={phase.phaseID} className="hover:bg-accent/50 transition-colors">
+                              <td className="py-2">
+                                <div className="font-medium text-foreground">{phase.phaseTitle}</div>
+                                <div className="text-[10px] text-muted-foreground font-mono">{phase.phaseID}</div>
+                              </td>
+                              <td className="py-2 text-right font-mono text-muted-foreground">
+                                {phase.llmCalls.toLocaleString()}
+                              </td>
+                              <td className="py-2 text-right font-mono text-muted-foreground">
+                                {(phase.inputTokens + phase.outputTokens).toLocaleString()}
+                              </td>
+                              <td className="py-2 text-right font-bold text-amber-600 dark:text-amber-400">
+                                {formatUSD(phase.totalCost)}
+                              </td>
+                            </tr>
+                          ))}
+                          <tr className="bg-muted/30 font-semibold">
+                            <td className="py-2 text-foreground">Total</td>
+                            <td className="py-2 text-right font-mono text-muted-foreground">
+                              {phaseCostSummary.totalLLMCalls.toLocaleString()}
+                            </td>
+                            <td className="py-2 text-right font-mono text-muted-foreground">
+                              {phaseCostSummary.totalTokens.toLocaleString()}
+                            </td>
+                            <td className="py-2 text-right font-bold text-amber-600 dark:text-amber-400">
+                              {formatUSD(phaseCostSummary.totalCost)}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Aggregate Summary */}
               {aggregateSummary && (
                 <div className="bg-card border border-border rounded-lg p-4 shadow-sm">
@@ -634,7 +868,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
               )}
 
               {/* Individual Iterations */}
-              <div className="space-y-3">
+              {iterationCosts.length > 0 ? (
+                <div className="space-y-3">
                 {iterationCosts.map((iter) => {
                   const isExpanded = expandedIterations.has(iter.runFolder)
                   const viewMode = costViewMode[iter.runFolder] || 'step'
@@ -1032,7 +1267,12 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
                     </div>
                   )
                 })}
-              </div>
+                </div>
+              ) : (
+                <div className="bg-card border border-border rounded-lg p-6 text-sm text-muted-foreground">
+                  No workflow run cost data found yet. Run one or more workflow iterations to compare execution costs alongside the builder costs above.
+                </div>
+              )}
             </div>
           )}
         </div>

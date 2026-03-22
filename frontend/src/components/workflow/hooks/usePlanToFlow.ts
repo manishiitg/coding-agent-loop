@@ -199,7 +199,16 @@ export interface EvaluationStepNodeData extends Record<string, unknown> {
   isEvaluationStep: boolean
 }
 
-export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData
+export interface WorkflowArtifactNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  description?: string
+  kind: 'evaluation' | 'output'
+  configured: boolean
+  detail?: string
+}
+
+export type WorkflowNodeData = StepNodeData | ConditionalNodeData | DecisionNodeData | LoopNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | ExecutionSettingsNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -249,7 +258,8 @@ const NODE_DIMENSIONS = {
   start: { width: 80, height: 36 },
   end: { width: 80, height: 36 },
   variables: { width: 220, height: 120 },
-  'execution-settings': { width: 200, height: 100 }
+  'execution-settings': { width: 200, height: 100 },
+  'workflow-artifact': { width: 220, height: 120 }
 }
 
 /**
@@ -3009,4 +3019,3 @@ export function usePlanToFlow(
 }
 
 export default usePlanToFlow
-

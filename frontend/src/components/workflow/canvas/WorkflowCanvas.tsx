@@ -24,8 +24,8 @@ import { BatchProgressHeader } from '../BatchProgressHeader'
 import LLMOverrideModal from '../LLMOverrideModal'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
-import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData } from '../hooks/usePlanToFlow'
-import { useEvaluationPlanToFlow } from '../hooks/useEvaluationPlanToFlow'
+import { useOutputPlanData } from '../hooks/useOutputPlanData'
+import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData, type WorkflowArtifactNodeData } from '../hooks/usePlanToFlow'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
@@ -86,7 +86,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const viewportSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Get workflow mode and layout direction
-  const workflowMode = useWorkflowStore(state => state.workflowMode)
   const layoutDirection = useWorkflowStore(state => state.layoutDirection)
   const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
@@ -120,9 +119,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
     return workspacePath
-      ? `workflow-viewport-${workspacePath}-${workflowMode}`
-      : `workflow-viewport-default-${workflowMode}`
-  }, [workspacePath, workflowMode])
+      ? `workflow-viewport-${workspacePath}`
+      : 'workflow-viewport-default'
+  }, [workspacePath])
 
   // PERF: Debounced viewport change handler — saves to localStorage at most once per 500ms
   // instead of on every pixel of pan/zoom (which was causing excessive localStorage writes)
@@ -142,10 +141,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Get workflow layout file path
   const getLayoutFilePath = React.useCallback(() => {
     if (!workspacePath) return null
-    return workflowMode === 'plan'
-      ? `${workspacePath}/planning/workflow_layout.json`
-      : `${workspacePath}/evaluation/eval_layout.json`
-  }, [workspacePath, workflowMode])
+    return `${workspacePath}/planning/workflow_layout.json`
+  }, [workspacePath])
 
   // Load saved node positions and offsets from workspace
   const loadSavedLayout = React.useCallback(async (): Promise<{
@@ -235,7 +232,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       
       // Allow validation, learning, and evaluation nodes to be saved as parent positions
       // (they're independently draggable)
-      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation') {
+      if (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact') {
         parentPositions[node.id] = { x: node.position.x, y: node.position.y }
         return
       }
@@ -266,7 +263,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       if (node.id.includes('-sub-agent-') || 
           node.type === 'validation' || 
           node.type === 'learning' || 
-          node.type === 'evaluation') {
+          node.type === 'evaluation' ||
+          node.type === 'workflow-artifact') {
         return
       }
       
@@ -426,25 +424,25 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRunFolder, workspacePath, highlightFile])
 
-  // Load plan data (Plan Mode)
-  const planData = usePlanData(workflowMode === 'plan' ? workspacePath : null)
-  
-  // Load evaluation plan data (Eval Mode)
-  const evalData = useEvaluationPlanData(workflowMode === 'eval' ? workspacePath : null)
+  // Load workflow data for the main canvas and append eval/output artifacts to it.
+  const planData = usePlanData(workspacePath)
+  const evalData = useEvaluationPlanData(workspacePath)
+  const outputData = useOutputPlanData(workspacePath)
 
-  // Unify state based on mode
-  const plan = workflowMode === 'plan' ? planData.plan : null
-  const evaluationPlan = workflowMode === 'eval' ? evalData.evaluationPlan : null
-  
-  const loading = workflowMode === 'plan' ? planData.loading : evalData.loading
-  const error = workflowMode === 'plan' ? planData.error : evalData.error
-  const changes = workflowMode === 'plan' ? planData.changes : null
-  
-  const loadPlanRefresh = workflowMode === 'plan' ? planData.refresh : evalData.refresh
-  const noop = useCallback(() => {}, [])
-  const clearChanges = workflowMode === 'plan' ? planData.clearChanges : noop
-  const setChanges = workflowMode === 'plan' ? planData.setChanges : noop
-  const stepOverride = workflowMode === 'plan' ? planData.stepOverride : null
+  const plan = planData.plan
+  const evaluationPlan = evalData.evaluationPlan
+  const outputPlan = outputData.outputPlan
+  const refreshEvaluationPlan = evalData.refresh
+  const refreshOutputPlan = outputData.refresh
+
+  const loading = planData.loading || evalData.loading || outputData.loading
+  const error = planData.error
+  const changes = planData.changes
+
+  const loadPlanRefresh = planData.refresh
+  const clearChanges = planData.clearChanges
+  const setChanges = planData.setChanges
+  const stepOverride = planData.stepOverride
   const saveStepOverride = planData.saveStepOverride
 
   // *** NEW CONSOLIDATED API ***
@@ -515,12 +513,12 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const currentViewport = hasInitializedView.current ? viewportStateRef.current : null
     console.log('[WorkflowCanvas] Saving viewport state before refresh:', currentViewport, 'hasInitializedView:', hasInitializedView.current)
 
-    // Refresh plan data (this also loads step_config.json)
-    await loadPlanRefresh()
-
-    // *** NEW: Use consolidated workspace state refresh ***
-    // This reloads run folders, variables, phases, and progress in one call
-    await refreshWorkspaceState()
+    await Promise.all([
+      loadPlanRefresh(),
+      refreshEvaluationPlan(),
+      refreshOutputPlan(),
+      refreshWorkspaceState()
+    ])
 
     // Restore viewport state after refresh completes
     // Only restore if we had a saved viewport (not on first load)
@@ -536,7 +534,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     console.log('[WorkflowCanvas] Refresh completed')
-  }, [workspacePath, loadPlanRefresh, refreshWorkspaceState, setViewport])
+  }, [workspacePath, loadPlanRefresh, refreshEvaluationPlan, refreshOutputPlan, refreshWorkspaceState, setViewport])
 
   // Workflow execution
   const {
@@ -707,7 +705,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         }
         // Allow validation, learning, and evaluation nodes to be draggable
         const node = nodesRef.current.find(n => n.id === nodeId)
-        if (node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation')) {
+        if (node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact')) {
           return true // Allow validation, learning, and evaluation nodes to be draggable
         }
         // Check if this is a child node (has a parent) - these should not be draggable
@@ -731,7 +729,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         const node = nodesRef.current.find(n => n.id === nodeId)
         // Include sub-agents, validation, learning, and evaluation nodes as independently movable
         const isSubAgent = nodeId.includes('-sub-agent-')
-        const isValidationLearningEval = node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation')
+        const isValidationLearningEval = node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact')
         // Check if this is a parent node (not a child) OR a sub-agent OR validation/learning/evaluation
         if (isSubAgent || isValidationLearningEval || (nodeGroupsRef.current.has(nodeId) && !childToParentRef.current.has(nodeId))) {
           parentPositionChanges.set(nodeId, { x: change.position.x, y: change.position.y })
@@ -750,7 +748,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           
           // Skip if this is a validation, learning, or evaluation node
           // These are independent and can be manually positioned
-          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation'
+          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact'
           if (isValidationLearningEval) {
             return node // These nodes are independent, don't update them here
           }
@@ -785,7 +783,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // Skip validation, learning, and evaluation nodes (they're independent)
         updatedNodes = updatedNodes.map(node => {
           // Skip validation, learning, and evaluation nodes - they're independent
-          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation'
+          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact'
           if (isValidationLearningEval) {
             return node
           }
@@ -974,18 +972,73 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     layoutDirection  // Layout direction: 'LR' for horizontal, 'TB' for vertical
   })
 
-  // Convert evaluation plan to flow (Eval Mode)
-  const evalFlow = useEvaluationPlanToFlow(evaluationPlan, {
-    onRunFromStep: handleRunFromStepCallback,
-    onOpenSidebar: handleOpenSidebarCallback,
-    isExecuting,
-    completedStepIndices: [], // Evaluation steps don't have progress tracking yet
-    workspacePath,
-    selectedRunFolder: selectedRunFolder ?? undefined
-  })
+  const augmentedFlow = React.useMemo(() => {
+    if (!planFlow.nodes.length) {
+      return planFlow
+    }
 
-  // Select flow based on mode
-  const { nodes: initialNodes, edges: initialEdges } = workflowMode === 'plan' ? planFlow : evalFlow
+    const nodes = [...planFlow.nodes]
+    const edges = [...planFlow.edges]
+    const endNode = nodes.find(node => node.id === 'end')
+
+    if (!endNode) {
+      return planFlow
+    }
+
+    const addonConfigs: WorkflowArtifactNodeData[] = [
+      {
+        id: 'workflow-evaluation-artifact',
+        title: 'Evaluation',
+        description: 'Review the workflow run with evaluation steps.',
+        kind: 'evaluation',
+        configured: !!(evaluationPlan?.steps && evaluationPlan.steps.length > 0),
+        detail: evaluationPlan?.steps?.length
+          ? `${evaluationPlan.steps.length} step${evaluationPlan.steps.length === 1 ? '' : 's'} configured`
+          : 'Configure in workflow builder chat'
+      },
+      {
+        id: 'workflow-output-artifact',
+        title: 'Final Report',
+        description: 'Generate the markdown summary report for each group run.',
+        kind: 'output',
+        configured: !!outputPlan?.step,
+        detail: outputPlan?.step?.title || 'Configure in workflow builder chat'
+      }
+    ]
+
+    const artifactBaseX = layoutDirection === 'LR' ? endNode.position.x + 220 : endNode.position.x
+    const artifactBaseY = layoutDirection === 'TB' ? endNode.position.y + 170 : endNode.position.y
+
+    addonConfigs.forEach((config, index) => {
+      const position = layoutDirection === 'LR'
+        ? { x: artifactBaseX, y: artifactBaseY + (index * 150) - 75 }
+        : { x: artifactBaseX + (index * 260) - 130, y: artifactBaseY }
+
+      nodes.push({
+        id: config.id,
+        type: 'workflow-artifact',
+        position,
+        data: config,
+        draggable: true
+      })
+
+      edges.push({
+        id: `end-to-${config.id}`,
+        source: 'end',
+        target: config.id,
+        type: 'smoothstep',
+        style: {
+          stroke: config.kind === 'evaluation' ? '#0ea5e9' : '#f59e0b',
+          strokeWidth: 2,
+          strokeDasharray: '6 4'
+        }
+      })
+    })
+
+    return { nodes, edges }
+  }, [planFlow, evaluationPlan, outputPlan, layoutDirection])
+
+  const { nodes: initialNodes, edges: initialEdges } = augmentedFlow
 
   // Helper function to highlight and position a specific step node
   const highlightStepNode = useCallback((stepId: string) => {
@@ -1045,9 +1098,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         execution_strategy: 'run_single_step',
         resume_from_step: stepIndex + 1  // 1-based step number (target step)
       }
-      const workflowMode = useWorkflowStore.getState().workflowMode
-      const phaseId = workflowMode === 'eval' ? 'evaluation-execution' : 'execution'
-      onStartPhase(phaseId, executionOptions)
+      onStartPhase('execution', executionOptions)
     }
   }, [onStartPhase, focusNode])
 
@@ -1332,7 +1383,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                   if (node.id.includes('-sub-agent-') || 
                       node.type === 'validation' || 
                       node.type === 'learning' || 
-                      node.type === 'evaluation') {
+                      node.type === 'evaluation' ||
+                      node.type === 'workflow-artifact') {
                     return node
                   }
                   
@@ -1871,8 +1923,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // If exactly one node is selected, also update selectedNode for sidebar compatibility
     if (stepNodes.length === 1) {
       setSelectedNode(stepNodes[0])
-    } else if (stepNodes.length > 1) {
-      // Multiple selection - clear single selection (sidebar won't show)
+    } else {
+      // Non-configurable or multiple selection - clear single selection
       setSelectedNode(null)
     }
   }, [])
@@ -1924,23 +1976,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [onStartPhase, highlightStepNode, selectedNode])
 
   // Get total step count
-  const totalSteps = workflowMode === 'plan' ? (plan?.steps?.length || 0) : (evaluationPlan?.steps?.length || 0)
+  const totalSteps = plan?.steps?.length || 0
 
 
   // Handle edit step
   const handleEditStep = useCallback(async (stepId: string, updates: Partial<PlanStep> | Partial<EvaluationStep>) => {
-    // Eval Mode
-    if (workflowMode === 'eval') {
-      if (!evaluationPlan) return
-      const stepIndex = evaluationPlan.steps.findIndex(s => s.id === stepId)
-      if (stepIndex >= 0) {
-        await evalData.updateEvaluationStep(stepIndex, updates as Partial<EvaluationStep>) // Type cast needed as EvaluationStep is similar to PlanStep
-        highlightStepNode(stepId)
-      }
-      return
-    }
-
-    // Plan Mode
     if (!plan) return
     
     // Capture current node positions before refresh to preserve layout
@@ -2034,17 +2074,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Highlight the step node after saving
       highlightStepNode(stepId)
     }
-  }, [plan, evaluationPlan, workflowMode, workspacePath, planData, evalData, highlightStepNode, loadPlanRefresh])
+  }, [plan, workspacePath, planData, highlightStepNode, loadPlanRefresh])
 
   // Handle delete step
   const handleDeleteStep = useCallback(async (stepId: string) => {
-    // Eval Mode
-    if (workflowMode === 'eval') {
-      console.warn('[WorkflowCanvas] Delete not yet implemented for evaluation steps')
-      return
-    }
-
-    // Plan Mode
     if (!plan) return
     
     const stepIndex = plan.steps.findIndex(s => s.id === stepId)
@@ -2052,7 +2085,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       await planData.deleteStep(stepIndex)
       setSelectedNode(null)
     }
-  }, [plan, workflowMode, planData])
+  }, [plan, planData])
 
   // Handle bulk update steps
   const handleBulkUpdateSteps = useCallback(async (updates: Array<{ stepId: string; updates: Partial<PlanStep> }>) => {
@@ -2180,7 +2213,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }
 
   // No plan state
-  const hasPlan = workflowMode === 'plan' ? (plan && plan.steps && plan.steps.length > 0) : (evaluationPlan && evaluationPlan.steps && evaluationPlan.steps.length > 0)
+  const hasPlan = !!(plan && plan.steps && plan.steps.length > 0)
   if (!hasPlan) {
     return (
       <div className={`flex flex-col h-full bg-gray-50 dark:bg-gray-900 ${className}`}>
@@ -2209,12 +2242,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             </div>
             <div>
               <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                {workflowMode === 'plan' ? 'No Plan Yet' : 'No Evaluation Plan Yet'}
+                No Plan Yet
               </h3>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                {workflowMode === 'plan' 
-                  ? 'Create a plan to visualize your workflow' 
-                  : 'Run Evaluation Designer to create an evaluation plan'}
+                Create a plan to visualize your workflow
               </p>
             </div>
             {onCreatePlan && (
@@ -2222,7 +2253,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 onClick={onCreatePlan}
                 className="px-6 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-medium"
               >
-                {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Build Plan'}
+                Build Plan
               </button>
             )}
           </div>
@@ -2237,7 +2268,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       <WorkflowToolbar
         status={status}
         hasPlan={true}
-        plan={workflowMode === 'plan' ? plan : undefined} // Only pass plan in plan mode (for start point calculation)
+        plan={plan || undefined}
         currentPhase={currentPhase}
         workspacePath={workspacePath}
         totalSteps={totalSteps}

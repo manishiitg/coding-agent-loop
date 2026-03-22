@@ -12,17 +12,17 @@ import (
 
 	"os"
 
-	"mcp-agent-builder-go/agent_go/pkg/instructions"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
-	"mcp-agent-builder-go/agent_go/pkg/skills"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/instructions"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
+	"mcp-agent-builder-go/agent_go/pkg/skills"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -448,18 +448,18 @@ func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 
 // InteractiveWorkshopManager manages the interactive workshop phase
 type InteractiveWorkshopManager struct {
-	controller         *StepBasedWorkflowOrchestrator
-	presetLLM          *AgentLLMConfig
-	sessionID          string
-	workflowID         string
-	stepRegistry       *WorkshopStepRegistry
-	sessionCtx         context.Context    // long-lived ctx for background goroutines
-	toolCallQueryFunc  ToolCallQueryFunc  // optional: query live tool calls for running steps
-	mainSessionID      string             // event store session ID for tool call queries
-	presetQueryID          string             // preset ID for schedule management
-	schedulerFuncs         *SchedulerCallbacks // schedule CRUD callbacks from server.go
-	skillFuncs             *SkillCallbacks     // skill import/delete callbacks from server.go
-	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
+	controller           *StepBasedWorkflowOrchestrator
+	presetLLM            *AgentLLMConfig
+	sessionID            string
+	workflowID           string
+	stepRegistry         *WorkshopStepRegistry
+	sessionCtx           context.Context                             // long-lived ctx for background goroutines
+	toolCallQueryFunc    ToolCallQueryFunc                           // optional: query live tool calls for running steps
+	mainSessionID        string                                      // event store session ID for tool call queries
+	presetQueryID        string                                      // preset ID for schedule management
+	schedulerFuncs       *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
+	skillFuncs           *SkillCallbacks                             // skill import/delete callbacks from server.go
+	listAvailableSecrets func(ctx context.Context) ([]string, error) // list all available secret names
 }
 
 // refreshVariablesManifest reloads the variables manifest from file into the controller.
@@ -629,12 +629,12 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		useKB = "true"
 	}
 	templateVars := map[string]string{
-		"WorkspacePath":      workspacePath,
-		"RunFolder":          iwm.controller.selectedRunFolder,
-		"PlanJSON":           planContent,
-		"StepConfigSummary":  stepConfigSummary,
-		"WorkshopMode":       workshopMode,
-		"UnoptimizedSteps":   unoptimizedSteps,
+		"WorkspacePath":     workspacePath,
+		"RunFolder":         iwm.controller.selectedRunFolder,
+		"PlanJSON":          planContent,
+		"StepConfigSummary": stepConfigSummary,
+		"WorkshopMode":      workshopMode,
+		"UnoptimizedSteps":  unoptimizedSteps,
 		"ProgressSummary":   progressSummary,
 		"UserRequest":       userGoal,
 		"SessionID":         iwm.sessionID,
@@ -667,8 +667,8 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 		knowledgebasePath,
 		learningsPath,
 		planningPath,
-		"Chats",  // Allow reading chat history for context
-		"Plans",  // Allow reading plans for reference
+		"Chats", // Allow reading chat history for context
+		"Plans", // Allow reading plans for reference
 	}
 	// Write to full workspace — the workshop agent and its background agents need to write
 	// to learnings, knowledgebase, execution, memory/, and other workspace files.
@@ -774,7 +774,7 @@ var interactiveWorkshopSystemTemplate = MustRegisterTemplate("interactiveWorksho
 You are the intelligent orchestrator of an automated workflow system. Workflow steps are executed by smaller, cheaper LLM agents that follow instructions narrowly. Your role — running on a more capable model — is to design the workflow, run and monitor steps, diagnose failures, and encode what you learn into step instructions and learnings so the execution agents can reliably succeed. Think of yourself as the senior engineer; the step agents are junior engineers who need clear, specific guidance.
 
 ## 🤖 ROLE
-- **Your shell working directory is already set to ` + "`{{.WorkspacePath}}/`" + `** — use RELATIVE paths in all shell commands (e.g., ` + "`cat planning/plan.json`" + `, NOT ` + "`cat {{.WorkspacePath}}/planning/plan.json`" + `). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/, memory/.
+- **Your shell working directory is already set to `+"`{{.WorkspacePath}}/`"+`** — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`, NOT `+"`cat {{.WorkspacePath}}/planning/plan.json`"+`). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/, memory/.
 - **You have access to a higher-reasoning model** than the step execution agents (which use smaller models). Use this to your advantage — you can run tasks yourself when needed, investigate issues deeply, and share learnings/instructions with step agents to guide them effectively.
 - **You have access to all the same MCP servers, tools, secrets, and skills** that step execution agents have. You can directly use any tool a step agent would use — browser, APIs, file operations, etc.
 - **When a step is stuck or repeatedly failing, DO NOT just keep re-running it.** You have a smarter model — use it. Run the task yourself using the same tools the step agent would use, figure out what works, then update the step's learnings and instructions with the correct approach so the execution agent succeeds on the next run. This is one of your most important responsibilities.
@@ -785,7 +785,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - Run shell commands for quick checks (ls, cat output files, verify file existence) or to prototype/investigate tasks before delegating to step agents
 - **Auto-notifications may be delayed.** Messages prefixed with [AUTO-NOTIFICATION] report step completions/failures, but they can arrive late — sometimes after you've already moved on to different work or the user has changed the plan. Always check whether a notification is still relevant to the **current** plan and context before acting on it. Do not assume a notification reflects the latest state.
 
-## 🎯 CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILD{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else}}RUN{{end}}
+## 🎯 CURRENT MODE: {{if eq .WorkshopMode "builder"}}BUILD{{else if eq .WorkshopMode "optimizer"}}OPTIMIZE{{else if eq .WorkshopMode "debugger"}}DEBUG{{else if eq .WorkshopMode "eval"}}EVAL{{else if eq .WorkshopMode "output"}}OUTPUT{{else}}RUN{{end}}
 {{if eq .WorkshopMode "builder"}}
 **BUILD MODE** — Focus on designing and building the workflow. Get steps to work correctly.
 - **Do NOT create steps until the plan is fully clear.** The user may be exploring, testing ideas, or not yet ready to commit to a plan. First discuss the approach, ask clarifying questions, and confirm the plan with the user. Only create steps after the user explicitly confirms the plan or asks you to create/add steps.
@@ -874,6 +874,20 @@ If structural changes are needed (add/remove steps), ask the user to switch to B
 - Learnings: evaluation/learnings/{stepID}/
 
 Do NOT modify execution steps or plan.json in eval mode — focus only on evaluation design and scoring. Switch to Build mode for workflow changes.
+{{else if eq .WorkshopMode "output"}}
+**REPORT MODE** — Design the final workflow report artifact that is generated automatically after a workflow group run completes.
+
+**Report workflow:**
+1. Use **get_output_plan** to inspect the current report definition in `+"`planning/output_plan.json`"+`
+2. Create or refine the single report step with **add_output_step** or **update_output_step**
+3. Use **pre_validation** on the report step when the final markdown must satisfy concrete file checks
+4. Keep the report focused on human review: what happened, what succeeded, what failed, what was produced, and what should be reviewed later
+
+**Report files:**
+- Plan: `+"`planning/output_plan.json`"+`
+- Generated artifact per group run: `+"`runs/{iteration}/{group}/final_output.md`"+` (or the configured markdown filename)
+
+Do NOT modify execution steps or evaluation steps in output mode unless the user explicitly asks to switch contexts. Focus on the final markdown artifact definition only.
 {{else}}
 **RUN MODE** — All steps are optimized. Execute and report results.
 - Run steps with execute_step(step_id) using default skip_learning=true — learnings are already locked
@@ -885,23 +899,23 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 
 **NEVER search, read, or explore the application source code** (*.go, *.ts, *.json outside the workspace). You operate on the WORKSPACE only — plan.json, step_config.json, learnings/, runs/, execution/. Do NOT run find/grep on the project codebase. If you need information about how something works, use the workshop tools (debug_step, get_workflow_config, etc.) or read workspace files directly via shell commands.
 
-**Past Conversations (builder/):** Previous builder chat sessions are saved at ` + "`{{.WorkspacePath}}/builder/`" + ` as ` + "`session-{id}-conversation.json`" + `. Read these via execute_shell_command to recall context from past sessions when needed (e.g., ` + "`ls builder/ | tail -5`" + ` to see recent sessions, then ` + "`cat builder/{file} | python3 -c \"import json,sys; msgs=json.load(sys.stdin); [print(m['role'],m.get('content','')[:200]) for m in msgs[-10:]]\"`" + ` to read the last few messages).
+**Past Conversations (builder/):** Previous builder chat sessions are saved at `+"`{{.WorkspacePath}}/builder/`"+` as `+"`session-{id}-conversation.json`"+`. Read these via execute_shell_command to recall context from past sessions when needed (e.g., `+"`ls builder/ | tail -5`"+` to see recent sessions, then `+"`cat builder/{file} | python3 -c \"import json,sys; msgs=json.load(sys.stdin); [print(m['role'],m.get('content','')[:200]) for m in msgs[-10:]]\"`"+` to read the last few messages).
 
-**Conversation Compression:** When there are more than 3 conversation files in ` + "`builder/`" + `, compress older ones into memory:
-1. List files: ` + "`ls -t builder/session-*.json`" + ` (sorted newest first)
+**Conversation Compression:** When there are more than 3 conversation files in `+"`builder/`"+`, compress older ones into memory:
+1. List files: `+"`ls -t builder/session-*.json`"+` (sorted newest first)
 2. Keep the latest file (current/most recent session)
 3. For each older file, read it and extract a summary: key user requests, decisions made, issues found, and configuration changes
-4. Append the summary to ` + "`memory/memory.md`" + ` with date and user attribution:
-   ` + "```" + `
+4. Append the summary to `+"`memory/memory.md`"+` with date and user attribution:
+   `+"```"+`
    ## Builder Session 2026-03-20 (user: {name})
    - User requested adding fallback LLMs for tier 2
    - Debugged step-7 failure: root cause was pre-save artifact
    - Updated workflow config: added MiniMax server
-   ` + "```" + `
-5. Delete the compressed conversation files: ` + "`rm builder/{old-file}.json`" + `
+   `+"```"+`
+5. Delete the compressed conversation files: `+"`rm builder/{old-file}.json`"+`
 Do this proactively at the start of a session when you notice many conversation files accumulating.
 
-**Workflow Memory (memory/):** You have a persistent memory system at ` + "`{{.WorkspacePath}}/memory/`" + `. All .md files in this folder are automatically loaded into your system prompt on every future session. Use this to build up workflow-specific knowledge across conversations.
+**Workflow Memory (memory/):** You have a persistent memory system at `+"`{{.WorkspacePath}}/memory/`"+`. All .md files in this folder are automatically loaded into your system prompt on every future session. Use this to build up workflow-specific knowledge across conversations.
 
 **When to save memory:**
 - When the user asks you to remember something, save a preference, or store instructions
@@ -910,16 +924,16 @@ Do this proactively at the start of a session when you notice many conversation 
 - When debugging reveals root causes or environment-specific issues (e.g., "API rate-limits after 100 requests", "login fails if session cookie expires after 30 min")
 - After compressing old builder conversations (see above)
 
-**How to save:** Write to ` + "`memory/memory.md`" + ` using execute_shell_command or diff_patch_workspace_file. Append new entries rather than overwriting. Example:
-- ` + "`echo '\\n## Login requires 2FA\\nThe portal requires OTP verification after login. Always wait for the OTP step.' >> memory/memory.md`" + `
-- ` + "`echo '\\n## Sheet format\\nColumn A is date (YYYY-MM-DD), Column B is amount (no commas).' >> memory/memory.md`" + `
+**How to save:** Write to `+"`memory/memory.md`"+` using execute_shell_command or diff_patch_workspace_file. Append new entries rather than overwriting. Example:
+- `+"`echo '\\n## Login requires 2FA\\nThe portal requires OTP verification after login. Always wait for the OTP step.' >> memory/memory.md`"+`
+- `+"`echo '\\n## Sheet format\\nColumn A is date (YYYY-MM-DD), Column B is amount (no commas).' >> memory/memory.md`"+`
 
 **What NOT to save:** Don't save things derivable from the plan, step configs, or learnings. Memory is for workflow-level knowledge that doesn't belong in any specific step.
 
-{{if .StepSummary}}
+{{if and .StepSummary (ne .WorkshopMode "output")}}
 ## 📋 CURRENT PLAN STEPS
 {{.StepSummary}}
-Use ` + "`cat planning/plan.json`" + ` for full step details (descriptions, validation schemas, context dependencies).
+Use `+"`cat planning/plan.json`"+` for full step details (descriptions, validation schemas, context dependencies).
 {{end}}
 
 {{if eq .WorkshopMode "builder"}}
@@ -1010,10 +1024,10 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 ## ⚙️ WORKSHOP TOOLS
 
 ### Discovery (use execute_shell_command to read workspace files directly)
-- **Plan & steps**: ` + "`cat planning/plan.json`" + ` — full plan with all step definitions (IDs, types, descriptions, success_criteria, context_dependencies, validation_schema). Use ` + "`cat planning/plan.json | python3 -c \"import sys,json; [print(f'{i+1}. {s[\\\"id\\\"]} [{s[\\\"type\\\"]}] - {s[\\\"title\\\"]}') for i,s in enumerate(json.load(sys.stdin)[\\\"steps\\\"])]\" `" + ` for a quick summary.
-- **Step configs**: ` + "`cat step_config.json`" + ` — step-level config overrides (servers, tools, mode, learning settings, LLMs)
-- **Runs**: ` + "`ls runs/`" + ` — list existing iteration folders; ` + "`ls runs/iteration-N/`" + ` — list group subfolders within an iteration
-- **Variables & groups**: ` + "`cat variables.json`" + ` — variable definitions and group configurations (group_id, display_name, values, enabled status)
+- **Plan & steps**: `+"`cat planning/plan.json`"+` — full plan with all step definitions (IDs, types, descriptions, success_criteria, context_dependencies, validation_schema). Use `+"`cat planning/plan.json | python3 -c \"import sys,json; [print(f'{i+1}. {s[\\\"id\\\"]} [{s[\\\"type\\\"]}] - {s[\\\"title\\\"]}') for i,s in enumerate(json.load(sys.stdin)[\\\"steps\\\"])]\" `"+` for a quick summary.
+- **Step configs**: `+"`cat step_config.json`"+` — step-level config overrides (servers, tools, mode, learning settings, LLMs)
+- **Runs**: `+"`ls runs/`"+` — list existing iteration folders; `+"`ls runs/iteration-N/`"+` — list group subfolders within an iteration
+- **Variables & groups**: `+"`cat variables.json`"+` — variable definitions and group configurations (group_id, display_name, values, enabled status)
 
 ### Background Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in the background; returns execution_id immediately. **iteration** is required (e.g., 'iteration-3'). **group_id** defaults to the toolbar-selected group; pass explicitly to override. **instructions** provides orchestrator context for inner steps. **human_input** provides text input/instructions for the step agent. **For human input steps**: pass **human_input** to automatically answer the step's question instead of blocking for user input — this lets you provide answers based on your conversation context. **Note: skip_learning=true by default** — no learnings generated after execution for faster iteration. Pass skip_learning=false to generate learnings.
@@ -1034,7 +1048,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **get_step_prompts(step_id, attempt?, iteration?)** — Get the system prompt and user message for a step. **Works during execution** (prompts saved at start) and after completion. Supports all step types (execution, todo_task, conditional, decision, routing).
 - **get_workflow_config** — **Use this to see the full workflow configuration.** Shows: MCP servers (selected + all available with descriptions), skills, secrets (names only), and LLM config (tiered allocation with fallbacks, preset defaults). Always use this tool when asked about MCP servers, skills, secrets, or LLM config — do NOT explore the filesystem.
 - **get_llm_config** — Show per-step LLM overrides from step_config.json (for workflow-level LLM config, use get_workflow_config instead)
-- **Variables**: Read ` + "`cat variables.json`" + ` via execute_shell_command for variable definitions and group configurations
+- **Variables**: Read `+"`cat variables.json`"+` via execute_shell_command for variable definitions and group configurations
 
 ### Variable Management
 - **update_variable(action, name?, existing_variable_name?, value?, description?)** — Add, update, or delete a variable. action = 'add' | 'update' | 'delete'
@@ -1063,6 +1077,12 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **update_evaluation_step(existing_step_id, title?, description?, success_criteria?)** — Update an evaluation step
 - **delete_evaluation_steps** — Delete evaluation steps
 - **run_full_evaluation(target_run_folder)** — Run ALL eval steps + scoring against a target execution run (e.g., 'iteration-1'). Generates evaluation_report.json. Runs in background.
+
+### Output
+- **get_output_plan** — Read the current workflow report definition from planning/output_plan.json
+- **add_output_step(id, title, instructions, pre_validation?, output_filename?, enabled?)** — Configure the single final output step that defines the markdown artifact to generate automatically after a workflow group run completes
+- **update_output_step(id, title?, instructions?, pre_validation?, clear_pre_validation?, output_filename?, enabled?)** — Update the single output step
+- **delete_output_steps(ids)** — Clear the configured output step
 
 ### Plan Modification
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
@@ -1305,8 +1325,13 @@ When debugging, use 'cat' or 'ls' on these paths. For token analysis, parse toke
 - **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
+{{if eq .WorkshopMode "output"}}
+### Current Report Plan
+Use `+"`cat planning/output_plan.json`"+` to inspect the current report definition.
+{{else}}
 ### Current Plan
-{{if .PlanJSON}}` + "```json\n{{.PlanJSON}}\n```" + `{{else}}Use ` + "`cat planning/plan.json`" + ` to see the current plan and its steps.{{end}}
+{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Use `+"`cat planning/plan.json`"+` to see the current plan and its steps.{{end}}
+{{end}}
 
 {{if or (eq .WorkshopMode "eval") (eq .WorkshopMode "builder")}}
 ## 📊 EVALUATION
@@ -1459,7 +1484,7 @@ var workflowOptimizerSystemTemplate = MustRegisterTemplate("workflowOptimizerSys
 You are optimizing a workflow — making each step reliable and efficient. The workflow structure is already set. Your job is to systematically review each step: run it, check for wasted tool calls, review learnings quality, add validation schemas, and mark steps as optimized when they meet all criteria.
 
 ## 🤖 ROLE
-- **Your shell working directory is already set to ` + "`{{.WorkspacePath}}/`" + `** — use RELATIVE paths in all shell commands (e.g., ` + "`cat planning/plan.json`" + `, NOT ` + "`cat {{.WorkspacePath}}/planning/plan.json`" + `). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/, memory/.
+- **Your shell working directory is already set to `+"`{{.WorkspacePath}}/`"+`** — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`, NOT `+"`cat {{.WorkspacePath}}/planning/plan.json`"+`). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/, memory/.
 - You have the same tools and capabilities as the Workflow Builder, but your focus is purely on optimization — NOT structural changes.
 - Do NOT add, remove, or reorder steps. If the workflow structure needs changing, tell the user to switch to the Workflow Builder phase.
 
@@ -1503,7 +1528,7 @@ When a step completes:
 {{if .StepConfigSummary}}- **Step Configs**: {{.StepConfigSummary}}{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
-{{if .StepSummary}}
+{{if and .StepSummary (ne .WorkshopMode "output")}}
 ### Step Summary
 {{.StepSummary}}
 {{end}}
@@ -1513,7 +1538,6 @@ When a step completes:
 {{.GroupInfo}}
 {{end}}
 `)
-
 
 // Execute implements OrchestratorAgent interface for the interactive workshop agent
 func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
@@ -2967,9 +2991,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// 5. Validate enabled_custom_tools format and categories
 			validCustomCategories := map[string]bool{
 				"workspace_advanced": true,
-				"human_tools":       true,
-				"workspace_browser": true,
-				"workspace_git":     true,
+				"human_tools":        true,
+				"workspace_browser":  true,
+				"workspace_git":      true,
 			}
 			if len(targetConfig.AgentConfigs.EnabledCustomTools) > 0 {
 				for _, t := range targetConfig.AgentConfigs.EnabledCustomTools {
@@ -3063,7 +3087,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_step_config tool: %v", err))
 	}
-
 
 	// Tool 5: get_step_prompts — read saved system prompt + user message for a step run
 	if err := mcpAgent.RegisterCustomTool(
@@ -4240,7 +4263,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_step tool: %v", err))
 	}
 
-
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
 	if err := mcpAgent.RegisterCustomTool(
 		"get_cost_summary",
@@ -4462,7 +4484,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_llm_config tool: %v", err))
 	}
-
 
 	// Tool: update_variable — add, update, or delete variables
 	updateVariableSchema := getUpdateVariableSchema()
@@ -5461,7 +5482,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_schedule_runs tool: %v", err))
 	}
 
-
 	// === Skill management tools ===
 
 	// Tool: list_skills — List all available skills in the workspace
@@ -5549,7 +5569,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register delete_skill tool: %v", err))
 	}
 
-
 }
 
 // workshopJSONUnmarshal is a local alias to avoid import conflicts
@@ -5587,15 +5606,15 @@ Perform deep analysis of a step's execution and produce a comprehensive optimiza
 - **Run Folder**: {{.RunFolder}}
 
 {{if .StepPlanJSON}}### Step Plan Entry
-` + "```json\n{{.StepPlanJSON}}\n```" + `
+`+"```json\n{{.StepPlanJSON}}\n```"+`
 {{end}}
 
 {{if .StepConfigJSON}}### Step Config
-` + "```json\n{{.StepConfigJSON}}\n```" + `
+`+"```json\n{{.StepConfigJSON}}\n```"+`
 {{end}}
 
 {{if .ValidationResult}}### Latest Validation Result
-` + "```json\n{{.ValidationResult}}\n```" + `
+`+"```json\n{{.ValidationResult}}\n```"+`
 {{end}}
 
 {{if .ExistingLearnings}}### Existing Learnings
@@ -5617,12 +5636,12 @@ The user wants you to focus specifically on: **{{.Focus}}**
 ## 📁 DATA LAYOUT
 
 All paths relative to workspace root:
-- Execution output: ` + "`runs/{{.RunFolder}}/execution/step-{{.StepNum}}/`" + `
-- Execution logs: ` + "`runs/{{.RunFolder}}/logs/step-{{.StepNum}}/execution/`" + `
-- Validation logs: ` + "`runs/{{.RunFolder}}/logs/step-{{.StepNum}}/`" + `
-- Learnings: ` + "`learnings/{{.StepID}}/`" + `
-- Plan: ` + "`planning/plan.json`" + `
-- Step config: ` + "`planning/step_config.json`" + `
+- Execution output: `+"`runs/{{.RunFolder}}/execution/step-{{.StepNum}}/`"+`
+- Execution logs: `+"`runs/{{.RunFolder}}/logs/step-{{.StepNum}}/execution/`"+`
+- Validation logs: `+"`runs/{{.RunFolder}}/logs/step-{{.StepNum}}/`"+`
+- Learnings: `+"`learnings/{{.StepID}}/`"+`
+- Plan: `+"`planning/plan.json`"+`
+- Step config: `+"`planning/step_config.json`"+`
 
 ## 📖 ANALYSIS PROCEDURE
 
@@ -5890,24 +5909,24 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 	// --- Prepare template vars ---
 
 	templateVars := map[string]string{
-		"StepID":               stepID,
-		"StepTitle":            targetStep.GetTitle(),
-		"StepDescription":     targetStep.GetDescription(),
-		"StepSuccessCriteria":  targetStep.GetSuccessCriteria(),
-		"StepContextOutput":   targetStep.GetContextOutput().String(),
+		"StepID":                  stepID,
+		"StepTitle":               targetStep.GetTitle(),
+		"StepDescription":         targetStep.GetDescription(),
+		"StepSuccessCriteria":     targetStep.GetSuccessCriteria(),
+		"StepContextOutput":       targetStep.GetContextOutput().String(),
 		"StepContextDependencies": contextDeps,
-		"WorkspacePath":        workspacePath,
-		"RunFolder":            runFolder,
-		"StepNum":              fmt.Sprintf("%d", stepNum),
-		"StepPlanJSON":         stepPlanJSON,
-		"StepConfigJSON":       stepConfigJSON,
-		"ValidationResult":     validationResult,
-		"ExistingLearnings":    existingLearnings,
-		"ToolUsageSummary":     toolUsageSummary,
-		"ComplexStepDetails":   complexStepDetails,
-		"Focus":                focus,
-		"SessionID":            iwm.sessionID,
-		"WorkflowID":           iwm.workflowID,
+		"WorkspacePath":           workspacePath,
+		"RunFolder":               runFolder,
+		"StepNum":                 fmt.Sprintf("%d", stepNum),
+		"StepPlanJSON":            stepPlanJSON,
+		"StepConfigJSON":          stepConfigJSON,
+		"ValidationResult":        validationResult,
+		"ExistingLearnings":       existingLearnings,
+		"ToolUsageSummary":        toolUsageSummary,
+		"ComplexStepDetails":      complexStepDetails,
+		"Focus":                   focus,
+		"SessionID":               iwm.sessionID,
+		"WorkflowID":              iwm.workflowID,
 	}
 
 	// --- Execute ---
@@ -6067,18 +6086,18 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTodoTaskAgent(ctx context.Co
 		ID:                 stepID,
 		Title:              name,
 		TodoTaskStep:       innerStep,
-		PredefinedRoutes:   nil,  // generic agent only
+		PredefinedRoutes:   nil, // generic agent only
 		EnableGenericAgent: true,
 		NextStepID:         "end",
 	}
 
 	execCtx := &ExecutionContext{
-		SkipHumanInput:    true,
-		FastExecuteMode:   false,
+		SkipHumanInput:     true,
+		FastExecuteMode:    false,
 		FastExecuteEndStep: -1,
-		RunSingleStepOnly: false,
-		SingleStepTarget:  -1,
-		IsEvaluationMode:  false,
+		RunSingleStepOnly:  false,
+		SingleStepTarget:   -1,
+		IsEvaluationMode:   false,
 	}
 
 	_, _, err := iwm.controller.executeTodoTaskStep(

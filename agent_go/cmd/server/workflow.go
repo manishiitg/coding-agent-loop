@@ -17,6 +17,7 @@ import (
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
@@ -625,24 +626,24 @@ type RunMetadataLLM struct {
 
 // RunMetadataModels captures the LLM configuration used for the run
 type RunMetadataModels struct {
-	AllocationMode string           `json:"allocation_mode,omitempty"` // "manual" or "tiered"
-	ExecutionLLM   *RunMetadataLLM  `json:"execution_llm,omitempty"`
-	LearningLLM    *RunMetadataLLM  `json:"learning_llm,omitempty"`
-	PhaseLLM       *RunMetadataLLM  `json:"phase_llm,omitempty"`
-	Tier1          *RunMetadataLLM  `json:"tier_1,omitempty"`
-	Tier2          *RunMetadataLLM  `json:"tier_2,omitempty"`
-	Tier3          *RunMetadataLLM  `json:"tier_3,omitempty"`
-	TempOverride   *RunMetadataLLM  `json:"temp_override,omitempty"`
-	TempOverride2  *RunMetadataLLM  `json:"temp_override_2,omitempty"`
+	AllocationMode string          `json:"allocation_mode,omitempty"` // "manual" or "tiered"
+	ExecutionLLM   *RunMetadataLLM `json:"execution_llm,omitempty"`
+	LearningLLM    *RunMetadataLLM `json:"learning_llm,omitempty"`
+	PhaseLLM       *RunMetadataLLM `json:"phase_llm,omitempty"`
+	Tier1          *RunMetadataLLM `json:"tier_1,omitempty"`
+	Tier2          *RunMetadataLLM `json:"tier_2,omitempty"`
+	Tier3          *RunMetadataLLM `json:"tier_3,omitempty"`
+	TempOverride   *RunMetadataLLM `json:"temp_override,omitempty"`
+	TempOverride2  *RunMetadataLLM `json:"temp_override_2,omitempty"`
 }
 
 // RunMetadata stores lifecycle information for a run folder
 type RunMetadata struct {
 	CreatedAt   time.Time          `json:"created_at"`
 	CompletedAt *time.Time         `json:"completed_at,omitempty"`
-	Status      string             `json:"status"`                    // "running", "completed"
-	TriggeredBy string             `json:"triggered_by,omitempty"`    // "manual", "cron", "workflow_builder"
-	Models      *RunMetadataModels `json:"models,omitempty"`          // LLM config used for this run
+	Status      string             `json:"status"`                 // "running", "completed"
+	TriggeredBy string             `json:"triggered_by,omitempty"` // "manual", "cron", "workflow_builder"
+	Models      *RunMetadataModels `json:"models,omitempty"`       // LLM config used for this run
 }
 
 // RunFolderInfo represents information about a single run folder
@@ -2131,11 +2132,11 @@ func (api *StreamingAPI) handleGetAllStepLearnings(w http.ResponseWriter, r *htt
 // All fields are pointers so nil means "not updated" and non-nil means "update this field"
 type PlanStepUpdate struct {
 	// Common fields (shared by all step types)
-	Title                       *string                                    `json:"title,omitempty"`
-	Description                 *string                                    `json:"description,omitempty"`
-	SuccessCriteria             *string                                    `json:"success_criteria,omitempty"`
-	ContextDependencies         *[]string                                  `json:"context_dependencies,omitempty"`
-	ContextOutput *todo_creation_human.FlexibleContextOutput `json:"context_output,omitempty"`
+	Title               *string                                    `json:"title,omitempty"`
+	Description         *string                                    `json:"description,omitempty"`
+	SuccessCriteria     *string                                    `json:"success_criteria,omitempty"`
+	ContextDependencies *[]string                                  `json:"context_dependencies,omitempty"`
+	ContextOutput       *todo_creation_human.FlexibleContextOutput `json:"context_output,omitempty"`
 
 	// Regular step fields
 	HasLoop         *bool   `json:"has_loop,omitempty"`
@@ -2594,6 +2595,51 @@ func writeStepOverrideToWorkspace(ctx context.Context, workspacePath string, ove
 	return nil
 }
 
+// readFinalOutputConfigFromWorkspace reads planning/output_plan.json from workspace using workspace API.
+// Falls back to the legacy output/output_plan.json path for older workspaces.
+// Returns nil, nil if the file does not exist.
+func readFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) (*todo_creation_human.WorkflowFinalOutputConfig, error) {
+	for _, configPath := range []string{
+		workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath,
+		workspacePath + "/" + todo_creation_human.LegacyOutputPlanPath,
+	} {
+		content, exists, err := readFileFromWorkspace(ctx, configPath)
+		if err != nil {
+			return nil, err
+		}
+		if !exists || strings.TrimSpace(content) == "" {
+			continue
+		}
+
+		var plan todo_creation_human.WorkflowOutputPlan
+		if err := json.Unmarshal([]byte(content), &plan); err != nil {
+			return nil, fmt.Errorf("failed to parse output_plan.json: %w", err)
+		}
+		plan.Normalize()
+		return todo_creation_human.ConvertOutputPlanToFinalOutputConfig(&plan), nil
+	}
+	return nil, nil
+}
+
+// writeFinalOutputConfigToWorkspace writes planning/output_plan.json to workspace using workspace API.
+// It also cleans up the legacy output/output_plan.json path when present.
+func writeFinalOutputConfigToWorkspace(ctx context.Context, workspacePath string, cfg *todo_creation_human.WorkflowFinalOutputConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("final output config is nil")
+	}
+	plan := cfg.ToOutputPlan()
+	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
+	configJSON, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal output_plan.json: %w", err)
+	}
+	if err := writeFileToWorkspace(ctx, configPath, string(configJSON)); err != nil {
+		return err
+	}
+	_ = deleteWorkspaceFile(ctx, workspacePath+"/"+todo_creation_human.LegacyOutputPlanPath)
+	return nil
+}
+
 // deleteStepOverrideFromWorkspace deletes step_override.json from workspace using workspace API
 func deleteStepOverrideFromWorkspace(ctx context.Context, workspacePath string) error {
 	overridePath := workspacePath + "/planning/step_override.json"
@@ -2630,6 +2676,54 @@ func deleteStepOverrideFromWorkspace(ctx context.Context, workspacePath string) 
 		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
+	return nil
+}
+
+// deleteFinalOutputConfigFromWorkspace deletes planning/output_plan.json and the legacy output/output_plan.json from workspace.
+func deleteFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) error {
+	for _, configPath := range []string{
+		workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath,
+		workspacePath + "/" + todo_creation_human.LegacyOutputPlanPath,
+	} {
+		if err := deleteWorkspaceFile(ctx, configPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteWorkspaceFile(ctx context.Context, configPath string) error {
+	pathSegments := strings.Split(configPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	apiURL := getWorkspaceAPIURL() + "/api/documents/" + encodedPath + "?confirm=true"
+	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
 	return nil
 }
 
@@ -3677,6 +3771,250 @@ func (api *StreamingAPI) handleUpdateStepOverride(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(response)
 }
 
+// handleGetFinalOutputConfig returns the current planning/output_plan.json content as a simplified config view.
+func (api *StreamingAPI) handleGetFinalOutputConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := readFinalOutputConfigFromWorkspace(r.Context(), workspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read final output config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"config": cfg,
+		},
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleUpdateFinalOutputConfig updates or deletes planning/output_plan.json via the simplified config view.
+func (api *StreamingAPI) handleUpdateFinalOutputConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		WorkspacePath string                                         `json:"workspace_path"`
+		Config        *todo_creation_human.WorkflowFinalOutputConfig `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.WorkspacePath == "" {
+		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Config == nil {
+		if err := deleteFinalOutputConfigFromWorkspace(r.Context(), req.WorkspacePath); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to delete final output config: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Final output config cleared",
+			"data": map[string]interface{}{
+				"config": nil,
+			},
+		})
+		return
+	}
+
+	if err := writeFinalOutputConfigToWorkspace(r.Context(), req.WorkspacePath, req.Config); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write final output config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Final output config updated successfully",
+		"data": map[string]interface{}{
+			"config": req.Config,
+		},
+	})
+}
+
+// handleGetFinalOutputs reads the generated final output markdown for a specific group-scoped run folder.
+func (api *StreamingAPI) handleGetFinalOutputs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	workspacePath := r.URL.Query().Get("workspace_path")
+	runFolder := r.URL.Query().Get("run_folder")
+	if workspacePath == "" {
+		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	cfg, err := readFinalOutputConfigFromWorkspace(r.Context(), workspacePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read final output config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"config":  cfg,
+		"exists":  false,
+	}
+
+	if runFolder == "" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	if !strings.Contains(runFolder, "/") {
+		http.Error(w, "run_folder must be group-scoped (iteration-X/group-name)", http.StatusBadRequest)
+		return
+	}
+
+	filename := todo_creation_human.DefaultFinalOutputFilename
+	if cfg != nil && cfg.OutputFilename != "" {
+		filename = cfg.OutputFilename
+	}
+	outputPath := filepath.ToSlash(filepath.Join(workspacePath, "runs", runFolder, filename))
+	content, exists, err := readFileFromWorkspace(r.Context(), outputPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read final output file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	response["run_folder"] = runFolder
+	response["output_path"] = filepath.ToSlash(filepath.Join("runs", runFolder, filename))
+	response["exists"] = exists
+	if exists {
+		response["content"] = content
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleGenerateFinalOutput generates the final markdown artifact for a group-scoped run folder.
+func (api *StreamingAPI) handleGenerateFinalOutput(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		WorkspacePath string `json:"workspace_path"`
+		RunFolder     string `json:"run_folder"`
+		WorkflowTitle string `json:"workflow_title,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.WorkspacePath == "" || req.RunFolder == "" {
+		http.Error(w, "workspace_path and run_folder are required", http.StatusBadRequest)
+		return
+	}
+	if !strings.Contains(req.RunFolder, "/") {
+		http.Error(w, "run_folder must be group-scoped (iteration-X/group-name)", http.StatusBadRequest)
+		return
+	}
+
+	llmConfig := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: api.provider,
+			ModelID:  api.model,
+		},
+	}
+
+	controller, err := todo_creation_human.NewStepBasedWorkflowOrchestrator(
+		r.Context(),
+		"",
+		"",
+		api.temperature,
+		"workflow",
+		nil,
+		nil,
+		false,
+		false,
+		nil,
+		api.mcpConfigPath,
+		llmConfig,
+		30,
+		api.logger,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		true,
+		nil,
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create final output controller: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	controller.SetWorkspacePath(req.WorkspacePath)
+	controller.SetObjective(req.WorkflowTitle)
+
+	result, err := controller.GenerateFinalOutput(r.Context(), req.WorkflowTitle, req.RunFolder)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to generate final output: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
 // handleDeleteStep handles deleting a step from plan and config
 func (api *StreamingAPI) handleDeleteStep(w http.ResponseWriter, r *http.Request) {
 	// Enable CORS
@@ -4336,7 +4674,7 @@ func (api *StreamingAPI) handleGetExecutionLogs(w http.ResponseWriter, r *http.R
 							if len(child.Children) > 0 {
 								for _, execChild := range child.Children {
 									execName := filepath.Base(execChild.FilePath)
-									
+
 									// Handle standard execution attempts
 									if strings.HasPrefix(execName, "execution-attempt-") && strings.HasSuffix(execName, ".json") && !strings.Contains(execName, "-conversation") {
 										execPath := execChild.FilePath
@@ -5463,6 +5801,8 @@ var versionedConfigFiles = []string{
 	"planning/step_config.json",
 	"planning/workflow_layout.json",
 	"planning/step_override.json",
+	"planning/output_plan.json",
+	"output/output_plan.json",
 	"variables/variables.json",
 	"evaluation/evaluation_plan.json",
 }

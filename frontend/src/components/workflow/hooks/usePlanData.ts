@@ -234,13 +234,14 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
           setStepOverride(null)
           console.log('[WorkflowPlanUpdate] No step_override.json found')
         }
+
       }
 
       return planData
     }
 
     return null
-  }, [getPlanFilePath, getStepConfigFilePath])
+  }, [getPlanFilePath, getStepConfigFilePath, workspacePath, setStepOverride])
 
   // Load plan from workspace with caching to prevent duplicate API calls
   const loadPlan = useCallback(async (): Promise<void> => {
@@ -730,6 +731,7 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     } else {
       // Reset everything when no workspace
       setPlan(null)
+      setStepOverride(null)
       currentWorkspaceRef.current = null
       setError(null)
       setChanges(null)
@@ -770,4 +772,3 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
 }
 
 export default usePlanData
-

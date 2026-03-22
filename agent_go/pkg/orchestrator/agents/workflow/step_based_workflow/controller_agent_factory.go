@@ -1369,11 +1369,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createConditionalAgent(ctx context.Co
 	maxTurns := hcpo.GetMaxTurns()
 	// Note: ConditionalMaxTurns doesn't exist in AgentConfigs - using orchestrator default
 
-	// Use the LLM config passed from caller (which handles ConditionalLLM > ExecutionLLM > preset > orchestrator priority)
+	// Use the LLM config passed from caller (which handles ConditionalLLM > ExecutionLLM > tiered priority)
 	// Note: conditionalLLMConfig is selected by the caller with proper priority including ConditionalLLM
 	llmConfig := conditionalLLMConfig
 	if llmConfig == nil {
-		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: step config and preset execution LLM are both empty or invalid")
+		return nil, fmt.Errorf("no valid LLM configuration found for conditional agent: conditional override, step execution override, and tiered workflow config are unavailable")
 	}
 
 	// Create agent config with custom LLM if needed

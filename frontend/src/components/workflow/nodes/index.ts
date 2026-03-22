@@ -9,6 +9,7 @@ import { RoutingStepNode } from './RoutingStepNode'
 import { StartNode, EndNode } from './StartEndNodes'
 import { VariablesNode } from './VariablesNode'
 import { ExecutionSettingsNode } from './ExecutionSettingsNode'
+import { WorkflowArtifactNode } from './WorkflowArtifactNode'
 
 export { StepNode } from './StepNode'
 export { ConditionalNode } from './ConditionalNode'
@@ -21,6 +22,7 @@ export { RoutingStepNode } from './RoutingStepNode'
 export { StartNode, EndNode } from './StartEndNodes'
 export { VariablesNode } from './VariablesNode'
 export { ExecutionSettingsNode } from './ExecutionSettingsNode'
+export { WorkflowArtifactNode } from './WorkflowArtifactNode'
 export { NodeConfigFooter } from './NodeConfigFooter'
 
 // Node types map for React Flow
@@ -36,5 +38,6 @@ export const nodeTypes = {
   start: StartNode,
   end: EndNode,
   variables: VariablesNode,
-  'execution-settings': ExecutionSettingsNode
+  'execution-settings': ExecutionSettingsNode,
+  'workflow-artifact': WorkflowArtifactNode
 } as const

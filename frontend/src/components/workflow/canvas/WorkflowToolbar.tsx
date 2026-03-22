@@ -27,6 +27,7 @@ import {
   ArrowRight,
   ArrowDown,
   Package,
+  Wand2,
 } from 'lucide-react'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
@@ -44,6 +45,7 @@ import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
 import CostsPopup from '../CostsPopup'
 import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
+import FinalOutputPopup from '../FinalOutputPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
@@ -160,7 +162,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setSelectedGroupIds,
     clearSelectedGroupIds,
     restoreSelectionFromLocalStorage,
-    workflowMode,
     workflowWorkspaceView,
     workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView,
@@ -185,7 +186,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setSelectedGroupIds: state.setSelectedGroupIds,
     clearSelectedGroupIds: state.clearSelectedGroupIds,
     restoreSelectionFromLocalStorage: state.restoreSelectionFromLocalStorage,
-    workflowMode: state.workflowMode,
     workflowWorkspaceView: state.workflowWorkspaceView,
     workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
@@ -193,13 +193,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     setLayoutDirection: state.setLayoutDirection
   })))
 
-  // Reset start point when switching to eval mode
-  useEffect(() => {
-    if (workflowMode === 'eval' && selectedStartPoint !== 0) {
-      setStartPoint(0)
-    }
-  }, [workflowMode, selectedStartPoint, setStartPoint])
-
+  // Reset start point when switching away from plan mode
   // Calculate the best run folder to use for popups (context-aware)
   // Priority: currentRunningGroupId > selectedRunFolder (if group path) > first selectedGroupIds
   const contextRunFolder = useMemo(() => {
@@ -231,6 +225,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Evaluation popup state
   const [showEvaluationPopup, setShowEvaluationPopup] = useState(false)
+  const [showFinalOutputPopup, setShowFinalOutputPopup] = useState(false)
 
   // Versions popup state
   const [showVersionsPopup, setShowVersionsPopup] = useState(false)
@@ -245,6 +240,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       setShowExecutionLogsPopup(false)
       setShowCostsPopup(false)
       setShowEvaluationPopup(false)
+      setShowFinalOutputPopup(false)
       setShowVersionsPopup(false)
     }
     prevWorkspacePathRef.current = workspacePath
@@ -283,8 +279,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Keep isRunning for other uses (like dropdown disabled state)
   const isRunning = status === 'running'
   
-  // Determine target execution phase ID based on mode
-  const targetExecutionPhaseId = workflowMode === 'eval' ? EVAL_EXECUTION_PHASE_ID : EXECUTION_PHASE_ID
+  // Main workflow execution phase for the canvas toolbar
+  const targetExecutionPhaseId = EXECUTION_PHASE_ID
   
   // Check if execution phase specifically is running (not just any phase)
   // Use a selector that only recalculates when chatTabs, pollingInterval, or sseConnections change
@@ -878,11 +874,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       { id: 'from_beginning', label: 'Start from Beginning', icon: Play, description: 'Execute all steps from start' }
     ]
     
-    // In Eval mode, only "Start from Beginning" is allowed
-    if (workflowMode === 'eval') {
-      return options
-    }
-    
     // Extract specific data inside useMemo to avoid dependency issues
     const stepProgressBranchSteps = stepProgress?.branch_steps
     const planSteps = plan?.steps
@@ -1288,8 +1279,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       return
     }
 
-    // Determine target execution phase based on mode
-    const targetExecutionPhaseId = workflowMode === 'eval' ? EVAL_EXECUTION_PHASE_ID : EXECUTION_PHASE_ID
+    const targetExecutionPhaseId = EXECUTION_PHASE_ID
 
     // Use isExecutionRunning instead of isRunning to allow execution even when other phases are running
     if (!isExecutionRunning) {
@@ -1418,7 +1408,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             >
               Execution
             </button>
-          </div>
+            </div>
         )}
         {!hasPlan ? (
           // No plan - show create button + refresh button
@@ -1428,7 +1418,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted text-foreground rounded-md hover:bg-accent transition-colors font-medium text-xs"
             >
               <Plus className="w-3.5 h-3.5" />
-              {workflowMode === 'eval' ? 'Create Evaluation Plan' : 'Build Plan'}
+              Build Plan
             </button>
             {onRefresh && (
               <TooltipProvider delayDuration={150}>
@@ -1587,8 +1577,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                           )}
                                           <span>{iteration}</span>
                                         </div>
-                                        {/* Select All / Unselect All buttons - only show if multiple groups and not in eval mode */}
-                                        {hasMultipleGroups && isExpanded && workflowMode !== 'eval' && (
+                                        {/* Select All / Unselect All buttons - only show if multiple groups */}
+                                        {hasMultipleGroups && isExpanded && (
                                           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                                             <button
                                               onClick={(e) => {
@@ -1691,8 +1681,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             }
                                           }}
                                         >
-                                          {/* Checkbox for group selection (only show if group has an ID, multiple groups exist, and not in eval mode) */}
-                                          {group.groupId && hasMultipleGroups && workflowMode !== 'eval' && (
+                                          {/* Checkbox for group selection (only show if group has an ID and multiple groups exist) */}
+                                          {group.groupId && hasMultipleGroups && (
                                             <input
                                               type="checkbox"
                                               checked={isGroupChecked}
@@ -1770,11 +1760,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                                             {/* Only show folder icon if folder exists - checkbox is the primary indicator for selection */}
                                             {group.exists ? (
                                               <FolderOpen className="w-4 h-4" />
-                                            ) : (hasMultipleGroups && workflowMode !== 'eval') ? (
-                                              // When checkboxes are present and not in eval mode, don't show circle icon (checkbox is the indicator)
+                                            ) : hasMultipleGroups ? (
+                                              // When checkboxes are present, don't show circle icon (checkbox is the indicator)
                                               null
                                             ) : (
-                                              // Show circle if no checkboxes or in eval mode
+                                              // Show circle if no checkboxes are present
                                               <Circle className="w-4 h-4" />
                                             )}
                                             <span className="flex-1 text-xs flex items-center gap-1.5">
@@ -2159,6 +2149,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </Tooltip>
         )}
 
+        {workspacePath && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowFinalOutputPopup(true)}
+                className="p-1.5 rounded-md bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom"><p>Final report</p></TooltipContent>
+          </Tooltip>
+        )}
+
         {/* Show Versions - opens popup with version publish/revert */}
         {workspacePath && (
           <Tooltip>
@@ -2229,6 +2233,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           </TooltipTrigger>
           <TooltipContent side="bottom"><p>Settings</p></TooltipContent>
         </Tooltip>
+
         </TooltipProvider>
 
         {/* Layout Controls Group - Direction, Save and Reset */}
@@ -2400,6 +2405,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => setShowEvaluationPopup(false)}
       workspacePath={workspacePath || null}
       selectedRunFolder={contextRunFolder}
+    />
+
+    <FinalOutputPopup
+      isOpen={showFinalOutputPopup}
+      onClose={() => setShowFinalOutputPopup(false)}
+      workspacePath={workspacePath || null}
+      selectedRunFolder={contextRunFolder}
+      runFolders={runFoldersNames}
+      workflowTitle={typeof plan?.title === 'string' ? plan.title : undefined}
     />
 
     {/* Workflow Versions Popup */}

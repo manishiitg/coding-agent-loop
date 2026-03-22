@@ -1045,6 +1045,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/final-outputs", api.handleGetFinalOutputs).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/final-outputs/generate", api.handleGenerateFinalOutput).Methods("POST", "OPTIONS")
 
 	// Plan and Step Config API routes
 	apiRouter.HandleFunc("/workflow/plan/update-step", api.handleUpdatePlanStep).Methods("POST", "OPTIONS")
@@ -1054,6 +1056,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/plan/add-step", api.handleAddStep).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleGetStepOverride).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/plan/step-override", api.handleUpdateStepOverride).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/final-output", api.handleGetFinalOutputConfig).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/plan/final-output", api.handleUpdateFinalOutputConfig).Methods("POST", "OPTIONS")
 
 	// Workflow Version API routes
 	apiRouter.HandleFunc("/workflow/versions", api.handleListVersions).Methods("GET", "OPTIONS")
@@ -4934,6 +4938,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools in %s: %v", workflowPhaseID, err)
 					} else {
 						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools in %s", workflowPhaseID)
+					}
+
+					if err := todo_creation_human.RegisterOutputModificationTools(
+						underlyingAgent,
+						phaseWorkspacePath,
+						api.logger,
+						phaseReadFile,
+						phaseWriteFile,
+						phaseMoveFile,
+					); err != nil {
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register output modification tools in %s: %v", workflowPhaseID, err)
+					} else {
+						log.Printf("[WORKFLOW_PHASE] Registered output modification tools in %s", workflowPhaseID)
 					}
 
 					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)

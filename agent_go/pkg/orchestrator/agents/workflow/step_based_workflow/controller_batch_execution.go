@@ -389,6 +389,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-evaluation failed for group %s: %v", group.GroupID, evalErr))
 				// Don't fail the group if auto-evaluation fails
 			}
+			if outputErr := hcpo.MaybeRunAutoFinalOutput(ctx); outputErr != nil {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-output generation failed for group %s: %v", group.GroupID, outputErr))
+				// Don't fail the group if auto-output fails
+			}
 		}
 
 		// If single step mode was active, stop batch execution after this group

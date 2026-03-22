@@ -1035,8 +1035,8 @@ export interface ExecutionOptions {
   // Cleanup control
   skip_execution_cleanup?: boolean;  // If true, skip deleting execution folders before running steps
 
-  // Workshop mode override (builder/optimizer/debugger/runner)
-  workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval';
+  // Workshop mode override (builder/optimizer/debugger/runner/eval/output)
+  workshop_mode?: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output';
 }
 
 // Execution strategy constants (matching backend)
@@ -1367,6 +1367,44 @@ export interface EvaluationAggregate {
   highest_score: number;
   lowest_score: number;
   max_possible_score: number;
+}
+
+export interface WorkflowFinalOutputConfig {
+  enabled: boolean;
+  title?: string;
+  instructions?: string;
+  output_filename?: string;
+}
+
+export interface WorkflowOutputPlanStep {
+  id: string;
+  title?: string;
+  instructions?: string;
+  pre_validation?: ValidationSchema;
+  output_filename?: string;
+  enabled: boolean;
+}
+
+export interface WorkflowOutputPlan {
+  step?: WorkflowOutputPlanStep | null;
+}
+
+export interface WorkflowFinalOutputConfigResponse {
+  success: boolean;
+  data?: {
+    config: WorkflowFinalOutputConfig | null;
+  };
+  error?: string;
+}
+
+export interface WorkflowFinalOutputResponse {
+  success: boolean;
+  config?: WorkflowFinalOutputConfig | null;
+  exists?: boolean;
+  run_folder?: string;
+  output_path?: string;
+  content?: string;
+  error?: string;
 }
 
 // Consolidated workspace state (NEW - single API call for all workspace data)

@@ -220,10 +220,10 @@ interface WorkflowStore {
   activeWorkflowTabId: string | null  // Currently selected tab
 
   // === WORKFLOW MODE STATE ===
-  workflowMode: 'plan' | 'eval'
-  workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval'
-  workshopModeByPreset: Record<string, 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval'>
-  setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => void
+  workflowMode: 'plan' | 'eval' | 'output'
+  workshopMode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'
+  workshopModeByPreset: Record<string, 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output'>
+  setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => void
   evaluationPlan: EvaluationPlan | null
   evaluationStepProgress: StepProgress | null
   isLoadingEvaluationPlan: boolean
@@ -328,7 +328,7 @@ interface WorkflowStore {
   setStepOverride: (override: AgentConfigs | null) => void
 
   // Workflow Mode Actions
-  setWorkflowMode: (mode: 'plan' | 'eval') => void
+  setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => void
   setEvaluationPlan: (plan: EvaluationPlan | null) => void
   loadEvaluationPlan: (workspacePath: string) => Promise<void>
 
@@ -604,10 +604,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
       workflowMode: 'plan',
       workshopMode: 'builder' as const,
       workshopModeByPreset: {},
-      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval') => {
+      setWorkshopMode: (mode: 'builder' | 'optimizer' | 'debugger' | 'runner' | 'eval' | 'output') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
         set((state) => ({
           workshopMode: mode,
+          workflowMode: mode === 'eval' ? 'eval' : mode === 'output' ? 'output' : 'plan',
           workshopModeByPreset: presetId
             ? { ...state.workshopModeByPreset, [presetId]: mode }
             : state.workshopModeByPreset,
@@ -2014,8 +2015,26 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Workflow Mode Actions
-      setWorkflowMode: (mode: 'plan' | 'eval') => {
-        set({ workflowMode: mode })
+      setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => {
+        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+        set(state => ({
+          workflowMode: mode,
+          workshopMode: mode === 'eval'
+            ? 'eval'
+            : mode === 'output'
+              ? 'output'
+              : (state.workshopMode === 'eval' || state.workshopMode === 'output' ? 'builder' : state.workshopMode),
+          workshopModeByPreset: presetId
+            ? {
+                ...state.workshopModeByPreset,
+                [presetId]: mode === 'eval'
+                  ? 'eval'
+                  : mode === 'output'
+                    ? 'output'
+                    : (state.workshopMode === 'eval' || state.workshopMode === 'output' ? 'builder' : state.workshopMode)
+              }
+            : state.workshopModeByPreset
+        }))
       },
 
       setEvaluationPlan: (plan: EvaluationPlan | null) => {

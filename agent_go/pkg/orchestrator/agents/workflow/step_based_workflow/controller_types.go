@@ -72,13 +72,13 @@ type ExecutionOptions struct {
 
 	// Temporary LLM overrides (optional, overrides step-level configs for this execution only)
 	// Only applies to execution agents (not validation or learning agents)
-	// Takes highest priority over step configs, preset defaults, and orchestrator defaults for execution agents
+	// Takes highest priority over step configs and tiered execution selection
 	// Cascading fallback: tempLLM1 → tempLLM2 → step LLM (on validation failures)
 	TempOverrideLLM  *AgentLLMConfig `json:"temp_override_llm,omitempty"`  // First override LLM (used on first attempt)
 	TempOverrideLLM2 *AgentLLMConfig `json:"temp_override_llm2,omitempty"` // Second override LLM (used on second attempt if tempLLM1 fails)
 
 	// Fallback behavior when validation fails
-	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use original LLM (step config > preset > orchestrator) instead of temp override when validation fails
+	FallbackToOriginalLLMOnFailure bool `json:"fallback_to_original_llm_on_failure,omitempty"` // If true, use the normal workflow LLM path (step config > tiered) instead of temp override when validation fails
 
 	// Learning behavior when tempLLM is active (per-model control)
 	SkipLearningWhenTempLLM1 bool `json:"skip_learning_when_temp_llm1,omitempty"` // If true, skip learning phases when tempLLM1 is used (default: false, learning runs)

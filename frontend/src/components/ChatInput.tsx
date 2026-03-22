@@ -25,35 +25,80 @@ import { useWorkflowStore } from '../stores/useWorkflowStore'
 
 function WorkshopModeToggle() {
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const workflowMode = useWorkflowStore(state => state.workflowMode)
+  const setWorkflowMode = useWorkflowStore(state => state.setWorkflowMode)
   const workshopMode = useWorkflowStore(state =>
     (activePresetId && state.workshopModeByPreset[activePresetId]) || state.workshopMode
   )
   const setWorkshopMode = useWorkflowStore(state => state.setWorkshopMode)
-  const modes = [
-    { id: 'builder' as const, label: 'Build', title: 'Build — design workflow' },
-    { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize — run, analyze, fix, mark optimized' },
-    { id: 'debugger' as const, label: 'Debug', title: 'Debug — investigate existing runs and logs' },
-    { id: 'runner' as const, label: 'Run', title: 'Run — execute and report' },
-    { id: 'eval' as const, label: 'Eval', title: 'Eval — build and run evaluation plans' },
+
+  const builderModes = [
+    { id: 'builder' as const, label: 'Build', title: 'Build', description: 'Design and refine the workflow structure and step instructions.' },
+    { id: 'optimizer' as const, label: 'Optimize', title: 'Optimize', description: 'Improve reliability, learnings, validation, and step efficiency.' },
+    { id: 'debugger' as const, label: 'Debug', title: 'Debug', description: 'Inspect prior runs and failures without re-executing the workflow.' },
+    { id: 'runner' as const, label: 'Run', title: 'Run', description: 'Use the finished workflow and focus on execution results.' },
   ]
+
+  const topLevelModes = [
+    { id: 'plan' as const, label: 'Builder', title: 'Builder', description: 'Author the main workflow and choose a builder sub-mode.' },
+    { id: 'eval' as const, label: 'Eval', title: 'Eval', description: 'Create and maintain evaluation plans for completed workflow runs.' },
+    { id: 'output' as const, label: 'Report', title: 'Report', description: 'Define the final markdown report generated after workflow completion.' }
+  ]
+
   return (
-    <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
-      {modes.map(({ id, label, title }) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => setWorkshopMode(id)}
-          className={`px-2 py-1 transition-colors ${
-            workshopMode === id
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
-          }`}
-          title={title}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <TooltipProvider delayDuration={120}>
+      <div className="flex items-center gap-2">
+        <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
+          {topLevelModes.map(({ id, label, title, description }) => (
+            <Tooltip key={id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => setWorkflowMode(id)}
+                  className={`px-2.5 py-1 transition-colors ${
+                    workflowMode === id
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                  }`}
+                  aria-label={title}
+                >
+                  {label}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{description}</p>
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+
+        {workflowMode === 'plan' && (
+          <div className="flex items-center rounded-md border border-border overflow-hidden text-xs font-medium">
+            {builderModes.map(({ id, label, title, description }) => (
+              <Tooltip key={id}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => setWorkshopMode(id)}
+                    className={`px-2 py-1 transition-colors ${
+                      workshopMode === id
+                        ? 'bg-muted-foreground text-background'
+                        : 'bg-background text-muted-foreground hover:text-foreground hover:bg-muted'
+                    }`}
+                    aria-label={title}
+                  >
+                    {label}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{description}</p>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        )}
+      </div>
+    </TooltipProvider>
   )
 }
 import InlineSelectionPopup from './InlineSelectionPopup'

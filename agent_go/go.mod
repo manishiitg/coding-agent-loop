@@ -15,7 +15,7 @@ require (
 	github.com/manishiitg/mcp-agent-builder-go/workspace v0.0.0
 	github.com/manishiitg/mcpagent v1.7.3
 	github.com/manishiitg/multi-llm-provider-go v0.5.4
-	github.com/mark3labs/mcp-go v0.44.0
+	github.com/mark3labs/mcp-go v0.45.0
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/r3labs/diff/v3 v3.0.2

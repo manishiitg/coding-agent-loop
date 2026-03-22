@@ -1,6 +1,6 @@
 # 🔍 Deterministic JSON Pre-Validation Guide
 
-MCP Agent Builder implements a **Two-Layer Validation Architecture**. While LLMs provide high-level qualitative assessment, the **Pre-Validation Layer** provides high-speed, deterministic, code-based checks to ensure execution artifacts meet specific structural and consistency requirements.
+AgentForge implements a **Two-Layer Validation Architecture**. While LLMs provide high-level qualitative assessment, the **Pre-Validation Layer** provides high-speed, deterministic, code-based checks to ensure execution artifacts meet specific structural and consistency requirements.
 
 ## 🚀 Why Pre-Validation?
 

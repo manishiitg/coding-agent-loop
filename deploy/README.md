@@ -1,6 +1,6 @@
 # Deploy
 
-Deployment configs and scripts for Multi Agent Builder.
+Deployment configs and scripts for AgentForge.
 
 | Target | Path | Description |
 |--------|------|-------------|

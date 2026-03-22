@@ -1,6 +1,6 @@
 # 📧 Google Workspace (GWS) Setup
 
-MCP Agent Builder integrates with Google Workspace via the `gws` CLI. This allows agents to interact with Gmail, Drive, Calendar, and more.
+AgentForge integrates with Google Workspace via the `gws` CLI. This allows agents to interact with Gmail, Drive, Calendar, and more.
 
 ## 🚀 Quick Setup
 

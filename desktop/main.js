@@ -561,7 +561,7 @@ function killChildren() {
 function showErrorAndExit(message) {
   dialog.showMessageBoxSync({
     type: 'error',
-    title: 'Multi Agent Builder',
+    title: 'AgentForge',
     message: 'Startup failed',
     detail: message,
   });

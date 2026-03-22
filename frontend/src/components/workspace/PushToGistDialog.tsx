@@ -63,7 +63,7 @@ export default function PushToGistDialog({
           'Accept': 'application/vnd.github.v3+json'
         },
         body: JSON.stringify({
-          description: `Uploaded from MCP Agent Builder: ${fileName}`,
+          description: `Uploaded from AgentForge: ${fileName}`,
           public: isPublic,
           files: {
             [fileName]: {

@@ -1,4 +1,4 @@
-# Multi Agent Builder — Desktop
+# AgentForge — Desktop
 
 Electron shell for the standalone Mac app. It bundles the `agent-server` and `workspace-server` binaries, managing their lifecycle automatically.
 
@@ -62,7 +62,7 @@ Artifacts will be output to `desktop/dist/`.
 
 ### Data & Logs
 The app stores data in the system's Application Support directory:
-`~/Library/Application Support/Multi Agent Builder/`
+`~/Library/Application Support/AgentForge/`
 
 - **Logs:** `logs/agent.log`, `logs/workspace.log`
 - **Database:** `chat_history.db`

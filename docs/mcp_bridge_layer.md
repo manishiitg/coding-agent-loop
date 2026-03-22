@@ -1,6 +1,6 @@
 # 🌉 MCP Bridge Layer & Exposed APIs
 
-The **MCP Bridge Layer** is a critical architectural component of the MCP Agent Builder. It acts as a universal proxy and translation layer, allowing external local CLI agents (like **Claude Code** and **Gemini CLI**) to seamlessly access the orchestrator's entire suite of loaded tools, virtual tools, and workspace capabilities.
+The **MCP Bridge Layer** is a critical architectural component of AgentForge. It acts as a universal proxy and translation layer, allowing external local CLI agents (like **Claude Code** and **Gemini CLI**) to seamlessly access the orchestrator's entire suite of loaded tools, virtual tools, and workspace capabilities.
 
 ## Architecture Overview
 

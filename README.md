@@ -1,4 +1,4 @@
-# 🚀 MCP Agent Builder - Enterprise AI Orchestrator
+# 🚀 AgentForge
 
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/manishiitg/mcp-agent-builder-go)
 [![Security Scan](https://github.com/manishiitg/mcp-agent-builder-go/workflows/Secret%20Scan/badge.svg)](https://github.com/manishiitg/mcp-agent-builder-go/actions)
@@ -7,20 +7,65 @@
 [![React](https://img.shields.io/badge/React-19.1.1-blue.svg)](https://reactjs.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**MCP Agent Builder** is a next-generation visual orchestration platform for building, simulating, and deploying **multi-agent swarms**. Built on a high-performance Go backend and a React Flow canvas, it transforms raw LLM capabilities into deterministic, scalable, and secure enterprise workflows using the Model Context Protocol (MCP).
+**AgentForge** is a multi-model agent platform for building, orchestrating, and scheduling AI workflows across coding tools, chat channels, browser automation, and human approvals.
 
-Stop wrestling with fragile chat scripts. Start visually engineering **self-optimizing cognitive architectures**.
+Run **Claude Code, Codex, Gemini CLI, and open models** in one system. Build visual workflows, launch complex orchestrators, schedule recurring jobs, and route agent conversations through **Slack, WhatsApp, and the web**.
+
+AgentForge is built for teams that want more than a chat box:
+- Build visual agent workflows and long-running orchestrators
+- Mix and match the best coding and reasoning models for each step
+- Schedule automations, recurring jobs, and background runs
+- Keep humans in the loop with approvals, feedback, and escalation paths
+- Connect agents to Slack, WhatsApp, browsers, Google Workspace, and MCP tools
+
+## Why AgentForge
+
+- **Multi-model by default**: Use Claude Code, Codex, Gemini CLI, OpenAI, Anthropic, Bedrock, Azure, MiniMax, OpenRouter, and open models in the same platform.
+- **Visual workflows plus real execution**: Design workflows on a canvas, then run them with tools, browser automation, memory, and evaluation built in.
+- **Built for operations, not demos**: Add scheduling, observability, validation, approvals, and secure workspace isolation from day one.
+- **Protocol-agnostic in practice**: MCP is supported, but AgentForge is broader than any single protocol, provider, or model vendor.
+
+## What You Can Build
+
+- **Coding workflows** that delegate across Claude Code, Codex, Gemini CLI, and open-source coding models
+- **Scheduled automations** for research, support, reporting, or back-office operations
+- **Human-in-the-loop agents** that pause for approvals, 2FA codes, or operator feedback
+- **Slack and WhatsApp agents** that continue conversations outside the dashboard
+- **Browser-powered workflows** that log in, click through apps, collect data, and complete tasks
+
+## Works With
+
+### Coding and LLM Models
+
+- **Claude Code** via the `@anthropic-ai/claude-code` CLI
+- **Codex-style agentic models** through OpenAI and Azure AI Foundry
+- **Gemini CLI** via the `@google-gemini/gemini-cli`
+- **Open-source and frontier models** through OpenRouter, Bedrock, Vertex AI, and direct provider integrations
+
+### Channels, Tools, and Connectors
+
+- **Slack**, **WhatsApp**, and custom webhook-based chat surfaces
+- **Google Workspace** for Gmail, Drive, Calendar, Docs, and Sheets
+- **Browser automation** through Vercel Agent-Browser, Camoufox, and local CDP bridging
+- **MCP servers**, local tools, workspace files, and custom connectors
+
+## Why Teams Choose It
+
+- Replace brittle prompt chains with durable workflows
+- Use the right model for the right step instead of standardizing on one vendor
+- Bring coding agents, operational automations, and human approvals into one system
+- Ship agent workflows that can be monitored, evaluated, and improved over time
 
 ---
 
-## ⚡ The Platform: Visual Agentic Programming
+## ⚡ Platform Overview
 
-At the core of MCP Agent Builder is the **[Workflow Orchestrator](docs/workflow_orchestrator.md)**—a directed acyclic graph (DAG) engine managed entirely through a rich **[React Flow Canvas](docs/react_flow_workflow_canvas.md)**. 
+At the core of AgentForge is the **[Workflow Orchestrator](docs/workflow_orchestrator.md)**, a directed acyclic graph (DAG) engine managed through a **[React Flow Canvas](docs/react_flow_workflow_canvas.md)**.
 
-Design complex business processes visually. The orchestrator drives a 7-phase execution pipeline (Extraction, Planning, Execution, Anonymization, Improvement, Alignment, Optimization) powered by 13 specialized node types.
+Design complex workflows visually, then run them with a 7-phase execution pipeline and 13 specialized node types for planning, routing, evaluation, loops, human input, and execution settings.
 
-### 🧠 Self-Optimizing Cognitive Architecture
-Move beyond static prompts. Our platform features an **"Explore vs. Exploit" Learning Engine**. 
+### 🧠 Learning, Validation, and Observability
+Move beyond static prompts with built-in optimization, validation, and run visibility.
 
 - **[Validation & Learning](docs/learnings_and_validation_architecture.md):** As your agents execute workflows, the system tracks trajectory success rates. Once a pattern stabilizes, the orchestrator automatically locks the step and cascades to faster, more cost-effective LLMs.
 - **[Deterministic Pre-Validation](docs/pre_validation_guide.md):** A high-speed, code-based validation layer that uses JSON schemas and consistency rules to verify artifacts with zero token cost and absolute precision.
@@ -29,22 +74,22 @@ Move beyond static prompts. Our platform features an **"Explore vs. Exploit" Lea
 - **[Swarm Delegation](docs/sub_agent_delegation.md):** Empower your primary agent to dynamically spawn independent sub-agents, parallelizing complex research, coding, or data extraction tasks across a distributed swarm.
 - **[Task Orchestration](docs/todo-task-step-type.md):** Intelligent sub-task routing that manages state, dependencies, and context windows automatically.
 
-### 🛡️ Enterprise-Grade Security & Guardrails
-Deploy with confidence using deterministic controls designed for strict compliance environments.
+### 🛡️ Security and Guardrails
+Deploy with deterministic controls designed for strict environments.
 - **[Zero-Trust Workspace (FolderGuard)](docs/multi_user_authentication.md):** Strict per-user filesystem isolation utilizing Linux namespaces. Agents operate in sandboxed environments, preventing cross-tenant data contamination.
 - **[Restricted Configuration Mode](docs/env-api-key-defaults.md):** Lock down the entire UI. Force the engine to route through environment-injected API keys (`LLM_CONFIG_LOCKED`), guaranteeing secrets never touch the browser.
 - **[Secure MCP OAuth](docs/oauth.md):** Seamless, auto-discovering OAuth 2.0 flows for connecting enterprise MCP servers safely.
 
-### 👁️ Omni-Channel Automation & Browser Stealth
-Interact with the real world, safely and reliably.
+### 👁️ Automation, Connectors, and Browser Control
+Connect agents to real systems and communication channels.
 - **[Google Workspace (GWS)](docs/google_workspace_integration.md):** Native CLI injection grants agents deterministic, scoped access to Gmail, Drive, Calendar, Docs, and Sheets.
 - **[Vercel Agent-Browser](https://github.com/vercel-labs/agent-browser):** High-level browser automation engine used for complex web interactions, DOM analysis, and visual grounding.
 - **[Camoufox Stealth Integration](docs/camoufox_stealth_browser.md):** Native integration with Camoufox, providing agents with anti-detect browser automation capable of bypassing the most aggressive enterprise bot-protections.
 - **[Local CDP Bridging](docs/cdp_local_browser.md):** Connect cloud agents directly to your local Chrome instance via CDP for real-time monitoring and session hijacking.
 - **[Bot Connectors](docs/bot_connector_system.md):** Expose your specialized agent swarms directly to Slack, Discord, or custom webhooks.
 
-### 🤝 Human-AI Symbiosis (Slack & Web)
-Keep humans in the loop for critical decision-making with a seamless multi-channel feedback loop.
+### 🤝 Human-in-the-Loop Operations
+Keep operators involved when workflows need approval, intervention, or additional input.
 
 - **[Human Feedback System](docs/human_feedback_system.md):** Agents can pause execution to request explicit approval, 2FA codes, or strategic guidance via real-time browser notifications or the visual dashboard.
 - **[Slack Human Connector](docs/human_feedback_system.md#slack-configuration):** 
@@ -54,9 +99,9 @@ Keep humans in the loop for critical decision-making with a seamless multi-chann
 
 ---
 
-### 🧩 Supported Cognitive Engines (LLM Providers)
+### 🧩 Supported Providers and Models
 
-MCP Agent Builder is provider-agnostic, allowing you to switch between the world's most powerful models or use them in combination across different workflow steps:
+AgentForge is provider-agnostic, so you can combine different models across different workflow steps:
 
 *   **OpenAI**: GPT-4o, GPT-4-turbo, and the O1 series.
 *   **Anthropic**: Full support for the Claude 3.5 & 4 series (Sonnet, Opus, Haiku).
@@ -66,8 +111,8 @@ MCP Agent Builder is provider-agnostic, allowing you to switch between the world
 *   **MiniMax**: Support for high-performance MiniMax models.
 *   **OpenRouter**: Unified access to 200+ open-source and frontier models with a single API key.
 
-#### 🛠️ Local CLI Agents (Coding Plans)
-Seamlessly bridge your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/mcp_bridge_layer.md)**:
+#### 🛠️ Local CLI Agents
+Bring your existing CLI-based coding agents into the visual orchestrator via the **[MCP Bridge Layer](docs/mcp_bridge_layer.md)**:
 *   **Claude Code**: Native integration with the `@anthropic-ai/claude-code` CLI.
 *   **Gemini CLI**: Integration with the `@google-gemini/gemini-cli`.
 *   **State Persistence**: Support for `--resume` functionality, allowing the visual orchestrator to maintain long-running coding sessions across CLI restarts.

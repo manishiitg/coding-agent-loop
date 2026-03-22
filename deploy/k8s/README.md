@@ -1,6 +1,6 @@
 # Kubernetes Deployment
 
-Deploy Multi Agent Builder to Kubernetes with Gemini and OpenRouter providers.
+Deploy AgentForge to Kubernetes with Gemini and OpenRouter providers.
 
 ## Services
 

@@ -82,7 +82,7 @@ export default function ServerConnectionStatus({ children }: { children: React.R
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-gray-900/95 backdrop-blur-sm" role="dialog" aria-modal>
       <div className="text-center space-y-6 p-8 max-w-md">
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold text-white">Multi Agent Builder</h1>
+          <h1 className="text-2xl font-semibold text-white">AgentForge</h1>
           <p className="text-gray-400 text-sm">Connecting to server...</p>
         </div>
         <div className="flex justify-center">

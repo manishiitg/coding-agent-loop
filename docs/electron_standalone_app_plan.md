@@ -1,4 +1,4 @@
-# Multi Agent Builder — Plan
+# AgentForge — Plan
 
 A plan for packaging mcp-agent-builder-go as a downloadable Mac app that runs the agent and workspace servers automatically—no browser or manual server startup required.
 
@@ -6,7 +6,7 @@ A plan for packaging mcp-agent-builder-go as a downloadable Mac app that runs th
 
 ## Overview
 
-Today the app runs in a browser: users start the Go agent server (and optionally the workspace server), then open the frontend. This plan describes a **standalone Electron app** for Multi Agent Builder that:
+Today the app runs in a browser: users start the Go agent server (and optionally the workspace server), then open the frontend. This plan describes a **standalone Electron app** for AgentForge that:
 
 - Bundles the **agent server** and **workspace server** as binaries inside the app.
 - **Starts both servers automatically** when the user launches the app.
@@ -137,8 +137,8 @@ These steps are recommended for a commercial or wide public release to ensure ro
 The standalone Electron application has been successfully packaged and released as **v1.21.0**.
 
 ### Artifacts Generated
-- **DMG:** `Multi Agent Builder-1.21.0-arm64.dmg`
-- **ZIP:** `Multi Agent Builder-1.21.0-arm64-mac.zip`
+- **DMG:** `AgentForge-1.21.0-arm64.dmg`
+- **ZIP:** `AgentForge-1.21.0-arm64-mac.zip`
 
 ### Key Achievements
 - **Dynamic Port Allocation:** Servers now bind to random free ports provided by the OS, eliminating port conflicts with other running instances or services.

@@ -16,7 +16,7 @@ This document describes the multi-provider authentication system and per-user wo
 
 ## Overview
 
-The Multi Agent Builder supports two modes of operation:
+AgentForge supports two modes of operation:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|

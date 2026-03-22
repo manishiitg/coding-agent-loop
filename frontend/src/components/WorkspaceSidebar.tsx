@@ -82,7 +82,7 @@ export default function WorkspaceSidebar({
     
     if (Notification.permission === 'granted') {
       new Notification('Test Notification', {
-        body: 'This is a test notification from Multi Agent Builder',
+        body: 'This is a test notification from AgentForge',
         icon: '/favicon.ico'
       })
     } else if (Notification.permission === 'default') {
@@ -90,7 +90,7 @@ export default function WorkspaceSidebar({
         setOsPermission(permission)
         if (permission === 'granted') {
           new Notification('Test Notification', {
-            body: 'This is a test notification from Multi Agent Builder',
+            body: 'This is a test notification from AgentForge',
             icon: '/favicon.ico'
           })
         }
@@ -100,7 +100,7 @@ export default function WorkspaceSidebar({
 
   const handleNotificationClick = () => {
     if (osPermission === 'denied') {
-      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > Multi Agent Builder.')
+      alert('Notifications are blocked by your system settings. Please enable them in System Settings > Notifications > AgentForge.')
       return
     }
 

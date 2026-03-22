@@ -1,6 +1,6 @@
 # Azure VM Deployment (Production)
 
-This guide describes how to deploy the Multi Agent Builder stack to an **Azure Virtual Machine (VM)**.
+This guide describes how to deploy the AgentForge stack to an **Azure Virtual Machine (VM)**.
 
 This architecture uses an Azure VM to provide full Linux kernel capabilities (namespaces, `unshare`, `mount`), which are required for the **FileSystem Isolation** features of the Workspace API.
 

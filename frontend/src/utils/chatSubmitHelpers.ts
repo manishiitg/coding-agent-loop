@@ -206,9 +206,7 @@ export function buildQueryRequestPayload(params: {
     preset_query_id: workflowPresetId || chatPresetId || undefined,
     use_code_execution_mode: correctAgentMode === 'simple' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
     use_tool_search_mode: correctAgentMode === 'simple' ? (useToolSearchMode ?? false) : useToolSearchMode,
-    execution_options: (executionOptions ?? (isWorkflowPhaseChat
-      ? useWorkflowStore.getState().buildExecutionOptions()
-      : undefined)) as AgentQueryRequest['execution_options'],
+    execution_options: executionOptions as AgentQueryRequest['execution_options'],
     enable_context_summarization: isChatLikeMode ? true : undefined,
     summarize_on_max_turns: isChatLikeMode ? true : undefined,
     summary_keep_last_messages: isChatLikeMode ? 4 : undefined,

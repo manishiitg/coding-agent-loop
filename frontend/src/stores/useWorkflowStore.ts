@@ -10,6 +10,7 @@ import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateN
 
 // Execution mode options
 export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
+export type WorkflowWorkspaceView = 'builder' | 'execution' | null
 
 // Layout direction for workflow canvas
 export type LayoutDirection = 'LR' | 'TB'
@@ -124,6 +125,8 @@ interface WorkflowStore {
   activePhase: string | null // Currently running phase
   showChatArea: boolean
   chatAreaExpanded: boolean
+  workflowWorkspaceView: WorkflowWorkspaceView
+  workflowWorkspaceSelectionTouched: boolean
   layoutDirection: LayoutDirection // Canvas layout direction ('LR' = horizontal, 'TB' = vertical)
 
   // Multi-tab chat state
@@ -215,6 +218,7 @@ interface WorkflowStore {
   setActivePhase: (phase: string | null) => void
   setShowChatArea: (show: boolean) => void
   setChatAreaExpanded: (expanded: boolean) => void
+  setWorkflowWorkspaceView: (view: WorkflowWorkspaceView) => void
   setLayoutDirection: (direction: LayoutDirection) => void
 
   // Workflow chat tabs
@@ -475,6 +479,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       activePhase: null,
       showChatArea: false,
       chatAreaExpanded: false,
+      workflowWorkspaceView: null,
+      workflowWorkspaceSelectionTouched: false,
       // Layout direction (persists across page refreshes via localStorage)
       layoutDirection: (() => {
         try {
@@ -1157,25 +1163,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
           groupsCount: state.variablesManifest?.groups?.length || 0
         })
         
-        // Use selectedGroupIds directly - they came from the UI where groups were already validated
-        // The execute button is disabled when no groups are selected, so this should always have values
+        // Use selectedGroupIds directly. Group selection is mandatory.
         if (state.selectedGroupIds.length > 0) {
           options.enabled_group_ids = state.selectedGroupIds
           console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_ids from selectedGroupIds:', state.selectedGroupIds)
-        } else if (state.variablesManifest?.groups && state.variablesManifest.groups.length > 0) {
-          // Fallback: Use all enabled groups (shouldn't happen due to UI validation, but defensive)
-          const enabledGroupIDs = state.variablesManifest.groups
-            .filter(g => g.enabled)
-            .map(g => g.group_id)
-          if (enabledGroupIDs.length > 0) {
-            options.enabled_group_ids = enabledGroupIDs
-            console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_ids from all enabled groups (fallback):', enabledGroupIDs)
-          } else {
-            console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No enabled groups found in manifest')
-          }
         } else {
-          // Single-group mode or no groups - backend handles it automatically
-          console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] No groups selected and no groups in manifest (single-group mode) - backend will handle')
+          console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No groups selected - enabled_group_ids will be omitted')
         }
 
         // Read feature toggles from preset and include when disabled (backend defaults to enabled)
@@ -1681,6 +1674,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
         set({ chatAreaExpanded: expanded })
       },
 
+      setWorkflowWorkspaceView: (view: WorkflowWorkspaceView) => {
+        set({
+          workflowWorkspaceView: view,
+          workflowWorkspaceSelectionTouched: view !== null
+        })
+      },
+
       setLayoutDirection: (direction: LayoutDirection) => {
         try {
           localStorage.setItem(LAYOUT_DIRECTION_KEY, direction)
@@ -2065,6 +2065,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
               batchProgress: null,
               workflowChatTabs: {},
               activeWorkflowTabId: null,
+              workflowWorkspaceView: null,
+              workflowWorkspaceSelectionTouched: false,
               _currentPresetId: presetId
             } as Partial<WorkflowStore>)
             return
@@ -2089,6 +2091,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
             selectedBranchStep: null,
             selectedGroupIds: [],
             activePhase: null,
+            workflowWorkspaceView: null,
+            workflowWorkspaceSelectionTouched: false,
             _currentPresetId: presetId
           }
 
@@ -2127,6 +2131,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           currentStepId: null,
           stepStatusMap: new Map(),
           batchProgress: null,
+          workflowWorkspaceView: null,
+          workflowWorkspaceSelectionTouched: false,
           // activePhase is saved/loaded per-preset, don't reset here
           workflowChatTabs: {},
           activeWorkflowTabId: null
@@ -2154,4 +2160,3 @@ export const useCompletedStepIndices = () => useWorkflowStore(state => state.ste
 
 // Legacy selector removed - use selectedGroupIds array instead
 // Group selection is now exclusively managed via checkbox multi-select (selectedGroupIds)
-

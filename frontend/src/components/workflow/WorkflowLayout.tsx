@@ -306,6 +306,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
   const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
   const stepProgress = useWorkflowStore(state => state.stepProgress)
@@ -940,6 +941,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     })
 
     setCurrentWorkflowPhase(phaseId)
+    setWorkflowWorkspaceView(
+      phaseId === 'execution' || phaseId === 'evaluation-execution'
+        ? 'execution'
+        : 'builder'
+    )
 
     // For chat-compatible phases, just open the tab without auto-submitting a query.
     // The user will type naturally in the chat input.
@@ -964,7 +970,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     // Show ChatArea (triggers mount if not already shown)
     setShowChatArea(true)
-  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById])
+  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView])
 
   // Handle create plan - always opens Workflow Builder.
   const handleCreatePlan = useCallback(() => {

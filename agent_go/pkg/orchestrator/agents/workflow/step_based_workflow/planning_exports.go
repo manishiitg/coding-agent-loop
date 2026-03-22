@@ -357,25 +357,12 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 				}
 			}
 			controller.enabledGroupIDs = cfg.EnabledGroupIDs
-		} else if existingManifest.HasGroups() {
-			// No group selected from toolbar — use first enabled group as default
-			enabledGroups := existingManifest.GetEnabledGroups()
-			if len(enabledGroups) > 0 {
-				controller.variableValues = enabledGroups[0].Values
-				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, enabledGroups[0].Values)
-				controller.enabledGroupIDs = []string{enabledGroups[0].GroupID}
-				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from first enabled group %q (%d vars)", enabledGroups[0].GroupID, len(enabledGroups[0].Values)))
-			}
-		} else {
-			// No groups — load base variable values
-			vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
-			if loadErr == nil && vals != nil {
-				controller.variableValues = vals
-				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
-				logger.Info(fmt.Sprintf("[WORKSHOP] Loaded %d base variable values (no groups)", len(vals)))
+			} else if existingManifest.HasGroups() {
+				logger.Warn("[WORKSHOP] No toolbar-selected group available — variable group selection is required for workshop context")
+			} else {
+				logger.Warn("[WORKSHOP] Variables manifest has no groups — group configuration is required for workshop context")
 			}
 		}
-	}
 
 	// Pre-load the plan so list_steps and get_step_prompts work immediately (best-effort).
 	// Use a detached context so SSE streaming or other concurrent request activity cannot
@@ -485,15 +472,10 @@ func (s *WorkshopChatSession) UpdateEnabledGroupIDs(ctx context.Context, enabled
 		} else {
 			s.controller.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in manifest during refresh", groupID))
 		}
-	} else if manifest != nil && manifest.HasGroups() {
-		enabledGroups := manifest.GetEnabledGroups()
-		if len(enabledGroups) > 0 {
-			s.controller.variableValues = enabledGroups[0].Values
-			s.controller.enabledGroupIDs = []string{enabledGroups[0].GroupID}
-			s.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Refreshed variable values from first enabled group %q", enabledGroups[0].GroupID))
+		} else if manifest != nil && manifest.HasGroups() {
+			s.controller.GetLogger().Warn("[WORKSHOP] No selected group during refresh — preserving existing workshop variable values")
 		}
 	}
-}
 
 // RegisterWorkshopChatTools registers execute_step, query_step, stop_step, list_steps,
 // update_step_config, and get_step_prompts on the given agent using the session's controller.

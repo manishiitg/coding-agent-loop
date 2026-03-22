@@ -446,11 +446,13 @@ export function validateExecutionGroups(
   const workflowStore = useWorkflowStore.getState()
   const variablesManifest = workflowStore.variablesManifest
 
-  if (!variablesManifest?.groups || variablesManifest.groups.length === 0) return null
+  if (!variablesManifest?.groups || variablesManifest.groups.length === 0) {
+    return 'Please create and enable at least one group before using workflow builder or execution.'
+  }
 
   const enabledGroupIds = executionOptions.enabled_group_ids
   if (!enabledGroupIds || enabledGroupIds.length === 0) {
-    return 'Please select at least one group to execute. Groups are available but no groups are selected.'
+    return 'Please select at least one group before using workflow builder or execution.'
   }
 
   return null

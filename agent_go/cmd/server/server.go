@@ -844,8 +844,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	}).Methods("POST", "OPTIONS")
 	sessionToolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
-		r.Header.Set("X-Session-ID", vars["session_id"])
-		executorHandlers.HandlePerToolCustomRequest(w, r, vars["tool"])
+		sid := vars["session_id"]
+		r.Header.Set("X-Session-ID", sid)
+		// Inject ChatSessionIDKey so execute_shell_command can look up
+		// the session's working directory and folder guard from the global map.
+		ctx := context.WithValue(r.Context(), common.ChatSessionIDKey, sid)
+		executorHandlers.HandlePerToolCustomRequest(w, r.WithContext(ctx), vars["tool"])
 	}).Methods("POST", "OPTIONS")
 	sessionToolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)

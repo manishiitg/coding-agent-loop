@@ -952,9 +952,10 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	var selectedSkillsStr sql.NullString
 	var selectedSecretsStr sql.NullString
 	var selectedGlobalSecretNamesStr sql.NullString
+	var employeeIDStr sql.NullString
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
-		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &preset.EmployeeID, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
+		&preset.ID, &preset.Label, &preset.Query, &selectedServersStr, &selectedToolsStr, &selectedFolderStr, &preset.AgentMode, &llmConfigNullStr, &preset.UseCodeExecutionMode, &preset.UseToolSearchMode, &preDiscoveredToolsStr, &selectedSkillsStr, &selectedSecretsStr, &selectedGlobalSecretNamesStr, &preset.EnableBrowserAccess, &preset.IsPredefined, &employeeIDStr, &preset.CreatedAt, &preset.UpdatedAt, &preset.CreatedBy,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -973,9 +974,11 @@ func (s *SupabaseDB) GetPresetQuery(ctx context.Context, id string) (*PresetQuer
 	} else {
 		preset.SelectedSecrets = "[]"
 	}
+	preset.EmployeeID = employeeIDStr
 	if selectedGlobalSecretNamesStr.Valid {
 		preset.SelectedGlobalSecretNames = selectedGlobalSecretNamesStr.String
 	}
+	preset.EmployeeID = employeeIDStr
 	if llmConfigNullStr.Valid {
 		preset.LLMConfig = json.RawMessage(llmConfigNullStr.String)
 	} else {

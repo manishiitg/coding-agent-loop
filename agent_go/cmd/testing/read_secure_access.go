@@ -131,7 +131,7 @@ Example:
 		logger.Info(fmt.Sprintf("✅ Agent created successfully"))
 
 		// Register workspace tools (including read_image)
-		workspaceTools := virtualtools.CreateWorkspaceTools()
+		workspaceTools := append(virtualtools.CreateWorkspaceBasicTools(), virtualtools.CreateWorkspaceAdvancedTools()...)
 		workspaceExecutors := virtualtools.CreateWorkspaceToolExecutors()
 
 		logger.Info(fmt.Sprintf("Registering %d workspace tools", len(workspaceTools)))

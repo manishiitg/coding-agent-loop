@@ -4061,7 +4061,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					toolName := tool.Function.Name
 
 					// Skip workspace tools - already registered above
-					if toolCategories[toolName] == virtualtools.GetWorkspaceToolCategory() {
+					if toolCategories[toolName] == "workspace_tools" {
 						continue
 					}
 

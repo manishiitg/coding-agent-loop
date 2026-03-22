@@ -5,7 +5,6 @@ import (
 	"os"
 
 	"github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
@@ -73,29 +72,10 @@ const (
 	FolderGuardAllowedWriteFolderKey = common.FolderGuardAllowedWriteFolderKey
 )
 
-// CreateWorkspaceTools creates all workspace-related virtual tools (basic + git + advanced)
-// This is the backward-compatible function that returns all tools
-func CreateWorkspaceTools() []llmtypes.Tool {
-	// Combine basic, git, and advanced tools for backward compatibility
-	tools := CreateWorkspaceBasicTools()
-	tools = append(tools, CreateWorkspaceGitTools()...)
-	tools = append(tools, CreateWorkspaceAdvancedTools()...)
-	return tools
-}
-
-// GetWorkspaceToolCategory returns the category name for all workspace tools (backward compatible)
-func GetWorkspaceToolCategory() string {
-	return "workspace_tools"
-}
 
 // CreateWorkspaceToolExecutors creates the execution functions for all workspace tools (basic + advanced)
-// This is the backward-compatible function that returns all executors
 func CreateWorkspaceToolExecutors() map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	// Combine basic, git, and advanced executors for backward compatibility
 	executors := CreateWorkspaceBasicToolExecutors()
-	for k, v := range CreateWorkspaceGitToolExecutors() {
-		executors[k] = v
-	}
 	for k, v := range CreateWorkspaceAdvancedToolExecutors() {
 		executors[k] = v
 	}

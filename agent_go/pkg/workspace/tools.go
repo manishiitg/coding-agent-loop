@@ -109,93 +109,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 		},
 	})
 
-	// Add regex_search_workspace_files tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "regex_search_workspace_files",
-			Description: "Search files in the workspace using regex patterns across full content. Searches text-based files within the specified folder only. Requires 'folder' parameter.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "Regex search query to find in files (e.g., 'docker', 'test.*file', \\d{4}-\\d{2}-\\d{2}', '(error|exception)', 'markdown')",
-					},
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required.",
-					},
-					"limit": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum number of results to return (default: 20, max: 100)",
-					},
-				},
-				"required": []string{"query", "folder"},
-			}),
-		},
-	})
-
-	// Add semantic_search_workspace_files tool only if enabled
-	if IsSemanticSearchEnabled() {
-		tools = append(tools, llmtypes.Tool{
-			Type: "function",
-			Function: &llmtypes.FunctionDefinition{
-				Name:        "semantic_search_workspace_files",
-				Description: "Search files using AI-powered semantic similarity. Finds content by meaning, not just exact text matches. Uses embeddings to understand context and relationships between concepts. For exact text matches, use search_workspace_files tool instead.",
-				Parameters: llmtypes.NewParameters(map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"query": map[string]interface{}{
-							"type":        "string",
-							"description": "Natural language search query (e.g., 'docker configuration', 'error handling', 'API endpoints', 'authentication setup', 'database connection')",
-						},
-						"folder": map[string]interface{}{
-							"type":        "string",
-							"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). Required parameter for semantic search.",
-						},
-						"limit": map[string]interface{}{
-							"type":        "integer",
-							"description": "Maximum number of semantic results to return (default: 10, max: 50)",
-						},
-					},
-					"required": []string{"query", "folder"},
-				}),
-			},
-		})
-	}
-
-	// Add glob_discover_workspace_files tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "glob_discover_workspace_files",
-			Description: "Discover files in the workspace using glob patterns. Supports standard glob syntax: * (matches any characters), ? (matches single character), [chars] (matches character set), and ** (matches zero or more directories recursively). Examples: '*.go' finds all Go files, '**/*.md' finds all Markdown files recursively, 'docs/**/*.txt' finds all text files in docs and subdirectories.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"pattern": map[string]interface{}{
-						"type":        "string",
-						"description": "Glob pattern to match files (e.g., '*.go', '**/*.md', 'docs/**/*.txt', 'test_*.py'). Supports * for any characters, ? for single character, [chars] for character set, and ** for recursive directory matching.",
-					},
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to search within (e.g., 'docs', 'src', 'configs'). If not specified, searches from workspace root.",
-					},
-					"max_depth": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum depth of directories to search recursively (default: unlimited, -1 for unlimited)",
-					},
-					"include_dirs": map[string]interface{}{
-						"type":        "boolean",
-						"description": "Include directories in results (default: false, only files are returned)",
-					},
-				},
-				"required": []string{"pattern"},
-			}),
-		},
-	})
-
 	// Add delete_workspace_file tool
 	tools = append(tools, llmtypes.Tool{
 		Type: "function",
@@ -238,18 +151,6 @@ func GetBasicToolDefinitions() []llmtypes.Tool {
 		},
 	})
 
-	return tools
-}
-
-// GetAllToolDefinitions aggregates definitions from all categories
-func GetAllToolDefinitions() []llmtypes.Tool {
-	var tools []llmtypes.Tool
-	tools = append(tools, GetBasicToolDefinitions()...)
-	tools = append(tools, GetAdvancedToolDefinitions()...)
-	if IsGitSyncEnabled() {
-		tools = append(tools, GetGitToolDefinitions()...)
-	}
-	tools = append(tools, browser.GetToolDefinition())
 	return tools
 }
 
@@ -300,33 +201,6 @@ func NewBasicExecutor(client *Client) map[string]func(ctx context.Context, args 
 			emitWorkspaceFileEvent(ctx, "update", params.Filepath, "")
 		}
 		return result, err
-	}
-
-	executors["regex_search_workspace_files"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params RegexSearchWorkspaceFilesParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
-		}
-		return client.RegexSearchWorkspaceFiles(ctx, params)
-	}
-
-	// Only register semantic search executor if enabled
-	if IsSemanticSearchEnabled() {
-		executors["semantic_search_workspace_files"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-			var params SemanticSearchWorkspaceFilesParams
-			if err := mapToStruct(args, &params); err != nil {
-				return "", fmt.Errorf("invalid arguments: %w", err)
-			}
-			return client.SemanticSearchWorkspaceFiles(ctx, params)
-		}
-	}
-
-	executors["glob_discover_workspace_files"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-		var params GlobDiscoverWorkspaceFilesParams
-		if err := mapToStruct(args, &params); err != nil {
-			return "", fmt.Errorf("invalid arguments: %w", err)
-		}
-		return client.GlobDiscoverWorkspaceFiles(ctx, params)
 	}
 
 	executors["delete_workspace_file"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -414,31 +288,6 @@ func NewAdvancedExecutor(client *Client) map[string]func(ctx context.Context, ar
 	return executors
 }
 
-// NewGitExecutor creates executors for git workspace tools
-func NewGitExecutor(client *Client) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
-
-	if IsGitSyncEnabled() {
-		executors["sync_workspace_to_github"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-			var params SyncWorkspaceToGithubParams
-			if err := mapToStruct(args, &params); err != nil {
-				return "", fmt.Errorf("invalid arguments: %w", err)
-			}
-			return client.SyncWorkspaceToGithub(ctx, params)
-		}
-
-		executors["get_workspace_github_status"] = func(ctx context.Context, args map[string]interface{}) (string, error) {
-			var params GetWorkspaceGithubStatusParams
-			if err := mapToStruct(args, &params); err != nil {
-				return "", fmt.Errorf("invalid arguments: %w", err)
-			}
-			return client.GetWorkspaceGithubStatus(ctx, params)
-		}
-	}
-
-	return executors
-}
-
 // NewBrowserExecutor creates executors for browser tools
 func NewBrowserExecutor(client *Client) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	executors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error))
@@ -450,24 +299,3 @@ func NewBrowserExecutor(client *Client) map[string]func(ctx context.Context, arg
 	return executors
 }
 
-// NewAllExecutors creates executors for ALL workspace tools (basic, advanced, git, browser)
-func NewAllExecutors(client *Client) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
-	executors := NewBasicExecutor(client)
-
-	// Merge advanced executors
-	for k, v := range NewAdvancedExecutor(client) {
-		executors[k] = v
-	}
-
-	// Merge git executors
-	for k, v := range NewGitExecutor(client) {
-		executors[k] = v
-	}
-
-	// Merge browser executors
-	for k, v := range NewBrowserExecutor(client) {
-		executors[k] = v
-	}
-
-	return executors
-}

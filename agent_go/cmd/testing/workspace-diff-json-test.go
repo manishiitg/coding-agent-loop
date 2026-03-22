@@ -114,9 +114,9 @@ This test:
 		defer agent.Close()
 
 		// Register only the tools needed for diff testing
-		workspaceTools := virtualtools.CreateWorkspaceTools()
+		workspaceTools := append(virtualtools.CreateWorkspaceBasicTools(), virtualtools.CreateWorkspaceAdvancedTools()...)
 		directExecutors := createDirectWorkspaceExecutors(tempDir)
-		workspaceCategory := virtualtools.GetWorkspaceToolCategory()
+		workspaceCategory := "workspace_tools"
 
 		// Only register read_workspace_file and diff_patch_workspace_file
 		requiredTools := []string{"read_workspace_file", "diff_patch_workspace_file"}

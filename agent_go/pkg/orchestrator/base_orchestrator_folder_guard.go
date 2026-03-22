@@ -47,9 +47,7 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 	// Human feedback is an interactive tool that doesn't use file paths
 	// Note: human_feedback may be included in WorkspaceTools (combined in server.go createCustomTools)
 	specialTools := map[string]bool{
-		"sync_workspace_to_github":    true,
-		"get_workspace_github_status": true,
-		"human_feedback":              true,
+		"human_feedback": true,
 	}
 	if specialTools[toolName] {
 		return originalDescription
@@ -67,11 +65,8 @@ func (bo *BaseOrchestrator) EnhanceToolDescriptionWithFolderGuard(toolName, orig
 	// Tool classification (same as in WrapWorkspaceToolsWithFolderGuard)
 	readOnlyTools := map[string]bool{
 		"read_workspace_file":             true,
-		"list_workspace_files":            true,
-		"regex_search_workspace_files":    true,
-		"semantic_search_workspace_files": true,
-		"glob_discover_workspace_files":   true,
-		"execute_shell_command":           true,
+		"list_workspace_files":  true,
+		"execute_shell_command": true,
 		"read_image":                      true,
 		"read_pdf":                        true,
 	}
@@ -183,9 +178,6 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 	readOnlyTools := map[string][]string{
 		"read_workspace_file":             {"filepath"},
 		"list_workspace_files":            {"folder"},
-		"regex_search_workspace_files":    {"folder"},
-		"semantic_search_workspace_files": {"folder"},
-		"glob_discover_workspace_files":   {"folder"},
 		"execute_shell_command":           {},
 		"read_image":                      {"filepath"},
 		"read_pdf":                        {"filepath"},

@@ -306,6 +306,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const activePhase = useWorkflowStore(state => state.activePhase)
   const showChatArea = useWorkflowStore(state => state.showChatArea)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
+  const setWorkflowWorkspaceView = useWorkflowStore(state => state.setWorkflowWorkspaceView)
   const chatAreaExpandedManual = useWorkflowStore(state => state.chatAreaExpanded)
   const minimizeWorkflow = useRunningWorkflowsStore(state => state.minimizeWorkflow)
   const stepProgress = useWorkflowStore(state => state.stepProgress)
@@ -940,6 +941,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     })
 
     setCurrentWorkflowPhase(phaseId)
+    setWorkflowWorkspaceView(
+      phaseId === 'execution' || phaseId === 'evaluation-execution'
+        ? 'execution'
+        : 'builder'
+    )
 
     // For chat-compatible phases, just open the tab without auto-submitting a query.
     // The user will type naturally in the chat input.
@@ -964,9 +970,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     // Show ChatArea (triggers mount if not already shown)
     setShowChatArea(true)
-  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById])
+  }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById, setWorkflowWorkspaceView])
 
-  // Handle create plan - starts the planning or evaluation-builder phase depending on workflow mode
+  // Handle create plan - always opens Workflow Builder.
   const handleCreatePlan = useCallback(() => {
     // Ensure we're in workflow mode before creating plan (only if we have an active preset)
     if (activePresetId) {
@@ -976,23 +982,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
     }
 
-    const workflowMode = useWorkflowStore.getState().workflowMode
     const phases = useWorkflowStore.getState().phases
-
-    if (workflowMode === 'eval') {
-      const evalBuilderPhase = phases.find(p => p.id === 'evaluation-builder')
-      const evalPhaseId = evalBuilderPhase?.id || 'evaluation-builder'
-      logger.debug('WorkflowLayout', 'Create eval plan requested, starting eval designer phase:', evalPhaseId)
-      setShowChatArea(true)
-      handleStartPhase(evalPhaseId)
-    } else {
-      // Use the workflow builder phase
-      const workshopPhase = phases.find(p => p.id === 'workflow-builder')
-      const phaseId = workshopPhase?.id || 'workflow-builder'
-      logger.debug('WorkflowLayout', 'Create plan requested, starting workflow builder phase:', phaseId)
-      setShowChatArea(true)
-      handleStartPhase(phaseId)
-    }
+    const workshopPhase = phases.find(p => p.id === 'workflow-builder')
+    const phaseId = workshopPhase?.id || 'workflow-builder'
+    logger.debug('WorkflowLayout', 'Create plan requested, starting workflow builder phase:', phaseId)
+    setShowChatArea(true)
+    handleStartPhase(phaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
 
   // Minimize chat area when drawer opens to reduce renders and stop event processing

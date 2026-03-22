@@ -42,16 +42,7 @@ func (m *VariablesManifest) HasGroups() bool {
 // GetEnabledGroups returns only the enabled groups
 func (m *VariablesManifest) GetEnabledGroups() []VariableGroup {
 	if !m.HasGroups() {
-		// Single group mode: create a virtual group from Variables
-		values := make(map[string]string)
-		for _, v := range m.Variables {
-			values[v.Name] = v.Value
-		}
-		return []VariableGroup{{
-			GroupID: "group-1",
-			Values:  values,
-			Enabled: true,
-		}}
+		return nil
 	}
 
 	var enabled []VariableGroup
@@ -527,4 +518,3 @@ func createUpdateVariableExecutor(workspacePath string, logger loggerv2.Logger, 
 		return fmt.Sprintf("Successfully performed %s action on variables", action), nil
 	}
 }
-

@@ -54,39 +54,6 @@ const PHASE_CHAT_INFO: Record<string, {
   limitations: string[]
   showStepTypes?: boolean
 }> = {
-  'planning': {
-    title: 'Planning Agent',
-    description: 'Chat with the planning agent to create and refine your execution plan.',
-    capabilities: [
-      'View and discuss the current plan',
-      'Add, update, or remove plan steps',
-      'Reorganize step order and dependencies',
-      'Refine objectives and requirements',
-    ],
-    limitations: [
-      'Cannot execute the plan — use the Execution phase for that',
-      'Cannot read execution logs or results from previous runs',
-      'Cannot modify evaluation plans or learnings',
-      'Canvas won\'t auto-refresh — re-open the tab to see plan changes',
-    ],
-    showStepTypes: true,
-  },
-  'evaluation-builder': {
-    title: 'Evaluation Builder',
-    description: 'Design and refine evaluation plans, analyze results.',
-    capabilities: [
-      'Create new evaluation steps from the execution plan',
-      'Review evaluation scores and reasoning from past runs',
-      'Identify low-scoring steps and suggest improvements',
-      'Update, add, or remove evaluation steps',
-      'Read execution outputs for context',
-    ],
-    limitations: [
-      'Cannot modify the execution plan (use Workflow Builder)',
-      'Cannot execute evaluations — use Evaluation Execution phase',
-      'Cannot modify learnings or knowledgebase files',
-    ],
-  },
   'workflow-builder': {
     title: 'Workflow Builder',
     description: 'Execute steps, update the plan, debug, generate learnings, tweak configs, manage schedules, and run evaluations — all in one conversation.',

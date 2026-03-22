@@ -25,12 +25,12 @@ type BatchExecutionResult struct {
 	FailedGroupIDs    []string
 }
 
-// getEnabledGroupsForExecution returns the list of groups to execute
-// Priority: ExecutionOptions.EnabledGroupIDs > manifest enabled groups
+// getEnabledGroupsForExecution returns the list of groups to execute.
+// Group selection is mandatory. Priority: ExecutionOptions.EnabledGroupIDs > manifest enabled groups.
 func (hcpo *StepBasedWorkflowOrchestrator) getEnabledGroupsForExecution() []VariableGroup {
 	if hcpo.variablesManifest == nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ [GROUP SELECTION] variablesManifest is nil - using default group"))
-		return []VariableGroup{{GroupID: "group-1", Values: map[string]string{}, Enabled: true}}
+		hcpo.GetLogger().Error("❌ [GROUP SELECTION] variablesManifest is nil - group configuration is required", nil)
+		return nil
 	}
 
 	// Log available groups in manifest for debugging
@@ -76,7 +76,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getEnabledGroupsForExecution() []Vari
 			}
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ [GROUP SELECTION] Returning %d groups: %v", len(groups), returnedGroupIDs))
 		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP SELECTION] No groups found matching requested IDs, falling back to manifest enabled groups"))
+			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [GROUP SELECTION] No groups found matching requested IDs"))
 		}
 
 		// If we found at least some groups, return them (even if some were missing)
@@ -85,7 +85,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) getEnabledGroupsForExecution() []Vari
 		}
 	}
 
-	// Fall back to manifest's enabled groups
+	// Fall back to manifest's enabled groups only when the manifest defines real groups.
+	if !hcpo.variablesManifest.HasGroups() {
+		hcpo.GetLogger().Error("❌ [GROUP SELECTION] No groups defined in variables manifest - group configuration is required", nil)
+		return nil
+	}
+
 	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [GROUP SELECTION] No execution options or no matches found, using manifest's enabled groups"))
 	enabledGroups := hcpo.variablesManifest.GetEnabledGroups()
 	enabledGroupIDs := make([]string, len(enabledGroups))

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 )
 
 // ---------------------------------------------------------------------------
@@ -62,86 +62,6 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 
 {{"{{TOOL_STRUCTURE}}"}}`)
 
-var evaluationBuilderChatTemplate = MustRegisterTemplate("evaluationBuilderChatSystem", `# Evaluation Builder (Chat Mode)
-
-## 🤖 ROLE
-You are an evaluation plan designer and debugger. Help the user create, review, and refine evaluation plans — and analyze results from past evaluation runs to improve criteria.
-
-## ⚠️ RULES
-1. **Conversational**: Discuss proposed changes with the user. Apply changes when they agree.
-2. **Answer Directly**: For general questions, answer from the context below.
-3. **Read Files Only When Needed**: Only read logs/files if user asks for deep analysis.
-4. **Concrete Criteria**: Evaluation criteria must be specific and file-verifiable.
-5. **Scoring**: Use 0-10 scale. Define what constitutes each score range for clarity.
-
-## 📋 CONTEXT
-- **Workspace**: {{.WorkspacePath}}
-
-### Execution Plan
-{{if .ExecutionPlanJSON}}` + "`" + `json
-{{.ExecutionPlanJSON}}
-` + "`" + `{{else}}No execution plan found. Read it from 'planning/plan.json'.{{end}}
-
-### Evaluation Plan
-{{if .EvaluationPlanJSON}}` + "`" + `json
-{{.EvaluationPlanJSON}}
-` + "`" + `{{else}}No evaluation plan exists yet. Help the user create one using the evaluation modification tools.{{end}}
-
-{{if .EvaluationReportJSON}}### Latest Evaluation Report
-` + "`" + `json
-{{.EvaluationReportJSON}}
-` + "`" + `{{end}}
-
-## 📁 FILE LOCATIONS
-- **Evaluation Plan**: '{{.WorkspacePath}}/evaluation/evaluation_plan.json'
-- **Evaluation Reports**: '{{.WorkspacePath}}/evaluation/runs/{runFolder}/evaluation_report.json'
-- **Execution outputs**: '{{.WorkspacePath}}/runs/{iteration}/execution/'
-- **Learnings**: '{{.WorkspacePath}}/evaluation/learnings/'
-
-## 🏗️ EVAL STEP DESIGN
-Each evaluation step checks one execution step's output:
-- **step_id**: Which execution step to evaluate
-- **evaluation_criteria**: What to check (be specific — reference file names, expected fields, formats)
-- **pre_validation**: Optional code-based checks (file existence, JSON schema) that run before LLM scoring
-- **scoring**: 0-10 scale with clear rubric for each range
-
-## 📖 ANALYSIS GUIDE (when evaluation report is available)
-- **Low Scores (< 5)**: Read 'reasoning' in the report. Check if criteria were too vague or output files were missing.
-- **Criteria Issues**: If reasoning says "criteria too vague", make success_criteria more specific with exact file/field references.
-- **Missing Evidence**: If reasoning says "file not found", verify the step checks for the correct output file names.
-- **Score Inflation**: If all scores are 8-10 but outputs look mediocre, tighten the criteria.
-
-## ⚙️ AGENT EXECUTION MODES
-Each evaluation step runs as an agent. Choose the right mode via **update_step_config(step_id, use_code_execution_mode, use_tool_search_mode)**:
-
-- **Simple mode** (default): Agent calls MCP tools directly. Best for straightforward checks (read a file, verify a field).
-- **Code Execution mode** (use_code_execution_mode=true): Agent writes Python code to call tools programmatically. **Use when**:
-  - The eval step needs to parse/compare multiple files or run data transformations
-  - Complex validation logic (e.g., diff two outputs, compute metrics, check row counts)
-  - Deterministic checks that benefit from Python (regex, JSON parsing, math)
-- **Tool Search mode** (use_tool_search_mode=true): Agent discovers tools dynamically at runtime. Best when the eval step needs to use tools that aren't known at build time.
-
-**Default**: Simple mode works for most eval steps since they typically read outputs and verify criteria.
-
-## 🛠️ TOOLS
-### Evaluation Plan
-- **add_evaluation_step, update_evaluation_step, delete_evaluation_steps** — Modify the evaluation plan
-
-### Execution & Optimization
-- **execute_step(step_id)** — Run a single eval step in background
-- **query_step(execution_id)** — Check status of a running step
-- **generate_learnings(step_id, guidance?)** — Generate learnings from eval step runs
-- **optimize_step(step_id, focus?)** — Analyze and optimize an eval step
-- **analyze_step(step_id)** — Get optimization suggestions for an eval step
-- **update_step_config(step_id, ...)** — Update eval step config (mode, LLM, learning_mode, etc.)
-- **run_full_evaluation(target_run_folder)** — Run ALL eval steps + scoring against a target execution run (e.g., 'iteration-1'). Generates evaluation_report.json.
-- **list_runs** — List available execution runs to evaluate
-- **list_steps** — List all eval steps with their config
-
-Discuss changes with the user before applying them.
-
-{{"{{TOOL_STRUCTURE}}"}}`)
-
 // PhaseChatSystemPrompt generates the system prompt for any chat-compatible phase.
 // Dispatches to the correct template based on phaseId.
 func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) string {
@@ -158,11 +78,6 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 	switch phaseId {
 	case "execution-qa":
 		tmpl = executionDebuggerChatTemplate
-	case "evaluation-builder":
-		templateData["EvaluationPlanJSON"] = templateVars["EvaluationPlanJSON"]
-		templateData["EvaluationReportJSON"] = templateVars["EvaluationReportJSON"]
-		templateData["ExecutionPlanJSON"] = templateVars["ExistingPlanJSON"]
-		tmpl = evaluationBuilderChatTemplate
 	case "workflow-builder":
 		// Use the full workshop system template (same as orchestrator mode)
 		// so the chat agent gets all plan design guidance, optimization tips, etc.
@@ -177,7 +92,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["StepSummary"] = templateVars["StepSummary"]
 		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
 		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
-		templateData["PlanJSON"] = "" // Intentionally empty — agent reads plan.json on demand via shell command
+		templateData["PlanJSON"] = ""    // Intentionally empty — agent reads plan.json on demand via shell command
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
 		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
 		// the agent reads them on demand via execute_shell_command.
@@ -217,17 +132,17 @@ type SkillCallbacks struct {
 // WorkshopChatSession holds the per-session controller and step registry for interactive
 // workshop in chat mode. Create with NewWorkshopChatSession; clean up with Close().
 type WorkshopChatSession struct {
-	controller        *StepBasedWorkflowOrchestrator
-	StepRegistry      *WorkshopStepRegistry
-	sessionCtx        context.Context
-	cancelFunc        context.CancelFunc
-	toolCallQueryFunc ToolCallQueryFunc
-	mainSessionID     string
-	config            *WorkshopConfig // Original config for creating fresh controllers
-	presetQueryID          string
-	schedulerFuncs         *SchedulerCallbacks
-	skillFuncs             *SkillCallbacks
-	listAvailableSecrets   func(ctx context.Context) ([]string, error)
+	controller           *StepBasedWorkflowOrchestrator
+	StepRegistry         *WorkshopStepRegistry
+	sessionCtx           context.Context
+	cancelFunc           context.CancelFunc
+	toolCallQueryFunc    ToolCallQueryFunc
+	mainSessionID        string
+	config               *WorkshopConfig // Original config for creating fresh controllers
+	presetQueryID        string
+	schedulerFuncs       *SchedulerCallbacks
+	skillFuncs           *SkillCallbacks
+	listAvailableSecrets func(ctx context.Context) ([]string, error)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier SubAgentNotifier
@@ -265,37 +180,37 @@ type WorkshopConfig struct {
 	CustomToolExecutors  map[string]interface{}
 	ToolCategories       map[string]string
 	LLMConfig            *orchestrator.LLMConfig
-	PresetPhaseLLM *AgentLLMConfig
+	PresetPhaseLLM       *AgentLLMConfig
 	UseKnowledgebase     bool
 	LLMAllocationMode    string
 	TieredConfig         *TieredLLMConfig
 	Logger               loggerv2.Logger
 	EventBridge          mcpagent.AgentEventListener
 	// Session tracking — needed for MCP connection sharing and session cleanup
-	SessionID            string
+	SessionID string
 	// Secrets for step execution (merged global + user secrets)
-	Secrets              []orchestrator.SecretEntry
+	Secrets []orchestrator.SecretEntry
 	// Skills loaded from preset for skill-based step execution
-	SelectedSkills       []string
+	SelectedSkills []string
 	// WorkspaceEnvRef holds the env map reference for session-aware workspace executors.
 	// When set, code execution mode uses this to get MCP_API_URL with session scoping.
-	WorkspaceEnvRef      map[string]string
+	WorkspaceEnvRef map[string]string
 	// EnabledGroupIDs holds the group IDs selected from the workspace toolbar.
 	// When set, the session auto-resolves variable values and run folder for these groups.
-	EnabledGroupIDs      []string
+	EnabledGroupIDs []string
 	// ToolCallQueryFunc provides live tool call query capability for query_step_tools.
 	// Set by server.go which has access to the EventStore.
-	ToolCallQueryFunc    ToolCallQueryFunc
+	ToolCallQueryFunc ToolCallQueryFunc
 	// IsEvaluationMode when true, the controller uses evaluation/ paths for step_config, learnings, etc.
-	IsEvaluationMode     bool
+	IsEvaluationMode bool
 	// PresetQueryID is the preset this workshop belongs to (needed for schedule management)
-	PresetQueryID        string
+	PresetQueryID string
 	// SchedulerFuncs provides callbacks for schedule CRUD operations.
 	// Set by server.go which has access to the database and scheduler service.
-	SchedulerFuncs       *SchedulerCallbacks
+	SchedulerFuncs *SchedulerCallbacks
 	// SkillFuncs provides callbacks for skill import/delete operations.
 	// Set by server.go which has access to the workspace API.
-	SkillFuncs           *SkillCallbacks
+	SkillFuncs *SkillCallbacks
 	// ListAvailableSecrets returns names of all available secrets (global + user-stored).
 	// Used by get_workflow_config to show which secrets can be added.
 	ListAvailableSecrets func(ctx context.Context) ([]string, error)
@@ -442,25 +357,12 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 				}
 			}
 			controller.enabledGroupIDs = cfg.EnabledGroupIDs
-		} else if existingManifest.HasGroups() {
-			// No group selected from toolbar — use first enabled group as default
-			enabledGroups := existingManifest.GetEnabledGroups()
-			if len(enabledGroups) > 0 {
-				controller.variableValues = enabledGroups[0].Values
-				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, enabledGroups[0].Values)
-				controller.enabledGroupIDs = []string{enabledGroups[0].GroupID}
-				logger.Info(fmt.Sprintf("[WORKSHOP] Auto-set variable values from first enabled group %q (%d vars)", enabledGroups[0].GroupID, len(enabledGroups[0].Values)))
-			}
-		} else {
-			// No groups — load base variable values
-			vals, loadErr := LoadVariableValues(ctx, controller.BaseOrchestrator, cfg.WorkspacePath, cfg.WorkspacePath)
-			if loadErr == nil && vals != nil {
-				controller.variableValues = vals
-				SyncVariablesToWorkspaceEnv(controller.BaseOrchestrator, vals)
-				logger.Info(fmt.Sprintf("[WORKSHOP] Loaded %d base variable values (no groups)", len(vals)))
+			} else if existingManifest.HasGroups() {
+				logger.Warn("[WORKSHOP] No toolbar-selected group available — variable group selection is required for workshop context")
+			} else {
+				logger.Warn("[WORKSHOP] Variables manifest has no groups — group configuration is required for workshop context")
 			}
 		}
-	}
 
 	// Pre-load the plan so list_steps and get_step_prompts work immediately (best-effort).
 	// Use a detached context so SSE streaming or other concurrent request activity cannot
@@ -474,20 +376,19 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	wsn := &workshopSubAgentNotifier{registry: registry}
 	controller.SetSubAgentNotifier(wsn)
 
-
 	return &WorkshopChatSession{
-		controller:        controller,
-		StepRegistry:      registry,
-		sessionCtx:        sessionCtx,
-		cancelFunc:        cancelFunc,
-		toolCallQueryFunc: cfg.ToolCallQueryFunc,
-		mainSessionID:     cfg.SessionID,
-		config:            cfg,
-		presetQueryID:          cfg.PresetQueryID,
-		schedulerFuncs:         cfg.SchedulerFuncs,
-		skillFuncs:             cfg.SkillFuncs,
-		listAvailableSecrets:   cfg.ListAvailableSecrets,
-		workshopNotifier:  wsn,
+		controller:           controller,
+		StepRegistry:         registry,
+		sessionCtx:           sessionCtx,
+		cancelFunc:           cancelFunc,
+		toolCallQueryFunc:    cfg.ToolCallQueryFunc,
+		mainSessionID:        cfg.SessionID,
+		config:               cfg,
+		presetQueryID:        cfg.PresetQueryID,
+		schedulerFuncs:       cfg.SchedulerFuncs,
+		skillFuncs:           cfg.SkillFuncs,
+		listAvailableSecrets: cfg.ListAvailableSecrets,
+		workshopNotifier:     wsn,
 	}, nil
 }
 
@@ -571,15 +472,10 @@ func (s *WorkshopChatSession) UpdateEnabledGroupIDs(ctx context.Context, enabled
 		} else {
 			s.controller.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in manifest during refresh", groupID))
 		}
-	} else if manifest != nil && manifest.HasGroups() {
-		enabledGroups := manifest.GetEnabledGroups()
-		if len(enabledGroups) > 0 {
-			s.controller.variableValues = enabledGroups[0].Values
-			s.controller.enabledGroupIDs = []string{enabledGroups[0].GroupID}
-			s.controller.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Refreshed variable values from first enabled group %q", enabledGroups[0].GroupID))
+		} else if manifest != nil && manifest.HasGroups() {
+			s.controller.GetLogger().Warn("[WORKSHOP] No selected group during refresh — preserving existing workshop variable values")
 		}
 	}
-}
 
 // RegisterWorkshopChatTools registers execute_step, query_step, stop_step, list_steps,
 // update_step_config, and get_step_prompts on the given agent using the session's controller.
@@ -589,15 +485,15 @@ func RegisterWorkshopChatTools(
 	logger loggerv2.Logger,
 ) {
 	iwm := &InteractiveWorkshopManager{
-		controller:        session.controller,
-		stepRegistry:      session.StepRegistry,
-		sessionCtx:        session.sessionCtx,
-		toolCallQueryFunc: session.toolCallQueryFunc,
-		mainSessionID:     session.mainSessionID,
-		presetQueryID:          session.presetQueryID,
-		schedulerFuncs:         session.schedulerFuncs,
-		skillFuncs:             session.skillFuncs,
-		listAvailableSecrets:   session.listAvailableSecrets,
+		controller:           session.controller,
+		stepRegistry:         session.StepRegistry,
+		sessionCtx:           session.sessionCtx,
+		toolCallQueryFunc:    session.toolCallQueryFunc,
+		mainSessionID:        session.mainSessionID,
+		presetQueryID:        session.presetQueryID,
+		schedulerFuncs:       session.schedulerFuncs,
+		skillFuncs:           session.skillFuncs,
+		listAvailableSecrets: session.listAvailableSecrets,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
 }
@@ -739,7 +635,7 @@ func RegisterRunFullEvaluationTool(
 }
 
 // RegisterEvaluationModificationTools is the exported wrapper for registering evaluation
-// modification tools on an MCP agent. Used by server.go for evaluation-builder phase.
+// modification tools on an MCP agent. Used by server.go for workflow-builder chat sessions.
 func RegisterEvaluationModificationTools(
 	mcpAgent *mcpagent.Agent,
 	workspacePath string,

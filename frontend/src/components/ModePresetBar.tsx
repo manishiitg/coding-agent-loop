@@ -129,6 +129,7 @@ export const ModePresetBar: React.FC = () => {
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
+  const isOrganizationView = showWorkflowsOverview
 
   const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow' | 'organization') => {
     if (modeKey === 'organization') {
@@ -399,6 +400,12 @@ export const ModePresetBar: React.FC = () => {
     }
   }, [])
 
+  useEffect(() => {
+    if (isOrganizationView && showPresetDropdown) {
+      setShowPresetDropdown(false)
+    }
+  }, [isOrganizationView, showPresetDropdown])
+
   return (
     <>
       <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -445,7 +452,7 @@ export const ModePresetBar: React.FC = () => {
               {(() => {
                 // For workflow mode only, always show preset selector
                 // Chat mode no longer supports presets
-                if (selectedModeCategory === 'workflow') {
+                if (selectedModeCategory === 'workflow' && !isOrganizationView) {
                   return (
                     <div className="relative flex items-center">
                       <div className="flex items-center bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md overflow-hidden">

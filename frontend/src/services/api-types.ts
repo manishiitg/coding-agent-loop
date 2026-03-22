@@ -86,7 +86,7 @@ export interface AgentQueryRequest {
   enabled_tools?: string[]
   enabled_servers?: string[]
   selected_tools?: string[] // Array of "server:tool" strings
-  agent_mode?: 'simple' | 'workflow' | 'workflow_phase'
+  agent_mode?: 'simple' | 'workflow' | 'workflow_phase' | 'organization_chat'
   // Workflow phase chat: specifies which phase to run as a chat session
   phase_id?: string
   // Support both legacy and new config format

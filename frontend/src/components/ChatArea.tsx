@@ -978,14 +978,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const notifiedWorkshopAgentsRef = useRef<Set<string>>(new Set())
   // Skip auto-notifications until the first user-initiated message is sent.
   // On page load/SSE reconnect, old events are backfilled and would trigger 100+ stale notifications.
-  // Initialize from tab events: if the tab already has a user_message, the user previously interacted
-  // (handles ChatArea remount when showChatArea toggles without losing the interaction flag).
-  const hasUserSentMessageRef = useRef((() => {
+  // On remount (showChatArea toggle) or tab switch, check if the tab already has user messages
+  // so we don't lose the interaction flag.
+  const hasUserSentMessageRef = useRef(false)
+  useEffect(() => {
+    if (hasUserSentMessageRef.current) return // already true, no need to check
     const sessionId = activeTab?.sessionId
-    if (!sessionId) return false
+    if (!sessionId) return
     const events = useChatStore.getState().tabEvents[sessionId]
-    return events?.some(e => e.type === 'user_message') ?? false
-  })())
+    if (events?.some(e => e.type === 'user_message')) {
+      hasUserSentMessageRef.current = true
+    }
+  }, [activeTab?.sessionId])
 
   // Reusable event processing logic — shared by both SSE and polling paths.
   // Takes an events response (same shape from SSE or REST) and a tab, then processes

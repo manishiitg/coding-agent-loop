@@ -58,6 +58,7 @@ import (
 	"strconv"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/agent/prompt"
 )
 
 // ServerCmd represents the server command
@@ -4604,6 +4605,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Generate phase-specific system prompt (dispatches by phaseId)
 				phaseSystemPrompt := todo_creation_human.PhaseChatSystemPrompt(workflowPhaseID, phaseTemplateVars)
+
+				// Append code execution / tool search instructions from mcpagent.
+				// These tell the LLM HOW to call tools (via HTTP API, get_api_spec, etc.)
+				// Without these, the LLM guesses parameter names instead of discovering them.
+				if req.UseCodeExecutionMode {
+					codeExecInstructions := prompt.GetCodeExecutionInstructions("")
+					phaseSystemPrompt += "\n\n## Code Execution Mode\n" + codeExecInstructions
+				} else if req.UseToolSearchMode {
+					toolSearchInstructions := prompt.GetToolSearchInstructions()
+					phaseSystemPrompt += "\n\n## Tool Search Mode\n" + toolSearchInstructions
+				}
 
 				// Override the agent's system prompt — use SetSystemPrompt to properly set tracking flags
 				// so that rebuildSystemPromptWithUpdatedToolStructure preserves this prompt

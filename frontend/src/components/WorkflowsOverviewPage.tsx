@@ -709,6 +709,14 @@ const ORG_TOOL_GUIDE = [
 
 const OrganizationChatPanel: React.FC = () => {
   const [orgTabId, setOrgTabId] = useState<string | null>(null)
+  const hasConversationStarted = useChatStore(state => {
+    if (!orgTabId) return false
+    const tab = state.chatTabs[orgTabId]
+    if (!tab) return false
+    if (tab.isStreaming) return true
+    const sessionId = tab.sessionId
+    return !!sessionId && (state.tabEvents[sessionId]?.length ?? 0) > 0
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -776,16 +784,18 @@ const OrganizationChatPanel: React.FC = () => {
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Single assistant thread for employee and workflow management.</p>
       </div>
 
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {ORG_TOOL_GUIDE.map(tool => (
-            <div key={tool.title} className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-2">
-              <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">{tool.title}</div>
-              <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">{tool.desc}</div>
-            </div>
-          ))}
+      {!hasConversationStarted && (
+        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {ORG_TOOL_GUIDE.map(tool => (
+              <div key={tool.title} className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-2">
+                <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">{tool.title}</div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">{tool.desc}</div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 min-h-0 bg-white dark:bg-gray-900">
         {orgTabId ? (

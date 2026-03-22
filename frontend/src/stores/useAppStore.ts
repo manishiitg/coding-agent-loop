@@ -170,6 +170,7 @@ export const useAppStore = create<AppState>()(
         agentMode: state.agentMode,
         sidebarMinimized: state.sidebarMinimized,
         workspaceMinimized: state.workspaceMinimized,
+        showWorkflowsOverview: state.showWorkflowsOverview,
         selectedPresetId: state.selectedPresetId,
         useCodeExecutionMode: state.useCodeExecutionMode,
         delegationMode: state.delegationMode,
@@ -184,11 +185,14 @@ export const useAppStore = create<AppState>()(
         // File context is now mode-specific: multi-agent tabs have their own, workflow uses preset
         }),
         // Migrate old 'plan' delegationMode to 'off' (plan is now implicit in multi-agent mode)
-        version: 1,
+        version: 2,
         migrate: (persistedState: unknown, version: number) => {
           const state = persistedState as Record<string, unknown>
           if (version === 0 && state.delegationMode === 'plan') {
             state.delegationMode = 'off'
+          }
+          if (state.showWorkflowsOverview === undefined) {
+            state.showWorkflowsOverview = false
           }
           return state as unknown as AppState
         }

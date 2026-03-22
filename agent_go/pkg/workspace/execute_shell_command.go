@@ -5,68 +5,32 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
-	"sync"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
-// Global session → shell config map.
-// Set by server.go when a session is created, read by execute_shell_command.
-// This avoids the need for session-aware executor instances — one global executor
-// looks up the config per-session at call time.
-// Covers: working directory, folder guard (read/write paths for Isolator sandboxing).
-var (
-	sessionShellConfigs   = make(map[string]*SessionShellConfig)
-	sessionShellConfigsMu sync.RWMutex
-)
+// SessionShellConfig delegates to common.SessionShellConfig.
+// Kept for backward compatibility — new code should use common.SessionShellConfig directly.
+type SessionShellConfig = common.SessionShellConfig
 
-// SessionShellConfig holds per-session shell execution settings.
-type SessionShellConfig struct {
-	WorkingDir string   // Default working directory (relative to workspace-docs)
-	ReadPaths  []string // Folder guard read paths for Isolator
-	WritePaths []string // Folder guard write paths for Isolator
-}
-
-// SetSessionWorkingDir sets the default working directory for a session.
+// SetSessionWorkingDir delegates to common.SetSessionWorkingDir.
 func SetSessionWorkingDir(sessionID, dir string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.WorkingDir = dir
-	log.Printf("[SHELL] Set default working dir for session %s: %s", sessionID, dir)
+	common.SetSessionWorkingDir(sessionID, dir)
 }
 
-// SetSessionFolderGuard sets the folder guard read/write paths for a session.
-// The Isolator uses these to sandbox shell commands — restricting filesystem access.
+// SetSessionFolderGuard delegates to common.SetSessionFolderGuard.
 func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	cfg := sessionShellConfigs[sessionID]
-	if cfg == nil {
-		cfg = &SessionShellConfig{}
-		sessionShellConfigs[sessionID] = cfg
-	}
-	cfg.ReadPaths = readPaths
-	cfg.WritePaths = writePaths
-	log.Printf("[SHELL] Set folder guard for session %s: read=%v write=%v", sessionID, readPaths, writePaths)
+	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
 }
 
-// ClearSessionShellConfig removes all shell config for a session.
+// ClearSessionShellConfig delegates to common.ClearSessionShellConfig.
 func ClearSessionShellConfig(sessionID string) {
-	sessionShellConfigsMu.Lock()
-	defer sessionShellConfigsMu.Unlock()
-	delete(sessionShellConfigs, sessionID)
+	common.ClearSessionShellConfig(sessionID)
 }
 
-// getSessionShellConfig looks up the shell config for a session.
-func getSessionShellConfig(sessionID string) *SessionShellConfig {
-	sessionShellConfigsMu.RLock()
-	defer sessionShellConfigsMu.RUnlock()
-	return sessionShellConfigs[sessionID]
+// GetSessionShellConfig delegates to common.GetSessionShellConfig.
+func GetSessionShellConfig(sessionID string) *SessionShellConfig {
+	return common.GetSessionShellConfig(sessionID)
 }
 
 type ExecuteShellCommandParams struct {
@@ -103,12 +67,28 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		params.Timeout = &noTimeout
 	}
 
+	// Block direct agent-browser CLI calls via shell — must use the agent_browser tool instead.
+	// The agent_browser tool handles CDP URL resolution (host.docker.internal → IP),
+	// session tracking, and folder guard. Calling agent-browser directly via shell bypasses all of this.
+	cmdTrimmed := strings.TrimSpace(params.Command)
+	if strings.HasPrefix(cmdTrimmed, "agent-browser ") || strings.HasPrefix(cmdTrimmed, "agent-browser\t") || cmdTrimmed == "agent-browser" {
+		log.Printf("[SHELL] Blocked direct agent-browser call — must use agent_browser tool. Command: %s", params.Command)
+		return "ERROR: Do not call agent-browser directly via execute_shell_command. Use the agent_browser tool instead.\n\n" +
+			"For direct tool call mode:\n" +
+			"  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\n" +
+			"For code execution mode (MCP bridge):\n" +
+			"  Call get_api_spec(server_name=\"agent_browser\") to get the HTTP API spec,\n" +
+			"  then POST to the agent_browser endpoint via HTTP.\n\n" +
+			"The agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. " +
+			"Calling agent-browser CLI directly bypasses CDP URL resolution and will fail inside Docker.", nil
+	}
+
 	// Look up per-session shell config (working dir + folder guard)
 	sessionID := ""
 	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
 		sessionID = sid
 	}
-	sessionCfg := getSessionShellConfig(sessionID)
+	sessionCfg := GetSessionShellConfig(sessionID)
 
 	// Set default working directory:
 	// Priority: param > session config > client field > ExtraEnv > empty (workspace root)

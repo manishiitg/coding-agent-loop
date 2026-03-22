@@ -2262,11 +2262,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Load browser access mode from preset
-				if preset.EnableBrowserAccess {
+				// Resolve effective browser mode: prefer BrowserMode, fall back to EnableBrowserAccess
+				workflowBrowserMode := preset.BrowserMode
+				if workflowBrowserMode == "" && preset.EnableBrowserAccess {
+					workflowBrowserMode = "headless"
+				}
+				if workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
+					// Resolve CDP port: prefer request, fall back to preset browser_mode
+					wfCdpPort := getCdpPort(req)
+					if wfCdpPort == 0 && workflowBrowserMode == "cdp" {
+						wfCdpPort = 9222
+					}
+
 					// Add browser tools to the available tools pool
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
+					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, wfCdpPort)
 
 					allTools = append(allTools, browserTools...)
 					for name, executor := range browserExecutors {
@@ -2279,7 +2290,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							toolCategories[tool.Function.Name] = browserCategory
 						}
 					}
-					log.Printf("[WORKFLOW] Added browser tools (enable_browser_access: true, sessionID=%s)", sessionID)
+					log.Printf("[WORKFLOW] Added browser tools (mode=%s, cdp_port=%d, sessionID=%s)", workflowBrowserMode, wfCdpPort, sessionID)
 
 					// Auto-add agent-browser skill if not already selected
 					hasAgentBrowserSkill := false
@@ -4685,6 +4696,44 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 								underlyingAgent.AppendSystemPrompt(phaseBrowserPrompt)
 								log.Printf("[WORKFLOW_PHASE] Appended browser instructions to %s (mode=%s, playwright=%v, camofox=%v, agent-browser=%v)",
 									workflowPhaseID, effectiveBrowserMode, phaseBrowserCfg.HasPlaywright, phaseBrowserCfg.HasCamofox, phaseBrowserCfg.HasAgentBrowser)
+							}
+
+							// Register agent_browser tool on the chat agent for headless/CDP modes.
+							// Without this, the MCP bridge can't find agent_browser and the LLM
+							// falls back to calling agent-browser via execute_shell_command (which bypasses CDP resolution).
+							if phaseBrowserCfg.HasAgentBrowser {
+								phaseCdpPort := 0
+								if effectiveBrowserMode == "cdp" {
+									phaseCdpPort = 9222
+								}
+								phaseBrowserTools := virtualtools.CreateWorkspaceBrowserTools()
+								phaseBrowserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, phaseCdpPort)
+								phaseBrowserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+								for _, tool := range phaseBrowserTools {
+									if tool.Function == nil {
+										continue
+									}
+									if executor, exists := phaseBrowserExecutors[tool.Function.Name]; exists {
+										var params map[string]interface{}
+										if tool.Function.Parameters != nil {
+											paramsBytes, _ := json.Marshal(tool.Function.Parameters)
+											json.Unmarshal(paramsBytes, &params)
+										}
+										if params != nil {
+											if err := underlyingAgent.RegisterCustomTool(
+												tool.Function.Name,
+												tool.Function.Description,
+												params,
+												executor,
+												phaseBrowserCategory,
+											); err != nil {
+												log.Printf("[WORKFLOW_PHASE] Warning: Failed to register browser tool %s: %v", tool.Function.Name, err)
+											} else {
+												log.Printf("[WORKFLOW_PHASE] Registered browser tool: %s (category: %s, cdp_port=%d)", tool.Function.Name, phaseBrowserCategory, phaseCdpPort)
+											}
+										}
+									}
+								}
 							}
 
 							// GWS instructions (check if gws server is in selected servers)
@@ -9301,11 +9350,22 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				}
 			}
 
-			// Browser tools (same logic as normal workflow)
-			if preset.EnableBrowserAccess {
+			// Browser tools: resolve effective browser mode from preset
+			effectiveBrowserMode := preset.BrowserMode
+			if effectiveBrowserMode == "" && preset.EnableBrowserAccess {
+				effectiveBrowserMode = "headless" // Legacy preset without browser_mode
+			}
+			// agent-browser tool is used for headless and CDP modes (not playwright/camofox which use MCP servers)
+			if effectiveBrowserMode == "headless" || effectiveBrowserMode == "cdp" {
+				// Resolve CDP port: prefer request, fall back to preset browser_mode, default 9222 for CDP
+				cdpPortForBrowser := getCdpPort(req)
+				if cdpPortForBrowser == 0 && effectiveBrowserMode == "cdp" {
+					cdpPortForBrowser = 9222 // Default CDP port when preset says CDP but request doesn't include port
+				}
+
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
-				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, getCdpPort(req))
+				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPortForBrowser)
 
 				allTools = append(allTools, browserTools...)
 				for name, executor := range browserExecutors {
@@ -9316,9 +9376,9 @@ func (api *StreamingAPI) buildWorkshopConfig(
 						toolCategories[tool.Function.Name] = browserCategory
 					}
 				}
-				log.Printf("[WORKSHOP] Added browser tools (enable_browser_access: true)")
+				log.Printf("[WORKSHOP] Added browser tools (mode=%s, cdp_port=%d)", effectiveBrowserMode, cdpPortForBrowser)
 
-				// Strip playwright/camofox MCP servers (headless mode uses agent_browser)
+				// Strip playwright/camofox MCP servers (headless/CDP mode uses agent_browser)
 				var filteredServers []string
 				for _, s := range cfg.SelectedServers {
 					if s != "playwright" && s != "camofox" {

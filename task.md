@@ -31,10 +31,10 @@
 
 56. we have routing / conditional / branch... is branch step relevent anymore? depricate loop also -- done
 
-57. workspace github sync on top automatic?
-
 58. workflow view page.. to see crons/ runs / etc and manage them as a team / company
 
 59. simply the query tools tu automatically query real time logs vs file system depending on if the agent is running or not
 
 60. add claude clode reasoing effort also
+
+61. add a steer option like in codex

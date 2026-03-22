@@ -143,20 +143,59 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Determine timeout
 	timeout := getTimeoutForCommand(command)
 
-	// Build FolderGuard from context (same pattern as shell tool)
+	// Resolve folder guard and working directory — same priority as execute_shell_command.
+	// This ensures agent_browser has identical sandboxing to shell commands.
 	var folderGuard *FolderGuardConfig
-	if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+	workingDir := "."
+
+	// Look up per-session config (working dir + folder guard)
+	var sessionCfg *common.SessionShellConfig
+	if chatSessionID != "" {
+		sessionCfg = common.GetSessionShellConfig(chatSessionID)
+	}
+
+	// Working directory priority: browser downloads path > session config > default
+	if downloadsPath, ok := ctx.Value(common.BrowserDownloadsPathKey).(string); ok && downloadsPath != "" {
+		workingDir = downloadsPath
+	} else if sessionCfg != nil && sessionCfg.WorkingDir != "" {
+		workingDir = sessionCfg.WorkingDir
+	}
+
+	// Folder guard priority: session config > context system 1 > context system 2
+	if sessionCfg != nil && len(sessionCfg.WritePaths) > 0 {
+		readPaths := sessionCfg.WritePaths
+		if len(sessionCfg.ReadPaths) > 0 {
+			readPaths = common.DeduplicateStrings(append(sessionCfg.ReadPaths, sessionCfg.WritePaths...))
+		}
+		folderGuard = &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: sessionCfg.WritePaths,
+			ReadPaths:  readPaths,
+		}
+	} else if allowedWrites, ok := ctx.Value(common.FolderGuardAllowedWriteFolderKey).([]string); ok && len(allowedWrites) > 0 {
+		// Context System 1: chat/plan/prototype mode
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+		readPaths := allowedWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = common.DeduplicateStrings(append(ctxReads, allowedWrites...))
+		}
 		folderGuard = &FolderGuardConfig{
 			Enabled:    true,
 			WritePaths: allowedWrites,
-			ReadPaths:  []string{"."},
+			ReadPaths:  readPaths,
 		}
-	}
-
-	// Use browser downloads path as working directory if set (for screenshots/downloads in workflows)
-	workingDir := "."
-	if downloadsPath, ok := ctx.Value(common.BrowserDownloadsPathKey).(string); ok && downloadsPath != "" {
-		workingDir = downloadsPath
+	} else if ctxWrites, ok := ctx.Value(common.FolderGuardWritePathsKey).([]string); ok && len(ctxWrites) > 0 {
+		// Context System 2: workflow orchestrator
+		ctxReads, hasCtxReads := ctx.Value(common.FolderGuardReadPathsKey).([]string)
+		readPaths := ctxWrites
+		if hasCtxReads && len(ctxReads) > 0 {
+			readPaths = common.DeduplicateStrings(append(ctxReads, ctxWrites...))
+		}
+		folderGuard = &FolderGuardConfig{
+			Enabled:    true,
+			WritePaths: ctxWrites,
+			ReadPaths:  readPaths,
+		}
 	}
 
 	// Execute via client

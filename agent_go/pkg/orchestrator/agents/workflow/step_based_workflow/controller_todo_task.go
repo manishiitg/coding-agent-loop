@@ -723,8 +723,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	// Setup folder guard for generic agent
-	readPaths := []string{executionWorkspacePath, filepath.Join(executionWorkspacePath, stepPath)}
-	writePaths := []string{executionPath, downloadsPath}
+	// Include parent step execution path so sub-agents can write output files
+	// to the orchestrator's step folder (e.g., technical_check.json in step-3/)
+	parentStepExecutionPath := filepath.Join(executionWorkspacePath, stepPath)
+	readPaths := []string{executionWorkspacePath, parentStepExecutionPath}
+	writePaths := []string{executionPath, downloadsPath, parentStepExecutionPath}
 
 	// Add knowledgebase folder paths if enabled
 	if hcpo.UseKnowledgebase() {
@@ -886,8 +889,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	// Setup folder guard for sub-agent
-	readPaths := []string{executionWorkspacePath, filepath.Join(executionWorkspacePath, stepPath)}
-	writePaths := []string{executionPath, downloadsPath}
+	// Include parent step execution path so sub-agents can write output files
+	// to the orchestrator's step folder (e.g., technical_check.json in step-3/)
+	parentStepExecutionPath := filepath.Join(executionWorkspacePath, stepPath)
+	readPaths := []string{executionWorkspacePath, parentStepExecutionPath}
+	writePaths := []string{executionPath, downloadsPath, parentStepExecutionPath}
 
 	// Add knowledgebase folder paths if enabled
 	if hcpo.UseKnowledgebase() {

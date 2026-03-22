@@ -151,6 +151,8 @@ You have the ` + "`agent_browser`" + ` tool for browser automation. Basic workfl
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
 
+**In code execution mode:** Use get_api_spec(server_name="agent_browser") to get the HTTP API spec, then call via HTTP POST.
+
 For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
 }
 

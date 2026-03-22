@@ -745,7 +745,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
    - Did it search for tools that should already be configured? (wasted turns)
    - Did it call the wrong server/tool names? (stale learnings)
    - Could the same result be achieved with fewer tool calls?
-3. **Review and fix learnings** — Read learnings: cat learnings/{step-id}/*.md
+3. **Review and fix learnings** — Read learnings: cat learnings/{step-id}/SKILL.md
    - Do they reference the correct server/tool names matching the step config?
    - Are they guiding the agent to use the minimum number of tool calls?
    - Are they specific enough to prevent exploration/guessing?
@@ -790,7 +790,7 @@ If structural changes are needed (add/remove steps), ask the user to switch to B
 - Use **optimize_step(step_id)** to analyze an existing run — it reads execution logs, system prompts, conversation history, tool usage, and learnings, then returns a detailed analysis with fix suggestions.
 - Use **debug_step(step_id)** for deeper analysis if available.
 - Read execution output files directly: cat runs/{run_folder}/execution/{step}/output.json
-- Read learnings: cat learnings/{step-id}/*.md
+- Read learnings: cat learnings/{step-id}/SKILL.md
 - Compare step config against learnings — check for stale server/tool names.
 - Check validation logs: cat runs/{run_folder}/logs/{step}/*.json
 
@@ -1022,7 +1022,17 @@ When a step has learning_mode "human_assisted", the recommended workflow is:
 
 1. **Explore first** — Before running the step via the workflow, use execute_shell_command to manually explore the task yourself: check the environment, APIs, file paths, tool outputs. Understand what works and what doesn't.
 2. **Discuss with the user** — Share your findings and ask the user to confirm the correct approach, expected output, or any edge cases they care about.
-3. **Write the learnings** — Based on your exploration and the user's input, write specific actionable learnings directly to 'learnings/{step-id}/'. Use diff_patch_workspace_file to create or update learning files.
+3. **Write the learnings** — Based on your exploration and the user's input, write a SKILL.md file to 'learnings/{step-id}/SKILL.md' using diff_patch_workspace_file. The file MUST use YAML frontmatter format:
+   ` + "```" + `
+   ---
+   name: <step title>
+   description: "<1-2 sentence summary of what this skill teaches — optimal approach and key pitfalls>"
+   disable-model-invocation: true
+   user-invocable: false
+   ---
+   (learning content here)
+   ` + "```" + `
+   If legacy '*_learning.md' files exist, migrate their content into SKILL.md and delete them.
 4. **Lock the learnings** — Call update_step_config(step_id, lock_learnings=true) so the learning agent doesn't overwrite your hand-crafted learnings on the next run.
 5. **Run via workflow** — Now execute_step with the enriched learnings in place. The step agent will use them during execution.
 
@@ -1059,12 +1069,23 @@ After a step runs successfully, always check: could a stale/fake output file pas
 - **Wait for maturity**: Don't suggest locking learnings or disabling learning until the step has had several successful runs. Premature optimization can hurt quality.
 
 ### 3. Managing Learnings
-Learnings are stored as .md files in the workspace at 'learnings/{step-id}/'. You can read, edit, and delete them using **execute_shell_command** and **diff_patch_workspace_file**:
-- **Read learnings**: 'ls learnings/{step-id}/' to list files, then 'cat learnings/{step-id}/filename.md' to read content
+Learnings are stored as SKILL.md files in the workspace at 'learnings/{step-id}/SKILL.md'. Each learning file MUST use YAML frontmatter format:
+` + "```" + `
+---
+name: <step title>
+description: "<1-2 sentence summary of what this skill teaches — optimal approach and key pitfalls>"
+disable-model-invocation: true
+user-invocable: false
+---
+(learning content here)
+` + "```" + `
+You can read, edit, and delete them using **execute_shell_command** and **diff_patch_workspace_file**:
+- **Read learnings**: 'cat learnings/{step-id}/SKILL.md' to read the learning file
 - **Read metadata**: 'cat learnings/{step-id}/.learning_metadata.json' for iteration counts, lock status, success history
-- **Edit learnings**: Use **diff_patch_workspace_file** to update a learning file. If learnings are locked, edits are used directly by the execution agent. If unlocked, the learning agent may overwrite on next run — suggest locking after manual edits.
-- **Delete learnings**: 'rm learnings/{step-id}/*.md learnings/{step-id}/.learning_metadata.json' to reset. Then unlock learnings via update_step_config so fresh learnings are generated on next run.
+- **Edit learnings**: Use **diff_patch_workspace_file** to update SKILL.md. If learnings are locked, edits are used directly by the execution agent. If unlocked, the learning agent may overwrite on next run — suggest locking after manual edits.
+- **Delete learnings**: 'rm learnings/{step-id}/SKILL.md learnings/{step-id}/.learning_metadata.json' to reset. Then unlock learnings via update_step_config so fresh learnings are generated on next run.
 - **Lock after editing**: Always suggest lock_learnings=true after manual edits to prevent the learning agent from overwriting.
+- **Legacy migration**: If you find '*_learning.md' files (old format) instead of SKILL.md, migrate their content into a new SKILL.md with proper frontmatter and delete the legacy files.
 
 ### 4. Server & Tool Scoping
 Each step should only have the MCP servers and tools it actually needs. After a step runs, use **analyze_step** to compare configured servers vs actually used tools, then use **update_step_config** to restrict servers to the minimum required set. This reduces tool discovery noise and speeds up execution.
@@ -1096,7 +1117,7 @@ After running a step, review it for optimization — but follow this priority or
 - **Context I/O** — Are context_dependencies and context_output correct? Missing deps cause failures; incomplete outputs break downstream steps.
 
 **Priority 2 — Knowledge (fix after step works correctly):**
-- **Review learnings after every successful run** — call 'cat learnings/{step-id}/*.md' to read the current learning files. Check:
+- **Review learnings after every successful run** — call 'cat learnings/{step-id}/SKILL.md' to read the current learning file. Check:
   - Are they **specific and actionable**? Vague learnings like "be careful with the API" waste tokens. Good learnings describe exact patterns: "The /api/v2/data endpoint returns paginated results — always follow next_page_token until null."
   - Do they **contradict the step description**? If so, either update the description or delete the misleading learning.
   - Do they **match the current step config**? Cross-check learnings against the step's configured servers, tools, and description. Learnings may reference server names, tool names, or patterns from a previous config that no longer apply (e.g., learning says "use server gws" but the step now uses "google_sheets", or learning references a tool that's been removed). Stale references cause the execution agent to search for non-existent servers/tools, wasting turns and causing failures. Fix by updating the learning file with the correct names.
@@ -1200,7 +1221,7 @@ All paths below are relative to the workspace root. Use **execute_shell_command*
 - 'token_usage.json' — Aggregated token usage across all phases (planning, execution, learning, etc.)
 
 ### Learnings
-- 'learnings/{step-id}/*.md' — Learning files (task-specific patterns captured by the learning agent)
+- 'learnings/{step-id}/SKILL.md' — Learning file with YAML frontmatter (task-specific patterns captured by the learning agent)
 - 'learnings/{step-id}/code/*.py' — Code examples (for code execution mode steps)
 - 'learnings/{step-id}/.learning_metadata.json' — Metadata (iteration counts, success history, auto-lock info)
 - **Learnings are keyed purely by step ID** (e.g., 'learnings/step-icici-login/'), NOT by positional path (step-1, step-3, etc.). Each step (including sub-agent route steps) has its own learnings folder using its plan.json step ID.
@@ -1395,7 +1416,7 @@ The following steps are NOT yet optimized: **{{.UnoptimizedSteps}}**
 For each unoptimized step, follow this workflow:
 1. **Run the step** — execute_step(step_id) to get a fresh execution
 2. **Review execution quality** — check for wasted tool calls, wrong server names, unnecessary exploration
-3. **Review learnings** — read learnings/{step-id}/*.md and check:
+3. **Review learnings** — read learnings/{step-id}/SKILL.md and check:
    - Do they reference correct server/tool names matching the step config?
    - Are they specific and actionable (not vague)?
    - Do they contradict the step description?
@@ -2194,7 +2215,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q completed.\n\n%s", stepID, result), nil
 				}
-				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read learnings: 'cat learnings/%s/*.md' — are they specific and actionable? Edit or delete noisy ones.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
+				return fmt.Sprintf("Step %q completed.\n\n%s\n\n**Next actions (do these now):**\n1. Review the result against the step's success criteria\n2. Read learnings: 'cat learnings/%s/SKILL.md' — are they specific and actionable? Edit or delete noisy ones.\n3. Check learning metadata: 'cat learnings/%s/.learning_metadata.json' — if consecutive_successes >= 3, consider locking learnings.\n4. Note the highest-priority optimization from Post-Execution Step Review.\n5. If output looks wrong, investigate with debug_step(%q) or analyze_step(%q) and fix the root cause before re-running.", stepID, result, stepID, stepID, stepID, stepID), nil
 			case WorkshopStepFailed:
 				if strings.HasPrefix(execID, "bg-") {
 					return fmt.Sprintf("Background task %q failed: %v", stepID, execErr), nil

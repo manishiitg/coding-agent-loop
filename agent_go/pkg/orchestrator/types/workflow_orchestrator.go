@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/database"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/database"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -63,12 +63,6 @@ func GetWorkflowConstants() WorkflowConstants {
 				Title:       "Execution",
 				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
 				Options:     []WorkflowPhaseOption{}, // No options for execution phase
-			},
-			{
-				ID:          "evaluation-builder",
-				Title:       "Evaluation Builder",
-				Description: "Design, review, and refine evaluation plans in a free-flow conversation. Create new evaluation steps, analyze results from past runs, and improve criteria — all in one place.",
-				Options:     []WorkflowPhaseOption{},
 			},
 			{
 				ID:          "evaluation-execution",
@@ -165,7 +159,6 @@ func (wo *WorkflowOrchestrator) SetToolCallQueryFunc(fn step_based_workflow.Tool
 func (wo *WorkflowOrchestrator) SetExtraSubAgentNotifier(n step_based_workflow.SubAgentNotifier) {
 	wo.extraSubAgentNotifier = n
 }
-
 
 // SetVirtualPlan sets a synthetic plan for the workflow (used by Task Agent mode)
 func (wo *WorkflowOrchestrator) SetVirtualPlan(plan *step_based_workflow.PlanningResponse) {
@@ -420,9 +413,9 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
 
-	// workflow-builder, human-assisted-execution, and evaluation-builder are chat-only phases —
-	// they should never reach the orchestrator path. If they do, return an error.
-	if workflowStatus == "workflow-builder" || workflowStatus == "evaluation-builder" {
+	// workflow-builder is a chat-only phase and should never reach the orchestrator path.
+	// If it does, return an error.
+	if workflowStatus == "workflow-builder" {
 		return "", fmt.Errorf("%s is a chat-only phase — use phase chat mode instead of orchestrator execution", workflowStatus)
 	}
 
@@ -654,8 +647,8 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 		wo.GetSelectedServers(),
 		wo.GetSelectedTools(),
 		wo.GetUseCodeExecutionMode(),
-		wo.GetUseToolSearchMode(),    // NEW: Pass tool search mode
-		wo.GetPreDiscoveredTools(),   // NEW: Pass pre-discovered tools
+		wo.GetUseToolSearchMode(),  // NEW: Pass tool search mode
+		wo.GetPreDiscoveredTools(), // NEW: Pass pre-discovered tools
 		wo.GetMCPConfigPath(),
 		llmConfig,
 		wo.GetMaxTurns(),

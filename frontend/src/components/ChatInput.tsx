@@ -2370,11 +2370,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const placeholder = useMemo(() => {
     if (isViewOnly) return "View only — cannot continue this conversation"
     if (isWorkflowPhaseChat) {
-      const phaseNames: Record<string, string> = {
-        'planning': 'planning agent',
-        'evaluation-builder': 'evaluation builder',
-      }
-      return `Chat with the ${phaseNames[workflowPhaseId!] ?? 'agent'}...`
+      return 'Chat with the workflow builder...'
     }
     const baseHints = "@ files, / commands, # workflows, ! skills, $ servers, ^ agents"
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`

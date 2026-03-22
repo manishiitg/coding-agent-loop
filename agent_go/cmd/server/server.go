@@ -1725,7 +1725,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Build typed config from request
 		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != "" || req.AgentMode == "workflow" || req.AgentMode == "workflow_phase"
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != "" || req.AgentMode == "workflow" || req.AgentMode == "workflow_phase" || req.AgentMode == "organization_chat"
 		if hasConfig {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
@@ -2045,6 +2045,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Handle workflow phase chat mode - convert to simple agent with phase-specific prompt + tools
 	// This runs BEFORE the workflow orchestrator branch to intercept and redirect
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
+	isOrganizationChat := req.AgentMode == "organization_chat"
 	workflowPhaseID := req.PhaseID
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
 	_ = workflowPhaseFolder   // used later in the function
@@ -3177,10 +3178,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Workflow phase agents (workflow-builder, evaluation-builder) always use tool search mode —
+		// Workflow phase agents with many custom tools always use tool search mode —
 		// they get 21+ workshop tools registered after agent creation, which aren't counted in
 		// the MCP tool count above. Force tool search mode so these tools are discoverable.
-		if isWorkflowPhase && (workflowPhaseID == "workflow-builder" || workflowPhaseID == "evaluation-builder") {
+		if isWorkflowPhase && workflowPhaseID == "workflow-builder" {
 			if !useToolSearchMode {
 				log.Printf("[TOOL_SEARCH] Forcing tool search mode for %s phase (21+ workshop tools)", workflowPhaseID)
 				useToolSearchMode = true
@@ -3532,7 +3533,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
 		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
 		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
-		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
+		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat" || isOrganizationChat
 
 		// Check if skill-creator is in selected skills (mode-agnostic)
 		hasSkillCreator := false
@@ -3588,6 +3589,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Auto-enable workspace access for plan delegation mode
 			// Plan mode requires workspace tools for shell commands with proper FolderGuard
 			if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+				enableWorkspaceAccess = true
+			}
+
+			if isOrganizationChat {
 				enableWorkspaceAccess = true
 			}
 
@@ -4217,6 +4222,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
 
+			if isOrganizationChat {
+				if err := api.registerOrganizationChatTools(underlyingAgent, currentUserID, sessionID); err != nil {
+					log.Printf("[ORG CHAT] Failed to register organization tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register organization tools: %v", err), true)
+					return
+				}
+				log.Printf("[ORG CHAT] Registered organization tools")
+			}
+
 			// Read session state early for guidance injection
 			// (before delegation / memory instructions).
 			// NOTE: UpdateCodeExecutionRegistry is called AFTER all AppendSystemPrompt calls
@@ -4236,6 +4250,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// rules don't apply; background sub-agents get their own instructions.
 			if req.DelegationMode != "plan" {
 				underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+			}
+
+			if isOrganizationChat {
+				underlyingAgent.AppendSystemPrompt(getOrganizationChatInstructions())
 			}
 
 			// Add skill builder instructions when skill-creator is active
@@ -4513,7 +4531,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseTemplateVars["ExistingPlanJSON"] = existingPlanJSON
 					log.Printf("[WORKFLOW_PHASE] Loaded existing plan (%d bytes)", len(existingPlanJSON))
 
-					// Extract compact step summary for workflow-builder prompt
+					// Extract compact step summary for builder-style phase prompts
 					if stepSummary := extractStepSummary(existingPlanJSON); stepSummary != "" {
 						phaseTemplateVars["StepSummary"] = stepSummary
 						log.Printf("[WORKFLOW_PHASE] Extracted step summary (%d steps)", strings.Count(stepSummary, "\n"))
@@ -4579,25 +4597,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW_PHASE] Loaded variable names")
 				}
 
-				// Load evaluation context for evaluation-builder phase only.
-				// workflow-builder reads evaluation files on demand via execute_shell_command.
-				if workflowPhaseID == "evaluation-builder" {
-					// Read evaluation plan
-					evalPlanContent, evalPlanErr := phaseReadFile(setupCtx, phaseWorkspacePath+"/evaluation/evaluation_plan.json")
-					if evalPlanErr == nil && evalPlanContent != "" {
-						phaseTemplateVars["EvaluationPlanJSON"] = evalPlanContent
-						log.Printf("[WORKFLOW_PHASE] Loaded evaluation plan (%d bytes)", len(evalPlanContent))
-					}
-					// Read latest evaluation report if a run folder is selected
-					if phaseRunFolder != "" {
-						evalReportContent, evalReportErr := phaseReadFile(setupCtx, phaseWorkspacePath+"/evaluation/runs/"+phaseRunFolder+"/evaluation_report.json")
-						if evalReportErr == nil && evalReportContent != "" {
-							phaseTemplateVars["EvaluationReportJSON"] = evalReportContent
-							log.Printf("[WORKFLOW_PHASE] Loaded evaluation report from %s (%d bytes)", phaseRunFolder, len(evalReportContent))
-						}
-					}
-				}
-
 				// Load workflow memory from memory/ folder (user-saved knowledge for this workflow)
 				if phaseWorkspacePath != "" {
 					memoryContent := loadWorkflowMemory(phaseWorkspacePath, phaseReadFile, setupCtx)
@@ -4645,47 +4644,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 				// Register phase-appropriate tools
 				switch workflowPhaseID {
-				case "evaluation-builder":
-					// Evaluation modification tools (update/add/delete evaluation steps + update_eval_step_config)
-					if err := todo_creation_human.RegisterEvaluationModificationTools(
-						underlyingAgent,
-						phaseWorkspacePath,
-						api.logger,
-						phaseReadFile,
-						phaseWriteFile,
-						phaseMoveFile,
-					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools: %v", err)
-					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools")
-					}
-
-					// Workshop execution tools (execute_step, query_step, generate_learnings, etc.) in evaluation mode
-					evalSessionKey := "eval-" + sessionID
-					var evalSession *todo_creation_human.WorkshopChatSession
-					if cached, ok := api.workshopChatSessions.Load(evalSessionKey); ok {
-						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
-						log.Printf("[WORKFLOW_PHASE] Reusing existing workshop session for evaluation-builder %s", sessionID)
-						if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
-							evalSession.UpdateEnabledGroupIDs(r.Context(), req.ExecutionOptions.EnabledGroupIDs)
-						}
-					} else {
-						evalCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
-						evalCfg.IsEvaluationMode = true
-						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
-						if sessionErr != nil {
-							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create evaluation-builder workshop session: %v", sessionErr)
-						} else {
-							evalSession = newSession
-							api.workshopChatSessions.Store(evalSessionKey, evalSession)
-							log.Printf("[WORKFLOW_PHASE] Created evaluation-builder workshop session for %s", sessionID)
-						}
-					}
-					if evalSession != nil {
-						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, evalSession, api.logger)
-						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
-						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for evaluation-builder (execute_step, query_step, generate_learnings, run_full_evaluation, etc.)")
-					}
 				case "workflow-builder":
 					// Plan modification tools + workshop execution tools (execute_step, query_step, stop_step, etc.)
 					if err := todo_creation_human.RegisterPlanModificationTools(
@@ -4695,11 +4653,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseReadFile,
 						phaseWriteFile,
 						phaseMoveFile,
-						"workflow-builder chat agent",
+						fmt.Sprintf("%s chat agent", workflowPhaseID),
 					); err != nil {
 						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register plan modification tools for workshop: %v", err)
 					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for interactive-workshop")
+						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for %s", workflowPhaseID)
 					}
 
 					// Get or create per-session workshop controller + step registry
@@ -4842,11 +4800,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), workshopCfg)
 						if sessionErr != nil {
-							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create workshop session: %v — workshop execution tools unavailable", sessionErr)
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create workshop session for %s: %v — workshop execution tools unavailable", workflowPhaseID, sessionErr)
 						} else {
 							workshopSession = newSession
 							api.workshopChatSessions.Store(workshopSessionKey, workshopSession)
-							log.Printf("[WORKFLOW_PHASE] Created new workshop session for %s", sessionID)
+							log.Printf("[WORKFLOW_PHASE] Created new %s session for %s", workflowPhaseID, sessionID)
 						}
 					}
 
@@ -4855,10 +4813,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// Called every request (safe: always rebuilds the chain, no duplicates).
 						workshopSession.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
-						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools (execute_step, query_step, stop_step, list_steps, etc.)")
+						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)
 					}
 
-					// Register evaluation tools in workflow builder (eval plan modification + run_full_evaluation)
+					// Register evaluation tools in builder-style phases (eval plan modification + run_full_evaluation)
 					if err := todo_creation_human.RegisterEvaluationModificationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
@@ -4867,9 +4825,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseWriteFile,
 						phaseMoveFile,
 					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools in workflow-builder: %v", err)
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools in %s: %v", workflowPhaseID, err)
 					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools in workflow-builder")
+						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools in %s", workflowPhaseID)
 					}
 
 					// Create eval session for run_full_evaluation (needs isEvaluationMode=true)
@@ -4877,22 +4835,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					var evalSession *todo_creation_human.WorkshopChatSession
 					if cached, ok := api.workshopChatSessions.Load(evalSessionKey); ok {
 						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
-						log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in workflow-builder %s", sessionID)
+						log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in %s %s", workflowPhaseID, sessionID)
 					} else {
 						evalCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
 						evalCfg.IsEvaluationMode = true
 						newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
 						if evalSessionErr != nil {
-							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in workflow-builder: %v", evalSessionErr)
+							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in %s: %v", workflowPhaseID, evalSessionErr)
 						} else {
 							evalSession = newEvalSession
 							api.workshopChatSessions.Store(evalSessionKey, evalSession)
-							log.Printf("[WORKFLOW_PHASE] Created eval session in workflow-builder for %s", sessionID)
+							log.Printf("[WORKFLOW_PHASE] Created eval session in %s for %s", workflowPhaseID, sessionID)
 						}
 					}
 					if evalSession != nil {
 						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
-						log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in workflow-builder")
+						log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in %s", workflowPhaseID)
 					}
 				default:
 					// planning: plan modification tools
@@ -9739,6 +9697,503 @@ func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQuer
 		}
 		return sb.String()
 	}
+}
+
+func getOrganizationChatInstructions() string {
+	return `# Organization Assistant
+
+You manage organization operations across workflows.
+
+Primary responsibilities:
+1. Manage employees.
+2. Assign multiple workflows to employees.
+3. Manage workflow schedules.
+4. Inspect latest workflow outputs and recent scheduled runs.
+
+Operating rules:
+- Stay in organization scope unless the user explicitly asks to switch to workflow design.
+- Prefer the dedicated organization tools over ad-hoc shell/database inspection.
+- When you change an employee assignment or schedule, state exactly what changed.
+- Treat "output" as the latest workflow run and its artifacts unless the user defines a stricter business-output contract.
+- If a workflow has no runs yet, say that explicitly instead of implying an output exists.`
+}
+
+func marshalOrganizationResult(v interface{}) (string, error) {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (api *StreamingAPI) registerOrganizationChatTools(underlyingAgent *mcpagent.Agent, currentUserID string, sessionID string) error {
+	if underlyingAgent == nil {
+		return fmt.Errorf("underlying agent is nil")
+	}
+
+	wsClient := workspace.NewClient(
+		getWorkspaceAPIURL(),
+		workspace.WithUserID(currentUserID),
+	)
+
+	listWorkflowSummaries := func(ctx context.Context) ([]map[string]interface{}, error) {
+		var (
+			presets []database.PresetQuery
+			err     error
+		)
+		if currentUserID != "" {
+			presets, _, err = api.chatDB.ListPresetQueriesWithUser(ctx, 500, 0, currentUserID)
+		} else {
+			presets, _, err = api.chatDB.ListPresetQueries(ctx, 500, 0)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		employees, err := api.chatDB.ListEmployees(ctx)
+		if err != nil {
+			return nil, err
+		}
+		employeeNames := make(map[string]string, len(employees))
+		for _, emp := range employees {
+			employeeNames[emp.ID] = emp.Name
+		}
+
+		entityType := database.ScheduleEntityWorkflow
+		jobs, _, err := api.chatDB.ListScheduledJobs(ctx, 500, 0, &entityType, nil)
+		if err != nil {
+			return nil, err
+		}
+		scheduleCountByPreset := make(map[string]int, len(jobs))
+		for _, job := range jobs {
+			scheduleCountByPreset[job.PresetQueryID]++
+		}
+
+		workflows := make([]map[string]interface{}, 0, len(presets))
+		for _, preset := range presets {
+			if preset.AgentMode != database.AgentModeWorkflow {
+				continue
+			}
+
+			summary := map[string]interface{}{
+				"preset_query_id":    preset.ID,
+				"label":              preset.Label,
+				"employee_id":        nil,
+				"employee_name":      nil,
+				"workspace_path":     "",
+				"schedule_count":     scheduleCountByPreset[preset.ID],
+				"latest_run_folder":  nil,
+				"latest_output_path": nil,
+				"latest_logs_path":   nil,
+			}
+
+			if preset.EmployeeID.Valid && preset.EmployeeID.String != "" {
+				summary["employee_id"] = preset.EmployeeID.String
+				if name := employeeNames[preset.EmployeeID.String]; name != "" {
+					summary["employee_name"] = name
+				}
+			}
+
+			if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
+				workspacePath := preset.SelectedFolder.String
+				summary["workspace_path"] = workspacePath
+				latestRunFolder := resolveLatestRunFolder(ctx, workspacePath, wsClient)
+				if latestRunFolder != "" {
+					summary["latest_run_folder"] = latestRunFolder
+					summary["latest_output_path"] = filepath.ToSlash(filepath.Join(workspacePath, "runs", latestRunFolder, "execution"))
+					summary["latest_logs_path"] = filepath.ToSlash(filepath.Join(workspacePath, "runs", latestRunFolder, "logs"))
+				}
+			}
+
+			workflows = append(workflows, summary)
+		}
+
+		sort.Slice(workflows, func(i, j int) bool {
+			li, _ := workflows[i]["label"].(string)
+			lj, _ := workflows[j]["label"].(string)
+			return strings.ToLower(li) < strings.ToLower(lj)
+		})
+
+		return workflows, nil
+	}
+
+	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
+		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "organization_tools")
+	}
+
+	if err := registerTool("list_employees", "List all employees available for workflow assignment.", map[string]interface{}{}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		employees, err := api.chatDB.ListEmployees(ctx)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"employees": employees})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("create_employee", "Create a new employee record.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"name":         map[string]interface{}{"type": "string", "description": "Employee name."},
+			"avatar_color": map[string]interface{}{"type": "string", "description": "Optional hex color.", "default": "#6366f1"},
+			"description":  map[string]interface{}{"type": "string", "description": "Optional employee description or role."},
+		},
+		"required": []string{"name"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		name, _ := args["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return "", fmt.Errorf("name is required")
+		}
+		avatarColor, _ := args["avatar_color"].(string)
+		description, _ := args["description"].(string)
+		created, err := api.chatDB.CreateEmployee(ctx, &database.Employee{
+			Name:        name,
+			AvatarColor: strings.TrimSpace(avatarColor),
+			Description: strings.TrimSpace(description),
+			UserID:      currentUserID,
+		})
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"employee": created, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("update_employee", "Update an existing employee record.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"employee_id":  map[string]interface{}{"type": "string", "description": "Employee ID."},
+			"name":         map[string]interface{}{"type": "string", "description": "Updated employee name."},
+			"avatar_color": map[string]interface{}{"type": "string", "description": "Updated hex color."},
+			"description":  map[string]interface{}{"type": "string", "description": "Updated description or role."},
+		},
+		"required": []string{"employee_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		employeeID, _ := args["employee_id"].(string)
+		employeeID = strings.TrimSpace(employeeID)
+		if employeeID == "" {
+			return "", fmt.Errorf("employee_id is required")
+		}
+		current, err := api.chatDB.GetEmployee(ctx, employeeID)
+		if err != nil {
+			return "", err
+		}
+		if current == nil {
+			return "", fmt.Errorf("employee %q not found", employeeID)
+		}
+		if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
+			current.Name = strings.TrimSpace(name)
+		}
+		if avatarColor, ok := args["avatar_color"].(string); ok && strings.TrimSpace(avatarColor) != "" {
+			current.AvatarColor = strings.TrimSpace(avatarColor)
+		}
+		if description, ok := args["description"].(string); ok {
+			current.Description = strings.TrimSpace(description)
+		}
+		updated, err := api.chatDB.UpdateEmployee(ctx, employeeID, current)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"employee": updated, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("delete_employee", "Delete an employee. Assigned workflows become unassigned.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"employee_id": map[string]interface{}{"type": "string", "description": "Employee ID."},
+		},
+		"required": []string{"employee_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		employeeID, _ := args["employee_id"].(string)
+		employeeID = strings.TrimSpace(employeeID)
+		if employeeID == "" {
+			return "", fmt.Errorf("employee_id is required")
+		}
+		if err := api.chatDB.DeleteEmployee(ctx, employeeID); err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"success": true, "employee_id": employeeID})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("list_workflows", "List workflow presets with current employee assignment, schedules, and latest output locations.", map[string]interface{}{}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		workflows, err := listWorkflowSummaries(ctx)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"workflows": workflows})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("assign_workflow_employee", "Assign or unassign a workflow preset to an employee.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Workflow preset ID."},
+			"employee_id":     map[string]interface{}{"type": "string", "description": "Employee ID. Leave empty to unassign."},
+		},
+		"required": []string{"preset_query_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		presetQueryID = strings.TrimSpace(presetQueryID)
+		if presetQueryID == "" {
+			return "", fmt.Errorf("preset_query_id is required")
+		}
+		employeeID, _ := args["employee_id"].(string)
+		employeeID = strings.TrimSpace(employeeID)
+
+		sqlDB := api.chatDB.GetDB()
+		if sqlDB == nil {
+			return "", fmt.Errorf("database connection unavailable")
+		}
+
+		var (
+			result interface{ RowsAffected() (int64, error) }
+			err    error
+		)
+		if employeeID != "" {
+			result, err = sqlDB.ExecContext(ctx,
+				`UPDATE preset_queries SET employee_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+				employeeID, presetQueryID)
+		} else {
+			result, err = sqlDB.ExecContext(ctx,
+				`UPDATE preset_queries SET employee_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+				presetQueryID)
+		}
+		if err != nil {
+			return "", err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return "", err
+		}
+		if rowsAffected == 0 {
+			return "", fmt.Errorf("preset_query_id %q not found", presetQueryID)
+		}
+
+		return marshalOrganizationResult(map[string]interface{}{
+			"success":         true,
+			"preset_query_id": presetQueryID,
+			"employee_id":     employeeID,
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("list_workflow_schedules", "List schedules for workflow presets. Optionally filter by preset_query_id.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Optional workflow preset ID filter."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		presetQueryID = strings.TrimSpace(presetQueryID)
+		entityType := database.ScheduleEntityWorkflow
+		jobs, _, err := api.chatDB.ListScheduledJobs(ctx, 500, 0, &entityType, nil)
+		if err != nil {
+			return "", err
+		}
+		filtered := make([]database.ScheduledJob, 0, len(jobs))
+		for _, job := range jobs {
+			if presetQueryID != "" && job.PresetQueryID != presetQueryID {
+				continue
+			}
+			filtered = append(filtered, job)
+		}
+		return marshalOrganizationResult(map[string]interface{}{"jobs": filtered})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("create_workflow_schedule", "Create a schedule for a workflow preset.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Workflow preset ID."},
+			"name":            map[string]interface{}{"type": "string", "description": "Schedule name."},
+			"cron_expression": map[string]interface{}{"type": "string", "description": "Cron expression."},
+			"timezone":        map[string]interface{}{"type": "string", "description": "Timezone name.", "default": "Asia/Kolkata"},
+			"description":     map[string]interface{}{"type": "string", "description": "Optional description."},
+			"enabled":         map[string]interface{}{"type": "boolean", "description": "Whether schedule is enabled.", "default": true},
+			"group_ids":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional workflow group IDs."},
+		},
+		"required": []string{"preset_query_id", "name", "cron_expression"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		name, _ := args["name"].(string)
+		cronExpression, _ := args["cron_expression"].(string)
+		timezone, _ := args["timezone"].(string)
+		description, _ := args["description"].(string)
+		if strings.TrimSpace(presetQueryID) == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(cronExpression) == "" {
+			return "", fmt.Errorf("preset_query_id, name, and cron_expression are required")
+		}
+		if strings.TrimSpace(timezone) == "" {
+			timezone = "Asia/Kolkata"
+		}
+		var groupIDs []string
+		if rawGroupIDs, ok := args["group_ids"].([]interface{}); ok {
+			for _, item := range rawGroupIDs {
+				if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+					groupIDs = append(groupIDs, strings.TrimSpace(value))
+				}
+			}
+		}
+		enabled := true
+		if value, ok := args["enabled"].(bool); ok {
+			enabled = value
+		}
+		job, err := api.chatDB.CreateScheduledJob(ctx, &database.CreateScheduledJobRequest{
+			Name:           strings.TrimSpace(name),
+			Description:    strings.TrimSpace(description),
+			EntityType:     database.ScheduleEntityWorkflow,
+			PresetQueryID:  strings.TrimSpace(presetQueryID),
+			GroupIDs:       groupIDs,
+			CronExpression: strings.TrimSpace(cronExpression),
+			Timezone:       strings.TrimSpace(timezone),
+			Enabled:        &enabled,
+		})
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"job": job, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("update_workflow_schedule", "Update an existing workflow schedule.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"schedule_id":     map[string]interface{}{"type": "string", "description": "Schedule ID."},
+			"name":            map[string]interface{}{"type": "string", "description": "Updated name."},
+			"description":     map[string]interface{}{"type": "string", "description": "Updated description."},
+			"cron_expression": map[string]interface{}{"type": "string", "description": "Updated cron expression."},
+			"timezone":        map[string]interface{}{"type": "string", "description": "Updated timezone."},
+			"enabled":         map[string]interface{}{"type": "boolean", "description": "Enable or disable the schedule."},
+			"group_ids":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Updated workflow group IDs."},
+		},
+		"required": []string{"schedule_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		scheduleID, _ := args["schedule_id"].(string)
+		scheduleID = strings.TrimSpace(scheduleID)
+		if scheduleID == "" {
+			return "", fmt.Errorf("schedule_id is required")
+		}
+		req := &database.UpdateScheduledJobRequest{}
+		if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
+			req.Name = strings.TrimSpace(name)
+		}
+		if description, ok := args["description"].(string); ok {
+			req.Description = strings.TrimSpace(description)
+		}
+		if cronExpression, ok := args["cron_expression"].(string); ok && strings.TrimSpace(cronExpression) != "" {
+			req.CronExpression = strings.TrimSpace(cronExpression)
+		}
+		if timezone, ok := args["timezone"].(string); ok && strings.TrimSpace(timezone) != "" {
+			req.Timezone = strings.TrimSpace(timezone)
+		}
+		if enabled, ok := args["enabled"].(bool); ok {
+			req.Enabled = &enabled
+		}
+		if rawGroupIDs, ok := args["group_ids"].([]interface{}); ok {
+			req.SetGroupIDs = true
+			for _, item := range rawGroupIDs {
+				if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
+					req.GroupIDs = append(req.GroupIDs, strings.TrimSpace(value))
+				}
+			}
+		}
+		job, err := api.chatDB.UpdateScheduledJob(ctx, scheduleID, req)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"job": job, "success": true})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("delete_workflow_schedule", "Delete a workflow schedule.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"schedule_id": map[string]interface{}{"type": "string", "description": "Schedule ID."},
+		},
+		"required": []string{"schedule_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		scheduleID, _ := args["schedule_id"].(string)
+		scheduleID = strings.TrimSpace(scheduleID)
+		if scheduleID == "" {
+			return "", fmt.Errorf("schedule_id is required")
+		}
+		if err := api.chatDB.DeleteScheduledJob(ctx, scheduleID); err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"success": true, "schedule_id": scheduleID})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("list_schedule_runs", "List recent runs for a schedule.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"schedule_id": map[string]interface{}{"type": "string", "description": "Schedule ID."},
+			"limit":       map[string]interface{}{"type": "number", "description": "Maximum runs to return.", "default": 20},
+		},
+		"required": []string{"schedule_id"},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		scheduleID, _ := args["schedule_id"].(string)
+		scheduleID = strings.TrimSpace(scheduleID)
+		if scheduleID == "" {
+			return "", fmt.Errorf("schedule_id is required")
+		}
+		limit := 20
+		if rawLimit, ok := args["limit"].(float64); ok && rawLimit > 0 {
+			limit = int(rawLimit)
+		}
+		runs, _, err := api.chatDB.ListScheduledJobRuns(ctx, scheduleID, limit, 0)
+		if err != nil {
+			return "", err
+		}
+		return marshalOrganizationResult(map[string]interface{}{"runs": runs})
+	}); err != nil {
+		return err
+	}
+
+	if err := registerTool("inspect_workflow_outputs", "Show the latest run/output paths for workflow presets. Optionally filter by preset_query_id.", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"preset_query_id": map[string]interface{}{"type": "string", "description": "Optional workflow preset ID filter."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		presetQueryID, _ := args["preset_query_id"].(string)
+		presetQueryID = strings.TrimSpace(presetQueryID)
+		workflows, err := listWorkflowSummaries(ctx)
+		if err != nil {
+			return "", err
+		}
+		if presetQueryID != "" {
+			filtered := make([]map[string]interface{}, 0, 1)
+			for _, workflow := range workflows {
+				if workflowID, _ := workflow["preset_query_id"].(string); workflowID == presetQueryID {
+					filtered = append(filtered, workflow)
+				}
+			}
+			workflows = filtered
+		}
+		return marshalOrganizationResult(map[string]interface{}{"outputs": workflows})
+	}); err != nil {
+		return err
+	}
+
+	workspace.SetSessionWorkingDir(sessionID, "Workflow/")
+	workspace.SetSessionFolderGuard(sessionID,
+		[]string{"Workflow/", "Chats/", "Downloads/", "Plans/", "skills/", "subagents/"},
+		[]string{"Chats/", "Downloads/"},
+	)
+
+	return nil
 }
 
 // workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.

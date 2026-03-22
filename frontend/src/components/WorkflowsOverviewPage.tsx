@@ -724,7 +724,7 @@ const OrganizationChatPanel: React.FC = () => {
     const ensureOrgTab = async () => {
       const chatStore = useChatStore.getState()
       const orgTabs = Object.values(chatStore.chatTabs).filter(
-        tab => (tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent') && (
+        tab => tab.metadata?.mode === 'multi-agent' && (
           tab.metadata?.isOrganizationAssistant ||
           tab.name.toLowerCase() === 'organization assistant' ||
           tab.name.toLowerCase().startsWith('org chat ')
@@ -735,9 +735,7 @@ const OrganizationChatPanel: React.FC = () => {
         const tabId = primaryOrgTab
         ? primaryOrgTab.tabId
         : await chatStore.createChatTab('Organization Assistant', {
-          mode: 'workflow',
-          phaseId: 'workflow-builder',
-          phaseName: 'Workflow Builder',
+          mode: 'multi-agent',
           isOrganizationAssistant: true
         })
 
@@ -745,14 +743,11 @@ const OrganizationChatPanel: React.FC = () => {
         chatStore.setTabConfig(tabId, { inputText: ORG_CHAT_STARTER_PROMPT })
       } else if (
         !primaryOrgTab.metadata?.isOrganizationAssistant ||
-        primaryOrgTab.metadata?.mode !== 'workflow' ||
-        primaryOrgTab.metadata?.phaseId !== 'workflow-builder'
+        primaryOrgTab.metadata?.mode !== 'multi-agent'
       ) {
         chatStore.setTabMetadata(tabId, {
           isOrganizationAssistant: true,
-          mode: 'workflow',
-          phaseId: 'workflow-builder',
-          phaseName: 'Workflow Builder'
+          mode: 'multi-agent'
         })
       }
 

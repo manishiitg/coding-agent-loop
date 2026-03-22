@@ -514,9 +514,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       }
     }
 
-    const evalPhaseIds = ['evaluation-builder', 'evaluation-execution']
-    // Planning and execution are always available in plan mode, but execution is handled separately in UI
-    const planPhaseIds = ['planning'] 
+    const evalPhaseIds = ['evaluation-execution']
+    // Execution is handled separately in the UI.
+    const planPhaseIds: string[] = []
 
     const executionPhase = phases.find((p: WorkflowPhase) => p.id === EXECUTION_PHASE_ID)
     const evalPhases = phases.filter((p: WorkflowPhase) => evalPhaseIds.includes(p.id))
@@ -1244,8 +1244,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     
     if (!isPhaseRunning) {
       // For phases that need run folder context, pass execution options
-      if (phaseId === 'evaluation-execution' ||
-          phaseId === 'evaluation-builder') {
+      if (phaseId === 'evaluation-execution') {
         // Build execution options to include selected_run_folder
         const executionOptions = buildExecutionOptions()
         console.log('[WorkflowToolbar] Starting', phaseId, 'with execution options:', executionOptions)

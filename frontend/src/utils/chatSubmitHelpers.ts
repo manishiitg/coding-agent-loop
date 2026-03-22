@@ -16,8 +16,6 @@ import { logger } from './logger'
 
 // Workflow phases that support conversational chat mode instead of blocking human_feedback
 const CHAT_COMPATIBLE_PHASES = new Set([
-  'planning',
-  'evaluation-builder',
   'workflow-builder',
 ])
 
@@ -140,12 +138,14 @@ export function buildQueryRequestPayload(params: {
   } = params
 
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
+  const isOrganizationAssistant = !!currentTab?.metadata?.isOrganizationAssistant
   // Detect workflow phase chat mode: tab has a phaseId and the phase supports conversational editing
-  const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
+  const isWorkflowPhaseChat = !isOrganizationAssistant
+    && selectedModeCategory === 'workflow'
     && currentTab?.metadata?.phaseId
     && CHAT_COMPATIBLE_PHASES.has(currentTab.metadata.phaseId)
   // isChatLikeMode: includes phase chat for basic settings (context summarization, workspace access)
-  const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat
+  const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat || isOrganizationAssistant
   // isChatWithExtras: only multi-agent mode gets optional extras (browser, GWS, skills, secrets, etc.)
   const isChatWithExtras = isMultiAgentMode
 
@@ -191,7 +191,11 @@ export function buildQueryRequestPayload(params: {
 
   return {
     query: queryWithContext,
-    agent_mode: (isWorkflowPhaseChat ? 'workflow_phase' : correctAgentMode) as AgentQueryRequest['agent_mode'],
+    agent_mode: (isOrganizationAssistant
+      ? 'organization_chat'
+      : isWorkflowPhaseChat
+        ? 'workflow_phase'
+        : correctAgentMode) as AgentQueryRequest['agent_mode'],
     phase_id: isWorkflowPhaseChat ? currentTab.metadata!.phaseId : undefined,
     enabled_tools: enabledTools.map(tool => tool.name),
     enabled_servers: payloadServers,

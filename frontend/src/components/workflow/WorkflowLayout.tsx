@@ -966,7 +966,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowChatArea(true)
   }, [activePresetId, setCurrentWorkflowPhase, setShowChatArea, getPhaseById])
 
-  // Handle create plan - starts the planning or evaluation-builder phase depending on workflow mode
+  // Handle create plan - always opens Workflow Builder.
   const handleCreatePlan = useCallback(() => {
     // Ensure we're in workflow mode before creating plan (only if we have an active preset)
     if (activePresetId) {
@@ -976,23 +976,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
     }
 
-    const workflowMode = useWorkflowStore.getState().workflowMode
     const phases = useWorkflowStore.getState().phases
-
-    if (workflowMode === 'eval') {
-      const evalBuilderPhase = phases.find(p => p.id === 'evaluation-builder')
-      const evalPhaseId = evalBuilderPhase?.id || 'evaluation-builder'
-      logger.debug('WorkflowLayout', 'Create eval plan requested, starting eval designer phase:', evalPhaseId)
-      setShowChatArea(true)
-      handleStartPhase(evalPhaseId)
-    } else {
-      // Use the workflow builder phase
-      const workshopPhase = phases.find(p => p.id === 'workflow-builder')
-      const phaseId = workshopPhase?.id || 'workflow-builder'
-      logger.debug('WorkflowLayout', 'Create plan requested, starting workflow builder phase:', phaseId)
-      setShowChatArea(true)
-      handleStartPhase(phaseId)
-    }
+    const workshopPhase = phases.find(p => p.id === 'workflow-builder')
+    const phaseId = workshopPhase?.id || 'workflow-builder'
+    logger.debug('WorkflowLayout', 'Create plan requested, starting workflow builder phase:', phaseId)
+    setShowChatArea(true)
+    handleStartPhase(phaseId)
   }, [handleStartPhase, setShowChatArea, activePresetId])
 
   // Minimize chat area when drawer opens to reduce renders and stop event processing

@@ -976,20 +976,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Track recently notified workshop agent names to prevent duplicate notifications
   // (retries emit multiple orchestrator_agent_end events with the same agent name)
   const notifiedWorkshopAgentsRef = useRef<Set<string>>(new Set())
-  // Skip auto-notifications until the first user-initiated message is sent.
-  // On page load/SSE reconnect, old events are backfilled and would trigger 100+ stale notifications.
-  // On remount (showChatArea toggle) or tab switch, check if the tab already has user messages
-  // so we don't lose the interaction flag.
+  // Suppress auto-notifications during initial SSE backfill (first 3s after mount).
+  // Without this, page reload would replay all old completion events as new notifications.
+  // After the backfill window, all notifications are allowed. The dedup set
+  // (notifiedWorkshopAgentsRef) still prevents duplicates within a session.
   const hasUserSentMessageRef = useRef(false)
   useEffect(() => {
-    if (hasUserSentMessageRef.current) return // already true, no need to check
-    const sessionId = activeTab?.sessionId
-    if (!sessionId) return
-    const events = useChatStore.getState().tabEvents[sessionId]
-    if (events?.some(e => e.type === 'user_message')) {
+    const timer = setTimeout(() => {
       hasUserSentMessageRef.current = true
-    }
-  }, [activeTab?.sessionId])
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [])
 
   // Reusable event processing logic — shared by both SSE and polling paths.
   // Takes an events response (same shape from SSE or REST) and a tab, then processes

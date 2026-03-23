@@ -1184,15 +1184,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // (detected by workshop- correlation_id) both trigger notifications.
       if (event.type === 'orchestrator_agent_end' && tab) {
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
-        if (!hasUserSentMessageRef.current) {
-          console.log('[AUTO-NOTIF DEBUG] orchestrator_agent_end skipped — hasUserSentMessage=false', { agentType })
-        }
-        const isWorkshopWrapper = agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task'
+        const isWorkshopWrapper = agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task' || agentType === 'workshop-report-execution'
         // Sub-agents within workshop steps have workshop_step_id in metadata (set by ContextAwareEventBridge)
         const metadata = (innerData?.metadata ?? agentEvent?.metadata) as Record<string, unknown> | undefined
         const workshopStepId = metadata?.workshop_step_id as string | undefined
+        // Any agent with workshop_step_id metadata is a sub-agent of a workshop step
+        // (includes execution, learning, eval, and generic agents)
         const isWorkshopSubAgent = !isWorkshopWrapper && !!workshopStepId
-          && (agentType === 'todo_planner_execution' || agentType === 'generic_execution' || agentType === 'todo_task_orchestrator')
         if ((isWorkshopWrapper || isWorkshopSubAgent) && hasUserSentMessageRef.current) {
           const agentName = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'unknown') as string
           const success = (innerData?.success ?? agentEvent?.success) as boolean
@@ -1384,22 +1382,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // background workflows still queue notifications on their own tabs — they'll be sent
     // when the user switches back or when the LLM turn ends.
     if (selectedModeCategory === 'workflow') {
-      // Debug: log all event types to see if todo_task_step_completed events arrive
-      const eventTypes = (response.events as PollingEvent[]).map(e => e.type)
-      const uniqueTypes = [...new Set(eventTypes)]
-      if (uniqueTypes.length > 0 && uniqueTypes.some(t => t?.includes('todo') || t?.includes('agent_end') || t?.includes('step'))) {
-        console.log('[AUTO-NOTIF DEBUG] Relevant events in batch:', uniqueTypes.filter(t => t?.includes('todo') || t?.includes('agent_end') || t?.includes('step') || t?.includes('completion')))
-      }
       for (const event of response.events as PollingEvent[]) {
-        if (event.type === 'todo_task_step_completed') {
-          console.log('[AUTO-NOTIF DEBUG] todo_task_step_completed received', {
-            hasUserSentMessage: hasUserSentMessageRef.current,
-            tabId: tab?.tabId,
-            phaseId: tab?.metadata?.phaseId,
-            isChatCompatible: tab ? isChatCompatiblePhase(tab.metadata?.phaseId) : false,
-            stepTitle: ((event.data as Record<string, unknown>)?.data as Record<string, unknown>)?.step_title ?? (event.data as Record<string, unknown>)?.step_title,
-          })
-        }
         if (event.type === 'todo_task_step_completed' && hasUserSentMessageRef.current) {
           const eventData = event.data as Record<string, unknown> | undefined
           const todoStepData = (eventData?.data as Record<string, unknown>) || eventData

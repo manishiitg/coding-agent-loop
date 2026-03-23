@@ -1362,7 +1362,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   }, [
     isExecutionRunning,
     isExecutionStarting,
-    workflowMode,
     buildExecutionOptions,
     defaultExecutionSelection,
     loadProgress,

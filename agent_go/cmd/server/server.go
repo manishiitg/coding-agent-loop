@@ -4926,8 +4926,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)
 					}
 
-					// Register evaluation tools in builder-style phases (eval plan modification + run_full_evaluation)
-					if err := todo_creation_human.RegisterEvaluationModificationTools(
+					// Register evaluation tools in builder-style phases (eval plan validation + run_full_evaluation)
+					if err := todo_creation_human.RegisterEvaluationValidationTools(
 						underlyingAgent,
 						phaseWorkspacePath,
 						api.logger,
@@ -4935,9 +4935,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseWriteFile,
 						phaseMoveFile,
 					); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation modification tools in %s: %v", workflowPhaseID, err)
+						log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation validation tool in %s: %v", workflowPhaseID, err)
 					} else {
-						log.Printf("[WORKFLOW_PHASE] Registered evaluation modification tools in %s", workflowPhaseID)
+						log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
 					}
 
 					if err := todo_creation_human.RegisterOutputModificationTools(
@@ -4974,6 +4974,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if evalSession != nil {
 						todo_creation_human.RegisterRunFullEvaluationTool(underlyingAgent, evalSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in %s", workflowPhaseID)
+					}
+					if workshopSession != nil {
+						todo_creation_human.RegisterRunFullReportTool(underlyingAgent, workshopSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered run_full_report in %s", workflowPhaseID)
 					}
 				default:
 					// planning: plan modification tools
@@ -5177,6 +5181,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				underlyingAgent.GeminiProjectDirID = gDirID
 				log.Printf("[GEMINI CLI] Restored project dir ID %s for session %s", gDirID, sessionID)
 			}
+			workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
@@ -5432,6 +5437,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Save Gemini CLI project dir ID for per-invocation isolation
 			if gDirID := underlyingAgent.GeminiProjectDirID; gDirID != "" {
 				api.geminiProjectDirIDs[sessionID] = gDirID
+				workspace.SetSessionGeminiProjectDirID(sessionID, gDirID)
 				log.Printf("[GEMINI CLI] Saved project dir ID %s for session %s", gDirID, sessionID)
 			}
 		}

@@ -681,7 +681,7 @@ function usePopupState() {
 const PopupGroup: React.FC<{ p: ReturnType<typeof usePopupState> }> = ({ p }) => (
   <>
     <ExecutionLogsPopup isOpen={p.logsOpen} onClose={() => p.setLogsOpen(false)} workspacePath={p.logsWorkspace} runFolder={p.logsRunFolder} runFolders={p.logsRunFolders} />
-    <EvaluationPopup isOpen={p.evalOpen} onClose={() => p.setEvalOpen(false)} workspacePath={p.evalWorkspace} selectedRunFolder={p.evalRunFolder} />
+    <EvaluationPopup isOpen={p.evalOpen} onClose={() => p.setEvalOpen(false)} workspacePath={p.evalWorkspace} selectedRunFolder={p.evalRunFolder} runFolders={p.evalRunFolder ? [p.evalRunFolder] : []} />
     <CostsPopup isOpen={p.costOpen} onClose={() => p.setCostOpen(false)} workspacePath={p.costWorkspace} selectedRunFolder={p.costRunFolder} runFolders={p.costRunFolders} />
   </>
 )

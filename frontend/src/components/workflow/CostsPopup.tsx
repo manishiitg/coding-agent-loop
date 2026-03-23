@@ -115,6 +115,7 @@ interface PhaseCostSummary {
 const formatPhaseTitle = (phaseID: string) => {
   const phaseTitles: Record<string, string> = {
     'workflow-builder': 'Workflow Builder',
+    'report-execution': 'Report Execution',
     planning: 'Planning',
     'plan-improvement': 'Plan Improvement',
     'evaluation-builder': 'Evaluation Builder',

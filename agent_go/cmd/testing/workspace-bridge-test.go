@@ -29,8 +29,8 @@ import (
 
 var workspaceBridgeTestCmd = &cobra.Command{
 	Use:   "workspace-bridge",
-	Short: "Test shell execution through Claude Code MCP bridge with folder guards",
-	Long: `Tests shell command execution through the Claude Code MCP bridge.
+	Short: "Test shell execution through CLI MCP bridge with folder guards",
+	Long: `Tests shell command execution through the Claude Code / Gemini CLI MCP bridge.
 
 Uses real workspace advanced tool executors (execute_shell_command) with the
 real chat-mode folder guard wrapper, pointed at the REAL workspace API (Docker).
@@ -41,13 +41,14 @@ Verifies:
   3. Folder guard blocks shell commands referencing Workflow/
   4. Browser commands execute through the bridge
 
-Starts a Claude Code agent with the MCP bridge and sends prompts via agent.Ask(). 
-Tests the complete path: Claude Code CLI → mcpbridge → executor HTTP server → folder guard → real workspace API.
+Starts a CLI agent with the MCP bridge and sends prompts via agent.Ask().
+Tests the complete path: Claude Code / Gemini CLI → mcpbridge → executor HTTP server → folder guard → real workspace API.
 
 How to run:
 
   cd agent_go
-  go run . test workspace-bridge --provider claude-code --verbose`,
+  go run . test workspace-bridge --provider claude-code --verbose
+  go run . test workspace-bridge --provider gemini-cli --verbose`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logFile := viper.GetString("log-file")
 		logLevel := viper.GetString("log-level")
@@ -56,7 +57,7 @@ How to run:
 		logger := GetTestLogger()
 
 		logger.Info("=== Workspace Bridge Test (Shell) ===")
-		logger.Info("Testing: shell execution + folder guards through Claude Code bridge")
+		logger.Info("Testing: shell execution + folder guards through CLI bridge")
 
 		tracer, isLangfuse := testutils.GetTracerWithLogger("langfuse", logger)
 		if tracer == nil {
@@ -233,14 +234,14 @@ func TestWorkspaceBridge(log loggerv2.Logger, tracer observability.Tracer, trace
 		apiURL = "http://localhost:8081"
 		os.Setenv("WORKSPACE_API_URL", apiURL)
 	}
-	
+
 	// Test connectivity with a simple shell command instead of /api/health
 	checkPayload := map[string]interface{}{
-		"command": "echo 'workspace-api-is-alive'",
+		"command":           "echo 'workspace-api-is-alive'",
 		"working_directory": ".",
 	}
 	checkJSON, _ := json.Marshal(checkPayload)
-	resp, err := http.Post(apiURL + "/api/execute", "application/json", bytes.NewBuffer(checkJSON))
+	resp, err := http.Post(apiURL+"/api/execute", "application/json", bytes.NewBuffer(checkJSON))
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("real Workspace API is not reachable at %s. Please ensure the workspace Docker container is running: %w", apiURL, err)
 	}
@@ -255,7 +256,7 @@ func TestWorkspaceBridge(log loggerv2.Logger, tracer observability.Tracer, trace
 	if !ok {
 		return fmt.Errorf("execute_shell_command executor not found in advanced executors")
 	}
-	
+
 	browserExecutor, ok := browserExecutors["agent_browser"]
 	if !ok {
 		return fmt.Errorf("agent_browser executor not found in browser executors")
@@ -268,7 +269,7 @@ func TestWorkspaceBridge(log loggerv2.Logger, tracer observability.Tracer, trace
 	}
 	wrappedMap := server.ApplyChatModeFolderGuard(shellOnlyMap)
 	wrappedShell := wrappedMap["execute_shell_command"]
-	
+
 	// Add browser back to wrappedMap for the HTTP server
 	wrappedMap["agent_browser"] = browserExecutor
 	log.Info("Applied chat-mode folder guard to shell executor")
@@ -294,8 +295,8 @@ func TestWorkspaceBridge(log loggerv2.Logger, tracer observability.Tracer, trace
 
 	time.Sleep(500 * time.Millisecond)
 
-	// Step 5: Create Claude Code agent
-	log.Info("--- Step 5: Create Claude Code agent ---")
+	// Step 5: Create CLI agent
+	log.Info("--- Step 5: Create CLI agent ---")
 	agent, cleanup, err := createWorkspaceBridgeAgent(ctx, log, tracer, traceID, serverURL, apiToken, bridgePath)
 	if err != nil {
 		return err
@@ -337,14 +338,17 @@ func createWorkspaceBridgeAgent(
 	traceID observability.TraceID,
 	apiURL, apiToken, bridgePath string,
 ) (*mcpagent.Agent, func(), error) {
-	model, provider, err := testutils.CreateTestLLMFromViper(log)
+	requestedProvider := viper.GetString("test.provider")
+	model, provider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
+		Provider: requestedProvider,
+		Logger:   log,
+	})
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("failed to create LLM: %w", err)
 	}
 
-	if provider != llm.ProviderClaudeCode {
-		log.Warn("Provider is not claude-code — forcing claude-code for this test",
-			loggerv2.String("actual_provider", string(provider)))
+	if provider != llm.ProviderClaudeCode && provider != llm.ProviderGeminiCLI {
+		return nil, func() {}, fmt.Errorf("workspace-bridge test only supports CLI providers claude-code or gemini-cli, got %q", provider)
 	}
 
 	mcpServers := map[string]interface{}{}
@@ -357,13 +361,13 @@ func createWorkspaceBridgeAgent(
 
 	agent, err := testutils.CreateTestAgent(ctx, &testutils.TestAgentConfig{
 		LLM:        model,
-		Provider:   llm.ProviderClaudeCode,
+		Provider:   provider,
 		ConfigPath: configPath,
 		Tracer:     tracer,
 		TraceID:    traceID,
 		Logger:     log,
 		Options: []mcpagent.AgentOption{
-			mcpagent.WithProvider(llm.ProviderClaudeCode),
+			mcpagent.WithProvider(provider),
 			mcpagent.WithCodeExecutionMode(true),
 			mcpagent.WithAPIConfig(apiURL, apiToken),
 		},
@@ -373,7 +377,8 @@ func createWorkspaceBridgeAgent(
 		return nil, func() {}, fmt.Errorf("failed to create agent: %w", err)
 	}
 
-	log.Info("Claude Code agent created for workspace bridge test")
+	log.Info("CLI agent created for workspace bridge test",
+		loggerv2.String("provider", string(provider)))
 	return agent, cleanup, nil
 }
 
@@ -414,7 +419,7 @@ func registerWorkspaceTools(
 	if len(browserTools) == 0 {
 		return fmt.Errorf("no browser tool definitions found")
 	}
-	
+
 	bTool := browserTools[0]
 	bSchema := make(map[string]interface{})
 	if bTool.Function.Parameters != nil {
@@ -485,7 +490,7 @@ func verifyBridgeConfig(agent *mcpagent.Agent, log loggerv2.Logger) error {
 			foundBrowser = true
 		}
 	}
-	
+
 	if !foundShell {
 		return fmt.Errorf("execute_shell_command not found in bridge config")
 	}
@@ -508,35 +513,52 @@ type shellScenario struct {
 	expectKeyword string
 }
 
-var shellScenarios = []shellScenario{
-	{
-		name:          "shell-echo",
-		description:   "User asks to echo a message",
-		prompt:        `Can you echo "Hello from the real bridge test" using the shell?`,
-		expectSuccess: true,
-		expectKeyword: "Hello",
-	},
-	{
-		name:          "shell-users-blocked",
-		description:   "User tries to access protected system folder",
-		prompt:        `I want to see what's in the _users folder. Please list it for me.`,
-		expectSuccess: false,
-		expectKeyword: "denied",
-	},
-	{
-		name:          "browser-navigate",
-		description:   "User asks to browse a website",
-		prompt:        `Can you open https://www.google.com in the browser and tell me the page title?`,
-		expectSuccess: true,
-		expectKeyword: "Google",
-	},
+func buildShellScenarios() []shellScenario {
+	scenarios := []shellScenario{
+		{
+			name:          "shell-echo",
+			description:   "User asks to echo a message",
+			prompt:        `Can you echo "Hello from the real bridge test" using the shell?`,
+			expectSuccess: true,
+			expectKeyword: "Hello",
+		},
+	}
+
+	if viper.GetString("test.provider") == string(llm.ProviderGeminiCLI) {
+		scenarios = append(scenarios, shellScenario{
+			name:          "gemini-relative-policy-path",
+			description:   "Resumed Gemini turn reads the policy file via relative .gemini path",
+			prompt:        `Use the shell tool to run exactly this command and tell me if it succeeded: cat .gemini/policies/restrict-tools.toml`,
+			expectSuccess: true,
+			expectKeyword: "restrict-tools.toml",
+		})
+	}
+
+	scenarios = append(scenarios,
+		shellScenario{
+			name:          "shell-users-blocked",
+			description:   "User tries to access protected system folder",
+			prompt:        `I want to see what's in the _users folder. Please list it for me.`,
+			expectSuccess: false,
+			expectKeyword: "denied",
+		},
+		shellScenario{
+			name:          "browser-navigate",
+			description:   "User asks to browse a website",
+			prompt:        `Can you open https://www.google.com in the browser and tell me the page title?`,
+			expectSuccess: true,
+			expectKeyword: "Google",
+		},
+	)
+
+	return scenarios
 }
 
 func runLLMShellScenarios(ctx context.Context, agent *mcpagent.Agent, log loggerv2.Logger, traceID observability.TraceID) error {
 	passed := 0
 	failed := 0
 
-	for _, sc := range shellScenarios {
+	for _, sc := range buildShellScenarios() {
 		log.Info(fmt.Sprintf("\n  Scenario: [%s] %s", sc.name, sc.description))
 
 		queryCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)

@@ -1253,12 +1253,23 @@ export const useWorkflowStore = create<WorkflowStore>()(
           groupsCount: state.variablesManifest?.groups?.length || 0
         })
         
-        // Use selectedGroupIds directly. Group selection is mandatory.
+        // Prefer explicit group selection from the UI, but fall back to enabled groups
+        // from the manifest so workflow builder chat still works before the user has
+        // manually clicked a group selector in the canvas.
         if (state.selectedGroupIds.length > 0) {
           options.enabled_group_ids = state.selectedGroupIds
           console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Set enabled_group_ids from selectedGroupIds:', state.selectedGroupIds)
         } else {
-          console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No groups selected - enabled_group_ids will be omitted')
+          const enabledManifestGroupIds = (state.variablesManifest?.groups || [])
+            .filter(group => group.enabled)
+            .map(group => group.group_id)
+
+          if (enabledManifestGroupIds.length > 0) {
+            options.enabled_group_ids = enabledManifestGroupIds
+            console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ✅ Falling back to enabled manifest groups:', enabledManifestGroupIds)
+          } else {
+            console.warn('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] ⚠️ No groups selected and no enabled manifest groups found - enabled_group_ids will be omitted')
+          }
         }
 
         // Read feature toggles from preset and include when disabled (backend defaults to enabled)

@@ -388,34 +388,48 @@ func startExecutorServer(
 	mux.HandleFunc("/api/custom/execute", handlers.HandleCustomExecute)
 	mux.HandleFunc("/api/virtual/execute", handlers.HandleVirtualExecute)
 
-	mux.HandleFunc("/tools/mcp/", func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/tools/mcp/")
-		parts := strings.SplitN(path, "/", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			http.Error(w, `{"success":false,"error":"invalid path"}`, http.StatusBadRequest)
-			return
+	dispatchToolRequest := func(w http.ResponseWriter, r *http.Request, path string) {
+		switch {
+		case strings.HasPrefix(path, "/tools/mcp/"):
+			toolPath := strings.TrimPrefix(path, "/tools/mcp/")
+			parts := strings.SplitN(toolPath, "/", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				http.Error(w, `{"success":false,"error":"invalid path"}`, http.StatusBadRequest)
+				return
+			}
+			handlers.HandlePerToolMCPRequest(w, r, parts[0], parts[1])
+		case strings.HasPrefix(path, "/tools/custom/"):
+			tool := strings.TrimPrefix(path, "/tools/custom/")
+			if tool == "" {
+				http.Error(w, `{"success":false,"error":"missing tool"}`, http.StatusBadRequest)
+				return
+			}
+			handlers.HandlePerToolCustomRequest(w, r, tool)
+		case strings.HasPrefix(path, "/tools/virtual/"):
+			tool := strings.TrimPrefix(path, "/tools/virtual/")
+			if tool == "" {
+				http.Error(w, `{"success":false,"error":"missing tool"}`, http.StatusBadRequest)
+				return
+			}
+			handlers.HandlePerToolVirtualRequest(w, r, tool)
+		default:
+			http.NotFound(w, r)
 		}
-		srv := parts[0]
-		tool := parts[1]
-		handlers.HandlePerToolMCPRequest(w, r, srv, tool)
+	}
+
+	mux.HandleFunc("/tools/", func(w http.ResponseWriter, r *http.Request) {
+		dispatchToolRequest(w, r, r.URL.Path)
 	})
 
-	mux.HandleFunc("/tools/custom/", func(w http.ResponseWriter, r *http.Request) {
-		tool := strings.TrimPrefix(r.URL.Path, "/tools/custom/")
-		if tool == "" {
-			http.Error(w, `{"success":false,"error":"missing tool"}`, http.StatusBadRequest)
+	mux.HandleFunc("/s/", func(w http.ResponseWriter, r *http.Request) {
+		sessionID, toolPath, ok := splitSessionScopedToolPath(r.URL.Path)
+		if !ok {
+			http.Error(w, `{"success":false,"error":"invalid session-scoped tool path"}`, http.StatusBadRequest)
 			return
 		}
-		handlers.HandlePerToolCustomRequest(w, r, tool)
-	})
-
-	mux.HandleFunc("/tools/virtual/", func(w http.ResponseWriter, r *http.Request) {
-		tool := strings.TrimPrefix(r.URL.Path, "/tools/virtual/")
-		if tool == "" {
-			http.Error(w, `{"success":false,"error":"missing tool"}`, http.StatusBadRequest)
-			return
-		}
-		handlers.HandlePerToolVirtualRequest(w, r, tool)
+		r = withSessionHeader(r, sessionID)
+		r.URL.Path = toolPath
+		dispatchToolRequest(w, r, toolPath)
 	})
 
 	authedHandler := executor.AuthMiddleware(apiToken)(mux)
@@ -442,6 +456,33 @@ func startExecutorServer(
 	}
 
 	return serverURL, shutdown, nil
+}
+
+func splitSessionScopedToolPath(path string) (string, string, bool) {
+	if !strings.HasPrefix(path, "/s/") {
+		return "", "", false
+	}
+	remainder := strings.TrimPrefix(path, "/s/")
+	parts := strings.SplitN(remainder, "/", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return "", "", false
+	}
+	sessionID := parts[0]
+	toolPath := "/" + parts[1]
+	if !strings.HasPrefix(toolPath, "/tools/") {
+		return "", "", false
+	}
+	return sessionID, toolPath, true
+}
+
+func withSessionHeader(r *http.Request, sessionID string) *http.Request {
+	if sessionID == "" {
+		return r
+	}
+	clone := r.Clone(r.Context())
+	clone.Header = r.Header.Clone()
+	clone.Header.Set("X-Session-ID", sessionID)
+	return clone
 }
 
 // ---------- Agent creation ----------
@@ -735,7 +776,6 @@ func printUsageSummary(agent *mcpagent.Agent) {
 	fmt.Fprintf(os.Stderr, "  [usage] %d in / %d out / %d total%s | calls: %d%s\n",
 		promptTokens, completionTokens, totalTokens, cacheInfo, llmCalls, extras)
 }
-
 
 // handleCommand processes slash commands. Returns (handled, shouldExit).
 func handleCommand(input string, history *[]llm.MessageContent, agent *mcpagent.Agent) (bool, bool) {

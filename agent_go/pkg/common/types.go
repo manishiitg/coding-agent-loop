@@ -50,9 +50,10 @@ var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
 // SessionShellConfig holds per-session shell execution settings.
 // Shared by execute_shell_command and agent_browser to ensure identical sandboxing.
 type SessionShellConfig struct {
-	WorkingDir string   // Default working directory (relative to workspace-docs)
-	ReadPaths  []string // Folder guard read paths for Isolator
-	WritePaths []string // Folder guard write paths for Isolator
+	WorkingDir         string   // Default working directory (relative to workspace-docs)
+	ReadPaths          []string // Folder guard read paths for Isolator
+	WritePaths         []string // Folder guard write paths for Isolator
+	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
 }
 
 var (
@@ -85,6 +86,21 @@ func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 	cfg.ReadPaths = readPaths
 	cfg.WritePaths = writePaths
 	log.Printf("[SHELL] Set folder guard for session %s: read=%v write=%v", sessionID, readPaths, writePaths)
+}
+
+// SetSessionGeminiProjectDirID stores the active Gemini CLI project dir ID for a session.
+// This lets workspace shell execution resolve Gemini-managed files like .gemini/policies/*
+// correctly across resumed CLI turns.
+func SetSessionGeminiProjectDirID(sessionID, dirID string) {
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.GeminiProjectDirID = dirID
+	log.Printf("[SHELL] Set Gemini project dir ID for session %s: %s", sessionID, dirID)
 }
 
 // ClearSessionShellConfig removes all shell config for a session.

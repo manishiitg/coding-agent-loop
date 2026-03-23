@@ -21,6 +21,196 @@ import (
 	todo_creation_human "mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
+func normalizeWorkspacePathForPresetMatch(path string) string {
+	cleaned := strings.TrimSpace(path)
+	if cleaned == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(cleaned))
+}
+
+func convertProviderAPIKeysToOrchestratorAPIKeys(keys interface {
+	GetOpenRouter() *string
+	GetOpenAI() *string
+	GetAnthropic() *string
+	GetVertex() *string
+	GetGeminiCLI() *string
+	GetMiniMax() *string
+	GetMiniMaxCodingPlan() *string
+	GetBedrockRegion() string
+	GetAzureEndpoint() string
+	GetAzureAPIKey() string
+	GetAzureAPIVersion() string
+	GetAzureRegion() string
+}) *orchestrator.APIKeys {
+	if keys == nil {
+		return nil
+	}
+
+	result := &orchestrator.APIKeys{
+		OpenRouter:         keys.GetOpenRouter(),
+		OpenAI:             keys.GetOpenAI(),
+		Anthropic:          keys.GetAnthropic(),
+		Vertex:             keys.GetVertex(),
+		GeminiCLI:          keys.GetGeminiCLI(),
+		MiniMax:            keys.GetMiniMax(),
+		MiniMaxCodingPlan:  keys.GetMiniMaxCodingPlan(),
+	}
+
+	if region := keys.GetBedrockRegion(); region != "" {
+		result.Bedrock = &orchestrator.BedrockKey{Region: region}
+	}
+	if endpoint := keys.GetAzureEndpoint(); endpoint != "" {
+		result.Azure = &orchestrator.AzureKey{
+			Endpoint:   endpoint,
+			APIKey:     keys.GetAzureAPIKey(),
+			APIVersion: keys.GetAzureAPIVersion(),
+			Region:     keys.GetAzureRegion(),
+		}
+	}
+
+	return result
+}
+
+type providerAPIKeysAdapter struct {
+	openRouter        *string
+	openAI            *string
+	anthropic         *string
+	vertex            *string
+	geminiCLI         *string
+	miniMax           *string
+	miniMaxCodingPlan *string
+	bedrockRegion     string
+	azureEndpoint     string
+	azureAPIKey       string
+	azureAPIVersion   string
+	azureRegion       string
+}
+
+func (p providerAPIKeysAdapter) GetOpenRouter() *string        { return p.openRouter }
+func (p providerAPIKeysAdapter) GetOpenAI() *string            { return p.openAI }
+func (p providerAPIKeysAdapter) GetAnthropic() *string         { return p.anthropic }
+func (p providerAPIKeysAdapter) GetVertex() *string            { return p.vertex }
+func (p providerAPIKeysAdapter) GetGeminiCLI() *string         { return p.geminiCLI }
+func (p providerAPIKeysAdapter) GetMiniMax() *string           { return p.miniMax }
+func (p providerAPIKeysAdapter) GetMiniMaxCodingPlan() *string { return p.miniMaxCodingPlan }
+func (p providerAPIKeysAdapter) GetBedrockRegion() string      { return p.bedrockRegion }
+func (p providerAPIKeysAdapter) GetAzureEndpoint() string      { return p.azureEndpoint }
+func (p providerAPIKeysAdapter) GetAzureAPIKey() string        { return p.azureAPIKey }
+func (p providerAPIKeysAdapter) GetAzureAPIVersion() string    { return p.azureAPIVersion }
+func (p providerAPIKeysAdapter) GetAzureRegion() string        { return p.azureRegion }
+
+func providerAPIKeysFromEnvAsOrchestratorKeys() *orchestrator.APIKeys {
+	envKeys := buildProviderAPIKeysFromEnv()
+	if envKeys == nil {
+		return nil
+	}
+	adapter := providerAPIKeysAdapter{
+		openRouter:        envKeys.OpenRouter,
+		openAI:            envKeys.OpenAI,
+		anthropic:         envKeys.Anthropic,
+		vertex:            envKeys.Vertex,
+		geminiCLI:         envKeys.GeminiCLI,
+		miniMax:           envKeys.MiniMax,
+		miniMaxCodingPlan: envKeys.MiniMaxCodingPlan,
+	}
+	if envKeys.Bedrock != nil {
+		adapter.bedrockRegion = envKeys.Bedrock.Region
+	}
+	if envKeys.Azure != nil {
+		adapter.azureEndpoint = envKeys.Azure.Endpoint
+		adapter.azureAPIKey = envKeys.Azure.APIKey
+		adapter.azureAPIVersion = envKeys.Azure.APIVersion
+		adapter.azureRegion = envKeys.Azure.Region
+	}
+	return convertProviderAPIKeysToOrchestratorAPIKeys(adapter)
+}
+
+func (api *StreamingAPI) findPresetForWorkspace(ctx context.Context, workspacePath, userID string) (*database.PresetQuery, error) {
+	normalizedTarget := normalizeWorkspacePathForPresetMatch(workspacePath)
+	if normalizedTarget == "" {
+		return nil, nil
+	}
+
+	var (
+		presets []database.PresetQuery
+		err     error
+	)
+	if userID != "" {
+		presets, _, err = api.chatDB.ListPresetQueriesWithUser(ctx, 500, 0, userID)
+	} else {
+		presets, _, err = api.chatDB.ListPresetQueries(ctx, 500, 0)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range presets {
+		if !presets[i].SelectedFolder.Valid {
+			continue
+		}
+		presetPath := normalizeWorkspacePathForPresetMatch(presets[i].SelectedFolder.String)
+		if presetPath == normalizedTarget ||
+			strings.HasSuffix(presetPath, "/"+normalizedTarget) ||
+			strings.HasSuffix(normalizedTarget, "/"+presetPath) {
+			return &presets[i], nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (api *StreamingAPI) resolveWorkflowLLMConfigForWorkspace(
+	ctx context.Context,
+	workspacePath string,
+	userID string,
+) (*todo_creation_human.AgentLLMConfig, *todo_creation_human.TieredLLMConfig, string, error) {
+	preset, err := api.findPresetForWorkspace(ctx, workspacePath, userID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	if preset != nil && len(preset.LLMConfig) > 0 {
+		var presetLLMConfig database.PresetLLMConfig
+		if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
+			return nil, nil, "", fmt.Errorf("failed to parse preset LLM config for workspace %s: %w", workspacePath, err)
+		}
+
+		phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
+		var tieredConfig *todo_creation_human.TieredLLMConfig
+		if presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
+			tieredConfig = &todo_creation_human.TieredLLMConfig{
+				Tier1: &todo_creation_human.AgentLLMConfig{
+					Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
+					ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
+					Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
+				},
+				Tier2: &todo_creation_human.AgentLLMConfig{
+					Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
+					ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
+					Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
+				},
+				Tier3: &todo_creation_human.AgentLLMConfig{
+					Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
+					ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
+					Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
+				},
+			}
+		}
+
+		return phaseLLM, tieredConfig, preset.ID, nil
+	}
+
+	if api.provider != "" && api.model != "" {
+		return &todo_creation_human.AgentLLMConfig{
+			Provider: api.provider,
+			ModelID:  api.model,
+		}, nil, "", nil
+	}
+
+	return nil, nil, "", nil
+}
+
 // getWorkspaceAPIURL returns the workspace API base URL from environment or default
 func getWorkspaceAPIURL() string {
 	if url := os.Getenv("WORKSPACE_API_URL"); url != "" {
@@ -2596,33 +2786,25 @@ func writeStepOverrideToWorkspace(ctx context.Context, workspacePath string, ove
 }
 
 // readFinalOutputConfigFromWorkspace reads planning/output_plan.json from workspace using workspace API.
-// Falls back to the legacy output/output_plan.json path for older workspaces.
 // Returns nil, nil if the file does not exist.
 func readFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) (*todo_creation_human.WorkflowFinalOutputConfig, error) {
-	for _, configPath := range []string{
-		workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath,
-		workspacePath + "/" + todo_creation_human.LegacyOutputPlanPath,
-	} {
-		content, exists, err := readFileFromWorkspace(ctx, configPath)
-		if err != nil {
-			return nil, err
-		}
-		if !exists || strings.TrimSpace(content) == "" {
-			continue
-		}
-
-		var plan todo_creation_human.WorkflowOutputPlan
-		if err := json.Unmarshal([]byte(content), &plan); err != nil {
-			return nil, fmt.Errorf("failed to parse output_plan.json: %w", err)
-		}
-		plan.Normalize()
-		return todo_creation_human.ConvertOutputPlanToFinalOutputConfig(&plan), nil
+	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
+	content, exists, err := readFileFromWorkspace(ctx, configPath)
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil
+	if !exists || strings.TrimSpace(content) == "" {
+		return nil, nil
+	}
+
+	plan, err := todo_creation_human.ParseWorkflowOutputPlan(content)
+	if err != nil {
+		return nil, err
+	}
+	return todo_creation_human.ConvertOutputPlanToFinalOutputConfig(plan), nil
 }
 
 // writeFinalOutputConfigToWorkspace writes planning/output_plan.json to workspace using workspace API.
-// It also cleans up the legacy output/output_plan.json path when present.
 func writeFinalOutputConfigToWorkspace(ctx context.Context, workspacePath string, cfg *todo_creation_human.WorkflowFinalOutputConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("final output config is nil")
@@ -2636,7 +2818,6 @@ func writeFinalOutputConfigToWorkspace(ctx context.Context, workspacePath string
 	if err := writeFileToWorkspace(ctx, configPath, string(configJSON)); err != nil {
 		return err
 	}
-	_ = deleteWorkspaceFile(ctx, workspacePath+"/"+todo_creation_human.LegacyOutputPlanPath)
 	return nil
 }
 
@@ -2679,15 +2860,11 @@ func deleteStepOverrideFromWorkspace(ctx context.Context, workspacePath string) 
 	return nil
 }
 
-// deleteFinalOutputConfigFromWorkspace deletes planning/output_plan.json and the legacy output/output_plan.json from workspace.
+// deleteFinalOutputConfigFromWorkspace deletes planning/output_plan.json from workspace.
 func deleteFinalOutputConfigFromWorkspace(ctx context.Context, workspacePath string) error {
-	for _, configPath := range []string{
-		workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath,
-		workspacePath + "/" + todo_creation_human.LegacyOutputPlanPath,
-	} {
-		if err := deleteWorkspaceFile(ctx, configPath); err != nil {
-			return err
-		}
+	configPath := workspacePath + "/" + todo_creation_human.DefaultOutputPlanPath
+	if err := deleteWorkspaceFile(ctx, configPath); err != nil {
+		return err
 	}
 	return nil
 }
@@ -3966,12 +4143,22 @@ func (api *StreamingAPI) handleGenerateFinalOutput(w http.ResponseWriter, r *htt
 		return
 	}
 
+	currentUserID := GetUserIDFromContext(r.Context())
+	presetPhaseLLM, tieredConfig, presetID, presetErr := api.resolveWorkflowLLMConfigForWorkspace(r.Context(), req.WorkspacePath, currentUserID)
+	if presetErr != nil {
+		http.Error(w, fmt.Sprintf("Failed to resolve workflow LLM config: %v", presetErr), http.StatusInternalServerError)
+		return
+	}
+
 	llmConfig := &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
 			Provider: api.provider,
 			ModelID:  api.model,
 		},
+		APIKeys: providerAPIKeysFromEnvAsOrchestratorKeys(),
 	}
+
+	customTools, customToolExecutors, toolCategories := createCustomTools(true)
 
 	controller, err := todo_creation_human.NewStepBasedWorkflowOrchestrator(
 		r.Context(),
@@ -3990,12 +4177,12 @@ func (api *StreamingAPI) handleGenerateFinalOutput(w http.ResponseWriter, r *htt
 		api.logger,
 		nil,
 		nil,
-		nil,
-		nil,
-		nil,
-		nil,
+		customTools,
+		customToolExecutors,
+		toolCategories,
+		presetPhaseLLM,
 		true,
-		nil,
+		tieredConfig,
 	)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create final output controller: %v", err), http.StatusInternalServerError)
@@ -4007,6 +4194,7 @@ func (api *StreamingAPI) handleGenerateFinalOutput(w http.ResponseWriter, r *htt
 
 	result, err := controller.GenerateFinalOutput(r.Context(), req.WorkflowTitle, req.RunFolder)
 	if err != nil {
+		log.Printf("[FINAL_OUTPUT] Manual generate failed: workspace=%s run_folder=%s preset=%s user=%s err=%v", req.WorkspacePath, req.RunFolder, presetID, currentUserID, err)
 		http.Error(w, fmt.Sprintf("Failed to generate final output: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -5802,7 +5990,6 @@ var versionedConfigFiles = []string{
 	"planning/workflow_layout.json",
 	"planning/step_override.json",
 	"planning/output_plan.json",
-	"output/output_plan.json",
 	"variables/variables.json",
 	"evaluation/evaluation_plan.json",
 }

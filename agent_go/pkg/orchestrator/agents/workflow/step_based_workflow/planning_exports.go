@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -67,11 +68,12 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) string {
 	now := time.Now()
 	templateData := map[string]interface{}{
-		"WorkspacePath":    templateVars["WorkspacePath"],
-		"ExistingPlanJSON": templateVars["ExistingPlanJSON"],
-		"VariableNames":    templateVars["VariableNames"],
-		"CurrentDate":      now.Format("2006-01-02"),
-		"CurrentTime":      now.Format("15:04:05"),
+		"WorkspacePath":       templateVars["WorkspacePath"],
+		"ExistingPlanJSON":    templateVars["ExistingPlanJSON"],
+		"VariableNames":       templateVars["VariableNames"],
+		"IsCodeExecutionMode": templateVars["IsCodeExecutionMode"],
+		"CurrentDate":         now.Format("2006-01-02"),
+		"CurrentTime":         now.Format("15:04:05"),
 	}
 
 	var tmpl = interactiveWorkshopSystemTemplate // default: workflow-builder template
@@ -357,12 +359,12 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 				}
 			}
 			controller.enabledGroupIDs = cfg.EnabledGroupIDs
-			} else if existingManifest.HasGroups() {
-				logger.Warn("[WORKSHOP] No toolbar-selected group available — variable group selection is required for workshop context")
-			} else {
-				logger.Warn("[WORKSHOP] Variables manifest has no groups — group configuration is required for workshop context")
-			}
+		} else if existingManifest.HasGroups() {
+			logger.Warn("[WORKSHOP] No toolbar-selected group available — variable group selection is required for workshop context")
+		} else {
+			logger.Warn("[WORKSHOP] Variables manifest has no groups — group configuration is required for workshop context")
 		}
+	}
 
 	// Pre-load the plan so list_steps and get_step_prompts work immediately (best-effort).
 	// Use a detached context so SSE streaming or other concurrent request activity cannot
@@ -472,10 +474,10 @@ func (s *WorkshopChatSession) UpdateEnabledGroupIDs(ctx context.Context, enabled
 		} else {
 			s.controller.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Group %q not found in manifest during refresh", groupID))
 		}
-		} else if manifest != nil && manifest.HasGroups() {
-			s.controller.GetLogger().Warn("[WORKSHOP] No selected group during refresh — preserving existing workshop variable values")
-		}
+	} else if manifest != nil && manifest.HasGroups() {
+		s.controller.GetLogger().Warn("[WORKSHOP] No selected group during refresh — preserving existing workshop variable values")
 	}
+}
 
 // RegisterWorkshopChatTools registers execute_step, query_step, stop_step, list_steps,
 // update_step_config, and get_step_prompts on the given agent using the session's controller.
@@ -634,9 +636,183 @@ func RegisterRunFullEvaluationTool(
 	}
 }
 
-// RegisterEvaluationModificationTools is the exported wrapper for registering evaluation
-// modification tools on an MCP agent. Used by server.go for workflow-builder chat sessions.
-func RegisterEvaluationModificationTools(
+// RegisterRunFullReportTool registers a run_full_report tool that executes the workflow
+// report/output generation against a target execution run. Runs in background.
+func RegisterRunFullReportTool(
+	mcpAgent *mcpagent.Agent,
+	session *WorkshopChatSession,
+	logger loggerv2.Logger,
+) {
+	if err := mcpAgent.RegisterCustomTool(
+		"run_full_report",
+		"Run the full workflow report generation against a target execution run. Regenerates the final report artifact for that run in background and notifies when complete.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"target_run_folder": map[string]interface{}{
+					"type":        "string",
+					"description": "The group-scoped execution run folder to generate a report for (e.g., 'iteration-2/manish').",
+				},
+			},
+			"required": []string{"target_run_folder"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			targetRunFolder, _ := args["target_run_folder"].(string)
+			if targetRunFolder == "" {
+				return "target_run_folder is required", nil
+			}
+			if !strings.Contains(targetRunFolder, "/") {
+				return "target_run_folder must be group-scoped, e.g. 'iteration-2/group-name'", nil
+			}
+
+			cfg := session.config
+			if cfg == nil {
+				return "session config not available — cannot create report controller", nil
+			}
+
+			execID := fmt.Sprintf("report-full-%s-%d", strings.ReplaceAll(targetRunFolder, "/", "-"), time.Now().UnixNano())
+			execCtx, cancel := context.WithCancel(session.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-report-%s-%d", strings.ReplaceAll(targetRunFolder, "/", "-"), time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         fmt.Sprintf("full-report-%s", targetRunFolder),
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			session.StepRegistry.Register(exec)
+
+			go func() {
+				eventBridge := session.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-report-execution",
+						AgentName:     fmt.Sprintf("Report: %s", targetRunFolder),
+						InputData: map[string]string{
+							"run_folder":     targetRunFolder,
+							"workshop_mode":  "output",
+							"execution_type": "report",
+						},
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				reportController, err := NewStepBasedWorkflowOrchestrator(
+					execCtx,
+					"", "", 0.7, "simple",
+					cfg.SelectedServers,
+					cfg.SelectedTools,
+					cfg.UseCodeExecutionMode,
+					cfg.UseToolSearchMode,
+					cfg.PreDiscoveredTools,
+					cfg.MCPConfigPath,
+					cfg.LLMConfig,
+					100,
+					logger,
+					nil,
+					cfg.EventBridge,
+					cfg.CustomTools,
+					cfg.CustomToolExecutors,
+					cfg.ToolCategories,
+					cfg.PresetPhaseLLM,
+					cfg.UseKnowledgebase,
+					cfg.TieredConfig,
+				)
+				if err != nil {
+					exec.mu.Lock()
+					exec.Status = WorkshopStepFailed
+					exec.Err = fmt.Errorf("failed to create report controller: %w", err)
+					exec.mu.Unlock()
+					return
+				}
+
+				if cfg.SessionID != "" {
+					reportController.SetHTTPSessionID(cfg.SessionID)
+				}
+				if len(cfg.Secrets) > 0 {
+					reportController.SetSecrets(cfg.Secrets)
+				}
+				if cfg.WorkspaceEnvRef != nil {
+					reportController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
+				}
+				if skills := session.controller.GetSelectedSkills(); len(skills) > 0 {
+					reportController.SetSelectedSkills(skills)
+				}
+				if session.controller.GetCdpPort() > 0 {
+					reportController.SetCdpPort(session.controller.GetCdpPort())
+				}
+				reportController.SetExecutionOptions(session.controller.GetExecutionOptions())
+
+				resultText, execErr := reportController.ExecuteFinalOutputOnly(
+					execCtx,
+					session.controller.GetObjective(),
+					cfg.WorkspacePath,
+					targetRunFolder,
+				)
+
+				exec.mu.Lock()
+				defer exec.mu.Unlock()
+				if exec.Status == WorkshopStepCancelled {
+					return
+				}
+				if execErr != nil {
+					exec.Status = WorkshopStepFailed
+					exec.Err = execErr
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = firstNonEmpty(strings.TrimSpace(resultText), "Report generated successfully.")
+				}
+
+				if eventBridge != nil {
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-report-execution",
+						AgentName:     fmt.Sprintf("Report: %s", targetRunFolder),
+						Success:       execErr == nil,
+						InputData: map[string]string{
+							"run_folder":     targetRunFolder,
+							"workshop_mode":  "output",
+							"execution_type": "report",
+						},
+					}
+					if execErr != nil {
+						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+					} else if exec.Result != "" {
+						endEvent.Result = exec.Result
+					} else {
+						endEvent.Result = "Report generated successfully."
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+			}()
+
+			return fmt.Sprintf("Full report generation started for run %q.\nexecution_id: %q\nThis will regenerate the report artifact for that run.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_report tool: %v", err))
+	}
+}
+
+// RegisterEvaluationValidationTools is the exported wrapper for registering evaluation
+// plan validation tools on an MCP agent. Used by server.go for workflow-builder chat sessions.
+func RegisterEvaluationValidationTools(
 	mcpAgent *mcpagent.Agent,
 	workspacePath string,
 	logger loggerv2.Logger,
@@ -644,7 +820,9 @@ func RegisterEvaluationModificationTools(
 	writeFile func(context.Context, string, string) error,
 	moveFile func(context.Context, string, string) error,
 ) error {
-	return registerEvaluationModificationTools(mcpAgent, workspacePath, logger, readFile, writeFile, moveFile)
+	_ = writeFile
+	_ = moveFile
+	return registerEvaluationValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
 // RegisterPlanModificationTools is the exported wrapper for registering plan modification tools

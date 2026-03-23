@@ -59,6 +59,7 @@ import {
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const EVAL_EXECUTION_PHASE_ID = 'evaluation-execution'
+const REPORT_EXECUTION_PHASE_ID = 'report-execution'
 
 
 // Start Point options - where to start execution
@@ -1138,7 +1139,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView === 'execution' ||
     (workflowWorkspaceSelectionTouched &&
       workflowWorkspaceView === null &&
-      (currentPhase === EXECUTION_PHASE_ID || currentPhase === EVAL_EXECUTION_PHASE_ID))
+      (currentPhase === EXECUTION_PHASE_ID || currentPhase === EVAL_EXECUTION_PHASE_ID || currentPhase === REPORT_EXECUTION_PHASE_ID))
   const isBuilderWorkspace =
     workflowWorkspaceView === 'builder' ||
     (workflowWorkspaceSelectionTouched &&
@@ -1372,6 +1373,42 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     variablesManifest,
     workspacePath
   ])
+
+  const handleRunReport = useCallback(async (runFolder: string) => {
+    if (!runFolder || !runFolder.includes('/')) {
+      throw new Error('Select a group-scoped run folder like iteration-2/manish before generating the report.')
+    }
+
+    const options = buildExecutionOptions()
+    const inferredGroupId = extractGroupIdFromFolder(runFolder, variablesManifest)
+    const enabledGroupIds = inferredGroupId
+      ? [inferredGroupId]
+      : (options.enabled_group_ids && options.enabled_group_ids.length > 0 ? options.enabled_group_ids : undefined)
+
+    onStartPhase(REPORT_EXECUTION_PHASE_ID, {
+      ...options,
+      selected_run_folder: runFolder,
+      enabled_group_ids: enabledGroupIds,
+    })
+  }, [buildExecutionOptions, onStartPhase, variablesManifest])
+
+  const handleRunEvaluation = useCallback(async (runFolder: string) => {
+    if (!runFolder || !runFolder.includes('/')) {
+      throw new Error('Select a group-scoped run folder like iteration-2/manish before running evaluation.')
+    }
+
+    const options = buildExecutionOptions()
+    const inferredGroupId = extractGroupIdFromFolder(runFolder, variablesManifest)
+    const enabledGroupIds = inferredGroupId
+      ? [inferredGroupId]
+      : (options.enabled_group_ids && options.enabled_group_ids.length > 0 ? options.enabled_group_ids : undefined)
+
+    onStartPhase(EVAL_EXECUTION_PHASE_ID, {
+      ...options,
+      selected_run_folder: runFolder,
+      enabled_group_ids: enabledGroupIds,
+    })
+  }, [buildExecutionOptions, onStartPhase, variablesManifest])
 
   return (
     <>
@@ -2405,6 +2442,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       onClose={() => setShowEvaluationPopup(false)}
       workspacePath={workspacePath || null}
       selectedRunFolder={contextRunFolder}
+      runFolders={runFoldersNames}
+      onRunEvaluation={handleRunEvaluation}
     />
 
     <FinalOutputPopup
@@ -2414,6 +2453,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       selectedRunFolder={contextRunFolder}
       runFolders={runFoldersNames}
       workflowTitle={typeof plan?.title === 'string' ? plan.title : undefined}
+      onRunReport={handleRunReport}
     />
 
     {/* Workflow Versions Popup */}

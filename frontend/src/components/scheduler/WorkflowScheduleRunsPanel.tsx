@@ -742,6 +742,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           onClose={() => setPopupState(null)}
           workspacePath={popupState.workspacePath}
           selectedRunFolder={popupState.selectedRunFolder ?? popupState.runFolders[popupState.runFolders.length - 1] ?? null}
+          runFolders={popupState.runFolders}
         />
       )}
 

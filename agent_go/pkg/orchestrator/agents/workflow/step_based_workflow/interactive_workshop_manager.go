@@ -629,17 +629,18 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		useKB = "true"
 	}
 	templateVars := map[string]string{
-		"WorkspacePath":     workspacePath,
-		"RunFolder":         iwm.controller.selectedRunFolder,
-		"PlanJSON":          planContent,
-		"StepConfigSummary": stepConfigSummary,
-		"WorkshopMode":      workshopMode,
-		"UnoptimizedSteps":  unoptimizedSteps,
-		"ProgressSummary":   progressSummary,
-		"UserRequest":       userGoal,
-		"SessionID":         iwm.sessionID,
-		"WorkflowID":        iwm.workflowID,
-		"UseKnowledgebase":  useKB,
+		"WorkspacePath":       workspacePath,
+		"RunFolder":           iwm.controller.selectedRunFolder,
+		"PlanJSON":            planContent,
+		"StepConfigSummary":   stepConfigSummary,
+		"IsCodeExecutionMode": fmt.Sprintf("%v", agent.GetConfig().UseCodeExecutionMode),
+		"WorkshopMode":        workshopMode,
+		"UnoptimizedSteps":    unoptimizedSteps,
+		"ProgressSummary":     progressSummary,
+		"UserRequest":         userGoal,
+		"SessionID":           iwm.sessionID,
+		"WorkflowID":          iwm.workflowID,
+		"UseKnowledgebase":    useKB,
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -777,6 +778,7 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 - **Your shell working directory is already set to `+"`{{.WorkspacePath}}/`"+`** — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`, NOT `+"`cat {{.WorkspacePath}}/planning/plan.json`"+`). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/, memory/.
 - **You have access to a higher-reasoning model** than the step execution agents (which use smaller models). Use this to your advantage — you can run tasks yourself when needed, investigate issues deeply, and share learnings/instructions with step agents to guide them effectively.
 - **You have access to all the same MCP servers, tools, secrets, and skills** that step execution agents have. You can directly use any tool a step agent would use — browser, APIs, file operations, etc.
+{{if eq .IsCodeExecutionMode "true"}}- **Workflow workshop tools are exposed through the shared code-execution API path, not as bridge-native tools.** In CLI code execution mode, the small bridge-native tool set is `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`agent_browser`"+`, and `+"`get_api_spec`"+`. Workflow tools such as `+"`execute_step`"+`, `+"`query_step`"+`, `+"`run_full_evaluation`"+`, `+"`run_full_report`"+`, validators, and plan modification tools are available through the workflow custom-tool API path. Discover them via the pre-loaded tool specs or `+"`get_api_spec(server_name=\"workflow\", tool_name=\"...\")`"+`, and use the session-scoped API information from those specs. Do **not** hardcode raw `+"`host.docker.internal:8000/tools/...`"+` requests.{{end}}
 - **When a step is stuck or repeatedly failing, DO NOT just keep re-running it.** You have a smarter model — use it. Run the task yourself using the same tools the step agent would use, figure out what works, then update the step's learnings and instructions with the correct approach so the execution agent succeeds on the next run. This is one of your most important responsibilities.
 - Execute workflow steps in the background via **execute_step** and report results
 - Update the plan (add, remove, edit steps) using plan modification tools
@@ -863,10 +865,13 @@ If structural changes are needed (add/remove steps), ask the user to switch to B
 **EVAL MODE** — Build and run evaluation plans to measure workflow quality.
 
 **Evaluation workflow:**
-1. **Design eval steps** — Use add_evaluation_step to create evaluation steps. Each eval step targets an execution step and defines scoring criteria (what to check, how to score).
-2. **Run evaluations** — Use run_full_evaluation(target_run_folder) to score all eval steps against a specific execution run (e.g., "iteration-1").
-3. **Review results** — Read the evaluation report: cat evaluation/runs/{run_folder}/evaluation_report.json. Check scores — low scores (< 5) mean the step output is poor or the eval criteria need tightening.
-4. **Iterate** — Either fix the execution step (switch to Build/Optimize mode) or refine the eval criteria (update_evaluation_step) and re-run.
+1. Edit `+"`evaluation/evaluation_plan.json`"+` directly using shell/file tools.
+2. Keep each eval step focused on one execution concern with a clear `+"`id`"+`, `+"`title`"+`, `+"`description`"+`, and `+"`success_criteria`"+`.
+3. After editing, run **validate_evaluation_plan** to confirm the JSON parses and the eval step schema is acceptable.
+4. Use **pre_validation** on eval steps when the generated artifacts need concrete file checks before scoring.
+5. Use **run_full_evaluation(target_run_folder)** to score the current eval plan against a specific execution run.
+6. Review the evaluation report: `+"`cat evaluation/runs/{run_folder}/evaluation_report.json`"+`. Low scores (< 5) usually mean the step output is weak or the eval criteria need tightening.
+7. Iterate by refining `+"`evaluation/evaluation_plan.json`"+` or switching to Build/Optimize mode if the execution workflow itself needs changes.
 
 **Evaluation files:**
 - Plan: evaluation/evaluation_plan.json
@@ -878,10 +883,13 @@ Do NOT modify execution steps or plan.json in eval mode — focus only on evalua
 **REPORT MODE** — Design the final workflow report artifact that is generated automatically after a workflow group run completes.
 
 **Report workflow:**
-1. Use **get_output_plan** to inspect the current report definition in `+"`planning/output_plan.json`"+`
-2. Create or refine the single report step with **add_output_step** or **update_output_step**
-3. Use **pre_validation** on the report step when the final markdown must satisfy concrete file checks
-4. Keep the report focused on human review: what happened, what succeeded, what failed, what was produced, and what should be reviewed later
+1. Edit `+"`planning/output_plan.json`"+` directly using shell/file tools.
+2. Keep the file in the single-step report-plan shape — one `+"`step`"+` object, not a `+"`steps`"+` array.
+3. After editing, run **validate_report_plan** to confirm the JSON is valid and the report step shape is acceptable.
+4. Use **pre_validation** on the report step when the final markdown must satisfy concrete file checks.
+5. Keep the report focused on human review: what happened, what succeeded, what failed, what was produced, and what should be reviewed later.
+6. If the user wants lightweight visuals in the markdown report, ask for fenced `+"`chart`"+` blocks with JSON data using supported types `+"`bar`"+` or `+"`line`"+`.
+7. Use **run_full_report(target_run_folder)** to manually regenerate the report for an existing completed group run after you update the report definition.
 
 **Report files:**
 - Plan: `+"`planning/output_plan.json`"+`
@@ -1023,6 +1031,9 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 
 ## ⚙️ WORKSHOP TOOLS
 
+{{if eq .IsCodeExecutionMode "true"}}**How to use these tools in code execution mode:** The workflow tools listed below are available through the workflow custom-tool API path in this workshop session. The bridge-native tool set is `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`agent_browser`"+`, and `+"`get_api_spec`"+`. Use the pre-loaded tool specs or `+"`get_api_spec(server_name=\"workflow\", tool_name=\"...\")`"+` to get the exact request/response schema for workflow tools, and use the session-scoped API details from those specs. Do **not** hardcode raw `+"`curl http://host.docker.internal:8000/tools/...`"+` calls.
+{{end}}
+
 ### Discovery (use execute_shell_command to read workspace files directly)
 - **Plan & steps**: `+"`cat planning/plan.json`"+` — full plan with all step definitions (IDs, types, descriptions, success_criteria, context_dependencies, validation_schema). Use `+"`cat planning/plan.json | python3 -c \"import sys,json; [print(f'{i+1}. {s[\\\"id\\\"]} [{s[\\\"type\\\"]}] - {s[\\\"title\\\"]}') for i,s in enumerate(json.load(sys.stdin)[\\\"steps\\\"])]\" `"+` for a quick summary.
 - **Step configs**: `+"`cat step_config.json`"+` — step-level config overrides (servers, tools, mode, learning settings, LLMs)
@@ -1073,16 +1084,12 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **delete_skill(folder_name)** — Delete a skill from the workspace
 
 ### Evaluation
-- **add_evaluation_step(id, title, description, success_criteria)** — Add a new evaluation step
-- **update_evaluation_step(existing_step_id, title?, description?, success_criteria?)** — Update an evaluation step
-- **delete_evaluation_steps** — Delete evaluation steps
+- **validate_evaluation_plan** — Validate evaluation/evaluation_plan.json after editing it via shell/file tools. Checks JSON parsing, required eval step fields, duplicate IDs, and pre_validation schema syntax.
 - **run_full_evaluation(target_run_folder)** — Run ALL eval steps + scoring against a target execution run (e.g., 'iteration-1'). Generates evaluation_report.json. Runs in background.
 
 ### Output
-- **get_output_plan** — Read the current workflow report definition from planning/output_plan.json
-- **add_output_step(id, title, instructions, pre_validation?, output_filename?, enabled?)** — Configure the single final output step that defines the markdown artifact to generate automatically after a workflow group run completes
-- **update_output_step(id, title?, instructions?, pre_validation?, clear_pre_validation?, output_filename?, enabled?)** — Update the single output step
-- **delete_output_steps(ids)** — Clear the configured output step
+- **validate_report_plan** — Validate planning/output_plan.json after editing it via shell/file tools. Checks JSON parsing, single-step report-plan shape, and pre_validation schema syntax.
+- **run_full_report(target_run_folder)** — Run the full report generation pipeline against a target execution run (for example, 'iteration-2/manish'). Regenerates final_output.md for that run in background.
 
 ### Plan Modification
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
@@ -1107,7 +1114,7 @@ When a step has learning_mode "human_assisted", the recommended workflow is:
 1. **Explore first** — Before running the step via the workflow, use execute_shell_command to manually explore the task yourself: check the environment, APIs, file paths, tool outputs. Understand what works and what doesn't.
 2. **Discuss with the user** — Share your findings and ask the user to confirm the correct approach, expected output, or any edge cases they care about.
 3. **Write the learnings** — Based on your exploration and the user's input, write a SKILL.md file to 'learnings/{step-id}/SKILL.md' using diff_patch_workspace_file. The file MUST use YAML frontmatter format:
-   ` + "```" + `
+   `+"```"+`
    ---
    name: <step title>
    description: "<1-2 sentence summary of what this skill teaches — optimal approach and key pitfalls>"
@@ -1115,7 +1122,7 @@ When a step has learning_mode "human_assisted", the recommended workflow is:
    user-invocable: false
    ---
    (learning content here)
-   ` + "```" + `
+   `+"```"+`
    If legacy '*_learning.md' files exist, migrate their content into SKILL.md and delete them.
 4. **Lock the learnings** — Call update_step_config(step_id, lock_learnings=true) so the learning agent doesn't overwrite your hand-crafted learnings on the next run.
 5. **Run via workflow** — Now execute_step with the enriched learnings in place. The step agent will use them during execution.
@@ -1154,7 +1161,7 @@ After a step runs successfully, always check: could a stale/fake output file pas
 
 ### 3. Managing Learnings
 Learnings are stored as SKILL.md files in the workspace at 'learnings/{step-id}/SKILL.md'. Each learning file MUST use YAML frontmatter format:
-` + "```" + `
+`+"```"+`
 ---
 name: <step title>
 description: "<1-2 sentence summary of what this skill teaches — optimal approach and key pitfalls>"
@@ -1162,7 +1169,7 @@ disable-model-invocation: true
 user-invocable: false
 ---
 (learning content here)
-` + "```" + `
+`+"```"+`
 You can read, edit, and delete them using **execute_shell_command** and **diff_patch_workspace_file**:
 - **Read learnings**: 'cat learnings/{step-id}/SKILL.md' to read the learning file
 - **Read metadata**: 'cat learnings/{step-id}/.learning_metadata.json' for iteration counts, lock status, success history
@@ -1344,10 +1351,11 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 - **Learnings**: 'evaluation/learnings/{stepID}/'
 
 **Workflow:**
-1. Create eval steps with **add_evaluation_step** — each targets an execution step and defines scoring criteria
-2. Run **run_full_evaluation(target_run_folder)** to score all eval steps against an execution run
-3. Review the evaluation report — low scores (< 5) need tighter criteria or better step descriptions
-4. Iterate: fix execution steps or refine eval criteria, then re-run
+1. Edit **evaluation/evaluation_plan.json** directly with shell/file tools — each step should target one execution concern and define clear scoring criteria
+2. Run **validate_evaluation_plan** after editing to confirm the plan shape and pre_validation config are valid
+3. Run **run_full_evaluation(target_run_folder)** to score all eval steps against an execution run
+4. Review the evaluation report — low scores (< 5) need tighter criteria or better step descriptions
+5. Iterate: fix execution steps or refine the eval plan JSON, then re-run
 
 **Eval step design tips:**
 - Be specific — reference exact file names, expected fields, formats

@@ -25,20 +25,12 @@ export function useOutputPlanData(workspacePath: string | null): UseOutputPlanDa
     setError(null)
 
     try {
-      const candidatePaths = [
-        `${workspacePath}/planning/output_plan.json`,
-        `${workspacePath}/output/output_plan.json`
-      ]
-
+      const response = await agentApi.getPlannerFileContent(`${workspacePath}/planning/output_plan.json`)
       let loadedPlan: WorkflowOutputPlan | null = null
-      for (const path of candidatePaths) {
-        const response = await agentApi.getPlannerFileContent(path)
-        if (response.success && response.data?.content) {
-          const parsed = JSON.parse(response.data.content) as WorkflowOutputPlan
-          const step = parsed.step ?? null
-          loadedPlan = step ? { step } : null
-          break
-        }
+      if (response.success && response.data?.content) {
+        const parsed = JSON.parse(response.data.content) as WorkflowOutputPlan
+        const step = parsed.step ?? null
+        loadedPlan = step ? { step } : null
       }
       setOutputPlan(loadedPlan)
     } catch (err) {

@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
+	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -20,8 +22,10 @@ import (
 const (
 	DefaultFinalOutputFilename = "final_output.md"
 	DefaultOutputPlanPath      = "planning/output_plan.json"
-	LegacyOutputPlanPath       = "output/output_plan.json"
 	defaultOutputStepID        = "final-output"
+	internalOutputRunFolder    = "__report_generation"
+	internalOutputStepID       = "final-output-generation"
+	internalOutputStepPath     = "step-1"
 	maxFinalOutputFiles        = 80
 	maxFinalOutputFileChars    = 12000
 )
@@ -72,6 +76,44 @@ type WorkflowOutputPlanStep struct {
 	PreValidation  *ValidationSchema `json:"pre_validation,omitempty"`
 	OutputFilename string            `json:"output_filename,omitempty"`
 	Enabled        bool              `json:"enabled"`
+}
+
+// ParseWorkflowOutputPlan parses planning/output_plan.json and accepts both the
+// current nested plan shape ({ "step": {...} }) and the flat single-step shape
+// ({ "id": "...", "instructions": "...", ... }) that may already exist in
+// workspaces created before the nested wrapper was enforced.
+func ParseWorkflowOutputPlan(content string) (*WorkflowOutputPlan, error) {
+	if strings.TrimSpace(content) == "" {
+		return nil, nil
+	}
+
+	var plan WorkflowOutputPlan
+	if err := json.Unmarshal([]byte(content), &plan); err != nil {
+		return nil, fmt.Errorf("failed to parse output_plan.json: %w", err)
+	}
+	plan.Normalize()
+	if plan.Step != nil || len(plan.Steps) > 0 {
+		return &plan, nil
+	}
+
+	var flatStep WorkflowOutputPlanStep
+	if err := json.Unmarshal([]byte(content), &flatStep); err == nil {
+		if workflowOutputStepLooksConfigured(&flatStep) {
+			flatStep.Normalize()
+			return &WorkflowOutputPlan{Step: &flatStep}, nil
+		}
+	}
+
+	var flatConfig WorkflowFinalOutputConfig
+	if err := json.Unmarshal([]byte(content), &flatConfig); err == nil {
+		if workflowFinalOutputConfigLooksConfigured(&flatConfig) {
+			plan := flatConfig.ToOutputPlan()
+			plan.Normalize()
+			return plan, nil
+		}
+	}
+
+	return &plan, nil
 }
 
 func (p *WorkflowOutputPlan) Normalize() {
@@ -128,6 +170,28 @@ func (s *WorkflowOutputPlanStep) Normalize() {
 	}
 }
 
+func workflowOutputStepLooksConfigured(step *WorkflowOutputPlanStep) bool {
+	if step == nil {
+		return false
+	}
+	return strings.TrimSpace(step.ID) != "" ||
+		strings.TrimSpace(step.Title) != "" ||
+		strings.TrimSpace(step.Instructions) != "" ||
+		strings.TrimSpace(step.OutputFilename) != "" ||
+		step.Enabled ||
+		step.PreValidation != nil
+}
+
+func workflowFinalOutputConfigLooksConfigured(cfg *WorkflowFinalOutputConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.Title) != "" ||
+		strings.TrimSpace(cfg.Instructions) != "" ||
+		strings.TrimSpace(cfg.OutputFilename) != "" ||
+		cfg.Enabled
+}
+
 func ConvertOutputPlanToFinalOutputConfig(plan *WorkflowOutputPlan) *WorkflowFinalOutputConfig {
 	if plan == nil {
 		return nil
@@ -163,18 +227,33 @@ func NewWorkflowFinalOutputAgent(config *agents.OrchestratorAgentConfig, logger 
 }
 
 func (a *WorkflowFinalOutputAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
-	systemPrompt := `You are a workflow output agent.
-
-Your job is to produce a useful markdown report for a completed workflow group run.
-
-Rules:
-- Base everything strictly on the provided run artifacts and metadata.
-- Do not invent actions, files, or outcomes that are not supported by the artifacts.
-- Focus on what the workflow actually did, what it produced, what succeeded, what failed, and any important retries/branching.
-- Output VALID markdown only.
-- Do not wrap the answer in code fences.
-- Start with a level-1 heading.
-- Make the report easy for a human to review later without opening every artifact manually.`
+	systemPrompt := strings.TrimSpace("You are a workflow output agent.\n\n" +
+		"Your job is to produce a useful markdown report for a completed workflow group run.\n\n" +
+		"Rules:\n" +
+		"- Base everything strictly on the provided run artifacts and metadata.\n" +
+		"- Do not invent actions, files, or outcomes that are not supported by the artifacts.\n" +
+		"- Focus on what the workflow actually did, what it produced, what succeeded, what failed, and any important retries/branching.\n" +
+		"- Output VALID markdown only.\n" +
+		"- Do not wrap the whole answer in outer code fences.\n" +
+		"- Start with a level-1 heading.\n" +
+		"- Make the report easy for a human to review later without opening every artifact manually.\n" +
+		"- When a compact numeric summary would help, you MAY include fenced `chart` blocks inside the markdown body.\n" +
+		"- Supported `chart` block types are `bar` and `line` only.\n" +
+		"- A `chart` block must contain valid JSON with this shape:\n" +
+		"  ```chart\n" +
+		"  {\n" +
+		"    \"type\": \"bar\",\n" +
+		"    \"title\": \"Step outcomes\",\n" +
+		"    \"description\": \"Optional short caption\",\n" +
+		"    \"xLabel\": \"Step\",\n" +
+		"    \"yLabel\": \"Count\",\n" +
+		"    \"data\": [\n" +
+		"      { \"label\": \"Posted\", \"value\": 12 },\n" +
+		"      { \"label\": \"Failed\", \"value\": 2 }\n" +
+		"    ]\n" +
+		"  }\n" +
+		"  ```\n" +
+		"- Use chart blocks only for simple comparisons or trend summaries grounded in the artifacts. For everything else, prefer normal markdown paragraphs, bullets, and tables.")
 
 	inputProcessor := func(vars map[string]string) string {
 		return fmt.Sprintf(`Workflow Title: %s
@@ -214,32 +293,20 @@ type finalOutputResponse struct {
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) readOutputPlan(ctx context.Context) (*WorkflowOutputPlan, error) {
-	planPaths := []string{DefaultOutputPlanPath, LegacyOutputPlanPath}
-	var content string
-	var err error
-	for _, path := range planPaths {
-		content, err = hcpo.ReadWorkspaceFile(ctx, path)
-		if err == nil {
-			break
-		}
+	content, err := hcpo.ReadWorkspaceFile(ctx, DefaultOutputPlanPath)
+	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
 			content = ""
-			err = nil
-			continue
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
 	if strings.TrimSpace(content) == "" {
 		return nil, nil
 	}
 
-	var plan WorkflowOutputPlan
-	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return nil, fmt.Errorf("failed to parse output_plan.json: %w", err)
-	}
-	plan.Normalize()
-	return &plan, nil
+	return ParseWorkflowOutputPlan(content)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) readFinalOutputConfig(ctx context.Context) (*WorkflowFinalOutputConfig, error) {
@@ -267,11 +334,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 	config := ConvertOutputPlanToFinalOutputConfig(outputPlan)
 	outputRelativePath := filepath.ToSlash(filepath.Join("runs", runFolder, outputStep.OutputFilename))
 	runRelativePath := filepath.ToSlash(filepath.Join("runs", runFolder))
-	readPaths := []string{filepath.ToSlash(filepath.Join(hcpo.GetWorkspacePath(), "runs", runFolder))}
-	writePaths := []string{filepath.ToSlash(filepath.Join(hcpo.GetWorkspacePath(), "runs", runFolder))}
-	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
-
-	_, artifactSummary, artifactContents, err := hcpo.collectFinalOutputArtifacts(ctx, runRelativePath, outputStep.OutputFilename)
+	_, artifactSummary, _, err := hcpo.collectFinalOutputArtifacts(ctx, runRelativePath, outputStep.OutputFilename)
 	if err != nil {
 		return nil, err
 	}
@@ -280,70 +343,91 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
+	internalRunFolder := filepath.ToSlash(filepath.Join(runFolder, internalOutputRunFolder))
+	internalOutputRelativePath := filepath.ToSlash(filepath.Join("runs", internalRunFolder, "execution", internalOutputStepPath, outputStep.OutputFilename))
+	targetRunAbsPath := filepath.ToSlash(filepath.Join(hcpo.GetWorkspacePath(), "runs", runFolder))
+	originalSelectedRunFolder := hcpo.selectedRunFolder
+	originalIterationFolder := hcpo.GetIterationFolder()
+	originalWorkspaceTools := hcpo.WorkspaceTools
+	originalWorkspaceToolExecutors := hcpo.WorkspaceToolExecutors
+	originalTargetRunPath, hadTargetRunPath := hcpo.variableValues["TARGET_RUN_PATH"]
+	if hcpo.variableValues == nil {
+		hcpo.variableValues = make(map[string]string)
+	}
+	hcpo.variableValues["TARGET_RUN_PATH"] = targetRunAbsPath
+	hcpo.selectedRunFolder = internalRunFolder
+	hcpo.SetIterationFolder(internalRunFolder)
+	defer func() {
+		hcpo.selectedRunFolder = originalSelectedRunFolder
+		hcpo.SetIterationFolder(originalIterationFolder)
+		hcpo.WorkspaceTools = originalWorkspaceTools
+		hcpo.WorkspaceToolExecutors = originalWorkspaceToolExecutors
+		if hadTargetRunPath {
+			hcpo.variableValues["TARGET_RUN_PATH"] = originalTargetRunPath
+		} else {
+			delete(hcpo.variableValues, "TARGET_RUN_PATH")
+		}
+	}()
 
-	configForAgent := hcpo.CreateStandardAgentConfigWithLLM("workflow-final-output-agent", 30, agents.OutputFormatStructured, llmConfig)
-	configForAgent.ServerNames = []string{}
-	configForAgent.SelectedTools = []string{"workspace_advanced:execute_shell_command"}
-	configForAgent.UseCodeExecutionMode = false
-	configForAgent.UseToolSearchMode = false
-
-	// Final output generation is intentionally not a normal workflow step:
-	// no validation phase, no learning phase, and only the shell workspace tool
-	// is exposed so the agent can inspect artifacts when needed.
 	shellTools, shellExecutors := orchestrator.FilterCustomToolsByCategory(
-		hcpo.WorkspaceTools,
-		hcpo.WorkspaceToolExecutors,
+		originalWorkspaceTools,
+		originalWorkspaceToolExecutors,
 		[]string{"workspace_advanced:execute_shell_command"},
 	)
-	shellTools, shellExecutors = hcpo.PrepareWorkspaceToolsWithFolderGuard(shellTools, shellExecutors)
+	hcpo.WorkspaceTools = shellTools
+	// Keep the full executor map so the report pipeline can still use internal
+	// workspace read/write/list helpers, while the LLM-visible tool definitions
+	// remain shell-only.
+	hcpo.WorkspaceToolExecutors = originalWorkspaceToolExecutors
+	_ = shellExecutors
 
-	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
+	reportStep := hcpo.buildFinalOutputExecutionStep(workflowTitle, runFolder, outputStep, artifactSummary, llmConfig)
+	progress := &StepProgress{
+		CompletedStepIndices:     []int{},
+		TotalSteps:               1,
+		LastUpdated:              time.Now(),
+		BranchSteps:              make(map[int]BranchStepProgress),
+		ValidationFailures:       make(map[string]int),
+		DecisionEvaluationCounts: make(DecisionEvaluationCount),
+	}
+	execCtx := hcpo.buildExecutionContext()
+	execCtx.SkipHumanInput = true
+	execCtx.RunSingleStepOnly = true
+
+	_, _, err = hcpo.executeSingleStep(
 		ctx,
-		configForAgent,
-		"final-output",
-		0, 0, outputStep.ID,
-		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowFinalOutputAgent(cfg, logger, tracer, eventBridge)
-		},
-		shellTools, shellExecutors, true,
+		reportStep,
+		0,
+		internalOutputStepPath,
+		1,
+		1,
+		nil,
+		progress,
+		false,
+		execCtx,
+		[]PlanStepInterface{reportStep},
+		false,
+		nil,
+		"",
+		false,
+		nil,
+		nil,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create final output agent: %w", err)
-	}
-
-	finalOutputAgent, ok := agent.(*WorkflowFinalOutputAgent)
-	if !ok {
-		return nil, fmt.Errorf("failed to cast final output agent")
-	}
-
-	result, _, err := finalOutputAgent.Execute(ctx, map[string]string{
-		"WorkflowTitle":    workflowTitle,
-		"ConfiguredTitle":  outputStep.Title,
-		"RunFolder":        runFolder,
-		"OutputPath":       outputRelativePath,
-		"Instructions":     outputStep.Instructions,
-		"ArtifactSummary":  artifactSummary,
-		"ArtifactContents": artifactContents,
-	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("final output generation failed: %w", err)
 	}
 
+	result, err := hcpo.ReadWorkspaceFile(ctx, internalOutputRelativePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read generated report markdown from %s: %w", internalOutputRelativePath, err)
+	}
 	result = strings.TrimSpace(result)
 	if result == "" {
-		return nil, fmt.Errorf("final output agent returned empty markdown")
+		return nil, fmt.Errorf("final output step created an empty markdown file")
 	}
 
 	if err := hcpo.WriteWorkspaceFile(ctx, outputRelativePath, result); err != nil {
-		return nil, fmt.Errorf("failed to write final output markdown: %w", err)
-	}
-
-	preValidationResults, preValidationErr := RunPreValidation(ctx, outputStep.PreValidation, runRelativePath, hcpo.BaseOrchestrator)
-	if preValidationErr != nil {
-		return nil, fmt.Errorf("final output pre-validation failed to run: %w", preValidationErr)
-	}
-	if outputStep.PreValidation != nil && len(outputStep.PreValidation.Files) > 0 && !preValidationResults.OverallPass {
-		return nil, fmt.Errorf("final output pre-validation failed:\n%s", formatWorkspaceResults(preValidationResults))
+		return nil, fmt.Errorf("failed to publish final output markdown: %w", err)
 	}
 
 	return &finalOutputResponse{
@@ -354,6 +438,144 @@ func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Conte
 		Exists:     true,
 		Config:     config,
 	}, nil
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) buildFinalOutputExecutionStep(
+	workflowTitle string,
+	runFolder string,
+	outputStep *WorkflowOutputPlanStep,
+	artifactSummary string,
+	llmConfig *orchestrator.LLMConfig,
+) *RegularPlanStep {
+	disableLearning := true
+	disableTempLLM := true
+	executionMaxTurns := 30
+	useToolSearchMode := false
+	selectedServers := []string{mcpclient.NoServers}
+	stepID := outputStep.ID
+	if stepID == "" {
+		stepID = internalOutputStepID
+	}
+
+	description := strings.TrimSpace(fmt.Sprintf(`Generate the final workflow report for the completed run "%s".
+
+Read the actual execution artifacts under runs/%s and use them as the only source of truth.
+
+Workflow title: %s
+Configured report title: %s
+
+User instructions:
+%s
+
+Artifact inventory:
+%s
+
+Rules:
+- Produce valid markdown only.
+- Start with a level-1 heading.
+- Do not invent actions, files, outcomes, retries, or failures that are not supported by the artifacts.
+- Focus on what the workflow actually did, what it produced, what succeeded, what failed, and anything a human should review later.
+- If a compact numeric summary helps, you may include fenced chart blocks with JSON using only supported types "bar" or "line".
+- Read more files from the target run folder when needed before writing the report.
+- Write the final markdown to the required output file.`, runFolder, runFolder, workflowTitle, outputStep.Title, outputStep.Instructions, artifactSummary))
+
+	successCriteria := fmt.Sprintf("A grounded markdown report is written to %s and it passes pre-validation.", outputStep.OutputFilename)
+
+	return &RegularPlanStep{
+		Type: StepTypeRegular,
+		CommonStepFields: CommonStepFields{
+			ID:                  stepID,
+			Title:               firstNonEmpty(outputStep.Title, "Final Report"),
+			Description:         description,
+			SuccessCriteria:     successCriteria,
+			ContextDependencies: nil,
+			ContextOutput:       FlexibleContextOutput(outputStep.OutputFilename),
+			ValidationSchema:    ensureOutputFileValidation(outputStep.OutputFilename, outputStep.PreValidation),
+		},
+		HasLoop: false,
+		AgentConfigs: &AgentConfigs{
+			ExecutionLLM:         convertLLMConfigToAgentLLMConfig(llmConfig),
+			ExecutionMaxTurns:    &executionMaxTurns,
+			DisableLearning:      &disableLearning,
+			DisableTempLLM:       &disableTempLLM,
+			UseToolSearchMode:    &useToolSearchMode,
+			SelectedServers:      selectedServers,
+			EnabledCustomTools:   []string{"workspace_advanced:execute_shell_command"},
+			SelectedTools:        []string{},
+			PreDiscoveredTools:   []string{},
+			DisableKnowledgebase: finalOutputBoolPtr(true),
+		},
+	}
+}
+
+func ensureOutputFileValidation(outputFilename string, schema *ValidationSchema) *ValidationSchema {
+	if outputFilename == "" {
+		outputFilename = DefaultFinalOutputFilename
+	}
+	if schema == nil {
+		return &ValidationSchema{
+			Files: []FileValidationRule{{
+				FileName:  outputFilename,
+				MustExist: true,
+			}},
+		}
+	}
+
+	clone := &ValidationSchema{
+		Files: make([]FileValidationRule, len(schema.Files)),
+	}
+	copy(clone.Files, schema.Files)
+	for i := range clone.Files {
+		jsonChecks := make([]JSONValidationCheck, len(schema.Files[i].JSONChecks))
+		copy(jsonChecks, schema.Files[i].JSONChecks)
+		clone.Files[i].JSONChecks = jsonChecks
+	}
+
+	for i := range clone.Files {
+		if strings.EqualFold(clone.Files[i].FileName, outputFilename) {
+			clone.Files[i].MustExist = true
+			return clone
+		}
+	}
+
+	clone.Files = append(clone.Files, FileValidationRule{
+		FileName:  outputFilename,
+		MustExist: true,
+	})
+	return clone
+}
+
+func convertLLMConfigToAgentLLMConfig(llmConfig *orchestrator.LLMConfig) *AgentLLMConfig {
+	if llmConfig == nil {
+		return nil
+	}
+	result := &AgentLLMConfig{
+		Provider: llmConfig.Primary.Provider,
+		ModelID:  llmConfig.Primary.ModelID,
+	}
+	if len(llmConfig.Fallbacks) > 0 {
+		result.Fallbacks = make([]AgentLLMFallback, 0, len(llmConfig.Fallbacks))
+		for _, fallback := range llmConfig.Fallbacks {
+			result.Fallbacks = append(result.Fallbacks, AgentLLMFallback{
+				Provider: fallback.Provider,
+				ModelID:  fallback.ModelID,
+			})
+		}
+	}
+	return result
+}
+
+func finalOutputBoolPtr(v bool) *bool {
+	return &v
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoFinalOutput(ctx context.Context) error {
@@ -378,6 +600,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) MaybeRunAutoFinalOutput(ctx context.C
 		return fmt.Errorf("auto-output generation failed: %w", err)
 	}
 	return nil
+}
+
+// ExecuteFinalOutputOnly runs only the report/final-output generation phase for a
+// completed group-scoped run folder.
+func (hcpo *StepBasedWorkflowOrchestrator) ExecuteFinalOutputOnly(ctx context.Context, objective, workspacePath, targetRunFolder string) (string, error) {
+	hcpo.GetLogger().Info("🚀 Starting final output execution")
+
+	hcpo.SetObjective(objective)
+	hcpo.SetWorkspacePath(workspacePath)
+
+	outputPlan, err := hcpo.readOutputPlan(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to check report plan: %w", err)
+	}
+	if outputPlan == nil || outputPlan.PrimaryStep() == nil {
+		return "", fmt.Errorf("no enabled output step found in %s", DefaultOutputPlanPath)
+	}
+	if targetRunFolder == "" {
+		return "", fmt.Errorf("targetRunFolder is required for report execution")
+	}
+	if !strings.Contains(targetRunFolder, "/") {
+		return "", fmt.Errorf("targetRunFolder must be group-scoped, e.g. iteration-2/manish")
+	}
+
+	response, err := hcpo.GenerateFinalOutput(ctx, objective, targetRunFolder)
+	if err != nil {
+		return "", err
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Final output execution completed successfully: %s", response.OutputPath))
+	return fmt.Sprintf("Report generated successfully.\nrun_folder: %s\noutput_path: %s", response.RunFolder, response.OutputPath), nil
 }
 
 // selectFinalOutputLLM selects the LLM config for final output generation.
@@ -467,150 +720,31 @@ func RegisterOutputModificationTools(
 	deleteFile func(context.Context, string, string) error,
 ) error {
 	loadPlan := func(ctx context.Context) (*WorkflowOutputPlan, error) {
-		planPaths := []string{DefaultOutputPlanPath, LegacyOutputPlanPath}
-		for _, relativePath := range planPaths {
-			planPath := relativePath
-			if workspacePath != "" {
-				planPath = filepath.ToSlash(filepath.Join(workspacePath, relativePath))
-			}
-			content, err := readFile(ctx, planPath)
-			if err != nil {
-				if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
-					continue
-				}
-				return nil, err
-			}
-
-			if strings.TrimSpace(content) == "" {
-				return &WorkflowOutputPlan{}, nil
-			}
-
-			var plan WorkflowOutputPlan
-			if err := json.Unmarshal([]byte(content), &plan); err != nil {
-				return nil, fmt.Errorf("failed to parse output plan: %w", err)
-			}
-			plan.Normalize()
-			return &plan, nil
-		}
-		return &WorkflowOutputPlan{}, nil
-	}
-
-	savePlan := func(ctx context.Context, plan *WorkflowOutputPlan) error {
-		if plan == nil {
-			plan = &WorkflowOutputPlan{}
-		}
-		plan.Normalize()
 		planPath := DefaultOutputPlanPath
 		if workspacePath != "" {
 			planPath = filepath.ToSlash(filepath.Join(workspacePath, DefaultOutputPlanPath))
 		}
-		data, err := json.MarshalIndent(plan, "", "  ")
+		content, err := readFile(ctx, planPath)
 		if err != nil {
-			return fmt.Errorf("failed to marshal output plan: %w", err)
+			if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
+				return &WorkflowOutputPlan{}, nil
+			}
+			return nil, err
 		}
-		if err := writeFile(ctx, planPath, string(data)); err != nil {
-			return err
-		}
-		if workspacePath != "" {
-			legacyPath := filepath.ToSlash(filepath.Join(workspacePath, LegacyOutputPlanPath))
-			_ = deleteFile(ctx, legacyPath, "")
-		}
-		return nil
-	}
 
-	parseIDs := func(raw interface{}) ([]string, error) {
-		switch v := raw.(type) {
-		case string:
-			if strings.TrimSpace(v) == "" {
-				return nil, nil
-			}
-			trimmed := strings.TrimSpace(v)
-			if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
-				var ids []string
-				if err := json.Unmarshal([]byte(strings.ReplaceAll(trimmed, "'", "\"")), &ids); err == nil {
-					return ids, nil
-				}
-			}
-			return []string{v}, nil
-		case []string:
-			return v, nil
-		case []interface{}:
-			ids := make([]string, 0, len(v))
-			for _, item := range v {
-				id, ok := item.(string)
-				if !ok {
-					return nil, fmt.Errorf("ids must contain only strings")
-				}
-				ids = append(ids, id)
-			}
-			return ids, nil
-		default:
-			return nil, fmt.Errorf("ids must be a string or array of strings")
+		if strings.TrimSpace(content) == "" {
+			return &WorkflowOutputPlan{}, nil
 		}
-	}
 
-	parsePreValidation := func(raw interface{}) (*ValidationSchema, error) {
-		if raw == nil {
-			return nil, nil
-		}
-		pv, ok := raw.(map[string]interface{})
-		if !ok {
-			return nil, fmt.Errorf("invalid argument: pre_validation must be an object")
-		}
-		pvJSON, err := json.Marshal(pv)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal pre_validation: %w", err)
-		}
-		var schema ValidationSchema
-		if err := json.Unmarshal(pvJSON, &schema); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal pre_validation into ValidationSchema: %w", err)
-		}
-		if err := validateRegexPatternsInSchema(&schema); err != nil {
-			return nil, fmt.Errorf("invalid regex patterns in pre_validation schema: %w", err)
-		}
-		if err := validateJSONPathSyntax(&schema); err != nil {
-			return nil, fmt.Errorf("invalid JSONPath syntax in pre_validation schema: %w", err)
-		}
-		if err := validateArrayLengthConsistencyChecks(&schema); err != nil {
-			return nil, fmt.Errorf("invalid array_length consistency checks in pre_validation schema: %w", err)
-		}
-		return &schema, nil
+		return ParseWorkflowOutputPlan(content)
 	}
 
 	if err := mcpAgent.RegisterCustomTool(
-		"get_output_plan",
-		"Read the current workflow report plan from planning/output_plan.json.",
-		map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			plan, err := loadPlan(ctx)
-			if err != nil {
-				return "", err
-			}
-			data, err := json.MarshalIndent(plan, "", "  ")
-			if err != nil {
-				return "", err
-			}
-			return string(data), nil
-		},
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register get_output_plan tool: %w", err)
-	}
-
-	if err := mcpAgent.RegisterCustomTool(
-		"add_output_step",
-		"Add a workflow report step to planning/output_plan.json. This defines what final markdown artifact should be generated automatically after a workflow group run completes.",
+		"validate_report_plan",
+		"Validate planning/output_plan.json after you edit it via shell or file tools. Checks that the file contains valid JSON, matches the single-step report-plan shape, and that any pre_validation schema is valid.",
 		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"id":              map[string]interface{}{"type": "string", "description": "Unique ID for the output step"},
-				"title":           map[string]interface{}{"type": "string", "description": "Short title for the output"},
-				"instructions":    map[string]interface{}{"type": "string", "description": "Detailed instructions describing what the final output should show"},
-				"pre_validation":  map[string]interface{}{"type": "object", "description": "Optional pre-validation schema, same shape used by workflow and evaluation steps"},
-				"output_filename": map[string]interface{}{"type": "string", "description": "Markdown filename to write under the group run folder"},
-				"enabled":         map[string]interface{}{"type": "boolean", "description": "Whether this output step should run automatically after workflow completion"},
-			},
-			"required": []string{"id", "title", "instructions"},
+			"type":       "object",
+			"properties": map[string]interface{}{},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			plan, err := loadPlan(ctx)
@@ -618,173 +752,45 @@ func RegisterOutputModificationTools(
 				return "", err
 			}
 
-			id, _ := args["id"].(string)
-			title, _ := args["title"].(string)
-			instructions, _ := args["instructions"].(string)
-			if strings.TrimSpace(id) == "" || strings.TrimSpace(title) == "" || strings.TrimSpace(instructions) == "" {
-				return "", fmt.Errorf("id, title, and instructions are required")
-			}
-			if existing := plan.FirstStep(); existing != nil {
-				return "", fmt.Errorf("output plan already has a single step (%q). Use update_output_step instead", existing.ID)
-			}
-
-			step := &WorkflowOutputPlanStep{
-				ID:             id,
-				Title:          title,
-				Instructions:   instructions,
-				OutputFilename: DefaultFinalOutputFilename,
-				Enabled:        true,
-			}
-			if v, ok := args["output_filename"].(string); ok && strings.TrimSpace(v) != "" {
-				step.OutputFilename = v
-			}
-			if val, ok := args["pre_validation"]; ok && val != nil {
-				schema, err := parsePreValidation(val)
-				if err != nil {
-					return "", err
-				}
-				step.PreValidation = schema
-			}
-			if v, ok := args["enabled"].(bool); ok {
-				step.Enabled = v
-			}
-			step.Normalize()
-
-			plan.Step = step
-			if err := savePlan(ctx, plan); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Added report step %q. Report plan now has a single configured step.", step.ID), nil
-		},
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_output_step tool: %w", err)
-	}
-
-	if err := mcpAgent.RegisterCustomTool(
-		"update_output_step",
-		"Update an existing workflow report step in planning/output_plan.json.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"id":                   map[string]interface{}{"type": "string", "description": "ID of the output step to update"},
-				"title":                map[string]interface{}{"type": "string"},
-				"instructions":         map[string]interface{}{"type": "string"},
-				"pre_validation":       map[string]interface{}{"type": "object", "description": "Optional pre-validation schema, same shape used by workflow and evaluation steps"},
-				"clear_pre_validation": map[string]interface{}{"type": "boolean", "description": "If true, remove any existing pre-validation schema from the output step"},
-				"output_filename":      map[string]interface{}{"type": "string"},
-				"enabled":              map[string]interface{}{"type": "boolean"},
-			},
-			"required": []string{"id"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			plan, err := loadPlan(ctx)
-			if err != nil {
-				return "", err
-			}
-
-			id, _ := args["id"].(string)
-			if strings.TrimSpace(id) == "" {
-				return "", fmt.Errorf("id is required")
+			if plan.Step != nil && len(plan.Steps) > 0 {
+				return "", fmt.Errorf("output plan must use a single 'step' field only; legacy 'steps' array is not allowed")
 			}
 
 			step := plan.FirstStep()
 			if step == nil {
-				return "", fmt.Errorf("no output step exists yet. Use add_output_step first")
-			}
-			if step.ID != id {
-				return "", fmt.Errorf("output plan has a single step %q, not %q", step.ID, id)
+				return "Report plan is valid JSON, but no report step is configured.", nil
 			}
 
-			if v, ok := args["title"].(string); ok {
-				step.Title = v
+			if strings.TrimSpace(step.ID) == "" {
+				return "", fmt.Errorf("output plan step.id is required")
 			}
-			if v, ok := args["instructions"].(string); ok {
-				step.Instructions = v
-			}
-			if clearSchema, ok := args["clear_pre_validation"].(bool); ok && clearSchema {
-				step.PreValidation = nil
-			}
-			if val, ok := args["pre_validation"]; ok && val != nil {
-				schema, err := parsePreValidation(val)
-				if err != nil {
-					return "", err
-				}
-				step.PreValidation = schema
-			}
-			if v, ok := args["output_filename"].(string); ok && strings.TrimSpace(v) != "" {
-				step.OutputFilename = v
-			}
-			if v, ok := args["enabled"].(bool); ok {
-				step.Enabled = v
+			if strings.TrimSpace(step.Instructions) == "" {
+				return "", fmt.Errorf("output plan step.instructions is required")
 			}
 			step.Normalize()
-			plan.Step = step
-			if err := savePlan(ctx, plan); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("Updated output step %q.", id), nil
-		},
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_output_step tool: %w", err)
-	}
-
-	if err := mcpAgent.RegisterCustomTool(
-		"delete_output_steps",
-		"Delete one or more workflow report steps from planning/output_plan.json.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"ids": map[string]interface{}{
-					"type":        "array",
-					"description": "IDs of the output steps to delete",
-					"items":       map[string]interface{}{"type": "string"},
-				},
-			},
-			"required": []string{"ids"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			plan, err := loadPlan(ctx)
-			if err != nil {
-				return "", err
-			}
-
-			ids, err := parseIDs(args["ids"])
-			if err != nil {
-				return "", err
-			}
-			if len(ids) == 0 {
-				return "", fmt.Errorf("at least one id is required")
-			}
-
-			step := plan.FirstStep()
-			if step == nil {
-				return "", fmt.Errorf("no output step exists")
-			}
-			shouldDelete := false
-			for _, id := range ids {
-				if id == step.ID {
-					shouldDelete = true
-					break
+			if step.PreValidation != nil {
+				if err := validateRegexPatternsInSchema(step.PreValidation); err != nil {
+					return "", fmt.Errorf("invalid regex patterns in output pre_validation schema: %w", err)
+				}
+				if err := validateJSONPathSyntax(step.PreValidation); err != nil {
+					return "", fmt.Errorf("invalid JSONPath syntax in output pre_validation schema: %w", err)
+				}
+				if err := validateArrayLengthConsistencyChecks(step.PreValidation); err != nil {
+					return "", fmt.Errorf("invalid array_length consistency checks in output pre_validation schema: %w", err)
 				}
 			}
-			if !shouldDelete {
-				return "", fmt.Errorf("output plan has a single step %q, which was not included in ids", step.ID)
-			}
 
-			plan.Step = nil
-
-			if err := savePlan(ctx, plan); err != nil {
-				return "", err
+			stepJSON, err := json.MarshalIndent(step, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal normalized report step: %w", err)
 			}
-			return fmt.Sprintf("Deleted output step %q.", step.ID), nil
+			return fmt.Sprintf("Report plan is valid.\nEnabled: %t\nOutput filename: %s\nNormalized step:\n%s", step.Enabled, step.OutputFilename, string(stepJSON)), nil
 		},
 		"workflow",
 	); err != nil {
-		return fmt.Errorf("failed to register delete_output_steps tool: %w", err)
+		return fmt.Errorf("failed to register validate_report_plan tool: %w", err)
 	}
 
-	logger.Info("✅ Registered output modification tools")
+	logger.Info("✅ Registered report plan validation tool")
 	return nil
 }

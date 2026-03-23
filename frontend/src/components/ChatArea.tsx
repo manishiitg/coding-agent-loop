@@ -962,6 +962,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     disconnectSSE: state.disconnectSSE,
     disconnectAllSSE: state.disconnectAllSSE,
   })))
+  const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
 
   // Get active sessions from cache (shared across all components)
   const startActiveSessionsPolling = useChatStore(state => state.startActiveSessionsPolling)
@@ -2016,8 +2017,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const chatStore = useChatStore.getState()
     const freshActiveTab = activeTab?.tabId ? chatStore.chatTabs[activeTab.tabId] : activeTab
 
-    executionOptionsRef.current = executionOptions
-
     // Early validation
     if (!query?.trim()) {
       logger.warn('ChatArea', 'Empty query, returning early')
@@ -2033,6 +2032,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory })
     if (!resolved) return
     const { tab: currentTab, sessionId: tabSessionId } = resolved
+
+    const effectiveExecutionOptions = executionOptions ?? (
+      selectedModeCategory === 'workflow' && currentTab?.metadata?.phaseId
+        ? buildExecutionOptions()
+        : undefined
+    )
+    executionOptionsRef.current = effectiveExecutionOptions
 
     // Build file context — read preset fresh from store to avoid stale closure
     // when switching between workflows (the closure's activeWorkflowPreset may lag behind)
@@ -2274,7 +2280,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       })
 
       // Validate execution groups for workflow mode
-      if (correctAgentMode === 'workflow' && requestPayload.execution_options) {
+      const executionPhaseId = currentTab?.metadata?.phaseId
+      const requiresGroupValidation = executionPhaseId !== 'evaluation-execution' && executionPhaseId !== 'report-execution'
+
+      if (correctAgentMode === 'workflow' && requestPayload.execution_options && !isWorkflowPhaseChat && requiresGroupValidation) {
         const validationError = validateExecutionGroups(requestPayload.execution_options)
         if (validationError) {
           chatStore.addToast(validationError, 'warning')

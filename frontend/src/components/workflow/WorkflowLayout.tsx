@@ -949,7 +949,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
     setCurrentWorkflowPhase(phaseId)
     setWorkflowWorkspaceView(
-      phaseId === 'execution' || phaseId === 'evaluation-execution'
+      phaseId === 'execution' || phaseId === 'evaluation-execution' || phaseId === 'report-execution'
         ? 'execution'
         : 'builder'
     )

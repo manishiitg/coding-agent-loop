@@ -18,6 +18,21 @@ interface MarkdownRendererProps {
   showScrollbar?: boolean
 }
 
+interface ChartDatum {
+  label: string
+  value: number
+  color?: string
+}
+
+interface ChartSpec {
+  type: 'bar' | 'line'
+  title?: string
+  description?: string
+  xLabel?: string
+  yLabel?: string
+  data: ChartDatum[]
+}
+
 const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
   const lines = content.split('\n').filter(line => line.trim() !== '')
   const data: Record<string, string> = {}
@@ -55,6 +70,213 @@ const ToolDefinition: React.FC<{ content: string }> = ({ content }) => {
           </React.Fragment>
         ))}
       </div>
+    </div>
+  )
+}
+
+const CHART_COLORS = ['#3b82f6', '#14b8a6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
+
+const ChartBlock: React.FC<{ content: string }> = ({ content }) => {
+  const parsed = React.useMemo(() => {
+    try {
+      const raw = JSON.parse(content) as Record<string, unknown>
+      const type = raw.type
+      if (type !== 'bar' && type !== 'line') {
+        return {
+          error: 'Chart blocks currently support only "bar" and "line" types.',
+        }
+      }
+
+      const rawData = Array.isArray(raw.data) ? raw.data : []
+      const data: ChartDatum[] = []
+
+      rawData.forEach((item, index) => {
+        if (!item || typeof item !== 'object') {
+          return
+        }
+        const row = item as Record<string, unknown>
+        const numericValue = typeof row.value === 'number' ? row.value : Number(row.value)
+        if (!Number.isFinite(numericValue) || numericValue < 0) {
+          return
+        }
+        data.push({
+          label: typeof row.label === 'string' && row.label.trim() !== '' ? row.label : `Item ${index + 1}`,
+          value: numericValue,
+          color: typeof row.color === 'string' ? row.color : undefined,
+        })
+      })
+
+      if (data.length === 0) {
+        return {
+          error: 'Chart blocks need a non-empty "data" array with { "label", "value" } items.',
+        }
+      }
+
+      return {
+        spec: {
+          type,
+          title: typeof raw.title === 'string' ? raw.title : undefined,
+          description: typeof raw.description === 'string' ? raw.description : undefined,
+          xLabel: typeof raw.xLabel === 'string' ? raw.xLabel : undefined,
+          yLabel: typeof raw.yLabel === 'string' ? raw.yLabel : undefined,
+          data,
+        } satisfies ChartSpec,
+      }
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : 'Invalid chart JSON.',
+      }
+    }
+  }, [content])
+
+  if (parsed.error || !parsed.spec) {
+    return (
+      <div className="my-4 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-700 dark:bg-red-900/20">
+        <div className="mb-2 text-xs font-medium text-red-600 dark:text-red-400">Chart block error</div>
+        <pre className="whitespace-pre-wrap text-xs text-red-500 dark:text-red-400">{parsed.error ?? 'Invalid chart block.'}</pre>
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-gray-500">Show source</summary>
+          <pre className="mt-1 whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-400">{content}</pre>
+        </details>
+      </div>
+    )
+  }
+
+  const spec = parsed.spec
+  const chartWidth = 700
+  const chartHeight = 320
+  const chartTop = 24
+  const chartRight = 24
+  const chartBottom = 88
+  const chartLeft = 56
+  const plotWidth = chartWidth - chartLeft - chartRight
+  const plotHeight = chartHeight - chartTop - chartBottom
+  const maxValue = Math.max(...spec.data.map(item => item.value), 0)
+  const niceMax = maxValue <= 0 ? 1 : Math.ceil(maxValue / 5) * 5
+  const gridValues = Array.from({ length: 5 }, (_, index) => (niceMax / 4) * index)
+  const shouldRotateLabels = spec.data.some(item => item.label.length > 10) || spec.data.length > 5
+  const resolvedData: Array<ChartDatum & { color: string }> = spec.data.map((item, index) => ({
+    ...item,
+    color: item.color || CHART_COLORS[index % CHART_COLORS.length],
+  }))
+
+  let chartBody: React.ReactNode
+
+  if (spec.type === 'bar') {
+    const slotWidth = plotWidth / resolvedData.length
+    const barWidth = Math.max(18, Math.min(52, slotWidth * 0.62))
+
+    chartBody = (
+      <>
+        {gridValues.map(value => {
+          const y = chartTop + plotHeight - (value / niceMax) * plotHeight
+          return (
+            <g key={`grid-${value}`}>
+              <line x1={chartLeft} y1={y} x2={chartLeft + plotWidth} y2={y} stroke="currentColor" strokeOpacity="0.12" />
+              <text x={chartLeft - 8} y={y + 4} textAnchor="end" className="fill-gray-500 text-[11px] dark:fill-gray-400">
+                {value.toLocaleString()}
+              </text>
+            </g>
+          )
+        })}
+        {resolvedData.map((item, index) => {
+          const height = (item.value / niceMax) * plotHeight
+          const x = chartLeft + slotWidth * index + (slotWidth - barWidth) / 2
+          const y = chartTop + plotHeight - height
+          const labelX = chartLeft + slotWidth * index + slotWidth / 2
+          return (
+            <g key={`${item.label}-${index}`}>
+              <rect x={x} y={y} width={barWidth} height={Math.max(height, 2)} rx={8} fill={item.color} fillOpacity="0.92" />
+              <text x={labelX} y={y - 8} textAnchor="middle" className="fill-gray-600 text-[11px] dark:fill-gray-300">
+                {item.value.toLocaleString()}
+              </text>
+              <text
+                x={labelX}
+                y={chartTop + plotHeight + (shouldRotateLabels ? 18 : 24)}
+                textAnchor={shouldRotateLabels ? 'end' : 'middle'}
+                transform={shouldRotateLabels ? `rotate(-32 ${labelX} ${chartTop + plotHeight + 18})` : undefined}
+                className="fill-gray-600 text-[11px] dark:fill-gray-300"
+              >
+                {item.label}
+              </text>
+            </g>
+          )
+        })}
+      </>
+    )
+  } else {
+    const slotWidth = resolvedData.length > 1 ? plotWidth / (resolvedData.length - 1) : 0
+    const points = resolvedData.map((item, index) => {
+      const x = chartLeft + (resolvedData.length === 1 ? plotWidth / 2 : slotWidth * index)
+      const y = chartTop + plotHeight - (item.value / niceMax) * plotHeight
+      return { ...item, x, y }
+    })
+
+    chartBody = (
+      <>
+        {gridValues.map(value => {
+          const y = chartTop + plotHeight - (value / niceMax) * plotHeight
+          return (
+            <g key={`grid-${value}`}>
+              <line x1={chartLeft} y1={y} x2={chartLeft + plotWidth} y2={y} stroke="currentColor" strokeOpacity="0.12" />
+              <text x={chartLeft - 8} y={y + 4} textAnchor="end" className="fill-gray-500 text-[11px] dark:fill-gray-400">
+                {value.toLocaleString()}
+              </text>
+            </g>
+          )
+        })}
+        <polyline
+          fill="none"
+          stroke="#3b82f6"
+          strokeWidth="3"
+          points={points.map(point => `${point.x},${point.y}`).join(' ')}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {points.map((point, index) => (
+          <g key={`${point.label}-${index}`}>
+            <circle cx={point.x} cy={point.y} r="5" fill={point.color} />
+            <text x={point.x} y={point.y - 10} textAnchor="middle" className="fill-gray-600 text-[11px] dark:fill-gray-300">
+              {point.value.toLocaleString()}
+            </text>
+            <text
+              x={point.x}
+              y={chartTop + plotHeight + (shouldRotateLabels ? 18 : 24)}
+              textAnchor={shouldRotateLabels ? 'end' : 'middle'}
+              transform={shouldRotateLabels ? `rotate(-32 ${point.x} ${chartTop + plotHeight + 18})` : undefined}
+              className="fill-gray-600 text-[11px] dark:fill-gray-300"
+            >
+              {point.label}
+            </text>
+          </g>
+        ))}
+      </>
+    )
+  }
+
+  return (
+    <div className="my-4 overflow-hidden rounded-xl border border-gray-200 bg-gray-50/80 shadow-sm dark:border-gray-700 dark:bg-gray-900/80">
+      <div className="border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {spec.title || (spec.type === 'bar' ? 'Bar chart' : 'Line chart')}
+        </div>
+        {spec.description ? (
+          <div className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-400">{spec.description}</div>
+        ) : null}
+      </div>
+      <div className="overflow-x-auto px-3 py-3">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-auto min-w-[640px] text-gray-700 dark:text-gray-200">
+          <line x1={chartLeft} y1={chartTop} x2={chartLeft} y2={chartTop + plotHeight} stroke="currentColor" strokeOpacity="0.24" />
+          <line x1={chartLeft} y1={chartTop + plotHeight} x2={chartLeft + plotWidth} y2={chartTop + plotHeight} stroke="currentColor" strokeOpacity="0.24" />
+          {chartBody}
+        </svg>
+      </div>
+      {(spec.xLabel || spec.yLabel) ? (
+        <div className="border-t border-gray-200 px-4 py-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          {spec.xLabel ? <span className="mr-4">X: {spec.xLabel}</span> : null}
+          {spec.yLabel ? <span>Y: {spec.yLabel}</span> : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -441,6 +663,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             
             if (!isInline && match && match[1] === 'tool-definition') {
               return <ToolDefinition content={String(children).replace(/\n$/, '')} />
+            }
+
+            if (!isInline && match && match[1] === 'chart') {
+              return <ChartBlock content={String(children).replace(/\n$/, '')} />
             }
 
             if (!isInline && match && match[1] === 'mermaid') {

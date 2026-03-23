@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
+	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -41,10 +41,10 @@ Answer user questions about the evaluation plan and report. Make improvements to
 - **Selected Run**: {{.RunPathRelative}}
 
 ### Evaluation Plan
-{{if .EvaluationPlanJSON}}` + "```json\n{{.EvaluationPlanJSON}}\n```" + `{{else}}No evaluation plan provided.{{end}}
+{{if .EvaluationPlanJSON}}`+"```json\n{{.EvaluationPlanJSON}}\n```"+`{{else}}No evaluation plan provided.{{end}}
 
 ### Evaluation Report (Latest)
-{{if .EvaluationReportJSON}}` + "```json\n{{.EvaluationReportJSON}}\n```" + `{{else}}No evaluation report found for this run.{{end}}
+{{if .EvaluationReportJSON}}`+"```json\n{{.EvaluationReportJSON}}\n```"+`{{else}}No evaluation report found for this run.{{end}}
 
 ### Execution Summary
 {{.ExecutionResultsSummary}}
@@ -144,7 +144,7 @@ func (edm *EvaluationDebuggerManager) EvaluationDebuggerOnly(ctx context.Context
 	if strings.HasPrefix(relRunPath, "/") {
 		relRunPath = relRunPath[1:]
 	}
-	
+
 	evalReportPath := fmt.Sprintf("evaluation/runs/%s/evaluation_report.json", relRunPath)
 	evalReportContent, err := edm.ReadWorkspaceFile(ctx, evalReportPath)
 	if err != nil {
@@ -191,7 +191,7 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 	// Paths
 	evaluationPath := fmt.Sprintf("%s/evaluation", workspacePath)
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
-	
+
 	// Read paths: evaluation/, runs/
 	readPaths := []string{evaluationPath, runsPath}
 	// Write paths: evaluation/ (to update plan)
@@ -202,7 +202,7 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 	// LLM Config
 	var llmConfigToUse *orchestrator.LLMConfig
 	orchestratorLLMConfig := edm.GetLLMConfig()
-	
+
 	if edm.presetLLM != nil {
 		var fallbacks []orchestrator.LLMModel
 		var apiKeys *orchestrator.APIKeys
@@ -227,12 +227,12 @@ func (edm *EvaluationDebuggerManager) createEvaluationDebuggerAgent(ctx context.
 	// Phase agents always use simple mode UNLESS the provider requires code execution (claude-code, gemini-cli)
 	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(edm.presetLLM)
 	config.UseToolSearchMode = false
-	
+
 	// MCP Servers (use preset if available, else none)
 	selectedServers := edm.GetSelectedServers()
 	selectedTools := edm.GetSelectedTools()
 	mcpConfigPath := edm.GetMCPConfigPath()
-	
+
 	if len(selectedServers) > 0 && mcpConfigPath != "" {
 		config.ServerNames = selectedServers
 		config.SelectedTools = selectedTools
@@ -316,9 +316,9 @@ func (agent *WorkflowEvaluationDebuggerAgent) Execute(ctx context.Context, templ
 				InputData:     templateVars,
 			}
 			eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
-				Type: orchestrator_events.OrchestratorAgentStart,
+				Type:      orchestrator_events.OrchestratorAgentStart,
 				Timestamp: time.Now(),
-				Data: startedEvent,
+				Data:      startedEvent,
 			})
 		}
 	}
@@ -328,7 +328,7 @@ func (agent *WorkflowEvaluationDebuggerAgent) Execute(ctx context.Context, templ
 		logger.Info(fmt.Sprintf("📊 Evaluation Debugger iteration %d/%d", iteration, maxIterations))
 
 		inputProcessor := func(map[string]string) string { return userMessage.String() }
-		
+
 		// Use empty struct for template data since we already processed the templates
 		result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, currentConversationHistory, struct{}{}, systemPrompt.String(), true)
 		if err != nil {
@@ -342,7 +342,7 @@ func (agent *WorkflowEvaluationDebuggerAgent) Execute(ctx context.Context, templ
 		if iteration < maxIterations && agent.baseOrchestrator != nil {
 			requestID := fmt.Sprintf("eval_debug_continue_%d_%d", iteration, time.Now().UnixNano())
 			approved, feedback, err := agent.baseOrchestrator.RequestHumanFeedback(
-				ctx, requestID, 
+				ctx, requestID,
 				fmt.Sprintf("Analysis complete (iteration %d/%d). Continue?", iteration, maxIterations),
 				currentResult,
 				agent.baseOrchestrator.GetMCPSessionID(), // Use accessor method instead of direct field access
@@ -375,9 +375,9 @@ func (agent *WorkflowEvaluationDebuggerAgent) Execute(ctx context.Context, templ
 				Success:       true,
 			}
 			eventBridge.HandleEvent(ctx, &baseevents.AgentEvent{
-				Type: orchestrator_events.OrchestratorAgentEnd,
+				Type:      orchestrator_events.OrchestratorAgentEnd,
 				Timestamp: time.Now(),
-				Data: completedEvent,
+				Data:      completedEvent,
 			})
 		}
 	}
@@ -425,6 +425,85 @@ func writeEvaluationPlanToFile(ctx context.Context, workspacePath string, plan *
 	return writeFile(ctx, planPath, string(data))
 }
 
+func registerEvaluationValidationTools(
+	mcpAgent *mcpagent.Agent,
+	workspacePath string,
+	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+) error {
+	validationSchema := `{
+		"type": "object",
+		"properties": {},
+		"additionalProperties": false
+	}`
+	validationParams, _ := parseSchemaForToolParameters(validationSchema)
+
+	mcpAgent.RegisterCustomTool(
+		"validate_evaluation_plan",
+		"Validate evaluation/evaluation_plan.json after editing it via shell/file tools.",
+		validationParams,
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			plan, err := readEvaluationPlanFromFile(ctx, workspacePath, readFile)
+			if err != nil {
+				return "", fmt.Errorf("failed to read evaluation/evaluation_plan.json: %w", err)
+			}
+
+			if len(plan.Steps) == 0 {
+				return "Evaluation plan is valid JSON, but no evaluation steps are configured.", nil
+			}
+
+			seenIDs := make(map[string]struct{}, len(plan.Steps))
+			for idx, step := range plan.Steps {
+				if step == nil {
+					return "", fmt.Errorf("evaluation step %d is null", idx+1)
+				}
+				if strings.TrimSpace(step.ID) == "" {
+					return "", fmt.Errorf("evaluation step %d is missing id", idx+1)
+				}
+				if _, exists := seenIDs[step.ID]; exists {
+					return "", fmt.Errorf("duplicate evaluation step id %q", step.ID)
+				}
+				seenIDs[step.ID] = struct{}{}
+				if strings.TrimSpace(step.Title) == "" {
+					return "", fmt.Errorf("evaluation step %q is missing title", step.ID)
+				}
+				if strings.TrimSpace(step.Description) == "" {
+					return "", fmt.Errorf("evaluation step %q is missing description", step.ID)
+				}
+				if strings.TrimSpace(step.SuccessCriteria) == "" {
+					return "", fmt.Errorf("evaluation step %q is missing success_criteria", step.ID)
+				}
+				if step.PreValidation != nil {
+					if err := validateRegexPatternsInSchema(step.PreValidation); err != nil {
+						return "", fmt.Errorf("evaluation step %q has invalid pre_validation regex: %w", step.ID, err)
+					}
+					if err := validateJSONPathSyntax(step.PreValidation); err != nil {
+						return "", fmt.Errorf("evaluation step %q has invalid pre_validation jsonpath: %w", step.ID, err)
+					}
+					if err := validateArrayLengthConsistencyChecks(step.PreValidation); err != nil {
+						return "", fmt.Errorf("evaluation step %q has invalid pre_validation consistency checks: %w", step.ID, err)
+					}
+				}
+			}
+
+			normalized, err := json.MarshalIndent(plan, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("failed to marshal normalized evaluation plan: %w", err)
+			}
+
+			return fmt.Sprintf(
+				"Evaluation plan is valid.\nsteps: %d\nnormalized_plan:\n%s",
+				len(plan.Steps),
+				string(normalized),
+			), nil
+		},
+		"workflow",
+	)
+
+	logger.Info("✅ Registered evaluation plan validation tool")
+	return nil
+}
+
 func registerEvaluationModificationTools(
 	mcpAgent *mcpagent.Agent,
 	workspacePath string,
@@ -433,7 +512,7 @@ func registerEvaluationModificationTools(
 	writeFile func(context.Context, string, string) error,
 	moveFile func(context.Context, string, string) error,
 ) error {
-	
+
 	// Update Evaluation Step
 	updateSchema := `{
 		"type": "object",
@@ -453,15 +532,25 @@ func registerEvaluationModificationTools(
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			stepID, _ := args["existing_step_id"].(string)
 			plan, err := readEvaluationPlanFromFile(ctx, workspacePath, readFile)
-			if err != nil { return "", err }
-			
+			if err != nil {
+				return "", err
+			}
+
 			for i, step := range plan.Steps {
 				if step.ID == stepID {
-					if t, ok := args["title"].(string); ok && t != "" { plan.Steps[i].Title = t }
-					if d, ok := args["description"].(string); ok && d != "" { plan.Steps[i].Description = d }
-					if s, ok := args["success_criteria"].(string); ok && s != "" { plan.Steps[i].SuccessCriteria = s }
-					
-					if err := writeEvaluationPlanToFile(ctx, workspacePath, plan, writeFile); err != nil { return "", err }
+					if t, ok := args["title"].(string); ok && t != "" {
+						plan.Steps[i].Title = t
+					}
+					if d, ok := args["description"].(string); ok && d != "" {
+						plan.Steps[i].Description = d
+					}
+					if s, ok := args["success_criteria"].(string); ok && s != "" {
+						plan.Steps[i].SuccessCriteria = s
+					}
+
+					if err := writeEvaluationPlanToFile(ctx, workspacePath, plan, writeFile); err != nil {
+						return "", err
+					}
 					return fmt.Sprintf("Updated step %s", stepID), nil
 				}
 			}
@@ -488,16 +577,20 @@ func registerEvaluationModificationTools(
 		addParams,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			newStep := &EvaluationStep{
-				ID: args["id"].(string),
-				Title: args["title"].(string),
-				Description: args["description"].(string),
+				ID:              args["id"].(string),
+				Title:           args["title"].(string),
+				Description:     args["description"].(string),
 				SuccessCriteria: args["success_criteria"].(string),
 			}
 			plan, err := readEvaluationPlanFromFile(ctx, workspacePath, readFile)
-			if err != nil { return "", err }
-			
+			if err != nil {
+				return "", err
+			}
+
 			plan.Steps = append(plan.Steps, newStep)
-			if err := writeEvaluationPlanToFile(ctx, workspacePath, plan, writeFile); err != nil { return "", err }
+			if err := writeEvaluationPlanToFile(ctx, workspacePath, plan, writeFile); err != nil {
+				return "", err
+			}
 			return fmt.Sprintf("Added step %s", newStep.ID), nil
 		},
 		"workflow",

@@ -16,7 +16,8 @@ import {
   Filter,
   RefreshCw,
   Copy,
-  Check
+  Check,
+  Play
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import type { EvaluationReportsResponse } from '../../services/api-types'
@@ -26,6 +27,8 @@ interface EvaluationPopupProps {
   onClose: () => void
   workspacePath: string | null
   selectedRunFolder: string | null // Currently selected run folder in the UI
+  runFolders: string[]
+  onRunEvaluation?: (runFolder: string) => Promise<void>
 }
 
 // Format percentage for display
@@ -58,10 +61,13 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   isOpen,
   onClose,
   workspacePath,
-  selectedRunFolder
+  selectedRunFolder,
+  runFolders,
+  onRunEvaluation,
 }) => {
   const [activeTab, setActiveTab] = useState<'reports' | 'plan'>('reports')
   const [loading, setLoading] = useState(false)
+  const [startingEvaluation, setStartingEvaluation] = useState(false)
   const [data, setData] = useState<EvaluationReportsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expandedReports, setExpandedReports] = useState<Set<string>>(new Set())
@@ -99,9 +105,12 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
   useEffect(() => {
     if (isOpen && workspacePath) {
       // If we have a selected run folder, default to single mode
-      if (selectedRunFolder) {
+      const preferredRunFolder = selectedRunFolder && selectedRunFolder.includes('/')
+        ? selectedRunFolder
+        : (runFolders.find(folder => folder.includes('/')) || '')
+      if (preferredRunFolder) {
         setViewMode('single')
-        setFilterRunFolder(selectedRunFolder)
+        setFilterRunFolder(preferredRunFolder)
       } else {
         setViewMode('all')
         setFilterRunFolder('')
@@ -111,19 +120,23 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
     } else {
       setData(null)
       setError(null)
+      setStartingEvaluation(false)
       setExpandedReports(new Set())
       setExpandedSteps(new Set())
     }
-  }, [isOpen, workspacePath, selectedRunFolder, loadReports])
+  }, [isOpen, workspacePath, selectedRunFolder, runFolders, loadReports])
 
   // Update filter when view mode changes
   useEffect(() => {
-    if (viewMode === 'single' && selectedRunFolder) {
-      setFilterRunFolder(selectedRunFolder)
+    if (viewMode === 'single') {
+      const preferredRunFolder = selectedRunFolder && selectedRunFolder.includes('/')
+        ? selectedRunFolder
+        : (runFolders.find(folder => folder.includes('/')) || '')
+      setFilterRunFolder(preferredRunFolder)
     } else if (viewMode === 'all') {
       setFilterRunFolder('')
     }
-  }, [viewMode, selectedRunFolder])
+  }, [viewMode, selectedRunFolder, runFolders])
 
   // Reload when filter changes
   useEffect(() => {
@@ -169,9 +182,26 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
 
   // Get unique run folders that have evaluation reports
   const availableRunFolders = useMemo(() => {
-    if (!data?.reports) return []
-    return [...new Set(data.reports.map(r => r.run_folder))].sort()
-  }, [data?.reports])
+    return runFolders.filter(folder => folder.includes('/')).sort()
+  }, [runFolders])
+
+  const canRunEvaluation = !!(filterRunFolder && filterRunFolder.includes('/'))
+
+  const handleRunEvaluation = useCallback(async () => {
+    if (!onRunEvaluation || !canRunEvaluation || !filterRunFolder) return
+
+    setStartingEvaluation(true)
+    setError(null)
+    try {
+      await onRunEvaluation(filterRunFolder)
+      onClose()
+    } catch (err) {
+      console.error('Failed to start evaluation execution:', err)
+      setError(err instanceof Error ? err.message : 'Failed to start evaluation execution')
+    } finally {
+      setStartingEvaluation(false)
+    }
+  }, [canRunEvaluation, filterRunFolder, onClose, onRunEvaluation])
 
   if (!isOpen) return null
 
@@ -276,6 +306,22 @@ const EvaluationPopup: React.FC<EvaluationPopupProps> = ({
                 >
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                 </button>
+
+                {onRunEvaluation && (
+                  <button
+                    onClick={handleRunEvaluation}
+                    disabled={!canRunEvaluation || startingEvaluation}
+                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-medium disabled:opacity-50"
+                    title="Run evaluation for the selected iteration/group"
+                  >
+                    {startingEvaluation ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4" />
+                    )}
+                    {startingEvaluation ? 'Starting...' : 'Run Evaluation'}
+                  </button>
+                )}
               </div>
             )}
             

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/common"
@@ -21,6 +24,11 @@ func SetSessionWorkingDir(sessionID, dir string) {
 // SetSessionFolderGuard delegates to common.SetSessionFolderGuard.
 func SetSessionFolderGuard(sessionID string, readPaths, writePaths []string) {
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
+}
+
+// SetSessionGeminiProjectDirID delegates to common.SetSessionGeminiProjectDirID.
+func SetSessionGeminiProjectDirID(sessionID, dirID string) {
+	common.SetSessionGeminiProjectDirID(sessionID, dirID)
 }
 
 // ClearSessionShellConfig delegates to common.ClearSessionShellConfig.
@@ -89,6 +97,16 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		sessionID = sid
 	}
 	sessionCfg := GetSessionShellConfig(sessionID)
+
+	if sessionCfg != nil && sessionCfg.GeminiProjectDirID != "" {
+		params.Command = rewriteGeminiRelativePaths(params.Command, sessionCfg.GeminiProjectDirID)
+		if params.ExtraEnv == nil {
+			params.ExtraEnv = make(map[string]string)
+		}
+		if _, exists := params.ExtraEnv["GEMINI_PROJECT_DIR"]; !exists {
+			params.ExtraEnv["GEMINI_PROJECT_DIR"] = geminiProjectDirPath(sessionCfg.GeminiProjectDirID)
+		}
+	}
 
 	// Set default working directory:
 	// Priority: param > session config > client field > ExtraEnv > empty (workspace root)
@@ -247,4 +265,23 @@ func deduplicateStrings(input []string) []string {
 		}
 	}
 	return result
+}
+
+var geminiRelativePathPattern = regexp.MustCompile("(^|[\\s\\\"'=:(])(?:(?:\\.\\./|\\./)*)\\.gemini($|[/\\s\\\"'`:)])")
+
+func geminiProjectDirPath(projectDirID string) string {
+	return filepath.Join(os.TempDir(), "gemini-cli-project-"+projectDirID)
+}
+
+func rewriteGeminiRelativePaths(command, projectDirID string) string {
+	if projectDirID == "" || !strings.Contains(command, ".gemini") {
+		return command
+	}
+
+	absoluteGeminiDir := filepath.Join(geminiProjectDirPath(projectDirID), ".gemini")
+	rewritten := geminiRelativePathPattern.ReplaceAllString(command, "${1}"+absoluteGeminiDir+"${2}")
+	if rewritten != command {
+		log.Printf("[SHELL] Rewrote Gemini relative path for project dir %s: %s -> %s", projectDirID, command, rewritten)
+	}
+	return rewritten
 }

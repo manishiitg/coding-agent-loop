@@ -70,6 +70,12 @@ func GetWorkflowConstants() WorkflowConstants {
 				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
 				Options:     []WorkflowPhaseOption{},
 			},
+			{
+				ID:          "report-execution",
+				Title:       "Report Execution",
+				Description: "Generate the final workflow report for a completed group run.",
+				Options:     []WorkflowPhaseOption{},
+			},
 		},
 	}
 }
@@ -413,6 +419,10 @@ func (wo *WorkflowOrchestrator) executeFlow(
 		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
 	}
 
+	if workflowStatus == "report-execution" {
+		return wo.runReportExecutionOnly(ctx, objective, selectedOptions)
+	}
+
 	// workflow-builder is a chat-only phase and should never reach the orchestrator path.
 	// If it does, return an error.
 	if workflowStatus == "workflow-builder" {
@@ -728,6 +738,101 @@ func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, 
 	return result, nil
 }
 
+// runReportExecutionOnly runs only the report execution phase.
+func (wo *WorkflowOrchestrator) runReportExecutionOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
+	wo.GetLogger().Info("🚀 Starting Report Execution Phase")
+
+	outputPlanPath := step_based_workflow.DefaultOutputPlanPath
+	outputPlanContent, err := wo.ReadWorkspaceFile(ctx, outputPlanPath)
+	if err != nil {
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "no such file") || strings.Contains(errMsg, "document not found") || strings.Contains(errMsg, "file does not exist") || strings.Contains(errMsg, "file not found") {
+			return "", fmt.Errorf("report plan not found at %s. Please create planning/output_plan.json first", outputPlanPath)
+		}
+		return "", fmt.Errorf("failed to read report plan at %s: %w", outputPlanPath, err)
+	}
+
+	outputPlan, err := step_based_workflow.ParseWorkflowOutputPlan(outputPlanContent)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse report plan at %s: %w", outputPlanPath, err)
+	}
+	if outputPlan == nil || outputPlan.PrimaryStep() == nil {
+		return "", fmt.Errorf("no enabled output step found in %s", outputPlanPath)
+	}
+
+	llmConfig := wo.GetLLMConfig()
+	reportAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
+		ctx,
+		"",
+		"",
+		wo.GetTemperature(),
+		wo.GetAgentMode(),
+		wo.GetSelectedServers(),
+		wo.GetSelectedTools(),
+		wo.GetUseCodeExecutionMode(),
+		wo.GetUseToolSearchMode(),
+		wo.GetPreDiscoveredTools(),
+		wo.GetMCPConfigPath(),
+		llmConfig,
+		wo.GetMaxTurns(),
+		wo.GetLogger(),
+		wo.GetTracer(),
+		wo.GetContextAwareBridge(),
+		wo.WorkspaceTools,
+		wo.WorkspaceToolExecutors,
+		wo.ToolCategories,
+		wo.presetPhaseLLM,
+		wo.useKnowledgebase,
+		wo.tieredConfig,
+	)
+	if err != nil {
+		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create report orchestrator: %v", err), nil)
+		return "", fmt.Errorf("failed to create report orchestrator: %w", err)
+	}
+
+	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
+		reportAgent.SetWorkspaceEnvRef(envRef)
+	}
+	reportAgent.SetMCPSessionID(wo.getSessionID())
+	if wo.httpSessionID != "" {
+		reportAgent.SetHTTPSessionID(wo.httpSessionID)
+	}
+	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
+		reportAgent.SetSelectedSkills(skills)
+	}
+	if secrets := wo.GetSecrets(); len(secrets) > 0 {
+		reportAgent.SetSecrets(secrets)
+	}
+	if wo.cdpPort > 0 {
+		reportAgent.SetCdpPort(wo.cdpPort)
+	}
+
+	if wo.executionOptions == nil {
+		wo.GetLogger().Error("❌ Execution options is NIL - report execution requires execution options", nil)
+		return "", fmt.Errorf("report execution requires execution options to be set (including selected run folder)")
+	}
+
+	reportAgent.SetExecutionOptions(wo.executionOptions)
+
+	targetRunFolder := wo.executionOptions.SelectedRunFolder
+	if targetRunFolder == "" {
+		wo.GetLogger().Error("❌ targetRunFolder is empty in execution options - cannot proceed", nil)
+		return "", fmt.Errorf("report execution requires a selected run folder (iteration/group) in execution options")
+	}
+	if !strings.Contains(targetRunFolder, "/") {
+		return "", fmt.Errorf("report execution requires a group-scoped run folder like iteration-2/manish")
+	}
+
+	result, err := reportAgent.ExecuteFinalOutputOnly(ctx, objective, wo.GetWorkspacePath(), targetRunFolder)
+	if err != nil {
+		wo.GetLogger().Error(fmt.Sprintf("❌ Report execution failed: %v", err), nil)
+		return "", fmt.Errorf("report execution failed: %w", err)
+	}
+
+	wo.GetLogger().Info("✅ Report execution completed successfully")
+	return result, nil
+}
+
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
 // This is called for execution status and executes the approved plan
 func (wo *WorkflowOrchestrator) runPlanning(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
@@ -882,6 +987,7 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 					database.WorkflowStatusPreVerification, // Execution phase
 					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
+					"report-execution",                     // Final report execution phase
 					"evaluation-debugger",                  // Evaluation debugger phase
 					"workflow-builder",                     // Interactive workshop phase
 				}

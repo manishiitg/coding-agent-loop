@@ -11,6 +11,7 @@ interface FinalOutputPopupProps {
   selectedRunFolder: string | null
   runFolders: string[]
   workflowTitle?: string
+  onRunReport?: (runFolder: string) => Promise<void>
 }
 
 const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
@@ -19,8 +20,28 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
   workspacePath,
   selectedRunFolder,
   runFolders,
-  workflowTitle
+  workflowTitle,
+  onRunReport,
 }) => {
+  const extractErrorMessage = (err: unknown, fallback: string): string => {
+    const responseData = (err as any)?.response?.data
+    if (typeof responseData === 'string' && responseData.trim()) {
+      return responseData.trim()
+    }
+    if (responseData && typeof responseData === 'object') {
+      if (typeof responseData.error === 'string' && responseData.error.trim()) {
+        return responseData.error.trim()
+      }
+      if (typeof responseData.message === 'string' && responseData.message.trim()) {
+        return responseData.message.trim()
+      }
+    }
+    if (err instanceof Error && err.message.trim()) {
+      return err.message.trim()
+    }
+    return fallback
+  }
+
   const [activeRunFolder, setActiveRunFolder] = useState('')
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -54,7 +75,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
       setData(response)
     } catch (err) {
       console.error('Failed to load final output:', err)
-      setError('Failed to load final output')
+      setError(extractErrorMessage(err, 'Failed to load final output'))
       setData(null)
     } finally {
       setLoading(false)
@@ -67,21 +88,27 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
     }
   }, [activeRunFolder, isOpen, workspacePath, loadOutput])
 
-  const handleGenerate = async () => {
+  const handleGenerate = useCallback(async () => {
     if (!workspacePath || !activeRunFolder) return
 
     setGenerating(true)
     setError(null)
     try {
+      if (onRunReport) {
+        await onRunReport(activeRunFolder)
+        onClose()
+        return
+      }
+
       const response = await agentApi.generateFinalOutput(workspacePath, activeRunFolder, workflowTitle)
       setData(response)
     } catch (err) {
       console.error('Failed to generate final output:', err)
-      setError('Failed to generate final output')
+      setError(extractErrorMessage(err, 'Failed to generate final output'))
     } finally {
       setGenerating(false)
     }
-  }
+  }, [activeRunFolder, onClose, onRunReport, workspacePath, workflowTitle])
 
   const handleCopy = async () => {
     const content = data?.content || ''
@@ -153,7 +180,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-              Generate
+              {generating ? 'Starting...' : 'Run Report'}
             </button>
             <button
               onClick={handleCopy}
@@ -218,7 +245,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
                 <AlertCircle className="w-8 h-8 text-yellow-600 dark:text-yellow-400 mx-auto" />
                 <div className="text-sm font-medium text-foreground">Report plan is missing or disabled</div>
                 <div className="text-sm text-muted-foreground">
-                  Configure the single report step in `planning/output_plan.json` through workflow builder chat tools like `add_output_step` or `update_output_step`, then completed group runs will generate this artifact automatically.
+                  Define the single report step in `planning/output_plan.json`, validate it with `validate_report_plan`, then completed group runs can generate this artifact automatically.
                 </div>
               </div>
             </div>

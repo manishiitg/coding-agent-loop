@@ -1087,7 +1087,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, enabled_skills, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
 - **analyze_step(step_id)** — Analyze a step's config and execution history; returns optimization suggestions
 - **generate_learnings(step_id, guidance?, execution_history?)** — Start the learning agent in the background. You will be automatically notified when it completes. Optionally provide human guidance to focus on specific patterns (e.g., "focus on the API pagination pattern"). If you ran the test yourself (not via execute_step), pass your recent tool calls as execution_history — the learning agent will use that directly instead of reading execution logs.
-- **optimize_step(step_id, focus?)** — Start a background optimization agent. Analyzes logs, output, learnings, and config for a step. You will be automatically notified when it completes. Optionally provide focus guidance (e.g., "learnings quality", "tool usage", "output correctness").
+- **optimize_step(step_id, focus?, forced?)** — Start a background optimization agent. Analyzes logs, output, learnings, and config for a step. You will be automatically notified when it completes. Optionally provide focus guidance (e.g., "learnings quality", "tool usage", "output correctness"). By default, already-optimized steps are skipped; pass forced=true to re-run analysis anyway.
 - **get_cost_summary** — Show token usage and cost breakdown (per-step, per-model, per-phase) for the current run
 
 ### Read-Only Info
@@ -4187,7 +4187,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7b: optimize_step — background optimization agent
 	if err := mcpAgent.RegisterCustomTool(
 		"optimize_step",
-		"Start a background optimization agent that analyzes logs, output, learnings, and config for a step. Returns execution_id immediately — you will be automatically notified when it completes.",
+		"Start a background optimization agent that analyzes logs, output, learnings, and config for a step. Returns execution_id immediately — you will be automatically notified when it completes. By default, if a step is already optimized, this tool returns early unless forced=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -4198,6 +4198,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"focus": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional focus guidance for the optimization agent. E.g., 'learnings quality', 'tool usage', 'output correctness', 'validation schema coverage'.",
+				},
+				"forced": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Optional. Default false. If true, run optimize_step even when step_config already marks the step as optimized.",
 				},
 			},
 			"required": []string{"step_id"},
@@ -4218,6 +4222,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					focus = s
 				}
 			}
+			forced := false
+			if val, ok := args["forced"]; ok && val != nil {
+				if b, ok := val.(bool); ok {
+					forced = b
+				} else {
+					return "forced must be a boolean", nil
+				}
+			}
 
 			// Resolve step ID
 			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
@@ -4228,6 +4240,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return resolveErr.Error(), nil
 			}
 			stepID = resolvedID
+
+			// Default guard: if the step is already optimized, skip re-optimization unless explicitly forced.
+			if !forced {
+				stepConfigs, cfgErr := iwm.controller.ReadStepConfigs(ctx)
+				if cfgErr != nil {
+					logger.Warn(fmt.Sprintf("⚠️ optimize_step: failed to read step configs for optimized check: %v (continuing)", cfgErr))
+				} else {
+					for _, sc := range stepConfigs {
+						if sc.ID != stepID || sc.AgentConfigs == nil || sc.AgentConfigs.Optimized == nil || !*sc.AgentConfigs.Optimized {
+							continue
+						}
+						return fmt.Sprintf(
+							"Step %q is already optimized (optimized=true in planning/step_config.json). Skipping optimize_step by default. To run optimization analysis again, call optimize_step with forced=true.",
+							stepID,
+						), nil
+					}
+				}
+			}
 
 			execID := fmt.Sprintf("debug-%s-%05d", stepID, time.Now().UnixNano()%100000)
 			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
@@ -4324,7 +4354,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if focus != "" {
 				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
 			}
-			logger.Info(fmt.Sprintf("🔍 Workshop: optimization agent for step %q started in background, execution_id=%q", stepID, execID))
+			logger.Info(fmt.Sprintf("🔍 Workshop: optimization agent for step %q started in background, execution_id=%q, forced=%v", stepID, execID, forced))
 			return fmt.Sprintf("Optimization agent for step %q started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", stepID, execID, focusInfo), nil
 		},
 		"workflow",

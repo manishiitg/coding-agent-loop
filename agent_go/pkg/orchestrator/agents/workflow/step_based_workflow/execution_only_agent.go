@@ -6,12 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
-	"mcp-agent-builder-go/agent_go/pkg/skills"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/agent/prompt"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -25,11 +24,6 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 - **Identity**: Execution-Only Agent (Focused on completion, not discovery).
 - **Goal**: Execute the current plan step using MCP tools or code execution.
 {{if .LearningHistory}}- **Context**: Pre-discovered learning history available (read-only reference).{{end}}
-
-{{if .CustomInstructions}}
-## Custom Instructions (Saved by User)
-{{.CustomInstructions}}
-{{end}}
 
 {{if .IsCodeExecutionMode}}
 ## Code Execution Mode
@@ -295,26 +289,10 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
 	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
 
-	// Read workflow memory from memory/memory.md (falls back to legacy instructions.md)
-	customInstructions := ""
-	if workspacePath != "" {
-		memoryPath := workspacePath + "/memory/memory.md"
-		if content, err := skills.ReadFile(memoryPath); err == nil && strings.TrimSpace(content) != "" {
-			customInstructions = strings.TrimSpace(content)
-		} else {
-			// Fallback: legacy instructions.md
-			instructionsPath := workspacePath + "/instructions.md"
-			if content, err := skills.ReadFile(instructionsPath); err == nil && strings.TrimSpace(content) != "" {
-				customInstructions = strings.TrimSpace(content)
-			}
-		}
-	}
-
 	// Execute the pre-parsed template
 	var result strings.Builder
 	err := executionOnlySystemTemplate.Execute(&result, map[string]interface{}{
 		"WorkspacePath":              workspacePath,
-		"CustomInstructions":         customInstructions,
 		"IsCodeExecutionMode":        isCodeExecutionMode,
 		"CodeExecutionInstructions":  codeExecutionInstructions,
 		"UseToolSearchMode":          useToolSearchMode,
@@ -335,14 +313,14 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"StepExecutionPath":          stepExecutionPath,
 		"PreviousStepsSummary":       previousStepsSummary,
 		"DecisionEvaluationQuestion": decisionEvaluationQuestion,
-		"ValidationSchema":           validationSchema,                        // Validation schema JSON string
-		"KnowledgebasePath":          knowledgebasePath,                       // Knowledgebase folder path
-		"UseKnowledgebase":           templateVars["UseKnowledgebase"],        // Whether knowledgebase is enabled
-		"FolderGuardReadPaths":       folderGuardReadPaths,                    // Folder guard read paths for agent guidance
-		"FolderGuardWritePaths":      folderGuardWritePaths,                   // Folder guard write paths for agent guidance
-		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],    // Skip cleanup mode flag
-		"IsEvaluationMode":           templateVars["IsEvaluationMode"],       // Evaluation mode flag
-		"WorkflowRoot":               templateVars["WorkflowRoot"],           // Workflow root path for absolute cwd display
+		"ValidationSchema":           validationSchema,                     // Validation schema JSON string
+		"KnowledgebasePath":          knowledgebasePath,                    // Knowledgebase folder path
+		"UseKnowledgebase":           templateVars["UseKnowledgebase"],     // Whether knowledgebase is enabled
+		"FolderGuardReadPaths":       folderGuardReadPaths,                 // Folder guard read paths for agent guidance
+		"FolderGuardWritePaths":      folderGuardWritePaths,                // Folder guard write paths for agent guidance
+		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"], // Skip cleanup mode flag
+		"IsEvaluationMode":           templateVars["IsEvaluationMode"],     // Evaluation mode flag
+		"WorkflowRoot":               templateVars["WorkflowRoot"],         // Workflow root path for absolute cwd display
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

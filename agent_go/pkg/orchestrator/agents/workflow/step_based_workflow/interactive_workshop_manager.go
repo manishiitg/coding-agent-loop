@@ -941,34 +941,11 @@ Do NOT modify execution steps or evaluation steps in output mode unless the user
 
 **Past Conversations (builder/):** Previous builder chat sessions are saved at `+"`{{.WorkspacePath}}/builder/`"+` as `+"`session-{id}-conversation.json`"+`. Read these via execute_shell_command to recall context from past sessions when needed (e.g., `+"`ls builder/ | tail -5`"+` to see recent sessions, then `+"`cat builder/{file} | python3 -c \"import json,sys; msgs=json.load(sys.stdin); [print(m['role'],m.get('content','')[:200]) for m in msgs[-10:]]\"`"+` to read the last few messages).
 
-**Conversation Compression:** When there are more than 3 conversation files in `+"`builder/`"+`, compress older ones into memory:
+**Conversation Cleanup:** When there are more than 3 conversation files in `+"`builder/`"+`, clean up older ones:
 1. List files: `+"`ls -t builder/session-*.json`"+` (sorted newest first)
 2. Keep the latest file (current/most recent session)
-3. For each older file, read it and extract a summary: key user requests, decisions made, issues found, and configuration changes
-4. Append the summary to `+"`memory/memory.md`"+` with date and user attribution:
-   `+"```"+`
-   ## Builder Session 2026-03-20 (user: {name})
-   - User requested adding fallback LLMs for tier 2
-   - Debugged step-7 failure: root cause was pre-save artifact
-   - Updated workflow config: added MiniMax server
-   `+"```"+`
-5. Delete the compressed conversation files: `+"`rm builder/{old-file}.json`"+`
+3. If older files are no longer useful for active work, delete them: `+"`rm builder/{old-file}.json`"+`
 Do this proactively at the start of a session when you notice many conversation files accumulating.
-
-**Workflow Memory (memory/):** You have a persistent memory system at `+"`{{.WorkspacePath}}/memory/`"+`. All .md files in this folder are automatically loaded into your system prompt on every future session. Use this to build up workflow-specific knowledge across conversations.
-
-**When to save memory:**
-- When the user asks you to remember something, save a preference, or store instructions
-- When you discover important errors, gotchas, or workarounds during workflow execution that would be valuable in future runs
-- When the user expresses preferences about how this workflow should be managed (e.g., "always run step X before Y", "don't optimize step Z")
-- When debugging reveals root causes or environment-specific issues (e.g., "API rate-limits after 100 requests", "login fails if session cookie expires after 30 min")
-- After compressing old builder conversations (see above)
-
-**How to save:** Write to `+"`memory/memory.md`"+` using execute_shell_command or diff_patch_workspace_file. Append new entries rather than overwriting. Example:
-- `+"`echo '\\n## Login requires 2FA\\nThe portal requires OTP verification after login. Always wait for the OTP step.' >> memory/memory.md`"+`
-- `+"`echo '\\n## Sheet format\\nColumn A is date (YYYY-MM-DD), Column B is amount (no commas).' >> memory/memory.md`"+`
-
-**What NOT to save:** Don't save things derivable from the plan, step configs, or learnings. Memory is for workflow-level knowledge that doesn't belong in any specific step.
 
 {{if and .StepSummary (ne .WorkshopMode "output")}}
 ## 📋 CURRENT PLAN STEPS
@@ -1418,7 +1395,7 @@ Evaluation plans test execution quality. Each eval step checks one execution ste
 
 **Every time the user asks to run a step**, determine the group:
 
-1. Run ` + "`cat variables.json`" + ` to see available groups and their group_ids
+1. Run `+"`cat variables.json`"+` to see available groups and their group_ids
 2. For the group: suggest the toolbar-selected group or the one matching the user's request. Only confirm if ambiguous.
 3. Call execute_step with the **group_id**. The iteration defaults to **iteration-0** (workshop scratch iteration) — do NOT pass iteration unless the user explicitly requests a different one (e.g., "run in iteration-3", "new iteration").
 
@@ -1501,11 +1478,6 @@ Inner steps live inside conditional branches, orchestration routes, or todo_task
 When debugging a failing workflow, read plan.json to see ALL steps including inner ones, then target the specific inner step that needs attention.
 {{end}}
 
-{{if .CustomInstructions}}
-## 🧠 WORKFLOW MEMORY
-{{.CustomInstructions}}
-{{end}}
-
 ## ⚠️ RULES
 1. **Async first**: Always use execute_step for running steps — never block waiting
 2. **Auto-notified**: You are automatically notified when background agents complete. Do NOT poll with query_step in a loop or ask the user to tell you when something finishes. query_step automatically shows live tool calls when checking a running step.
@@ -1527,14 +1499,9 @@ var workflowOptimizerSystemTemplate = MustRegisterTemplate("workflowOptimizerSys
 You are optimizing a workflow — making each step reliable and efficient. The workflow structure is already set. Your job is to systematically review each step: run it, check for wasted tool calls, review learnings quality, add validation schemas, and mark steps as optimized when they meet all criteria.
 
 ## 🤖 ROLE
-- **Your shell working directory is already set to `+"`{{.WorkspacePath}}/`"+`** — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`, NOT `+"`cat {{.WorkspacePath}}/planning/plan.json`"+`). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/, memory/.
+- **Your shell working directory is already set to `+"`{{.WorkspacePath}}/`"+`** — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`, NOT `+"`cat {{.WorkspacePath}}/planning/plan.json`"+`). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/.
 - You have the same tools and capabilities as the Workflow Builder, but your focus is purely on optimization — NOT structural changes.
 - Do NOT add, remove, or reorder steps. If the workflow structure needs changing, tell the user to switch to the Workflow Builder phase.
-
-{{if .CustomInstructions}}
-## Custom Instructions
-{{.CustomInstructions}}
-{{end}}
 
 ## 🎯 STEPS TO OPTIMIZE
 {{if .UnoptimizedSteps}}
@@ -5792,11 +5759,11 @@ If this is a todo_task step with sub-agents, analyze tier usage from the routing
 - **Tier recommendations**: For each route, recommend a specific tier with reasoning. Format as:
   - Route: {route_name} → Recommended Tier: {1/2/3} — Reason: {why}
 - **SKILL.md tier section**: Recommend adding a TIER RECOMMENDATIONS section to the orchestration SKILL.md that the orchestrator can read at runtime, e.g.:
-` + "```" + `
+`+"```"+`
 ## TIER RECOMMENDATIONS
 - route: {route_id} | tier: {1/2/3} | reason: {brief justification}
 - route: generic | tier: {1/2/3} | reason: {brief justification}
-` + "```" + `
+`+"```"+`
 {{end}}
 
 ### Priority Actions
@@ -6109,7 +6076,6 @@ When you finish, summarize what you did and any important findings.
 {{.SecretPrompt}}
 {{.BrowserPrompt}}
 {{.GWSPrompt}}
-{{.CustomInstructions}}
 `)
 
 var backgroundTaskAgentUserTemplate = MustRegisterTemplate("backgroundTaskAgentUser", `{{.Instruction}}`)
@@ -6356,14 +6322,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		}
 	}
 
-	// Load workflow memory from memory/memory.md (falls back to legacy instructions.md)
-	customInstructions := ""
-	if content, err := iwm.controller.ReadWorkspaceFile(ctx, "memory/memory.md"); err == nil && content != "" {
-		customInstructions = fmt.Sprintf("\n## 🧠 Workflow Memory\n%s", content)
-	} else if content, err := iwm.controller.ReadWorkspaceFile(ctx, "instructions.md"); err == nil && content != "" {
-		customInstructions = fmt.Sprintf("\n## 🧠 Workflow Memory\n%s", content)
-	}
-
 	// Apply post-setup configuration (folder guard + registry for code execution mode)
 	if err := iwm.controller.applyPostSetupToAgent(agent, "background-task-agent", isCodeExecMode); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Post-setup configuration failed for background-task-agent: %v", err))
@@ -6371,13 +6329,12 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 
 	// --- Template vars ---
 	templateVars := map[string]string{
-		"WorkspacePath":      workspacePath,
-		"Instruction":        instruction,
-		"SkillPrompt":        skillPrompt,
-		"SecretPrompt":       secretPrompt,
-		"BrowserPrompt":      browserPrompt,
-		"GWSPrompt":          gwsPrompt,
-		"CustomInstructions": customInstructions,
+		"WorkspacePath": workspacePath,
+		"Instruction":   instruction,
+		"SkillPrompt":   skillPrompt,
+		"SecretPrompt":  secretPrompt,
+		"BrowserPrompt": browserPrompt,
+		"GWSPrompt":     gwsPrompt,
 	}
 
 	// --- Execute ---

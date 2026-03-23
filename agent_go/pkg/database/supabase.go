@@ -406,6 +406,10 @@ func (s *SupabaseDB) StoreEvent(ctx context.Context, sessionID string, event *ev
 	s.batchMux.Lock()
 	defer s.batchMux.Unlock()
 
+	if cloned := events.CloneAgentEvent(event); cloned != nil {
+		event = cloned
+	}
+
 	if s.eventBuffer[sessionID] == nil {
 		s.eventBuffer[sessionID] = make([]pendingEvent, 0, s.batchSizeLimit)
 	}
@@ -904,7 +908,15 @@ func (s *SupabaseDB) CreatePresetQuery(ctx context.Context, req *CreatePresetQue
 		selectedSecretsJSON,
 		selectedGlobalSecretNamesParam,
 		req.EnableBrowserAccess,
-		func() string { if req.BrowserMode != "" { return req.BrowserMode }; if req.EnableBrowserAccess { return "headless" }; return "" }(),
+		func() string {
+			if req.BrowserMode != "" {
+				return req.BrowserMode
+			}
+			if req.EnableBrowserAccess {
+				return "headless"
+			}
+			return ""
+		}(),
 		req.IsPredefined,
 		"user",
 	).Scan(

@@ -869,22 +869,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
 		}
 
-		// Strip workflow root prefix from paths used in prompts.
-		// Shell commands run from the workflow root (via _DEFAULT_WORKING_DIR),
-		// so prompt paths must be relative to it, not to docsDir.
-		// e.g., "Workflow/ICICI BANK PARSING-v2/runs/..." → "runs/..."
+		// Build absolute paths for agent prompts using the workspace docs root.
+		// Absolute paths are unambiguous — agents can use them directly in shell commands.
+		// e.g., "Workflow/HRMS/runs/iteration-1/group-1/execution/step-3"
+		//     → "/app/workspace-docs/Workflow/HRMS/runs/iteration-1/group-1/execution/step-3"
 		workflowRoot := hcpo.GetWorkspacePath()
-		stripWorkflowPrefix := func(path string) string {
-			trimmed := strings.TrimPrefix(path, workflowRoot+"/")
-			if trimmed == path {
-				return strings.TrimPrefix(path, workflowRoot)
+		docsRoot := getWorkspaceDocsRoot()
+		toAbsPath := func(path string) string {
+			if path == "" || docsRoot == "" {
+				return path
 			}
-			return trimmed
+			return filepath.Join(docsRoot, path)
 		}
-		stripWorkflowPrefixSlice := func(paths []string) []string {
+		toAbsPathSlice := func(paths []string) []string {
 			result := make([]string, len(paths))
 			for i, p := range paths {
-				result[i] = stripWorkflowPrefix(p)
+				result[i] = toAbsPath(p)
 			}
 			return result
 		}
@@ -894,20 +894,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"StepDescription":       ResolveVariables(step.GetDescription(), hcpo.variableValues),
 			"StepSuccessCriteria":   ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
 			"StepContextOutput":     ResolveVariables(step.GetContextOutput().String(), hcpo.variableValues),
-			"WorkspacePath":         stripWorkflowPrefix(executionWorkspacePath),                        // Execution path relative to workflow root
-			"LearningsPath":         stripWorkflowPrefix(learningsPath),                                 // Learnings folder path relative to workflow root
-			"KnowledgebasePath":     stripWorkflowPrefix(knowledgebasePath),                             // Knowledgebase folder path relative to workflow root
-			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                                // Whether knowledgebase is enabled
-			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                             // Code execution mode flag (step-specific or preset)
-			"UseToolSearchMode":     fmt.Sprintf("%v", isToolSearchMode),                                // Tool search mode flag (step-specific or preset)
-			"HumanFeedback":         "",                                                                 // Human feedback for retry attempts (set after validation failure)
-			"StepNumber":            stepPath,                                                           // Step identifier (e.g., "step-8" or "step-3-if-true-0")
-			"StepExecutionPath":     stripWorkflowPrefix(stepExecutionPath),                             // Execution folder path relative to workflow root
-			"FolderGuardReadPaths":  strings.Join(stripWorkflowPrefixSlice(folderGuardReadPaths), ", "), // Folder guard read paths (relative to workflow root)
-			"FolderGuardWritePaths": strings.Join(stripWorkflowPrefixSlice(folderGuardWritePaths), ", "),// Folder guard write paths (relative to workflow root)
-			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),                            // Skip cleanup mode flag for state verification prompt
-			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                           // Evaluation mode flag for eval-specific prompt guidance
-			"WorkflowRoot":          workflowRoot,                                                       // Workflow root path (e.g., "Workflow/ICICI BANK PARSING-v2") — used to show absolute shell cwd
+			"WorkspacePath":         toAbsPath(executionWorkspacePath),                        // Absolute execution folder path (e.g., "/app/workspace-docs/Workflow/HRMS/runs/...")
+			"LearningsPath":         toAbsPath(learningsPath),                                 // Absolute learnings folder path
+			"KnowledgebasePath":     toAbsPath(knowledgebasePath),                             // Absolute knowledgebase folder path
+			"UseKnowledgebase":      fmt.Sprintf("%v", useKnowledgebase),                      // Whether knowledgebase is enabled
+			"IsCodeExecutionMode":   fmt.Sprintf("%v", isCodeExecutionMode),                   // Code execution mode flag (step-specific or preset)
+			"UseToolSearchMode":     fmt.Sprintf("%v", isToolSearchMode),                      // Tool search mode flag (step-specific or preset)
+			"HumanFeedback":         "",                                                       // Human feedback for retry attempts (set after validation failure)
+			"StepNumber":            stepPath,                                                  // Step identifier (e.g., "step-8" or "step-3-if-true-0")
+			"StepExecutionPath":     toAbsPath(stepExecutionPath),                             // Absolute step execution folder path
+			"FolderGuardReadPaths":  strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "), // Absolute folder guard read paths
+			"FolderGuardWritePaths": strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),// Absolute folder guard write paths
+			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),                  // Skip cleanup mode flag for state verification prompt
+			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                 // Evaluation mode flag for eval-specific prompt guidance
+			"WorkflowRoot":          toAbsPath(workflowRoot),                                  // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
 		}
 
 		// Inject workflow variables as environment variables for code execution mode.
@@ -940,7 +940,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							prevStepPath = fmt.Sprintf("step-%d-decision", j+1)
 						}
 						prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, prevStepPath)
-						fullPath = fmt.Sprintf("%s/%s", stripWorkflowPrefix(prevStepExecPath), dep)
+						fullPath = fmt.Sprintf("%s/%s", toAbsPath(prevStepExecPath), dep)
 						break
 					}
 				}

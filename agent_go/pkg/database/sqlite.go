@@ -505,6 +505,10 @@ func (s *SQLiteDB) StoreEvent(ctx context.Context, sessionID string, event *even
 	s.batchMux.Lock()
 	defer s.batchMux.Unlock()
 
+	if cloned := events.CloneAgentEvent(event); cloned != nil {
+		event = cloned
+	}
+
 	// Add event to buffer
 	if s.eventBuffer[sessionID] == nil {
 		s.eventBuffer[sessionID] = make([]pendingEvent, 0, s.batchSizeLimit)

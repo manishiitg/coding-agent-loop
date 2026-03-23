@@ -230,10 +230,12 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 			GetBaseEventData() *events.BaseEventData
 		}); ok {
 			if bd := baseData.GetBaseEventData(); bd != nil {
-				if bd.Metadata == nil {
-					bd.Metadata = make(map[string]any)
+				newMeta := make(map[string]any, len(bd.Metadata)+1)
+				for k, v := range bd.Metadata {
+					newMeta[k] = v
 				}
-				bd.Metadata["workshop_step_id"] = forcedID
+				newMeta["workshop_step_id"] = forcedID
+				bd.Metadata = newMeta
 			}
 		}
 	}
@@ -325,9 +327,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				modelTokenData = &ModelTokenData{
 					ModelID:          tokenEvent.ModelID,
 					Provider:         tokenEvent.Provider,
-					InputTokens:      tokenEvent.PromptTokens,     // input tokens
-					OutputTokens:     tokenEvent.CompletionTokens, // output tokens
-					CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
+					InputTokens:      tokenEvent.PromptTokens,         // input tokens
+					OutputTokens:     tokenEvent.CompletionTokens,     // output tokens
+					CacheTokens:      cacheTokensSeparate.Total,       // total cache (backward compat)
 					CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
 					CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
 					ReasoningTokens:  tokenEvent.ReasoningTokens,
@@ -344,9 +346,9 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 				if currentPhase != "" {
 					phaseTokenData = &PhaseTokenData{
 						Phase:            currentPhase,
-						InputTokens:      tokenEvent.PromptTokens,     // input tokens
-						OutputTokens:     tokenEvent.CompletionTokens, // output tokens
-						CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
+						InputTokens:      tokenEvent.PromptTokens,         // input tokens
+						OutputTokens:     tokenEvent.CompletionTokens,     // output tokens
+						CacheTokens:      cacheTokensSeparate.Total,       // total cache (backward compat)
 						CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
 						CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
 						ReasoningTokens:  tokenEvent.ReasoningTokens,
@@ -381,10 +383,10 @@ func (c *ContextAwareEventBridge) HandleEvent(ctx context.Context, event *events
 					stepTokenData = &StepTokenData{
 						Phase:            currentPhase,
 						Step:             currentStep,
-						StepID:           currentStepID, // Use step ID instead of index
-						InputTokens:      tokenEvent.PromptTokens,     // input tokens
-						OutputTokens:     tokenEvent.CompletionTokens, // output tokens
-						CacheTokens:      cacheTokensSeparate.Total,   // total cache (backward compat)
+						StepID:           currentStepID,                   // Use step ID instead of index
+						InputTokens:      tokenEvent.PromptTokens,         // input tokens
+						OutputTokens:     tokenEvent.CompletionTokens,     // output tokens
+						CacheTokens:      cacheTokensSeparate.Total,       // total cache (backward compat)
 						CacheReadTokens:  cacheTokensSeparate.ReadTokens,  // cache reads (discounted)
 						CacheWriteTokens: cacheTokensSeparate.WriteTokens, // cache writes (premium 1.25x)
 						ReasoningTokens:  tokenEvent.ReasoningTokens,

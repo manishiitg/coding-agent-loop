@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"mcp-agent-builder-go/agent_go/pkg/common"
 )
 
 // ExecutionManager centralizes all execution lifecycle decisions
@@ -640,6 +642,12 @@ func (em *ExecutionManager) ApplyExecutionContext(setup *ExecutionSetup) {
 		// Also update iteration folder for token persistence
 		// This ensures token_usage.json is written to the correct group folder during batch execution
 		orch.SetIterationFolder(setup.RunFolder)
+		// Update session working dir to the run's execution folder so all shell commands
+		// from execution agents default there instead of falling back to workspace root.
+		if orch.httpSessionID != "" && orch.GetWorkspacePath() != "" {
+			executionPath := fmt.Sprintf("%s/runs/%s/execution", orch.GetWorkspacePath(), setup.RunFolder)
+			common.SetSessionWorkingDir(orch.httpSessionID, executionPath)
+		}
 	}
 
 	// Set variable values for batch execution

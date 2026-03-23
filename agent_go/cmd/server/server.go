@@ -2507,6 +2507,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Inject user ID into the workflow context for per-user folder isolation
 		// This allows workspace tools to route per-user folders correctly
 		workflowCtx = context.WithValue(workflowCtx, common.UserIDKey, currentUserID)
+		// Inject chat session ID so execute_shell_command can look up the session's
+		// working directory and folder guard config from the global session map.
+		// Without this, execution agents always get workspace root as their shell cwd.
+		workflowCtx = context.WithValue(workflowCtx, common.ChatSessionIDKey, sessionID)
 
 		// Store the cancel function for potential cancellation (keyed by queryID for independent executions)
 		api.workflowOrchestratorContextMux.Lock()

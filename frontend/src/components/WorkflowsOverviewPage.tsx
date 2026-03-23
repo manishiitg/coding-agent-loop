@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { Loader2, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap } from 'lucide-react'
+import { Loader2, ChevronLeft, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap, MessageSquare } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -704,10 +704,13 @@ const ORG_TOOL_GUIDE = [
   { title: 'Assign Workflow', desc: 'Attach workflow preset to a specific employee.' },
   { title: 'Unassign Workflow', desc: 'Clear employee assignment from a workflow preset.' },
   { title: 'Manage Schedules', desc: 'Create/update cron schedules for workflow presets.' },
-  { title: 'Inspect Outputs', desc: 'Surface latest run/output and link to logs/evaluation.' },
+  { title: 'Inspect Outputs', desc: 'Surface the latest report, evaluation, cost, and run health.' },
 ]
 
-const OrganizationChatPanel: React.FC = () => {
+const OrganizationChatPanel: React.FC<{
+  minimized: boolean
+  onToggleMinimized: () => void
+}> = ({ minimized, onToggleMinimized }) => {
   const [orgTabId, setOrgTabId] = useState<string | null>(null)
   const hasConversationStarted = useChatStore(state => {
     if (!orgTabId) return false
@@ -772,11 +775,38 @@ const OrganizationChatPanel: React.FC = () => {
     // Single-thread organization assistant by design.
   }, [])
 
+  if (minimized) {
+    return (
+      <div className="w-full xl:w-16 xl:min-w-16 xl:max-w-16 h-14 xl:h-full shrink-0 border-b xl:border-b-0 xl:border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex items-center justify-between xl:justify-start xl:flex-col xl:py-4 px-4 xl:px-2">
+        <div className="flex items-center gap-2 xl:flex-col xl:gap-3 text-gray-600 dark:text-gray-300">
+          <MessageSquare className="w-4 h-4" />
+          <span className="text-xs font-medium xl:hidden">Organization Chat</span>
+        </div>
+        <button
+          onClick={onToggleMinimized}
+          className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          title="Expand organization chat"
+        >
+          <ChevronRight className="w-4 h-4 xl:rotate-180" />
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <div className="h-full flex flex-col min-h-0 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Organization Assistant</h3>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Single assistant thread for employee and workflow management.</p>
+    <div className="w-full xl:w-[46%] xl:min-w-[420px] h-full flex flex-col min-h-0 border-b xl:border-b-0 xl:border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Organization Assistant</h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Single assistant thread for employee and workflow management.</p>
+        </div>
+        <button
+          onClick={onToggleMinimized}
+          className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+          title="Minimize organization chat"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
       </div>
 
       {!hasConversationStarted && (
@@ -813,6 +843,7 @@ export const WorkflowsOverviewPage: React.FC = () => {
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const popups = usePopupState()
   const [activeTab, setActiveTab] = useState<'workflows' | 'employees'>('employees')
+  const [orgChatMinimized, setOrgChatMinimized] = useState(false)
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -824,10 +855,13 @@ export const WorkflowsOverviewPage: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col bg-white dark:bg-gray-900">
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[46%,54%]">
-        <OrganizationChatPanel />
+      <div className="flex-1 min-h-0 flex flex-col xl:flex-row">
+        <OrganizationChatPanel
+          minimized={orgChatMinimized}
+          onToggleMinimized={() => setOrgChatMinimized(prev => !prev)}
+        />
 
-        <div className="h-full min-h-0 flex flex-col">
+        <div className="h-full min-h-0 flex-1 min-w-0 flex flex-col">
           <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700">
             <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 w-fit">
               <button

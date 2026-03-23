@@ -271,7 +271,8 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		if err != nil {
 			subAgentResult.Error = err.Error()
 		} else {
-			subAgentResult.Error = "Sub-agent execution did not produce a successful result"
+			// No Go error, but result contains failure details (e.g. "ERROR: agent execution failed: ...")
+			subAgentResult.Error = result
 		}
 		subAgentResult.Hint = fmt.Sprintf("Sub-agent failed after %d internal retry attempts. Consider using get_sub_agent_conversation to inspect what went wrong, review LEARNING HISTORY, and execute the task yourself — you have a higher-reasoning LLM and the same tool access.", maxSubAgentRetryAttempts)
 	}
@@ -339,7 +340,8 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 		if err != nil {
 			subAgentResult.Error = err.Error()
 		} else {
-			subAgentResult.Error = "Sub-agent execution did not produce a successful result"
+			// No Go error, but result contains failure details (e.g. "ERROR: agent execution failed: ...")
+			subAgentResult.Error = result
 		}
 		subAgentResult.Hint = fmt.Sprintf("Sub-agent failed after %d internal retry attempts. Consider using get_sub_agent_conversation to inspect what went wrong, review LEARNING HISTORY, and execute the task yourself — you have a higher-reasoning LLM and the same tool access.", maxSubAgentRetryAttempts)
 	}

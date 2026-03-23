@@ -61,7 +61,7 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 - Sub-agents: 'step-{X}-sub-agent-{idx}/'
 - Generic agents: 'step-{X}-generic-agent-{idx}/'
 
-{{"{{TOOL_STRUCTURE}}"}}`)
+{{if .IsCodeExecutionMode}}{{"{{TOOL_STRUCTURE}}"}}{{end}}`)
 
 // PhaseChatSystemPrompt generates the system prompt for any chat-compatible phase.
 // Dispatches to the correct template based on phaseId.

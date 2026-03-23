@@ -156,7 +156,7 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 - execute_shell_command(command)
 {{end}}
 
-{{"{{TOOL_STRUCTURE}}"}}`)
+{{if .IsCodeExecutionMode}}{{"{{TOOL_STRUCTURE}}"}}{{end}}`)
 
 var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `## Success Criteria
 {{.StepSuccessCriteria}}

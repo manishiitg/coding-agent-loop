@@ -223,26 +223,31 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		agentOptions = append(agentOptions, mcpagent.WithToolChoice(config.ToolChoice))
 	}
 
-	// Add cross-provider fallback configuration if any fallbacks have a different provider
-	var crossProviderModels []string
-	var crossProviderName string
+	// Use unified LLM config (primary + fallbacks) as the single source of truth.
+	mcpLLMConfig := mcpagent.AgentLLMConfiguration{
+		Primary: mcpagent.LLMModel{
+			Provider: string(config.Provider),
+			ModelID:  config.ModelID,
+		},
+		Fallbacks: make([]mcpagent.LLMModel, 0, len(config.Fallbacks)),
+	}
 	for _, fb := range config.Fallbacks {
-		if fb.Provider != "" && fb.Provider != string(config.Provider) {
-			crossProviderModels = append(crossProviderModels, fb.ModelID)
-			if crossProviderName == "" {
-				crossProviderName = fb.Provider
-			}
+		fallbackProvider := strings.TrimSpace(fb.Provider)
+		if fallbackProvider == "" {
+			fallbackProvider = string(config.Provider)
 		}
-	}
-	if len(crossProviderModels) > 0 {
-		crossProviderFallback := &mcpagent.CrossProviderFallback{
-			Provider: crossProviderName,
-			Models:   crossProviderModels,
+		fallbackModelID := strings.TrimSpace(fb.ModelID)
+		if fallbackModelID == "" {
+			continue
 		}
-		agentOptions = append(agentOptions, mcpagent.WithCrossProviderFallback(crossProviderFallback))
-		logger.Info(fmt.Sprintf("🔄 Cross-provider fallback configured - Provider: %s, Models: %v",
-			crossProviderName, crossProviderModels))
+		mcpLLMConfig.Fallbacks = append(mcpLLMConfig.Fallbacks, mcpagent.LLMModel{
+			Provider: fallbackProvider,
+			ModelID:  fallbackModelID,
+		})
 	}
+	agentOptions = append(agentOptions, mcpagent.WithLLMConfig(mcpLLMConfig))
+	logger.Info(fmt.Sprintf("🔄 LLMConfig configured - Primary: %s/%s, Fallbacks: %d",
+		mcpLLMConfig.Primary.Provider, mcpLLMConfig.Primary.ModelID, len(mcpLLMConfig.Fallbacks)))
 
 	// Add selected servers for tool filtering
 	// Parse ServerName (comma-separated string) into array for WithSelectedServers
@@ -450,11 +455,11 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	if config.APIKeys != nil {
 		// Convert from wrapper API keys to agent API keys
 		agentAPIKeys := &mcpagent.AgentAPIKeys{
-			OpenRouter: config.APIKeys.OpenRouter,
-			OpenAI:     config.APIKeys.OpenAI,
-			Anthropic:  config.APIKeys.Anthropic,
-			Vertex:     config.APIKeys.Vertex,
-			GeminiCLI:  config.APIKeys.GeminiCLI,
+			OpenRouter:        config.APIKeys.OpenRouter,
+			OpenAI:            config.APIKeys.OpenAI,
+			Anthropic:         config.APIKeys.Anthropic,
+			Vertex:            config.APIKeys.Vertex,
+			GeminiCLI:         config.APIKeys.GeminiCLI,
 			MiniMax:           config.APIKeys.MiniMax,
 			MiniMaxCodingPlan: config.APIKeys.MiniMaxCodingPlan,
 		}

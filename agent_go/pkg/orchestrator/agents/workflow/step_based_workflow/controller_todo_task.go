@@ -351,9 +351,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		executionPath = filepath.Join("execution", stepPath)
 	}
 
-	// Build shell working directory (WorkspacePath + StepExecutionPath)
-	// Step folder path used as ShellWorkingDirectory in agent prompts
-	shellWorkingDirectory := filepath.Join(hcpo.GetWorkspacePath(), executionPath)
+	// Build shell working directory as absolute path — used in agent prompts so agents know
+	// the exact absolute path to their step folder without ambiguity.
+	shellWorkingDirectory := filepath.Join(getWorkspaceDocsRoot(), hcpo.GetWorkspacePath(), executionPath)
 
 	// Get step config for code execution mode: step config > workflow/preset default
 	stepConfig := getAgentConfigs(step)
@@ -376,9 +376,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		"StepDescription":         ResolveVariables(step.GetDescription(), hcpo.variableValues),
 		"StepSuccessCriteria":     ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
 		"StepContextDependencies": strings.Join(ResolveVariablesArray(previousContextFiles, hcpo.variableValues), ", "),
-		"WorkspacePath":           hcpo.GetWorkspacePath(),
+		"WorkspacePath":           filepath.Join(getWorkspaceDocsRoot(), hcpo.GetWorkspacePath()),
 		"StepNumber":              fmt.Sprintf("step-%d", stepIndex+1),
-		"StepExecutionPath":       executionPath,
+		"StepExecutionPath":       filepath.Join(getWorkspaceDocsRoot(), hcpo.GetWorkspacePath(), executionPath),
 		"ShellWorkingDirectory":   shellWorkingDirectory,
 		"PredefinedRoutes":        routesBuilder.String(),
 		"EnableGenericAgent":      fmt.Sprintf("%t", step.EnableGenericAgent),

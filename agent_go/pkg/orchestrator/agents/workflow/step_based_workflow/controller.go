@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
@@ -544,6 +545,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder: %s", selectedRunFolder))
 		// Set iteration folder for real-time token persistence
 		hcpo.SetIterationFolder(selectedRunFolder)
+		// Update session working dir to the run's execution folder
+		if hcpo.httpSessionID != "" && hcpo.GetWorkspacePath() != "" {
+			common.SetSessionWorkingDir(hcpo.httpSessionID, fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), selectedRunFolder))
+		}
 	} else {
 		// ===== INTERACTIVE MODE (no frontend options) =====
 		// Ask for run mode FIRST (before checking progress)
@@ -594,6 +599,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 		hcpo.GetLogger().Info(fmt.Sprintf("📁 Resolved run folder with selected run mode: %s", selectedRunFolder))
 		// Set iteration folder for real-time token persistence
 		hcpo.SetIterationFolder(selectedRunFolder)
+		// Update session working dir to the run's execution folder
+		if hcpo.httpSessionID != "" && hcpo.GetWorkspacePath() != "" {
+			common.SetSessionWorkingDir(hcpo.httpSessionID, fmt.Sprintf("%s/runs/%s/execution", hcpo.GetWorkspacePath(), selectedRunFolder))
+		}
 	}
 
 	// EARLY PROGRESS CHECK: Load progress from the selected run folder

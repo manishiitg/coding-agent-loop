@@ -204,6 +204,11 @@ func (es *EventStore) Unsubscribe(sessionID string, sub *Subscriber) {
 // AddEvent adds an event for a specific session
 func (es *EventStore) AddEvent(sessionID string, event Event) {
 	es.mu.Lock()
+	if event.Data != nil {
+		if cloned := events.CloneAgentEvent(event.Data); cloned != nil {
+			event.Data = cloned
+		}
+	}
 
 	// Initialize session if not exists
 	if _, exists := es.events[sessionID]; !exists {

@@ -53,7 +53,9 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 1. **Source of Truth**: The **Step Description** defines WHAT to do.{{if eq .HasLearnings "true"}} It ALWAYS overrides learnings.{{end}}
 2. **Workspace Paths**:
    - **Tool Args**: Pass '{{.WorkspacePath}}' as the workspace path argument.
-   - **NEVER hardcode absolute paths** (e.g., /Users/...) as they change between runs.
+   - **Current Working Directory**: Shell commands via execute_shell_command run with cwd = `+"`"+`/app/workspace-docs/{{.WorkflowRoot}}`+"`"+`. All relative paths (like `+"`"+`{{.StepExecutionPath}}`+"`"+`) resolve from this directory.
+   - **Absolute step folder path**: `+"`"+`/app/workspace-docs/{{.WorkflowRoot}}/{{.StepExecutionPath}}/`+"`"+`
+   - **IMPORTANT**: Always use `+"`"+`mkdir -p`+"`"+` before writing to a path if the directory may not exist yet.
 {{if .IsCodeExecutionMode}}   - **execute_shell_command paths**: Always use `+"`"+`cd '{{.StepExecutionPath}}' && python3 script.py`+"`"+` so code runs inside the step folder and relative file paths work correctly.
    - **Writing output files**: Use the full path: `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
    - **Reading dependencies from other steps**: Use paths relative to workflow root in your code: `+"`"+`{{.WorkspacePath}}/step-N/file.json`+"`"+`.
@@ -341,6 +343,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"FolderGuardWritePaths":      folderGuardWritePaths,                   // Folder guard write paths for agent guidance
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],    // Skip cleanup mode flag
 		"IsEvaluationMode":           templateVars["IsEvaluationMode"],       // Evaluation mode flag
+		"WorkflowRoot":               templateVars["WorkflowRoot"],           // Workflow root path for absolute cwd display
 	})
 	if err != nil {
 		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)

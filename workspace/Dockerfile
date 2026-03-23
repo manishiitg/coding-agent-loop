@@ -56,7 +56,7 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Configure pip: allow installs when Python is "externally managed" (PEP 668)
-RUN pip3 install --break-system-packages pandas
+RUN pip3 install --break-system-packages pandas requests beautifulsoup4 lxml pyyaml python-dotenv Pillow openpyxl
 
 # Set working directory
 WORKDIR /app

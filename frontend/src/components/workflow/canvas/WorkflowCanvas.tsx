@@ -11,6 +11,7 @@ import {
   type OnSelectionChangeParams,
   SelectionMode
 } from '@xyflow/react'
+import { Brain, Package, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { nodeTypes } from '../nodes'
@@ -20,6 +21,7 @@ import { VariablesSidebar } from './VariablesSidebar'
 import { StepLegend } from './StepLegend'
 import { MultiStepSidebar } from './MultiStepSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
+import LLMOverrideModal from '../LLMOverrideModal'
 import { usePlanData, type PlanChanges } from '../hooks/usePlanData'
 import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { usePlanToFlow, type WorkflowNode, type WorkflowEdge, type StepNodeData, type ConditionalNodeData, type LoopNodeData, type DecisionNodeData } from '../hooks/usePlanToFlow'
@@ -87,6 +89,33 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const workflowMode = useWorkflowStore(state => state.workflowMode)
   const layoutDirection = useWorkflowStore(state => state.layoutDirection)
   const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
+  const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
+  const workflowWorkspaceSelectionTouched = useWorkflowStore(state => state.workflowWorkspaceSelectionTouched)
+  const selectedStartPoint = useWorkflowStore(state => state.selectedStartPoint)
+  const selectedBranchStep = useWorkflowStore(state => state.selectedBranchStep)
+  const alwaysUseSameRun = useWorkflowStore(state => state.alwaysUseSameRun)
+  const setAlwaysUseSameRun = useWorkflowStore(state => state.setAlwaysUseSameRun)
+  const skipExecutionCleanup = useWorkflowStore(state => state.skipExecutionCleanup)
+  const setSkipExecutionCleanup = useWorkflowStore(state => state.setSkipExecutionCleanup)
+  const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
+  const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
+  const tempLearningLLM = useWorkflowStore(state => state.tempLearningLLM)
+  const tempOverrideLLMEnabled = useWorkflowStore(state => state.tempOverrideLLMEnabled)
+  const setTempOverrideLLMEnabled = useWorkflowStore(state => state.setTempOverrideLLMEnabled)
+  const clearTempOverrideLLM = useWorkflowStore(state => state.clearTempOverrideLLM)
+  const clearTempOverrideLLM2 = useWorkflowStore(state => state.clearTempOverrideLLM2)
+  const clearTempLearningLLM = useWorkflowStore(state => state.clearTempLearningLLM)
+
+  const isExecutionWorkspace =
+    workflowWorkspaceView === 'execution' ||
+    (workflowWorkspaceSelectionTouched &&
+      workflowWorkspaceView === null &&
+      (currentPhase === 'execution' || currentPhase === 'evaluation-execution'))
+  const isResumingExecution = selectedStartPoint > 0 || selectedBranchStep !== null
+  const effectiveAlwaysUseSameRun = alwaysUseSameRun || isResumingExecution
+  const clearOutputsBeforeRun = !skipExecutionCleanup
+  const hasTempLLMOverrides = !!(tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM)
+  const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
 
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
@@ -2284,6 +2313,166 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Batch Progress Header - Above Legend */}
         <BatchProgressHeader position="canvas" />
 
+        {isExecutionWorkspace && (
+          <div className="absolute top-3 right-3 z-20 w-[260px] rounded-xl border border-border/80 bg-background/95 backdrop-blur shadow-lg">
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/70">
+              <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
+              <div>
+                <div className="text-xs font-semibold text-foreground">Run Behavior</div>
+                <div className="text-[11px] text-muted-foreground">Execution mode settings</div>
+              </div>
+            </div>
+
+            <div className="p-2 space-y-2">
+              <button
+                onClick={() => {
+                  if (!isResumingExecution) {
+                    setAlwaysUseSameRun(!alwaysUseSameRun)
+                  }
+                }}
+                disabled={isResumingExecution}
+                aria-pressed={effectiveAlwaysUseSameRun}
+                title={isResumingExecution
+                  ? 'Resume mode always reuses the same iteration'
+                  : effectiveAlwaysUseSameRun
+                  ? 'Always reuse a single iteration for workflow runs'
+                  : 'Create a new iteration for each workflow run'
+                }
+                className={`
+                  w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all border
+                  ${effectiveAlwaysUseSameRun
+                    ? 'bg-primary/10 border-primary/30'
+                    : 'bg-muted/60 border-border hover:bg-muted'
+                  }
+                  ${isResumingExecution ? 'opacity-70 cursor-not-allowed' : ''}
+                `}
+              >
+                <Package className={`w-4 h-4 flex-shrink-0 ${effectiveAlwaysUseSameRun ? 'text-primary' : 'text-muted-foreground'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-foreground">Single Iteration</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {effectiveAlwaysUseSameRun
+                      ? 'Reuse one iteration for runs'
+                      : 'Create a new iteration each time'}
+                  </div>
+                </div>
+                <div className={`
+                  h-5 min-w-[38px] rounded-full px-1 flex items-center transition-colors
+                  ${effectiveAlwaysUseSameRun ? 'bg-primary/80 justify-end' : 'bg-muted-foreground/30 justify-start'}
+                `}>
+                  <div className="w-3.5 h-3.5 rounded-full bg-white shadow-sm" />
+                </div>
+              </button>
+
+              <button
+                onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
+                aria-pressed={clearOutputsBeforeRun}
+                title={clearOutputsBeforeRun
+                  ? 'Delete previous step outputs before running'
+                  : 'Keep previous step outputs for the selected group'
+                }
+                className={`
+                  w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all border
+                  ${clearOutputsBeforeRun
+                    ? 'bg-primary/10 border-primary/30'
+                    : 'bg-muted/60 border-border hover:bg-muted'
+                  }
+                `}
+              >
+                <Trash2 className={`w-4 h-4 flex-shrink-0 ${clearOutputsBeforeRun ? 'text-primary' : 'text-muted-foreground'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-medium text-foreground">Clear Outputs</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {clearOutputsBeforeRun
+                      ? 'Delete old step outputs before run'
+                      : 'Keep previous step outputs'}
+                  </div>
+                </div>
+                <div className={`
+                  h-5 min-w-[38px] rounded-full px-1 flex items-center transition-colors
+                  ${clearOutputsBeforeRun ? 'bg-primary/80 justify-end' : 'bg-muted-foreground/30 justify-start'}
+                `}>
+                  <div className="w-3.5 h-3.5 rounded-full bg-white shadow-sm" />
+                </div>
+              </button>
+
+              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Brain className={`w-4 h-4 flex-shrink-0 ${hasTempLLMOverrides && tempOverrideLLMEnabled ? 'text-primary fill-primary/20' : 'text-muted-foreground'}`} />
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-foreground">Temp LLM Override</div>
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {hasTempLLMOverrides
+                          ? tempOverrideLLMEnabled
+                            ? 'Active during execution'
+                            : 'Configured but disabled'
+                          : 'Not configured'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setShowLLMOverrideModal(true)}
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
+                    title={hasTempLLMOverrides ? 'Change temp LLM overrides' : 'Configure temp LLM overrides'}
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {hasTempLLMOverrides ? (
+                  <>
+                    <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
+                      <span className={tempOverrideLLM ? 'text-foreground' : ''}>L1</span>
+                      <span>→</span>
+                      <span className={tempOverrideLLM2 ? 'text-foreground' : ''}>L2</span>
+                      {tempLearningLLM && (
+                        <>
+                          <span>|</span>
+                          <span className="text-foreground">Learn</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => setTempOverrideLLMEnabled(!tempOverrideLLMEnabled)}
+                        className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
+                          tempOverrideLLMEnabled
+                            ? 'bg-primary/15 text-primary hover:bg-primary/20'
+                            : 'bg-background text-muted-foreground hover:bg-muted'
+                        }`}
+                        title={tempOverrideLLMEnabled ? 'Disable overrides' : 'Enable overrides'}
+                      >
+                        {tempOverrideLLMEnabled ? 'ON' : 'OFF'}
+                      </button>
+                      <button
+                        onClick={() => {
+                          clearTempOverrideLLM()
+                          clearTempOverrideLLM2()
+                          clearTempLearningLLM()
+                        }}
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
+                        title="Clear overrides"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setShowLLMOverrideModal(true)}
+                    className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md bg-background hover:bg-muted transition-colors text-xs font-medium text-foreground"
+                  >
+                    <Brain className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span>Configure Temp LLM</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Step Legend - Bottom Left */}
         {plan && plan.steps && plan.steps.length > 0 && (
           <StepLegend
@@ -2338,6 +2527,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
           />
         )}
       </div>}
+
+      <LLMOverrideModal
+        isOpen={showLLMOverrideModal}
+        onClose={() => setShowLLMOverrideModal(false)}
+      />
 
     </div>
   )

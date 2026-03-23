@@ -268,22 +268,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		stepID = fmt.Sprintf("step-%s", step.GetTitle())
 	}
 
-	// Check if step has step-specific config (conditional LLM or code execution mode)
+	// Check if step has step-specific config
 	agentConfigs := getAgentConfigs(step)
-	hasValidConditionalLLM := agentConfigs != nil && agentConfigs.ConditionalLLM != nil && agentConfigs.ConditionalLLM.Provider != "" && agentConfigs.ConditionalLLM.ModelID != ""
-	hasStepSpecificConfig := agentConfigs != nil && (hasValidConditionalLLM || agentConfigs.UseCodeExecutionMode != nil)
 
-	// Determine code execution mode: step config > workflow/preset default
-	var isCodeExecutionMode bool
-	if agentConfigs != nil && agentConfigs.UseCodeExecutionMode != nil {
-		isCodeExecutionMode = *agentConfigs.UseCodeExecutionMode
-	} else {
-		isCodeExecutionMode = hcpo.GetUseCodeExecutionMode()
-	}
-
-	// LLM selection: ConditionalLLM (highest priority) > selectExecutionLLM helper (step > preset > orchestrator)
+	// LLM selection via tiered mode
 	var llmConfig *orchestrator.LLMConfig
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	stepPath := fmt.Sprintf("step-%d", stepIndex+1)
 
 	// TIERED MODE: Use tier resolver for conditional agents
@@ -293,6 +282,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 			learningMode = agentConfigs.LearningMode
 		}
 		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
+		// Locked or optimized steps have built skills — use lowest viable tier
+		if agentConfigs != nil &&
+			((agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings) ||
+				(agentConfigs.Optimized != nil && *agentConfigs.Optimized)) &&
+			maturity >= HasLearnings {
+			maturity = LockedLearnings
+		}
 		if agentConfigs != nil && agentConfigs.DisableTierOptimization != nil && *agentConfigs.DisableTierOptimization {
 			llmConfig = hcpo.tierResolver.ResolveTier(TierHigh)
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Conditional agent for step '%s' using Tier 1 (High) — tier optimization disabled", step.GetTitle()))
@@ -327,80 +323,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 		return stepConditionalAgent
 	}
 
-	if hasStepSpecificConfig {
-		// Step has specific config - check for ConditionalLLM first (special case)
-		if hasValidConditionalLLM {
-			conditionalLLMConfig := agentConfigs.ConditionalLLM
-			llmConfig = &orchestrator.LLMConfig{
-				Primary: orchestrator.LLMModel{
-					Provider: conditionalLLMConfig.Provider,
-					ModelID:  conditionalLLMConfig.ModelID,
-				},
-				Fallbacks: convertAgentFallbacks(conditionalLLMConfig.Fallbacks),
-				APIKeys:   orchestratorLLMConfig.APIKeys,
-			}
-		} else {
-			// Use selectExecutionLLM helper for standard fallback (step ExecutionLLM > preset > orchestrator)
-			// learningsFolderEmpty=true since conditional agents don't accumulate learnings
-			llmConfig = hcpo.selectExecutionLLM(ctx, agentConfigs, false, 1, stepID, stepPath, true)
-		}
-		if llmConfig == nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ No valid LLM configuration found for conditional agent step '%s'", step.GetTitle()))
-			return nil
-		}
-
-		// Use provided agent name, or fallback to default format
-		actualAgentName := agentName
-		if actualAgentName == "" {
-			actualAgentName = fmt.Sprintf("conditional-agent-%s", stepID)
-		}
-
-		// Use provided phase, or fallback to default
-		actualPhase := phase
-		if actualPhase == "" {
-			actualPhase = "conditional_evaluation"
-		}
-
-		// Create fresh step-specific conditional agent (no caching)
-		// stepPath already defined above
-		agent, err := hcpo.createConditionalAgent(
-			ctx,
-			actualPhase,     // phase (from parameter)
-			stepIndex,       // step index
-			0,               // iteration
-			actualAgentName, // agent name (from parameter)
-			agentConfigs,    // step config (includes UseCodeExecutionMode)
-			llmConfig,       // conditional LLM config
-			stepPath,        // step path for execution folder write access
-			stepID,          // step ID for step-specific learnings folder access
-		)
-		if err != nil {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create step-specific conditional agent for step '%s': %v", step.GetTitle(), err), nil)
-			return nil
-		}
-
-		// Type assert to conditional agent
-		stepConditionalAgent, ok := agent.(*WorkflowConditionalAgent)
-		if !ok {
-			hcpo.GetLogger().Error(fmt.Sprintf("❌ Factory returned wrong agent type for step '%s'", step.GetTitle()), nil)
-			return nil
-		}
-
-		if hasValidConditionalLLM {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): %s/%s", step.GetTitle(), stepID, isCodeExecutionMode, agentConfigs.ConditionalLLM.Provider, agentConfigs.ConditionalLLM.ModelID))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created step-specific conditional agent for step '%s' (ID: %s, code exec: %v): using execution LLM", step.GetTitle(), stepID, isCodeExecutionMode))
-		}
-		return stepConditionalAgent
-	}
-
-	// No step-specific config - use selectExecutionLLM helper for standard fallback
-	// learningsFolderEmpty=true since conditional agents don't accumulate learnings
-	llmConfig = hcpo.selectExecutionLLM(ctx, nil, false, 1, stepID, stepPath, true)
-	if llmConfig == nil {
-		hcpo.GetLogger().Error("❌ No valid LLM configuration found for default conditional agent", nil)
-		return nil
-	}
+	// Tiered mode is required — if we reach here, tier resolver is nil.
+	panic(fmt.Sprintf("getOrCreateConditionalAgent: tier resolver is nil for step '%s' — tiered mode is required", step.GetTitle()))
 
 	// Use provided agent name, or fallback to default format
 	actualAgentName := agentName
@@ -732,22 +656,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// Process execution strategy early to set controller state
 	// This ensures skipHumanInput and fastExecuteMode are set regardless of code path
+	// All execution strategies now skip human input
 	if execOpts != nil && execOpts.ExecutionStrategy != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Processing execution strategy early: %s", execOpts.ExecutionStrategy))
-		switch execOpts.ExecutionStrategy {
-		case ExecutionStrategyStartFromBeginningNoHuman:
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting skipHumanInput=true for START_FROM_BEGINNING_NO_HUMAN (early processing)"))
-			hcpo.SetSkipHumanInput(true)
-		case ExecutionStrategyResumeFromStepNoHuman:
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting skipHumanInput=true for RESUME_FROM_STEP_NO_HUMAN (early processing)"))
-			hcpo.SetSkipHumanInput(true)
-		case ExecutionStrategyFastExecuteAll:
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting fastExecuteMode=true for FAST_EXECUTE_ALL (early processing)"))
-			hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
-		case ExecutionStrategyFastResumeFromStep:
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Setting fastExecuteMode=true for FAST_RESUME_FROM_STEP (early processing)"))
-			hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
-		}
+		hcpo.SetSkipHumanInput(true)
 	}
 
 	// Determine if user wants to resume or start from beginning
@@ -761,9 +673,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// should still be treated as resuming (so validation can catch it)
 	if execOpts != nil {
 		// Check if it's a resume strategy
-		isResumeStrategy := execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStep ||
-			execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
-			execOpts.ExecutionStrategy == ExecutionStrategyFastResumeFromStep ||
+		isResumeStrategy := execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
 			execOpts.ExecutionStrategy == ExecutionStrategyRunSingleStep
 
 		if execOpts.ResumeFromStep > 0 || execOpts.ResumeFromBranchStep != nil || isResumeStrategy {
@@ -909,10 +819,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 					switch execOpts.ExecutionStrategy {
 					case ExecutionStrategyRunSingleStep:
 						hcpo.SetRunSingleStepMode(true, startFromStep)
-						// Cleanup for single step will be handled by PrepareExecution + ApplyCleanup below
-					case ExecutionStrategyFastResumeFromStep:
-						hcpo.SetFastExecuteMode(true, len(breakdownSteps)-1)
-					case ExecutionStrategyResumeFromStepNoHuman:
+					default:
 						hcpo.SetSkipHumanInput(true)
 					}
 				}
@@ -935,9 +842,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// This allows validation to catch invalid resume_from_step=0 and request human feedback
 	isResumeStrategy := false
 	if execOpts != nil && execOpts.ExecutionStrategy != "" {
-		isResumeStrategy = execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStep ||
-			execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
-			execOpts.ExecutionStrategy == ExecutionStrategyFastResumeFromStep ||
+		isResumeStrategy = execOpts.ExecutionStrategy == ExecutionStrategyResumeFromStepNoHuman ||
 			execOpts.ExecutionStrategy == ExecutionStrategyRunSingleStep
 	}
 

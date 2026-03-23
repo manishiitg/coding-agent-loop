@@ -907,6 +907,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"FolderGuardWritePaths": strings.Join(stripWorkflowPrefixSlice(folderGuardWritePaths), ", "),// Folder guard write paths (relative to workflow root)
 			"SkipExecutionCleanup":  fmt.Sprintf("%v", skipExecutionCleanup),                            // Skip cleanup mode flag for state verification prompt
 			"IsEvaluationMode":      fmt.Sprintf("%v", hcpo.isEvaluationMode),                           // Evaluation mode flag for eval-specific prompt guidance
+			"WorkflowRoot":          workflowRoot,                                                       // Workflow root path (e.g., "Workflow/ICICI BANK PARSING-v2") — used to show absolute shell cwd
 		}
 
 		// Inject workflow variables as environment variables for code execution mode.

@@ -137,28 +137,30 @@ type DecisionContext struct {
 }
 
 // Execution strategy constants
+// All strategies run with learning enabled and no human feedback.
 const (
-	// Fresh start strategies
-	ExecutionStrategyStartFromBeginning        = "start_from_beginning"          // Normal execution with learning and human feedback
-	ExecutionStrategyFastExecuteAll            = "fast_execute_all"              // Fast execute all steps (skip learning and human feedback)
-	ExecutionStrategyStartFromBeginningNoHuman = "start_from_beginning_no_human" // Without human feedback (learning enabled)
+	// Fresh start
+	ExecutionStrategyStartFromBeginningNoHuman = "start_from_beginning_no_human" // Default: fresh start with learning, no human feedback
 
-	// Resume strategies
-	ExecutionStrategyResumeFromStep        = "resume_from_step"          // Resume from specific step (normal mode)
-	ExecutionStrategyFastResumeFromStep    = "fast_resume_from_step"     // Fast resume from step
-	ExecutionStrategyResumeFromStepNoHuman = "resume_from_step_no_human" // Resume without human
-	ExecutionStrategyFastExecuteRange      = "fast_execute_range"        // Fast execute 0 to step X
+	// Resume
+	ExecutionStrategyResumeFromStepNoHuman = "resume_from_step_no_human" // Resume from specific step with learning, no human feedback
 
 	// Single step execution
 	ExecutionStrategyRunSingleStep = "run_single_step" // Run only the specified step and stop
+
+	// Deprecated aliases — mapped to the kept strategies for backward compatibility
+	ExecutionStrategyStartFromBeginning = ExecutionStrategyStartFromBeginningNoHuman // Deprecated: use StartFromBeginningNoHuman
+	ExecutionStrategyFastExecuteAll     = ExecutionStrategyStartFromBeginningNoHuman // Deprecated: use StartFromBeginningNoHuman
+	ExecutionStrategyResumeFromStep     = ExecutionStrategyResumeFromStepNoHuman     // Deprecated: use ResumeFromStepNoHuman
+	ExecutionStrategyFastResumeFromStep = ExecutionStrategyResumeFromStepNoHuman     // Deprecated: use ResumeFromStepNoHuman
+	ExecutionStrategyFastExecuteRange   = ExecutionStrategyStartFromBeginningNoHuman // Deprecated: use StartFromBeginningNoHuman
 
 	// Plan change actions
 	PlanChangeActionKeepOldProgress   = "keep_old_progress"
 	PlanChangeActionDeleteOldProgress = "delete_old_progress"
 
 	// All steps completed actions
-	AllStepsCompletedActionFastExecuteAgain = "fast_execute_again"
-	AllStepsCompletedActionSkipExecution    = "skip_execution"
+	AllStepsCompletedActionSkipExecution = "skip_execution"
 )
 
 // TodoStep has been removed - use PlanStepInterface instead

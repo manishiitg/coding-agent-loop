@@ -25,6 +25,7 @@ Only capture learnings specific to **orchestrator decision-making**.
 - **Routing**: Which routes were selected and why (condition matching)?
 - **Evaluation**: What indicated success criteria were met?
 - **Delegation**: When was timing optimal? What made sub-agent instructions effective?
+- **Tier Selection**: Which LLM tier (1=High, 2=Medium, 3=Low) was used per route? Did lower tiers fail where higher tiers succeeded? Which routes are simple enough for Tier 2/3?
 - **Task-Specific Failures**: Document routing/evaluation errors (ignore general code issues).
 
 ## 📁 FILE MANAGEMENT ALGORITHM (MANDATORY)
@@ -56,6 +57,13 @@ Only capture learnings specific to **orchestrator decision-making**.
 - **⭐ OPTIMAL ROUTING PATTERN** [Runs: X | Success: Y%]
 - **🎯 ROUTE SELECTION PATTERNS**
 - **✅ SUCCESS CRITERIA EVALUATION PATTERNS**
+- **🏷️ TIER RECOMMENDATIONS** — Per-route tier assignment based on observed complexity and success/failure patterns:
+  ` + "`" + `` + "`" + `` + "`" + `
+  ## TIER RECOMMENDATIONS
+  - route: {route_id} | tier: {1/2/3} | reason: {brief justification based on task complexity and observed results}
+  - route: generic | tier: {1/2/3} | reason: {brief justification}
+  ` + "`" + `` + "`" + `` + "`" + `
+  The orchestrator reads this section at runtime to pick preferred_tier for each sub-agent call.
 - **❌ FAILURES TO AVOID**
 
 *Final Action: Output ONLY the updated file path. No summaries.*`)

@@ -470,13 +470,18 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 
 	// ── 1. SUB-AGENT OVERRIDE ────────────────────────────────────────────────
 	// When the todo-task orchestrator spawns a child agent, sub_agent_llm is
-	// injected into context. Use it directly unless enable_dynamic_tier_selection
-	// is set (which lets the orchestrator pick tiers dynamically instead).
-	dynamicTierEnabled := stepConfig != nil && stepConfig.EnableDynamicTierSelection != nil && *stepConfig.EnableDynamicTierSelection
+	// injected into context. Skip it when dynamic tier selection is active —
+	// the orchestrator picks tiers dynamically via preferred_tier instead.
+	// Dynamic tier is default-on when tier resolver exists, unless explicitly disabled.
+	dynamicTierEnabled := hcpo.tierResolver != nil
+	if dynamicTierEnabled && stepConfig != nil &&
+		stepConfig.EnableDynamicTierSelection != nil && !*stepConfig.EnableDynamicTierSelection {
+		dynamicTierEnabled = false
+	}
 	if subAgentLLM, ok := ctx.Value(virtualtools.SubAgentLLMContextKey).(*AgentLLMConfig); ok &&
 		subAgentLLM != nil && subAgentLLM.Provider != "" && subAgentLLM.ModelID != "" {
 		if dynamicTierEnabled {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] sub_agent_llm (%s/%s) skipped for step %s because enable_dynamic_tier_selection is true",
+			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ [SKIPPED] sub_agent_llm (%s/%s) skipped for step %s because dynamic tier selection is enabled",
 				subAgentLLM.Provider, subAgentLLM.ModelID, stepPath))
 		} else {
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 [SUB-AGENT] Using sub_agent_llm override for step %s: %s/%s",
@@ -645,6 +650,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			learningMode = stepConfig.LearningMode
 		}
 		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
+		// Locked or optimized steps have built skills — use lowest viable tier
+		if stepConfig != nil &&
+			((stepConfig.LockLearnings != nil && *stepConfig.LockLearnings) ||
+				(stepConfig.Optimized != nil && *stepConfig.Optimized)) &&
+			maturity >= HasLearnings {
+			maturity = LockedLearnings
+		}
 		llmConfig, tier := hcpo.tierResolver.ResolveForExecution(maturity)
 		if llmConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s (maturity: %d)",
@@ -653,16 +665,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		return llmConfig
 	}
 
-	// ── 5. ORCHESTRATOR MAIN LLM ─────────────────────────────────────────────
-	if orchestratorLLMConfig.Primary.Provider != "" && orchestratorLLMConfig.Primary.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using main workflow LLM as final fallback: %s/%s",
-			orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig
-	}
-
-	err := fmt.Errorf("no valid LLM configuration found for execution agent (step %s): tempLLM, step config, tiered mode, preset, and workflow LLM are all empty/unavailable", stepPath)
-	hcpo.GetLogger().Error("❌ "+err.Error(), err)
-	return nil
+	// ── 5. NO VALID CONFIG ──────────────────────────────────────────────────
+	// Tiered mode is required. If we reach here, something is misconfigured.
+	panic(fmt.Sprintf("selectExecutionLLM: no valid LLM configuration found for step %s — tier resolver is required", stepPath))
 }
 
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config
@@ -1022,9 +1027,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		return llmConfig
 	}
 
-	err := fmt.Errorf("no valid LLM configuration found for learning agent (step %s): tempLLM, step config, and tiered mode are all empty/unavailable", stepPath)
-	hcpo.GetLogger().Error("❌ "+err.Error(), err)
-	return nil
+	// Tiered mode is required. If we reach here, something is misconfigured.
+	panic(fmt.Sprintf("selectLearningLLM: no valid LLM configuration found for step %s — tier resolver is required", stepPath))
 }
 
 // applyPostSetupToAgent applies post-setup configuration to an agent after base factory setup
@@ -1717,13 +1721,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	// IMPORTANT: Inject sub-agent tools for tool-based delegation
 	// These tools allow the orchestrator to delegate work to sub-agents directly via tool calls
 	if subAgentExecCtx != nil {
-		// Determine if dynamic tier selection is enabled for sub-agent tools
-		enableTierSelection := hcpo.tierResolver != nil && subAgentExecCtx.TodoTaskStep != nil
-		if enableTierSelection {
-			stepConfig := getAgentConfigs(subAgentExecCtx.TodoTaskStep)
-			enableTierSelection = stepConfig != nil &&
-				stepConfig.EnableDynamicTierSelection != nil &&
-				*stepConfig.EnableDynamicTierSelection
+		// Dynamic tier selection: enabled by default when tier resolver is available.
+		// Can be explicitly disabled via step config enable_dynamic_tier_selection=false.
+		enableTierSelection := hcpo.tierResolver != nil
+		if enableTierSelection && subAgentExecCtx.TodoTaskStep != nil {
+			if stepConfig := getAgentConfigs(subAgentExecCtx.TodoTaskStep); stepConfig != nil &&
+				stepConfig.EnableDynamicTierSelection != nil && !*stepConfig.EnableDynamicTierSelection {
+				enableTierSelection = false
+			}
 		}
 		subAgentTools := virtualtools.CreateSubAgentTools(enableTierSelection)
 		subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
@@ -2161,37 +2166,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 }
 
 // selectEvaluationScoringLLM selects the LLM config for evaluation scoring agents
-// Priority: tiered medium > presetPhaseLLM > orchestrator fallback
+// Uses Tier 2 (Medium) — scoring is analysis, not generation.
 func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
-	// Prefer tiered medium — scoring is analysis, not generation
-	if hcpo.tierResolver != nil {
-		llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
-		if llmConfig != nil {
-			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ Using Tier 2 (Medium) for evaluation scoring: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-			return llmConfig, nil
-		}
+	if hcpo.tierResolver == nil {
+		panic("selectEvaluationScoringLLM: tier resolver is nil — tiered mode is required")
 	}
-
-	orchestratorLLMConfig := hcpo.GetLLMConfig()
-
-	if hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset phase LLM for evaluation scoring: %s/%s", hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetPhaseLLM.Provider,
-				ModelID:  hcpo.presetPhaseLLM.ModelID,
-			},
-			Fallbacks: convertAgentFallbacks(hcpo.presetPhaseLLM.Fallbacks),
-			APIKeys:   orchestratorLLMConfig.APIKeys,
-		}, nil
+	llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
+	if llmConfig == nil {
+		panic("selectEvaluationScoringLLM: tier resolver returned nil for Tier 2 (Medium)")
 	}
-
-	if orchestratorLLMConfig != nil && orchestratorLLMConfig.Primary.Provider != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using orchestrator LLM for evaluation scoring: %s/%s", orchestratorLLMConfig.Primary.Provider, orchestratorLLMConfig.Primary.ModelID))
-		return orchestratorLLMConfig, nil
-	}
-
-	return nil, fmt.Errorf("no valid LLM configuration found for evaluation scoring agent")
+	hcpo.GetLogger().Info(fmt.Sprintf("🏷️ Using Tier 2 (Medium) for evaluation scoring: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	return llmConfig, nil
 }
 
 // createEvaluationScoringAgent creates a single scoring agent that scores ALL evaluation steps

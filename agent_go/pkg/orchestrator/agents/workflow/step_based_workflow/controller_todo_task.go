@@ -409,12 +409,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 
 	templateVars["PreviousStepsSummary"] = previousStepsSummary
 
-	// Add EnableDynamicTierSelection flag for system prompt
-	enableDynamicTier := false
-	if hcpo.tierResolver != nil {
+	// EnableDynamicTierSelection: enabled by default when tier resolver is available.
+	// Can be explicitly disabled via step config enable_dynamic_tier_selection=false.
+	enableDynamicTier := hcpo.tierResolver != nil
+	if enableDynamicTier {
 		if stepConfig := getAgentConfigs(step); stepConfig != nil &&
-			stepConfig.EnableDynamicTierSelection != nil {
-			enableDynamicTier = *stepConfig.EnableDynamicTierSelection
+			stepConfig.EnableDynamicTierSelection != nil && !*stepConfig.EnableDynamicTierSelection {
+			enableDynamicTier = false
 		}
 	}
 	templateVars["EnableDynamicTierSelection"] = fmt.Sprintf("%t", enableDynamicTier)
@@ -460,18 +461,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 // selectTodoTaskOrchestratorLLM selects the LLM config for todo task orchestrator.
 //
 // Priority:
-//  1. step config OrchestratorLLM  — explicit orchestrator-specific LLM; always wins
-//  2. step config ExecutionLLM     — when user sets a step-level LLM, apply it to the orchestrator too
-//  3. TodoTaskOrchestratorTier     — tiered mode with an explicit tier pinned on the step
-//  4. selectExecutionLLM fallback  — handles dynamic tier selection, preset, and orchestrator main LLM
+//  1. step config OrchestratorLLM — explicit override always wins
+//  2. Tier 1 (High) — default for orchestrator (panics if tier resolver is unavailable)
 func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
 	stepID string,
 	stepPath string,
 ) *orchestrator.LLMConfig {
-	// 1. STEP CONFIG OVERRIDE: OrchestratorLLM always takes highest precedence.
-	// This beats tiered mode and dynamic tier selection — explicit config is authoritative.
+	// 1. Step config OrchestratorLLM always takes highest precedence.
 	if stepConfig != nil && stepConfig.OrchestratorLLM != nil &&
 		stepConfig.OrchestratorLLM.Provider != "" && stepConfig.OrchestratorLLM.ModelID != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Todo task orchestrator using step-config OrchestratorLLM: %s/%s",
@@ -485,47 +483,26 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 		}
 	}
 
-	// 2. EXECUTION LLM FALLBACK: If user set a step-level ExecutionLLM, use it for the orchestrator too.
-	// This handles the common case where users set one LLM for the step expecting it to apply everywhere.
-	// OrchestratorLLM (above) takes precedence if they need the orchestrator to differ from sub-agents.
-	if stepConfig != nil && stepConfig.ExecutionLLM != nil &&
-		stepConfig.ExecutionLLM.Provider != "" && stepConfig.ExecutionLLM.ModelID != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 [STEP OVERRIDE] Todo task orchestrator using step-config ExecutionLLM: %s/%s",
-			stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
-		return &orchestrator.LLMConfig{
-			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.ExecutionLLM.Provider,
-				ModelID:  stepConfig.ExecutionLLM.ModelID,
-			},
-			APIKeys: hcpo.GetAPIKeys(),
-		}
+	// 2. Tiered mode: use learning maturity to select tier.
+	// Locked/optimized steps with built skills use Tier 2 (Medium) for the orchestrator.
+	// The orchestrator still needs some reasoning for task planning and routing, so use Medium not Low.
+	if hcpo.tierResolver == nil {
+		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver is nil for step %s — tiered mode is required for todo task orchestrator", stepPath))
 	}
-
-	// 3. TIERED MODE: Use configured orchestrator tier if pinned on the step (only when no explicit LLM is set).
-	if hcpo.tierResolver != nil && stepConfig != nil &&
-		stepConfig.TodoTaskOrchestratorTier != nil {
-		tier := TierLevel(*stepConfig.TodoTaskOrchestratorTier)
-		if tier >= TierHigh && tier <= TierLow {
-			llmConfig := hcpo.tierResolver.ResolveTier(tier)
-			if llmConfig != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Todo task orchestrator using configured Tier %d (%s): %s/%s",
-					int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-				return llmConfig
-			}
-		}
+	tier := TierHigh
+	if stepConfig != nil &&
+		((stepConfig.LockLearnings != nil && *stepConfig.LockLearnings) ||
+			(stepConfig.Optimized != nil && *stepConfig.Optimized)) {
+		// Orchestrator needs more reasoning than execution agents, so Medium not Low
+		tier = TierMedium
 	}
-
-	// 4. Fallback: selectExecutionLLM with learningsFolderEmpty=true since orchestrators don't accumulate learnings.
-	// This handles dynamic tier selection, preset LLM, and the orchestrator main LLM as final fallback.
-	return hcpo.selectExecutionLLM(
-		ctx,
-		stepConfig,
-		false, // isRetryAfterValidationFailure - orchestrator doesn't retry
-		1,     // retryAttempt - first attempt
-		stepID,
-		stepPath,
-		true, // learningsFolderEmpty - orchestrator has no learnings, skip tempLLM
-	)
+	llmConfig := hcpo.tierResolver.ResolveTier(tier)
+	if llmConfig == nil {
+		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver returned nil for Tier %d (%s) on step %s", int(tier), TierLevelLabel(tier), stepPath))
+	}
+	hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Todo task orchestrator using Tier %d (%s): %s/%s",
+		int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
+	return llmConfig
 }
 
 // executeTodoTaskOrchestratorAgent executes the orchestrator agent using the standard factory pattern
@@ -1347,6 +1324,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 		}
 	}
 
+	// Extract preferred tier from context (set by call_sub_agent/call_generic_agent tools)
+	var preferredTier int
+	var preferredTierLabel string
+	if tier, ok := ctx.Value(virtualtools.PreferredTierContextKey).(int); ok && tier >= 1 && tier <= 3 {
+		preferredTier = tier
+		preferredTierLabel = TierLevelLabel(TierLevel(tier))
+	}
+
 	// Build log entry
 	routingEntry := map[string]interface{}{
 		"type":         "routing",
@@ -1369,6 +1354,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) logTodoTaskRoutingDecision(
 			"all_tasks_complete":              response.AllTasksComplete,
 			"progress_summary":                response.ProgressSummary,
 			"completion_reason":               response.CompletionReason,
+			"preferred_tier":                  preferredTier,
+			"preferred_tier_label":            preferredTierLabel,
 		},
 		"todo_summary": todoSummary,
 		"timestamp":    time.Now().Format(time.RFC3339),

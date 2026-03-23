@@ -65,11 +65,12 @@ func (em *ExecutionManager) PrepareExecution(
 	}
 
 	// Map strategy to mode and cleanup
+	// All strategies use learning enabled, no human feedback.
 	switch opts.ExecutionStrategy {
 
-	// === Fresh Start Strategies ===
-
-	case ExecutionStrategyStartFromBeginning:
+	// === Fresh Start ===
+	// All fresh start strategies (including deprecated aliases) map here
+	case "start_from_beginning", "start_from_beginning_no_human", "fast_execute_all", "fast_execute_range":
 		setup.Mode = ExecutionModeFresh
 		setup.Cleanup = CleanupScope{
 			DeleteProgress:    true,
@@ -77,50 +78,11 @@ func (em *ExecutionManager) PrepareExecution(
 			CleanAllSteps:     true,
 			NewTotalSteps:     totalSteps,
 		}
-
-	case ExecutionStrategyStartFromBeginningNoHuman:
-		setup.Mode = ExecutionModeFresh
-		setup.Cleanup = CleanupScope{
-			DeleteProgress:    true,
-			InitFreshProgress: true,
-			CleanAllSteps:     true,
-			NewTotalSteps:     totalSteps,
-		}
-		setup.Context.SkipHumanInput = true
-
-	// === Fast Execute Strategies ===
-
-	case ExecutionStrategyFastExecuteAll:
-		setup.Mode = ExecutionModeFastExecute
-		setup.Cleanup = CleanupScope{
-			DeleteProgress:    true,
-			InitFreshProgress: true,
-			CleanAllSteps:     true,
-			NewTotalSteps:     totalSteps,
-		}
-		setup.Context.FastExecuteMode = true
-		setup.Context.FastExecuteEndStep = totalSteps - 1
-		setup.Context.SkipHumanInput = true
-
-	case ExecutionStrategyFastExecuteRange:
-		endStep := opts.FastExecuteEndStep
-		if endStep <= 0 {
-			endStep = totalSteps - 1
-		}
-		setup.Mode = ExecutionModeFastExecuteRange
-		setup.Cleanup = CleanupScope{
-			DeleteProgress:    true,
-			InitFreshProgress: true,
-			CleanAllSteps:     true, // Clean all for simplicity
-			NewTotalSteps:     totalSteps,
-		}
-		setup.Context.FastExecuteMode = true
-		setup.Context.FastExecuteEndStep = endStep
 		setup.Context.SkipHumanInput = true
 
 	// === Resume Strategies ===
-
-	case ExecutionStrategyResumeFromStep:
+	// All resume strategies (including deprecated aliases) map here
+	case "resume_from_step", "resume_from_step_no_human", "fast_resume_from_step":
 		// Check if resuming from branch step
 		if opts.ResumeFromBranchStep != nil {
 			// Resuming from branch step - start from parent conditional step
@@ -131,6 +93,7 @@ func (em *ExecutionManager) PrepareExecution(
 				CleanFromStep:  opts.ResumeFromBranchStep.ParentStepIndex + 1, // Convert to 1-based for cleanup
 				NewTotalSteps:  totalSteps,
 			}
+			setup.Context.SkipHumanInput = true
 			setup.Context.ResumeBranchStep = opts.ResumeFromBranchStep
 			orch.GetLogger().Info(fmt.Sprintf("🔀 Resuming from branch step: parent=%d, branch=%s, step=%d",
 				opts.ResumeFromBranchStep.ParentStepIndex+1, opts.ResumeFromBranchStep.BranchType, opts.ResumeFromBranchStep.BranchStepIndex+1))
@@ -229,239 +192,6 @@ func (em *ExecutionManager) PrepareExecution(
 				CleanFromStep:  resumeStep, // Delete step-N and all after
 				NewTotalSteps:  totalSteps,
 			}
-		}
-
-	case ExecutionStrategyResumeFromStepNoHuman:
-		// Check if resuming from branch step
-		if opts.ResumeFromBranchStep != nil {
-			setup.Mode = ExecutionModeResumeFromStep
-			setup.StartFromStep = opts.ResumeFromBranchStep.ParentStepIndex
-			setup.Cleanup = CleanupScope{
-				UpdateProgress: true,
-				CleanFromStep:  opts.ResumeFromBranchStep.ParentStepIndex + 1,
-				NewTotalSteps:  totalSteps,
-			}
-			setup.Context.SkipHumanInput = true
-			setup.Context.ResumeBranchStep = opts.ResumeFromBranchStep
-			orch.GetLogger().Info(fmt.Sprintf("🔀 Resuming from branch step (no human): parent=%d, branch=%s, step=%d",
-				opts.ResumeFromBranchStep.ParentStepIndex+1, opts.ResumeFromBranchStep.BranchType, opts.ResumeFromBranchStep.BranchStepIndex+1))
-		} else {
-			resumeStep := opts.ResumeFromStep // 1-based
-			// Normalize resume_from_step=0 to 1 (start from step 1)
-			if resumeStep == 0 {
-				resumeStep = 1
-			}
-			if resumeStep < 0 {
-				// CRITICAL: resume_from_step < 0 is invalid!
-				// Request blocking human feedback approval (even in "no human" mode - this is a safety override)
-				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
-
-				// Build context message showing what would be deleted
-				var contextMsg strings.Builder
-				contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
-				contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
-
-				if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
-					contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
-					contextMsg.WriteString("Completed steps that would be deleted:\n")
-					for _, idx := range existingProgress.CompletedStepIndices {
-						contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
-					}
-					contextMsg.WriteString("\n")
-				} else {
-					contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
-				}
-
-				contextMsg.WriteString("**Options:**\n")
-				contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
-				contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
-
-				// Request blocking human feedback (safety override - even in "no human" mode)
-				requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
-				question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
-
-				approved, _, err := orch.RequestHumanFeedback(
-					ctx,
-					requestID,
-					question,
-					contextMsg.String(),
-					orch.getSessionID(),
-					orch.getWorkflowID(),
-				)
-
-				if err != nil {
-					orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
-					return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
-				}
-
-				if !approved {
-					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
-					return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
-				}
-
-				// User approved - proceed with fallback logic
-				orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
-
-				if existingProgress != nil {
-					nextIncomplete := findNextIncompleteStep(existingProgress)
-					if nextIncomplete < totalSteps {
-						resumeStep = nextIncomplete + 1 // Convert to 1-based
-						orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
-					} else {
-						// All steps complete - fallback to start from beginning
-						orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
-						setup.Mode = ExecutionModeFresh
-						setup.Cleanup = CleanupScope{
-							DeleteProgress:    true,
-							InitFreshProgress: true,
-							CleanAllSteps:     true,
-							NewTotalSteps:     totalSteps,
-						}
-						setup.Context.SkipHumanInput = true
-						return setup, nil
-					}
-				} else {
-					// No existing progress - fallback to start from beginning
-					orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
-					setup.Mode = ExecutionModeFresh
-					setup.Cleanup = CleanupScope{
-						DeleteProgress:    true,
-						InitFreshProgress: true,
-						CleanAllSteps:     true,
-						NewTotalSteps:     totalSteps,
-					}
-					setup.Context.SkipHumanInput = true
-					return setup, nil
-				}
-			}
-			setup.Mode = ExecutionModeResumeFromStep
-			setup.StartFromStep = resumeStep - 1 // Convert to 0-based
-			setup.Cleanup = CleanupScope{
-				UpdateProgress: true,
-				CleanFromStep:  resumeStep, // Delete step-N and all after
-				NewTotalSteps:  totalSteps,
-			}
-			setup.Context.SkipHumanInput = true
-		}
-
-	case ExecutionStrategyFastResumeFromStep:
-		// Check if resuming from branch step
-		if opts.ResumeFromBranchStep != nil {
-			setup.Mode = ExecutionModeResumeFromStep
-			setup.StartFromStep = opts.ResumeFromBranchStep.ParentStepIndex
-			setup.Cleanup = CleanupScope{
-				UpdateProgress: true,
-				CleanFromStep:  opts.ResumeFromBranchStep.ParentStepIndex + 1,
-				NewTotalSteps:  totalSteps,
-			}
-			setup.Context.FastExecuteMode = true
-			setup.Context.FastExecuteEndStep = totalSteps - 1
-			setup.Context.SkipHumanInput = true
-			setup.Context.ResumeBranchStep = opts.ResumeFromBranchStep
-			orch.GetLogger().Info(fmt.Sprintf("🔀 Fast resuming from branch step: parent=%d, branch=%s, step=%d",
-				opts.ResumeFromBranchStep.ParentStepIndex+1, opts.ResumeFromBranchStep.BranchType, opts.ResumeFromBranchStep.BranchStepIndex+1))
-		} else {
-			resumeStep := opts.ResumeFromStep // 1-based
-			// Normalize resume_from_step=0 to 1 (start from step 1)
-			if resumeStep == 0 {
-				resumeStep = 1
-			}
-			if resumeStep < 0 {
-				// CRITICAL: resume_from_step < 0 is invalid!
-				// Request blocking human feedback approval (even in fast mode - this is a safety override)
-				orch.GetLogger().Error(fmt.Sprintf("🚨 CRITICAL: Resume strategy selected but resume_from_step=%d (invalid)! This would delete all completed steps.", resumeStep), fmt.Errorf("invalid resume_from_step=%d", resumeStep))
-
-				// Build context message showing what would be deleted
-				var contextMsg strings.Builder
-				contextMsg.WriteString("⚠️ **CRITICAL WARNING: Invalid Resume Step Detected**\n\n")
-				contextMsg.WriteString(fmt.Sprintf("You selected a resume strategy but `resume_from_step=%d` is invalid.\n\n", resumeStep))
-
-				if existingProgress != nil && len(existingProgress.CompletedStepIndices) > 0 {
-					contextMsg.WriteString(fmt.Sprintf("**This would DELETE all %d completed steps and start from the beginning!**\n\n", len(existingProgress.CompletedStepIndices)))
-					contextMsg.WriteString("Completed steps that would be deleted:\n")
-					for _, idx := range existingProgress.CompletedStepIndices {
-						contextMsg.WriteString(fmt.Sprintf("- Step %d\n", idx+1))
-					}
-					contextMsg.WriteString("\n")
-				} else {
-					contextMsg.WriteString("**This would start execution from the beginning.**\n\n")
-				}
-
-				contextMsg.WriteString("**Options:**\n")
-				contextMsg.WriteString("1. **Approve & Continue**: Use next incomplete step (if available) or start from beginning\n")
-				contextMsg.WriteString("2. **Reject**: Cancel execution - fix the resume step selection in the frontend\n")
-
-				// Request blocking human feedback (safety override - even in fast mode)
-				requestID := fmt.Sprintf("resume_step_validation_%d", time.Now().UnixNano())
-				question := fmt.Sprintf("⚠️ Invalid Resume Step Detected (resume_from_step=%d)\n\nDo you want to proceed? This will delete all completed steps and start from the beginning.", resumeStep)
-
-				approved, _, err := orch.RequestHumanFeedback(
-					ctx,
-					requestID,
-					question,
-					contextMsg.String(),
-					orch.getSessionID(),
-					orch.getWorkflowID(),
-				)
-
-				if err != nil {
-					orch.GetLogger().Error(fmt.Sprintf("❌ Failed to request human feedback for resume step validation: %v", err), err)
-					return nil, fmt.Errorf("failed to request approval for invalid resume step: %w", err)
-				}
-
-				if !approved {
-					orch.GetLogger().Info("❌ User rejected proceeding with invalid resume step - canceling execution")
-					return nil, fmt.Errorf("execution canceled: user rejected proceeding with invalid resume_from_step=%d", resumeStep)
-				}
-
-				// User approved - proceed with fallback logic
-				orch.GetLogger().Info("✅ User approved proceeding with invalid resume step - using fallback logic")
-
-				if existingProgress != nil {
-					nextIncomplete := findNextIncompleteStep(existingProgress)
-					if nextIncomplete < totalSteps {
-						resumeStep = nextIncomplete + 1 // Convert to 1-based
-						orch.GetLogger().Info(fmt.Sprintf("✅ Using next incomplete step %d instead", resumeStep))
-					} else {
-						// All steps complete - fallback to start from beginning
-						orch.GetLogger().Warn(fmt.Sprintf("⚠️ All steps are complete, falling back to start from beginning"))
-						setup.Mode = ExecutionModeFresh
-						setup.Cleanup = CleanupScope{
-							DeleteProgress:    true,
-							InitFreshProgress: true,
-							CleanAllSteps:     true,
-							NewTotalSteps:     totalSteps,
-						}
-						setup.Context.FastExecuteMode = true
-						setup.Context.FastExecuteEndStep = totalSteps - 1
-						setup.Context.SkipHumanInput = true
-						return setup, nil
-					}
-				} else {
-					// No existing progress - fallback to start from beginning
-					orch.GetLogger().Warn(fmt.Sprintf("⚠️ No existing progress found, falling back to start from beginning"))
-					setup.Mode = ExecutionModeFresh
-					setup.Cleanup = CleanupScope{
-						DeleteProgress:    true,
-						InitFreshProgress: true,
-						CleanAllSteps:     true,
-						NewTotalSteps:     totalSteps,
-					}
-					setup.Context.FastExecuteMode = true
-					setup.Context.FastExecuteEndStep = totalSteps - 1
-					setup.Context.SkipHumanInput = true
-					return setup, nil
-				}
-			}
-			setup.Mode = ExecutionModeResumeFromStep
-			setup.StartFromStep = resumeStep - 1
-			setup.Cleanup = CleanupScope{
-				UpdateProgress: true,
-				CleanFromStep:  resumeStep,
-				NewTotalSteps:  totalSteps,
-			}
-			setup.Context.FastExecuteMode = true
-			setup.Context.FastExecuteEndStep = totalSteps - 1
 			setup.Context.SkipHumanInput = true
 		}
 
@@ -546,15 +276,10 @@ func (em *ExecutionManager) PrepareForBatchGroup(
 		strategy := orch.executionOptions.ExecutionStrategy
 
 		// Check if this is a "start from beginning" strategy
-		isStartFromBeginningStrategy = strategy == ExecutionStrategyStartFromBeginning ||
-			strategy == ExecutionStrategyStartFromBeginningNoHuman ||
-			strategy == ExecutionStrategyFastExecuteAll ||
-			strategy == ExecutionStrategyFastExecuteRange
+		isStartFromBeginningStrategy = strategy == ExecutionStrategyStartFromBeginningNoHuman
 
 		// Check if this is a resume strategy
-		isResumeStrategy := strategy == ExecutionStrategyResumeFromStep ||
-			strategy == ExecutionStrategyResumeFromStepNoHuman ||
-			strategy == ExecutionStrategyFastResumeFromStep ||
+		isResumeStrategy := strategy == ExecutionStrategyResumeFromStepNoHuman ||
 			strategy == ExecutionStrategyRunSingleStep
 
 		// Only use resume step for the first group

@@ -1040,16 +1040,12 @@ export interface ExecutionOptions {
 }
 
 // Execution strategy constants (matching backend)
+// All strategies use learning enabled, no human feedback.
 export const ExecutionStrategy = {
-  // Fresh start strategies
-  START_FROM_BEGINNING: 'start_from_beginning',
-  FAST_EXECUTE_ALL: 'fast_execute_all',
+  // Fresh start
   START_FROM_BEGINNING_NO_HUMAN: 'start_from_beginning_no_human',
-  // Resume strategies
-  RESUME_FROM_STEP: 'resume_from_step',
-  FAST_RESUME_FROM_STEP: 'fast_resume_from_step',
+  // Resume
   RESUME_FROM_STEP_NO_HUMAN: 'resume_from_step_no_human',
-  FAST_EXECUTE_RANGE: 'fast_execute_range',
   // Single step execution
   RUN_SINGLE_STEP: 'run_single_step',
 } as const;

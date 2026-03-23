@@ -44,9 +44,10 @@ type TieredLLMConfig struct {
 type LearningMaturity int
 
 const (
-	NoLearnings     LearningMaturity = 0 // No learning files exist
-	HasLearnings    LearningMaturity = 1 // 1 learning file exists
-	MatureLearnings LearningMaturity = 2 // 2+ learning files exist
+	NoLearnings      LearningMaturity = 0 // No learning files exist
+	HasLearnings     LearningMaturity = 1 // 1 learning file exists
+	MatureLearnings  LearningMaturity = 2 // 2+ learning files exist
+	LockedLearnings  LearningMaturity = 3 // Learnings are locked (skill is built, use lowest viable tier)
 )
 
 // TierResolver resolves the appropriate LLM tier based on agent type and learning maturity
@@ -109,9 +110,12 @@ func convertAgentFallbacks(fallbacks []AgentLLMFallback) []orchestrator.LLMModel
 }
 
 // ResolveForExecution returns the LLM for execution agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium)
+// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium), Locked: Tier 3 (Low)
+// Locked learnings means the skill is fully built — the agent follows a recipe and doesn't need high reasoning.
 func (tr *TierResolver) ResolveForExecution(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
 	switch maturity {
+	case LockedLearnings:
+		return tr.ResolveTier(TierLow), TierLow
 	case MatureLearnings:
 		return tr.ResolveTier(TierMedium), TierMedium
 	default:
@@ -139,9 +143,11 @@ func (tr *TierResolver) ResolveForValidation() (*orchestrator.LLMConfig, TierLev
 // No resolver method is needed since phase agents don't have maturity-based selection.
 
 // ResolveForConditional returns the LLM for conditional agents based on learning maturity
-// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium)
+// No Learnings: Tier 1 (High), Has Learnings (1 file): Tier 1 (High), Mature (2+ files): Tier 2 (Medium), Locked: Tier 3 (Low)
 func (tr *TierResolver) ResolveForConditional(maturity LearningMaturity) (*orchestrator.LLMConfig, TierLevel) {
 	switch maturity {
+	case LockedLearnings:
+		return tr.ResolveTier(TierLow), TierLow
 	case MatureLearnings:
 		return tr.ResolveTier(TierMedium), TierMedium
 	default:

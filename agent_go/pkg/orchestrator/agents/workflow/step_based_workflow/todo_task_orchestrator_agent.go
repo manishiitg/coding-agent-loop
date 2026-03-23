@@ -81,7 +81,8 @@ Execute any ad-hoc task. Same tool access as predefined agents. Set share_browse
 - 1 (High): Complex, novel, critical tasks
 - 2 (Medium): Routine, well-defined tasks
 - 3 (Low): Simple, repetitive tasks
-- Omit to auto-select based on learning maturity (no learnings = tier 1, mature learnings = tier 2)
+
+**How to choose**: Check LEARNING HISTORY below for a TIER RECOMMENDATIONS section. If it contains per-route tier recommendations, use those. Otherwise, omit preferred_tier to auto-select based on learning maturity.
 
 **Tier Escalation on Failure**: If a sub-agent fails or pre-validation fails at tier 2/3, retry at tier 1 (high reasoning) with improved instructions. The higher tier may catch edge cases the lower tier missed. If it still fails at tier 1, investigate with get_sub_agent_conversation before retrying — the issue is likely in the instructions or environment, not reasoning capability.
 {{end}}

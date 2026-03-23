@@ -47,7 +47,12 @@ import WorkflowVersionsPopup from '../WorkflowVersionsPopup'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import type { PlanStep, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
-import { sanitizeDisplayNameForFolder, resolveGroupFolderPath } from '../../../utils/workflowUtils'
+import {
+  buildGroupFolderPath,
+  extractGroupIdFromFolder,
+  sanitizeDisplayNameForFolder,
+  resolveGroupFolderPath
+} from '../../../utils/workflowUtils'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -771,6 +776,46 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
     return { sortedIterations, iterationMap, items }
   }, [folders, variablesManifest])
+
+  const defaultExecutionSelection = useMemo(() => {
+    const enabledManifestGroups = variablesManifest?.groups?.filter(group => group.enabled !== false) || []
+    if (enabledManifestGroups.length === 0) {
+      return null
+    }
+
+    const selectedIteration = selectedRunFolder?.startsWith('iteration-')
+      ? selectedRunFolder.split('/')[0]
+      : null
+    const targetIteration = selectedIteration || iterationGroups.sortedIterations[0] || null
+    if (!targetIteration) {
+      return null
+    }
+
+    const selectedFolderGroupId = extractGroupIdFromFolder(selectedRunFolder, variablesManifest)
+    if (selectedFolderGroupId && enabledManifestGroups.some(group => group.group_id === selectedFolderGroupId)) {
+      return {
+        groupIds: [selectedFolderGroupId],
+        runFolder: selectedRunFolder
+          || buildGroupFolderPath(selectedFolderGroupId, targetIteration, variablesManifest)
+          || targetIteration
+      }
+    }
+
+    const groupsInTargetIteration = iterationGroups.iterationMap.get(targetIteration) || []
+    const firstEnabledGroup = groupsInTargetIteration.find(group => group.groupId && group.enabled !== false)
+    if (firstEnabledGroup?.groupId) {
+      return {
+        groupIds: [firstEnabledGroup.groupId],
+        runFolder: firstEnabledGroup.id
+      }
+    }
+
+    const fallbackGroupId = enabledManifestGroups[0].group_id
+    return {
+      groupIds: [fallbackGroupId],
+      runFolder: buildGroupFolderPath(fallbackGroupId, targetIteration, variablesManifest) || targetIteration
+    }
+  }, [iterationGroups.iterationMap, iterationGroups.sortedIterations, selectedRunFolder, variablesManifest])
   
   // Auto-expand the iteration containing the selected run folder
   useEffect(() => {
@@ -1254,9 +1299,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         console.warn('[WorkflowToolbar] Cannot execute: No groups configured')
         return
       }
+
       if (selectedGroupIds.length === 0) {
-        console.warn('[WorkflowToolbar] Cannot execute: No groups selected')
-        return
+        if (!defaultExecutionSelection) {
+          console.warn('[WorkflowToolbar] Cannot execute: No groups selected and no default group available')
+          return
+        }
+
+        console.log('[WorkflowToolbar] Auto-selecting execution target:', defaultExecutionSelection)
+        setSelectedGroupIds(defaultExecutionSelection.groupIds)
+        setSelectedRunFolder(defaultExecutionSelection.runFolder)
+
+        if (workspacePath) {
+          void loadProgress(workspacePath, defaultExecutionSelection.runFolder)
+        }
       }
 
       // Set guard + show "Starting..." AFTER validation passes (so errors don't lock the button)
@@ -1312,7 +1368,20 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       // Start phase (will create new tab if none exists, or use existing if we switched to it)
       onStartPhase(targetExecutionPhaseId, options)
     }
-  }, [isExecutionRunning, isExecutionStarting, workflowMode, buildExecutionOptions, onStartPhase, selectedGroupIds, variablesManifest])
+  }, [
+    isExecutionRunning,
+    isExecutionStarting,
+    workflowMode,
+    buildExecutionOptions,
+    defaultExecutionSelection,
+    loadProgress,
+    onStartPhase,
+    selectedGroupIds,
+    setSelectedGroupIds,
+    setSelectedRunFolder,
+    variablesManifest,
+    workspacePath
+  ])
 
   return (
     <>
@@ -1417,51 +1486,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
               <>
-                {/* Execute/Stop Button - Changes to Stop when execution phase is running */}
-                {/* Disable unless at least one configured group is selected. */}
-                {(() => {
-                  const hasGroups = !!(variablesManifest?.groups && variablesManifest.groups.length > 0)
-                  const noGroupsSelected = selectedGroupIds.length === 0
-                  const isDisabled = isExecutionStarting || (!isExecutionRunning && (!hasGroups || noGroupsSelected))
-
-                  return (
-                    <button
-                      onClick={isExecutionRunning ? onStop : handleExecute}
-                      disabled={isDisabled}
-                      className={`
-                        flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
-                        ${isExecutionRunning
-                          ? 'bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 hover:shadow-lg'
-                          : isExecutionStarting
-                          ? 'bg-primary/70 text-primary-foreground shadow-md cursor-wait'
-                          : isDisabled
-                          ? 'bg-muted text-muted-foreground shadow-md cursor-not-allowed opacity-75'
-                          : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
-                        }
-                      `}
-                    >
-                      {isExecutionRunning ? (
-                        <>
-                          <Square className="w-3.5 h-3.5" />
-                          <span>Stop</span>
-                        </>
-                      ) : isExecutionStarting ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Starting...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Rocket className="w-3.5 h-3.5" />
-                          <span>Execute</span>
-                        </>
-                      )}
-                    </button>
-                  )
-                })()}
-                
-                <div className="w-px h-5 bg-border" />
-                
                 {/* Iteration Selector */}
                 <div className="relative" ref={iterationDropdownRef}>
                   <button
@@ -2003,6 +2027,52 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     document.body
                   )}
                 </div>
+
+                <div className="w-px h-5 bg-border" />
+
+                {/* Execute/Stop Button - Changes to Stop when execution phase is running */}
+                {/* Disable only when execution cannot resolve any selectable group. */}
+                {(() => {
+                  const hasGroups = !!(variablesManifest?.groups && variablesManifest.groups.length > 0)
+                  const noGroupsSelected = selectedGroupIds.length === 0
+                  const canAutoSelectGroup = !!defaultExecutionSelection
+                  const isDisabled = isExecutionStarting || (!isExecutionRunning && (!hasGroups || (noGroupsSelected && !canAutoSelectGroup)))
+
+                  return (
+                    <button
+                      onClick={isExecutionRunning ? onStop : handleExecute}
+                      disabled={isDisabled}
+                      className={`
+                        flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
+                        ${isExecutionRunning
+                          ? 'bg-destructive text-destructive-foreground shadow-md hover:bg-destructive/90 hover:shadow-lg'
+                          : isExecutionStarting
+                          ? 'bg-primary/70 text-primary-foreground shadow-md cursor-wait'
+                          : isDisabled
+                          ? 'bg-muted text-muted-foreground shadow-md cursor-not-allowed opacity-75'
+                          : 'bg-primary text-primary-foreground shadow-md hover:bg-primary/90 hover:shadow-lg'
+                        }
+                      `}
+                    >
+                      {isExecutionRunning ? (
+                        <>
+                          <Square className="w-3.5 h-3.5" />
+                          <span>Stop</span>
+                        </>
+                      ) : isExecutionStarting ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Starting...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Rocket className="w-3.5 h-3.5" />
+                          <span>Execute</span>
+                        </>
+                      )}
+                    </button>
+                  )
+                })()}
               </>
             )}
 

@@ -8,8 +8,8 @@ import { useGlobalPresetStore } from './useGlobalPresetStore'
 import { resolveGroupFolderPath } from '../utils/workflowUtils'
 import { normalizeStartPoint, normalizeRunFolder } from '../utils/workflowStateNormalization'
 
-// Execution mode options
-export type ExecutionModeType = 'human_approval' | 'fast_execution' | 'with_learning'
+// Execution mode - only 'with_learning' is supported (learning enabled, no human feedback)
+export type ExecutionModeType = 'with_learning'
 export type WorkflowWorkspaceView = 'builder' | 'execution' | null
 
 // Layout direction for workflow canvas
@@ -26,6 +26,7 @@ const TEMP_LEARNING_LLM_KEY = 'workflow_temp_learning_llm'
 const SELECTED_GROUP_IDS_KEY = 'workflow_selected_group_ids'
 const CURRENT_RUNNING_GROUP_ID_KEY = 'workflow_current_running_group_id'
 const SELECTED_RUN_FOLDER_KEY = 'workflow_selected_run_folder'
+const ALWAYS_USE_SAME_RUN_KEY = 'workflow_always_use_same_run'
 const LAYOUT_DIRECTION_KEY = 'workflow_layout_direction'
 const SKIP_EXECUTION_CLEANUP_KEY = 'workflow_skip_execution_cleanup'
 // NOTE: Running workflows logic has been moved to useRunningWorkflowsStore.ts
@@ -171,6 +172,7 @@ interface WorkflowStore {
       saveValidationResponses: boolean  // If true, save validation responses to workspace validation folder
       disableShellExecAccess: boolean  // If true, disable all execute_shell_command tool access globally
       disableReadImageAccess: boolean  // If true, disable all read_image tool access globally
+      alwaysUseSameRun: boolean  // If true, always reuse a single iteration instead of creating a new one
       skipExecutionCleanup: boolean  // If true, skip deleting execution folders before running steps
 
   // Variables manifest (for batch execution with multiple groups)
@@ -269,6 +271,7 @@ interface WorkflowStore {
   setSaveValidationResponses: () => void
   setDisableShellExecAccess: (enabled: boolean) => void
   setDisableReadImageAccess: (enabled: boolean) => void
+  setAlwaysUseSameRun: (enabled: boolean) => void
   setSkipExecutionCleanup: (enabled: boolean) => void
 
   // Variables manifest
@@ -495,6 +498,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
       disableShellExecAccess: false,
       // Disable read image access (defaults to false, not persisted)
       disableReadImageAccess: false,
+      // Run mode toggle (persists across page refreshes via localStorage)
+      // Default is false: create a new iteration each run unless user opts into reusing one
+      alwaysUseSameRun: (() => {
+        try {
+          const saved = localStorage.getItem(ALWAYS_USE_SAME_RUN_KEY)
+          if (saved !== null) {
+            return JSON.parse(saved) as boolean
+          }
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to load always-use-same-run from localStorage:', error)
+        }
+        return false
+      })(),
       // Skip execution cleanup (persists across page refreshes via localStorage)
       skipExecutionCleanup: (() => {
         try {
@@ -1100,22 +1116,11 @@ export const useWorkflowStore = create<WorkflowStore>()(
           isResumingBranch
         })
 
-        // Convert UI selections to backend ExecutionStrategy
-        let executionStrategy: string
-        if (state.selectedExecutionMode === 'fast_execution') {
-          executionStrategy = (isResuming || isResumingBranch)
-            ? ExecutionStrategy.FAST_RESUME_FROM_STEP
-            : ExecutionStrategy.FAST_EXECUTE_ALL
-        } else if (state.selectedExecutionMode === 'with_learning') {
-          executionStrategy = (isResuming || isResumingBranch)
-            ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
-            : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-        } else {
-          // Human approval (default)
-          executionStrategy = (isResuming || isResumingBranch)
-            ? ExecutionStrategy.RESUME_FROM_STEP
-            : ExecutionStrategy.START_FROM_BEGINNING
-        }
+        // All execution uses learning enabled, no human feedback
+        const executionStrategy: string = (isResuming || isResumingBranch)
+          ? ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN
+          : ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
+        const shouldUseSameRun = state.alwaysUseSameRun || isResuming || isResumingBranch
 
         console.log('[RESUME_DEBUG] Selected execution strategy:', executionStrategy)
 
@@ -1138,8 +1143,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
         console.log('[buildExecutionOptions] After resolveGroupFolderPath, resolvedRunFolder:', resolvedRunFolder)
         
         const options: ExecutionOptions = {
-          run_mode: state.selectedRunFolder ? 'use_same_run' : 'create_new_runs_always',
-          selected_run_folder: resolvedRunFolder,
+          run_mode: shouldUseSameRun ? 'use_same_run' : 'create_new_runs_always',
+          selected_run_folder: shouldUseSameRun ? resolvedRunFolder : undefined,
           execution_strategy: executionStrategy,
           workshop_mode: (() => {
             const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
@@ -1155,17 +1160,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
           isResumingBranch,
           selectedStartPoint: state.selectedStartPoint,
           executionStrategy,
-          isResumeStrategy: executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
-                           executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
-                           executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP ||
+          isResumeStrategy: executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
                            executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP
         })
-        
+
         if (isResuming && !isResumingBranch &&
             state.selectedStartPoint > 0 &&
-            (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
-             executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
-             executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP ||
+            (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
              executionStrategy === ExecutionStrategy.RUN_SINGLE_STEP)) {
           options.resume_from_step = state.selectedStartPoint
           console.log('[RESUME_DEBUG] ✅ Setting resume_from_step:', state.selectedStartPoint)
@@ -1174,21 +1175,13 @@ export const useWorkflowStore = create<WorkflowStore>()(
           console.warn('[RESUME_DEBUG] ⚠️ selectedStartPoint is', state.selectedStartPoint, 
             'but strategy is', executionStrategy, '- not including resume_from_step')
           console.warn('[RESUME_DEBUG] ⚠️ This means resume_from_step will NOT be set in options!')
-        } else if ((executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
-                    executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
-                    executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP) &&
+        } else if (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN &&
                    !isResumingBranch && state.selectedStartPoint === 0) {
           // CRITICAL: If resume strategy is selected but no valid step, log error and fallback to start from beginning
           console.error('[RESUME_DEBUG] 🚨 CRITICAL: Resume strategy selected but selectedStartPoint is 0! Falling back to start from beginning.')
           console.error('[RESUME_DEBUG] 🚨 This would cause backend to delete all completed steps. Strategy:', executionStrategy)
           // Override strategy to start from beginning to prevent data loss
-          if (state.selectedExecutionMode === 'fast_execution') {
-            options.execution_strategy = ExecutionStrategy.FAST_EXECUTE_ALL
-          } else if (state.selectedExecutionMode === 'with_learning') {
-            options.execution_strategy = ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
-          } else {
-            options.execution_strategy = ExecutionStrategy.START_FROM_BEGINNING
-          }
+          options.execution_strategy = ExecutionStrategy.START_FROM_BEGINNING_NO_HUMAN
           console.log('[RESUME_DEBUG] ✅ Overridden strategy to:', options.execution_strategy)
         } else {
           console.log('[RESUME_DEBUG] ℹ️ Not setting resume_from_step:', {
@@ -1205,9 +1198,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         // Include resume_from_branch_step for branch step resuming
         if (isResumingBranch && state.selectedBranchStep &&
-            (executionStrategy === ExecutionStrategy.RESUME_FROM_STEP ||
-             executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN ||
-             executionStrategy === ExecutionStrategy.FAST_RESUME_FROM_STEP)) {
+            executionStrategy === ExecutionStrategy.RESUME_FROM_STEP_NO_HUMAN) {
           options.resume_from_branch_step = {
             parent_step_index: state.selectedBranchStep.parentStepIndex,
             branch_type: state.selectedBranchStep.branchType,
@@ -1444,6 +1435,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
       setDisableReadImageAccess: (enabled: boolean) => {
         set({ disableReadImageAccess: enabled })
         // No longer persisted to localStorage
+      },
+
+      setAlwaysUseSameRun: (enabled: boolean) => {
+        set({ alwaysUseSameRun: enabled })
+        try {
+          localStorage.setItem(ALWAYS_USE_SAME_RUN_KEY, JSON.stringify(enabled))
+          console.log(`[WorkflowStore] Always use same run set: ${enabled}`)
+        } catch (error) {
+          console.error('[WorkflowStore] Failed to save always-use-same-run to localStorage:', error)
+        }
       },
 
       setSkipExecutionCleanup: (enabled: boolean) => {
@@ -2245,7 +2246,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           runFolders: [],
           selectedRunFolder: 'new',
           stepProgress: null,
-          selectedExecutionMode: 'human_approval',
+          selectedExecutionMode: 'with_learning',
           selectedStartPoint: 0,
           selectedBranchStep: null,
           variablesManifest: null,

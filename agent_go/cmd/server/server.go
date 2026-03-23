@@ -196,6 +196,11 @@ type StreamingAPI struct {
 	sessionAgents    map[string]*agent.LLMAgentWrapper
 	sessionAgentsMux sync.RWMutex
 
+	// Running agent references for steer message injection (chat mode)
+	// Written when agent starts, deleted when streaming completes
+	runningAgents    map[string]*mcpagent.Agent
+	runningAgentsMux sync.RWMutex
+
 	// Claude Code CLI session IDs for --resume (our sessionID -> CLI session_id)
 	claudeCodeSessionIDs map[string]string
 
@@ -422,6 +427,11 @@ type LLMGuidanceResponse struct {
 	Status    string `json:"status"`
 	Message   string `json:"message,omitempty"`
 	Guidance  string `json:"guidance,omitempty"`
+}
+
+// SteerMessageRequest represents a request to inject a user message mid-execution
+type SteerMessageRequest struct {
+	Message string `json:"message"`
 }
 
 // HumanFeedbackRequest represents a request to submit human feedback
@@ -692,6 +702,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		pendingCompletions:    make(map[string][]string),
 		lastQueryRequests:     make(map[string]QueryRequest),
 		sessionAgents:         make(map[string]*agent.LLMAgentWrapper),
+		runningAgents:         make(map[string]*mcpagent.Agent),
 		completionLoopStarted: make(map[string]bool),
 		claudeCodeSessionIDs:  make(map[string]string),
 		geminiSessionIDs:      make(map[string]string),
@@ -911,6 +922,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// LLM Guidance API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
+
+	// Steer message API route - inject user message mid-execution
+	apiRouter.HandleFunc("/sessions/{session_id}/steer", api.handleSteerMessage).Methods("POST", "OPTIONS")
 
 	// Context Summarization API routes
 	apiRouter.HandleFunc("/sessions/{session_id}/summarize", api.handleSummarizeConversation).Methods("POST", "OPTIONS")
@@ -4515,9 +4529,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseRunFolder = req.ExecutionOptions.SelectedRunFolder
 					phaseEnabledGroupIDs = req.ExecutionOptions.EnabledGroupIDs
 				}
-				// If no run folder selected by the user, auto-detect the latest iteration.
+				// Builder chat uses iteration-0 as its scratch run by default.
+				// Other phases keep the existing "latest iteration" fallback.
 				if phaseRunFolder == "" && phaseWorkspacePath != "" {
-					phaseRunFolder = resolveLatestRunFolder(context.WithoutCancel(r.Context()), phaseWorkspacePath, phaseWSClient)
+					if workflowPhaseID == "workflow-builder" {
+						phaseRunFolder = "iteration-0"
+					} else {
+						phaseRunFolder = resolveLatestRunFolder(context.WithoutCancel(r.Context()), phaseWorkspacePath, phaseWSClient)
+					}
 				}
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
@@ -5035,6 +5054,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			underlyingAgent.AddEventListener(dbEventObserver)
 			log.Printf("[DATABASE DEBUG] Added database event observer for session %s", sessionID)
 
+			// Store running agent reference for steer message injection
+			api.runningAgentsMux.Lock()
+			api.runningAgents[sessionID] = underlyingAgent
+			api.runningAgentsMux.Unlock()
 		} else {
 			log.Printf("[DATABASE DEBUG] ERROR: Underlying MCP agent is nil for session %s", sessionID)
 		}
@@ -5145,6 +5168,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Merge global secrets with user-supplied secrets, then inject into system prompt (not user message)
 		chatQuery := req.Query
+
+
 		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 		if len(allChatSecrets) > 0 {
 			var secretParts []string
@@ -5270,6 +5295,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		log.Printf("[STREAMING_LIFECYCLE] StreamWithEvents completed | session=%s chunks=%d duration=%dms", sessionID, chunkCount, time.Since(startTime).Milliseconds())
 		log.Printf("[AGENT DEBUG] After streaming loop, streamCtx.Err(): %v", streamCtx.Err())
+
+		// Clean up running agent reference (steer injection no longer possible)
+		api.runningAgentsMux.Lock()
+		delete(api.runningAgents, sessionID)
+		api.runningAgentsMux.Unlock()
 
 		// Final save of conversation history (in case streaming was stopped mid-way)
 		// This ensures we capture the final state even if streaming was interrupted
@@ -9123,6 +9153,53 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// handleSteerMessage injects a user message into a running agent's conversation loop.
+// The message is picked up after the current tool call completes, before the next LLM call.
+func (api *StreamingAPI) handleSteerMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	vars := mux.Vars(r)
+	sessionID := vars["session_id"]
+	if sessionID == "" {
+		http.Error(w, "Session ID is required", http.StatusBadRequest)
+		return
+	}
+
+	var req SteerMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Message == "" {
+		http.Error(w, "Message is required", http.StatusBadRequest)
+		return
+	}
+
+	// Look up the running agent for this session
+	api.runningAgentsMux.RLock()
+	runningAgent, exists := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+
+	if !exists || runningAgent == nil {
+		http.Error(w, "No running agent for this session", http.StatusNotFound)
+		return
+	}
+
+	// Inject the steer message into the agent's pending queue
+	runningAgent.AddSteerMessage(req.Message)
+	log.Printf("[STEER] Queued steer message for session %s: %.80s", sessionID, req.Message)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Steer message queued for injection",
+	})
 }
 
 // handleSubmitHumanFeedback handles human feedback submission

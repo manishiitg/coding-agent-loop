@@ -90,7 +90,7 @@ export const BlockingHumanQuestionsDisplay: React.FC<BlockingHumanQuestionsDispl
         const questionCount = questions.length
         notificationRef = new Notification('Questions Awaiting Your Response', {
           body: `${questionCount} question${questionCount !== 1 ? 's' : ''} need your input`,
-          icon: '/favicon.ico',
+          icon: '/logo.svg',
           tag: `blocking-questions-${requestId || Date.now()}`,
           requireInteraction: true,
           silent: false,

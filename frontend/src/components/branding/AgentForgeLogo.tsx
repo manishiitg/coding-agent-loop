@@ -1,0 +1,109 @@
+import { useId, type ComponentPropsWithoutRef } from 'react'
+import { cn } from '../../lib/utils'
+
+type AgentForgeMarkProps = ComponentPropsWithoutRef<'svg'> & {
+  title?: string
+}
+
+export function AgentForgeMark({
+  className,
+  title = 'AgentForge',
+  ...props
+}: AgentForgeMarkProps) {
+  const id = useId().replace(/:/g, '')
+  const shellGradientId = `${id}-shell`
+  const rimGradientId = `${id}-rim`
+  const forgeGradientId = `${id}-forge`
+  const signalGradientId = `${id}-signal`
+  const glowGradientId = `${id}-glow`
+
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      fill="none"
+      aria-hidden={title ? undefined : true}
+      role={title ? 'img' : 'presentation'}
+      className={cn('h-8 w-8', className)}
+      {...props}
+    >
+      {title ? <title>{title}</title> : null}
+      <defs>
+        <linearGradient id={shellGradientId} x1="10" y1="8" x2="54" y2="58" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#142235" />
+          <stop offset="0.55" stopColor="#0F172A" />
+          <stop offset="1" stopColor="#050B16" />
+        </linearGradient>
+        <linearGradient id={rimGradientId} x1="12" y1="10" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#38BDF8" stopOpacity="0.75" />
+          <stop offset="0.55" stopColor="#F59E0B" stopOpacity="0.5" />
+          <stop offset="1" stopColor="#F97316" stopOpacity="0.75" />
+        </linearGradient>
+        <linearGradient id={forgeGradientId} x1="21" y1="18" x2="43" y2="49" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FBBF24" />
+          <stop offset="0.5" stopColor="#F97316" />
+          <stop offset="1" stopColor="#EA580C" />
+        </linearGradient>
+        <linearGradient id={signalGradientId} x1="17" y1="18" x2="46" y2="34" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#67E8F9" />
+          <stop offset="1" stopColor="#60A5FA" />
+        </linearGradient>
+        <radialGradient id={glowGradientId} cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(32 31) rotate(90) scale(26)">
+          <stop offset="0" stopColor="#F97316" stopOpacity="0.28" />
+          <stop offset="0.65" stopColor="#0EA5E9" stopOpacity="0.12" />
+          <stop offset="1" stopColor="#0F172A" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+
+      <rect x="4" y="4" width="56" height="56" rx="18" fill={`url(#${shellGradientId})`} />
+      <rect x="4.75" y="4.75" width="54.5" height="54.5" rx="17.25" stroke={`url(#${rimGradientId})`} strokeOpacity="0.9" strokeWidth="1.5" />
+      <path
+        d="M32 11L47.5 19.5V44.5L32 53L16.5 44.5V19.5L32 11Z"
+        fill={`url(#${glowGradientId})`}
+        stroke="#94A3B8"
+        strokeOpacity="0.18"
+      />
+
+      <path d="M20.5 20.5L27.5 25" stroke={`url(#${signalGradientId})`} strokeWidth="2.2" strokeLinecap="round" />
+      <path d="M43.5 20.5L36.5 25" stroke={`url(#${signalGradientId})`} strokeWidth="2.2" strokeLinecap="round" />
+      <circle cx="19.5" cy="19.5" r="3.5" fill="#2DD4BF" />
+      <circle cx="44.5" cy="19.5" r="3.5" fill="#60A5FA" />
+      <circle cx="19.5" cy="19.5" r="1.3" fill="#ECFEFF" />
+      <circle cx="44.5" cy="19.5" r="1.3" fill="#EFF6FF" />
+
+      <path
+        d="M32 16L19 45H26.2L28.9 38.2H35.1L37.8 45H45L32 16ZM32 25.3L34.9 32.4H29.1L32 25.3Z"
+        fill={`url(#${forgeGradientId})`}
+        fillRule="evenodd"
+        clipRule="evenodd"
+      />
+      <path d="M24 48H40C39.1 51.2 36.2 53.5 32.8 53.5H31.2C27.8 53.5 24.9 51.2 24 48Z" fill={`url(#${forgeGradientId})`} opacity="0.85" />
+      <path d="M32 21.2L33.2 24.1L36.1 25.3L33.2 26.5L32 29.4L30.8 26.5L27.9 25.3L30.8 24.1L32 21.2Z" fill="#FFF7ED" />
+    </svg>
+  )
+}
+
+type AgentForgeLockupProps = {
+  className?: string
+  subtitle?: string
+}
+
+export function AgentForgeLockup({
+  className,
+  subtitle = 'Desktop workspace',
+}: AgentForgeLockupProps) {
+  return (
+    <div className={cn('flex items-center gap-3 min-w-0', className)}>
+      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950/90 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.95)] ring-1 ring-slate-700/40">
+        <AgentForgeMark className="h-7 w-7" />
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          AgentForge
+        </div>
+        <div className="truncate text-[11px] uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+          {subtitle}
+        </div>
+      </div>
+    </div>
+  )
+}

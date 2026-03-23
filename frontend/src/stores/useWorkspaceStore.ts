@@ -756,11 +756,39 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               // which has the necessary context about workflow mode and filtered files
               // The store just fetches and stores raw data
             } else {
-              set({ error: response.message || 'Failed to load files' })
+              const currentActiveFolder = get().activeFolder
+              const isScopedSubfolderFetch = !!(
+                effectiveFolder &&
+                currentActiveFolder &&
+                effectiveFolder !== currentActiveFolder &&
+                effectiveFolder.startsWith(currentActiveFolder + '/')
+              )
+              const message = response.message || 'Failed to load files'
+
+              if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
+                console.warn('[WorkspaceStore] Ignoring missing scoped subfolder during lazy-load:', effectiveFolder)
+                return
+              }
+
+              set({ error: message })
             }
           } catch (err) {
             console.error('Failed to fetch Planner files:', err)
-            set({ error: err instanceof Error ? err.message : 'Failed to fetch files' })
+            const currentActiveFolder = get().activeFolder
+            const isScopedSubfolderFetch = !!(
+              effectiveFolder &&
+              currentActiveFolder &&
+              effectiveFolder !== currentActiveFolder &&
+              effectiveFolder.startsWith(currentActiveFolder + '/')
+            )
+            const message = err instanceof Error ? err.message : 'Failed to fetch files'
+
+            if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
+              console.warn('[WorkspaceStore] Ignoring missing scoped subfolder error during lazy-load:', effectiveFolder)
+              return
+            }
+
+            set({ error: message })
           } finally {
             console.timeEnd(`[PERF] fetchFiles (folder=${effectiveFolder || 'root'})`)
             set({ loading: false })

@@ -1548,6 +1548,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
         try {
           let hasChanges = false
           const updates: Partial<WorkflowStore> = {}
+          const currentPresetId = get()._currentPresetId
+          let canRestoreLegacyKeys = true
 
           // Restore selectedGroupIds and selectedRunFolder from combined storage
           const savedGroupData = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
@@ -1555,25 +1557,31 @@ export const useWorkflowStore = create<WorkflowStore>()(
             const parsed = JSON.parse(savedGroupData)
             // Handle new format: { groupIds: [...], runFolder: "..." }
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              if (Array.isArray(parsed.groupIds) && parsed.groupIds.length > 0) {
-                updates.selectedGroupIds = parsed.groupIds
-                hasChanges = true
-              }
-              if (parsed.runFolder) {
-                updates.selectedRunFolder = parsed.runFolder
-                hasChanges = true
+              const storedPresetId = typeof parsed.presetId === 'string' ? parsed.presetId : null
+              const presetMatches = !currentPresetId || !storedPresetId || storedPresetId === currentPresetId
+              canRestoreLegacyKeys = !storedPresetId
+
+              if (presetMatches) {
+                if (Array.isArray(parsed.groupIds) && parsed.groupIds.length > 0) {
+                  updates.selectedGroupIds = parsed.groupIds
+                  hasChanges = true
+                }
+                if (parsed.runFolder) {
+                  updates.selectedRunFolder = parsed.runFolder
+                  hasChanges = true
+                }
               }
               // Note: startPoint is intentionally NOT restored - calculated from progress
             }
             // Handle old format: just array of groupIds (backward compatibility)
-            else if (Array.isArray(parsed) && parsed.length > 0) {
+            else if (Array.isArray(parsed) && parsed.length > 0 && !currentPresetId) {
               updates.selectedGroupIds = parsed
               hasChanges = true
             }
           }
 
           // Also check separate runFolder key (backward compatibility)
-          if (!updates.selectedRunFolder) {
+          if (!updates.selectedRunFolder && canRestoreLegacyKeys && !currentPresetId) {
             const savedRunFolder = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
             if (savedRunFolder) {
               updates.selectedRunFolder = savedRunFolder
@@ -1582,7 +1590,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
           }
 
           // Restore currentRunningGroupId
-          const savedCurrentGroup = localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+          const savedCurrentGroup = canRestoreLegacyKeys && !currentPresetId
+            ? localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            : null
           if (savedCurrentGroup) {
             updates.currentRunningGroupId = savedCurrentGroup
             hasChanges = true
@@ -2097,6 +2107,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           let savedRunFolder: string | null = null
           let savedGroupIds: string[] = []
           let savedCurrentRunningGroupId: string | null = null
+          let canRestoreLegacyKeys = false
 
           try {
             // Load from combined format first
@@ -2105,29 +2116,38 @@ export const useWorkflowStore = create<WorkflowStore>()(
               const parsed = JSON.parse(groupDataStr)
               // Handle new format: { groupIds: [...], runFolder: "..." }
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                if (Array.isArray(parsed.groupIds)) {
-                  savedGroupIds = parsed.groupIds
-                }
-                if (parsed.runFolder) {
-                  savedRunFolder = parsed.runFolder
+                const storedPresetId = typeof parsed.presetId === 'string' ? parsed.presetId : null
+                const presetMatches = !storedPresetId || storedPresetId === presetId
+                canRestoreLegacyKeys = !storedPresetId
+
+                if (presetMatches) {
+                  if (Array.isArray(parsed.groupIds)) {
+                    savedGroupIds = parsed.groupIds
+                  }
+                  if (parsed.runFolder) {
+                    savedRunFolder = parsed.runFolder
+                  }
                 }
                 // Note: startPoint is intentionally NOT restored - calculated from progress
               }
               // Handle old format: just array of groupIds
               else if (Array.isArray(parsed)) {
+                canRestoreLegacyKeys = true
                 savedGroupIds = parsed
               }
             }
 
             // Fallback to separate runFolder key if not in combined format
-            if (!savedRunFolder) {
+            if (!savedRunFolder && canRestoreLegacyKeys) {
               const runFolderStr = localStorage.getItem(SELECTED_RUN_FOLDER_KEY)
               if (runFolderStr) {
                 savedRunFolder = runFolderStr
               }
             }
 
-            const currentGroupStr = localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+            const currentGroupStr = canRestoreLegacyKeys
+              ? localStorage.getItem(CURRENT_RUNNING_GROUP_ID_KEY)
+              : null
             if (currentGroupStr) {
               savedCurrentRunningGroupId = currentGroupStr
             }

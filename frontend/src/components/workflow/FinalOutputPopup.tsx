@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { X, FileText, RefreshCw, Copy, Check, Wand2, AlertCircle, Loader2 } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import type { WorkflowFinalOutputConfig, WorkflowFinalOutputResponse } from '../../services/api-types'
+import type { VariablesManifest, WorkflowFinalOutputConfig, WorkflowFinalOutputResponse } from '../../services/api-types'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import { extractGroupIdFromFolder, extractIterationFolder } from '../../utils/workflowUtils'
 
 interface FinalOutputPopupProps {
   isOpen: boolean
@@ -10,6 +11,7 @@ interface FinalOutputPopupProps {
   workspacePath: string | null
   selectedRunFolder: string | null
   runFolders: string[]
+  variablesManifest?: VariablesManifest | null
   workflowTitle?: string
   onRunReport?: (runFolder: string) => Promise<void>
 }
@@ -20,6 +22,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
   workspacePath,
   selectedRunFolder,
   runFolders,
+  variablesManifest,
   workflowTitle,
   onRunReport,
 }) => {
@@ -42,28 +45,106 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
     return fallback
   }
 
-  const [activeRunFolder, setActiveRunFolder] = useState('')
+  const [selectedGroupKey, setSelectedGroupKey] = useState('')
+  const [selectedIteration, setSelectedIteration] = useState('')
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<WorkflowFinalOutputResponse | null>(null)
   const [copied, setCopied] = useState(false)
 
-  const availableRunFolders = useMemo(() => {
-    return runFolders.filter(folder => folder.includes('/')).sort()
-  }, [runFolders])
+  const runEntries = useMemo(() => {
+    const uniqueFolders = Array.from(new Set(runFolders.filter(folder => {
+      if (!folder.includes('/')) return false
+      return folder.split('/').length === 2
+    })))
+
+    const entries = uniqueFolders.map(runFolder => {
+      const iteration = extractIterationFolder(runFolder) || ''
+      const groupFolderName = runFolder.split('/')[1] || ''
+      const groupId = extractGroupIdFromFolder(runFolder, variablesManifest)
+      const manifestGroup = groupId
+        ? variablesManifest?.groups?.find(group => group.group_id === groupId)
+        : undefined
+
+      return {
+        runFolder,
+        iteration,
+        groupKey: groupId || groupFolderName,
+        groupLabel: manifestGroup?.display_name || groupFolderName || groupId || 'Unknown group',
+      }
+    })
+
+    return entries.sort((a, b) => {
+      const iterA = parseInt(a.iteration.replace('iteration-', ''), 10) || 0
+      const iterB = parseInt(b.iteration.replace('iteration-', ''), 10) || 0
+      if (a.groupLabel !== b.groupLabel) {
+        return a.groupLabel.localeCompare(b.groupLabel)
+      }
+      return iterB - iterA
+    })
+  }, [runFolders, variablesManifest])
+
+  const groupOptions = useMemo(() => {
+    const seen = new Set<string>()
+    return runEntries.filter(entry => {
+      if (seen.has(entry.groupKey)) return false
+      seen.add(entry.groupKey)
+      return true
+    }).map(entry => ({
+      value: entry.groupKey,
+      label: entry.groupLabel,
+    }))
+  }, [runEntries])
+
+  const iterationOptions = useMemo(() => {
+    const seen = new Set<string>()
+    return runEntries
+      .filter(entry => entry.groupKey === selectedGroupKey)
+      .filter(entry => {
+        if (seen.has(entry.iteration)) return false
+        seen.add(entry.iteration)
+        return true
+      })
+      .map(entry => entry.iteration)
+  }, [runEntries, selectedGroupKey])
+
+  const activeRunFolder = useMemo(() => {
+    if (!selectedGroupKey || !selectedIteration) return ''
+    return runEntries.find(entry =>
+      entry.groupKey === selectedGroupKey && entry.iteration === selectedIteration
+    )?.runFolder || ''
+  }, [runEntries, selectedGroupKey, selectedIteration])
 
   useEffect(() => {
     if (!isOpen) return
 
-    const preferredRunFolder = selectedRunFolder && selectedRunFolder.includes('/')
-      ? selectedRunFolder
-      : availableRunFolders[0] || ''
-    setActiveRunFolder(preferredRunFolder)
+    const preferredEntry = runEntries.find(entry => entry.runFolder === selectedRunFolder)
+      || runEntries[0]
+      || null
+
+    setSelectedGroupKey(preferredEntry?.groupKey || '')
+    setSelectedIteration(preferredEntry?.iteration || '')
     setError(null)
     setData(null)
     setCopied(false)
-  }, [isOpen, selectedRunFolder, availableRunFolders])
+  }, [isOpen, selectedRunFolder, runEntries])
+
+  useEffect(() => {
+    if (!isOpen) return
+
+    const selectionStillExists = runEntries.some(entry =>
+      entry.groupKey === selectedGroupKey && entry.iteration === selectedIteration
+    )
+    if (selectionStillExists) return
+
+    const preferredEntry = runEntries.find(entry => entry.groupKey === selectedGroupKey)
+      || runEntries[0]
+      || null
+
+    setSelectedGroupKey(preferredEntry?.groupKey || '')
+    setSelectedIteration(preferredEntry?.iteration || '')
+  }, [isOpen, runEntries, selectedGroupKey, selectedIteration])
 
   const loadOutput = useCallback(async (runFolder: string) => {
     if (!workspacePath || !runFolder) return
@@ -131,7 +212,7 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col border border-border relative">
+      <div className="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col border border-border relative overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
@@ -152,15 +233,35 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
 
         <div className="px-6 py-3 border-b border-border bg-muted/30 flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Run</span>
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Group</span>
             <select
-              value={activeRunFolder}
-              onChange={(e) => setActiveRunFolder(e.target.value)}
+              value={selectedGroupKey}
+              onChange={(e) => {
+                const nextGroupKey = e.target.value
+                const nextIteration = runEntries.find(entry => entry.groupKey === nextGroupKey)?.iteration || ''
+                setSelectedGroupKey(nextGroupKey)
+                setSelectedIteration(nextIteration)
+              }}
               className="min-w-[280px] rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             >
-              {!activeRunFolder && <option value="">Select iteration/group</option>}
-              {availableRunFolders.map(folder => (
-                <option key={folder} value={folder}>{folder}</option>
+              {!selectedGroupKey && <option value="">Select group</option>}
+              {groupOptions.map(group => (
+                <option key={group.value} value={group.value}>{group.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Iteration</span>
+            <select
+              value={selectedIteration}
+              onChange={(e) => setSelectedIteration(e.target.value)}
+              disabled={!selectedGroupKey || iterationOptions.length === 0}
+              className="min-w-[220px] rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground disabled:opacity-50"
+            >
+              {!selectedIteration && <option value="">Select iteration</option>}
+              {iterationOptions.map(iteration => (
+                <option key={iteration} value={iteration}>{iteration}</option>
               ))}
             </select>
           </div>
@@ -208,20 +309,25 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
             </div>
           </div>
           {config?.instructions?.trim() && (
-            <p className="text-xs text-muted-foreground mt-3 whitespace-pre-wrap">
-              {config.instructions.trim()}
-            </p>
+            <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
+              <MarkdownRenderer
+                content={config.instructions.trim()}
+                className="max-w-none !text-xs [&_p]:!text-xs [&_li]:!text-xs [&_h1]:!text-sm [&_h2]:!text-xs [&_h3]:!text-xs [&_code]:!text-[11px]"
+                maxHeight="160px"
+                showScrollbar={true}
+              />
+            </div>
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 min-h-0 overflow-y-auto p-6">
           {!workspacePath && (
             <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
               Select a workflow workspace to view final outputs.
             </div>
           )}
 
-          {workspacePath && !availableRunFolders.length && (
+          {workspacePath && !runEntries.length && (
             <div className="h-full flex items-center justify-center">
               <div className="max-w-md text-center space-y-3">
                 <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
@@ -233,9 +339,9 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
             </div>
           )}
 
-          {workspacePath && availableRunFolders.length > 0 && !hasGroupScopedSelection && (
+          {workspacePath && runEntries.length > 0 && !hasGroupScopedSelection && (
             <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-              Select an iteration/group run to view its final output.
+              Select a group and iteration to view its final output.
             </div>
           )}
 
@@ -276,8 +382,13 @@ const FinalOutputPopup: React.FC<FinalOutputPopupProps> = ({
           )}
 
           {workspacePath && hasGroupScopedSelection && isConfigEnabled && !loading && !error && hasContent && (
-            <div className="rounded-lg border border-border bg-card p-4">
-              <MarkdownRenderer content={data?.content || ''} className="max-w-none" showScrollbar={true} />
+            <div className="rounded-lg border border-border bg-card p-4 overflow-hidden">
+              <MarkdownRenderer
+                content={data?.content || ''}
+                className="max-w-none"
+                maxHeight="calc(90vh - 320px)"
+                showScrollbar={true}
+              />
             </div>
           )}
         </div>

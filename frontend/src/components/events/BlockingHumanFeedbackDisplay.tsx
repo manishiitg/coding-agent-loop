@@ -109,7 +109,7 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
 
         notificationRef = new Notification('Action Required', {
           body: question,
-          icon: '/favicon.ico',
+          icon: '/logo.svg',
           tag: `blocking-feedback-${requestId || Date.now()}`,
           requireInteraction: true,
           silent: false

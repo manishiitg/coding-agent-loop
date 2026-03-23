@@ -78,7 +78,7 @@ export const HumanFeedbackToolCallDisplay: React.FC<HumanFeedbackToolCallDisplay
 
       const notification = new Notification('Human Feedback Required', {
         body: toolParams.message_for_user,
-        icon: '/favicon.ico',
+        icon: '/logo.svg',
         tag: `human-feedback-${uniqueId}`,
         requireInteraction: true,
         silent: false

@@ -36,6 +36,7 @@ import { agentApi } from '../../../services/api'
 import type { PlanStep } from '../../../utils/stepConfigMatching'
 import { isConditionalStep } from '../../../utils/stepConfigMatching'
 import type { VariablesManifest, EvaluationStep } from '../../../services/api-types'
+import { buildGroupFolderPath } from '../../../utils/workflowUtils'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
@@ -90,6 +91,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const workflowWorkspaceSelectionTouched = useWorkflowStore(state => state.workflowWorkspaceSelectionTouched)
+  const selectedGroupIds = useWorkflowStore(state => state.selectedGroupIds)
+  const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
   const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
   const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
   const tempLearningLLM = useWorkflowStore(state => state.tempLearningLLM)
@@ -104,6 +107,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     (workflowWorkspaceSelectionTouched &&
       workflowWorkspaceView === null &&
       (currentPhase === 'execution' || currentPhase === 'evaluation-execution'))
+  const isBuilderWorkspace =
+    workflowWorkspaceView === 'builder' ||
+    (workflowWorkspaceSelectionTouched &&
+      workflowWorkspaceView === null &&
+      currentPhase === 'workflow-builder')
   const hasTempLLMOverrides = !!(tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM)
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
 
@@ -472,6 +480,42 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (!workspaceState?.run_folders) return []
     return workspaceState.run_folders.map(f => ({ name: f.name, progress: f.progress || undefined }))
   }, [workspaceState?.run_folders])
+
+  useEffect(() => {
+    if (!isBuilderWorkspace || !workspaceState?.run_folders?.length) {
+      return
+    }
+
+    const availableRunFolders = new Set(workspaceState.run_folders.map(folder => folder.name))
+    if (selectedRunFolder && selectedRunFolder !== 'new' && availableRunFolders.has(selectedRunFolder)) {
+      return
+    }
+
+    const preferredGroupId = selectedGroupIds[0]
+      || variablesManifest?.groups?.find(group => group.enabled !== false)?.group_id
+      || null
+
+    const builderGroupRunFolder = preferredGroupId
+      ? buildGroupFolderPath(preferredGroupId, 'iteration-0', variablesManifest)
+      : null
+
+    const fallbackBuilderRunFolder =
+      (builderGroupRunFolder && availableRunFolders.has(builderGroupRunFolder) && builderGroupRunFolder)
+      || (availableRunFolders.has('iteration-0') ? 'iteration-0' : null)
+      || workspaceState.run_folders.find(folder => folder.name.startsWith('iteration-0/'))?.name
+      || null
+
+    if (fallbackBuilderRunFolder) {
+      setSelectedRunFolder(fallbackBuilderRunFolder)
+    }
+  }, [
+    isBuilderWorkspace,
+    workspaceState?.run_folders,
+    selectedRunFolder,
+    selectedGroupIds,
+    variablesManifest,
+    setSelectedRunFolder
+  ])
 
   // Log workspace state errors
   React.useEffect(() => {

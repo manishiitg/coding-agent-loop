@@ -14,7 +14,6 @@ import {
   RefreshCw,
   BookOpen,
   Trash2,
-  Eraser,
   Settings,
   SlidersHorizontal,
   MessageSquare,
@@ -108,6 +107,63 @@ interface WorkflowToolbarProps {
   selectedStepIds?: string[]  // IDs of currently selected steps (shows indicator when 2+ selected)
   className?: string
 }
+
+interface ToolbarToggleProps {
+  label: string
+  checked: boolean
+  onClick: () => void
+  disabled?: boolean
+  tooltip: React.ReactNode
+}
+
+const ToolbarToggle: React.FC<ToolbarToggleProps> = ({
+  label,
+  checked,
+  onClick,
+  disabled = false,
+  tooltip
+}) => (
+  <TooltipProvider delayDuration={150}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          role="switch"
+          aria-checked={checked}
+          className={`
+            inline-flex h-8 items-center gap-2 rounded-md border px-2.5 text-xs transition-colors
+            ${checked
+              ? 'border-primary/30 bg-primary/10 text-primary'
+              : 'border-border bg-muted/40 text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+            }
+            ${disabled ? 'cursor-not-allowed opacity-70 hover:bg-primary/10 hover:text-primary' : ''}
+          `}
+        >
+          <span className="font-medium whitespace-nowrap">{label}</span>
+          <span
+            aria-hidden="true"
+            className={`
+              relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors
+              ${checked ? 'bg-primary/80' : 'bg-muted-foreground/30'}
+            `}
+          >
+            <span
+              className={`
+                inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform
+                ${checked ? 'translate-x-3.5' : 'translate-x-0.5'}
+              `}
+            />
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+)
 
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
@@ -1521,83 +1577,54 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </TooltipProvider>
             )}
 
-            <TooltipProvider delayDuration={150}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => {
-                      if (!isResumingExecution) {
-                        setAlwaysUseSameRun(!alwaysUseSameRun)
-                      }
-                    }}
-                    disabled={isResumingExecution}
-                    aria-pressed={effectiveAlwaysUseSameRun}
-                    className={`
-                      flex items-center justify-center w-8 h-8 rounded-md transition-colors border
-                      ${effectiveAlwaysUseSameRun
-                        ? 'bg-primary/10 text-primary border-primary/30'
-                        : 'bg-muted text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'
-                      }
-                      ${isResumingExecution ? 'cursor-not-allowed opacity-70' : ''}
-                    `}
-                  >
-                    <Package className="w-3.5 h-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <div className="space-y-1">
-                    <p>
-                      {isResumingExecution
-                        ? 'Iteration mode is locked while resuming.'
-                        : effectiveAlwaysUseSameRun
-                        ? 'Reuse the same iteration for every run.'
-                        : 'Create a new iteration every time you run.'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {isResumingExecution
-                        ? 'Resume runs continue inside the existing iteration.'
-                        : effectiveAlwaysUseSameRun
-                        ? 'Previous iteration data stays available unless cleanup is enabled.'
-                        : 'Useful when you want each run to start in a fresh iteration.'}
-                    </p>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <ToolbarToggle
+              label="Reuse Iteration"
+              checked={effectiveAlwaysUseSameRun}
+              disabled={isResumingExecution}
+              onClick={() => {
+                if (!isResumingExecution) {
+                  setAlwaysUseSameRun(!alwaysUseSameRun)
+                }
+              }}
+              tooltip={
+                <div className="space-y-1">
+                  <p>
+                    {isResumingExecution
+                      ? 'Iteration mode is locked while resuming.'
+                      : effectiveAlwaysUseSameRun
+                      ? 'Reuse the same iteration for every run.'
+                      : 'Create a new iteration every time you run.'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {isResumingExecution
+                      ? 'Resume runs continue inside the existing iteration.'
+                      : effectiveAlwaysUseSameRun
+                      ? 'Turn this on when you want to keep working in one iteration.'
+                      : 'Turn this off when each run should start in a fresh iteration.'}
+                  </p>
+                </div>
+              }
+            />
 
-            <TooltipProvider delayDuration={150}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
-                    aria-pressed={clearOutputsBeforeRun}
-                    className={`
-                      flex items-center justify-center w-8 h-8 rounded-md transition-colors border
-                      ${clearOutputsBeforeRun
-                        ? 'bg-primary/10 text-primary border-primary/30'
-                        : 'bg-muted text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'
-                      }
-                    `}
-                  >
-                    <Eraser className="w-3.5 h-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <div className="space-y-1">
-                    <p>
-                      {clearOutputsBeforeRun
-                        ? 'Clear previous step outputs before running.'
-                        : 'Keep previous step outputs when running again.'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {clearOutputsBeforeRun
-                        ? 'Each execution starts with cleaned output folders for the selected group.'
-                        : 'Useful when you want to reuse existing outputs inside the same group.'}
-                    </p>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <ToolbarToggle
+              label="Clear Outputs"
+              checked={clearOutputsBeforeRun}
+              onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
+              tooltip={
+                <div className="space-y-1">
+                  <p>
+                    {clearOutputsBeforeRun
+                      ? 'Clear previous step outputs before running.'
+                      : 'Keep previous step outputs when running again.'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {clearOutputsBeforeRun
+                      ? 'Turn this on when each run should start with cleaned output folders.'
+                      : 'Turn this off when you want to reuse existing outputs in the selected group.'}
+                  </p>
+                </div>
+              }
+            />
 
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (
@@ -2541,6 +2568,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       workspacePath={workspacePath || null}
       selectedRunFolder={contextRunFolder}
       runFolders={runFoldersNames}
+      variablesManifest={variablesManifest}
       workflowTitle={typeof plan?.title === 'string' ? plan.title : undefined}
       onRunReport={handleRunReport}
     />

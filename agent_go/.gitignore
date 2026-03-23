@@ -15,6 +15,8 @@ service_account.json
 # These files should not be included in go mod tidy or version control
 tool_output_folder/*
 tool_output_folder
+runs/*
+runs
 
 # Compiled binaries
 /claude-code-chat

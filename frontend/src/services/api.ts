@@ -472,6 +472,14 @@ export const agentApi = {
     return response.data
   },
 
+  // Steer message - inject user message into running agent mid-execution
+  steerMessage: async (sessionId: string, message: string): Promise<{ success: boolean; message?: string }> => {
+    const response = await api.post(`/api/sessions/${sessionId}/steer`, { message }, {
+      headers: { 'X-Session-ID': sessionId }
+    })
+    return response.data
+  },
+
   // Context Summarization Management
   // Summarize conversation history for a session
   summarizeConversation: async (sessionId: string, request?: SummarizeConversationRequest): Promise<SummarizeConversationResponse> => {

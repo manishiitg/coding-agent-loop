@@ -496,7 +496,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             running.set(corrId, { name, agentType, type: 'agent', depth })
           }
         }
-      } else if (event.type === 'orchestrator_agent_end') {
+      } else if (event.type === 'orchestrator_agent_end' || event.type === 'orchestrator_agent_error') {
         const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
         if (corrId) running.delete(corrId)
       } else if (event.type === 'delegation_start') {

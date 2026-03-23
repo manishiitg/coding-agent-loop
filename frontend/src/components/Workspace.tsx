@@ -476,16 +476,29 @@ export default function Workspace({
   // Gets selectedRunFolder from workflow store early (also used at line ~569 via hook)
   const selectedRunFolder = useWorkflowStore(state => state.selectedRunFolder)
   const setSelectedRunFolder = useWorkflowStore(state => state.setSelectedRunFolder)
+  const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const [workspaceDisplayedIteration, setWorkspaceDisplayedIteration] = useState<string | null>(null)
   const [showIterationDropdown, setShowIterationDropdown] = useState(false)
 
-  // Reset workspace iteration choice when switching workflows
+  // Reset workspace iteration choice when switching workflows so a stale selection
+  // from the previous workflow doesn't trigger a fetch for a non-existent iteration.
   const prevActiveFolderForIterRef = useRef<string | undefined>(undefined)
-  if (prevActiveFolderForIterRef.current !== activeFolder) {
+  useEffect(() => {
+    if (prevActiveFolderForIterRef.current === activeFolder) return
+
+    const previousActiveFolder = prevActiveFolderForIterRef.current
     prevActiveFolderForIterRef.current = activeFolder
-    if (activeFolder) loadedIterationsRef.current.delete(activeFolder)
-    // Don't reset workspaceDisplayedIteration — preserve user's selection across minor re-mounts
-  }
+
+    if (previousActiveFolder) {
+      loadedIterationsRef.current.delete(previousActiveFolder)
+    }
+    if (activeFolder) {
+      loadedIterationsRef.current.delete(activeFolder)
+    }
+
+    setWorkspaceDisplayedIteration(null)
+    setShowIterationDropdown(false)
+  }, [activeFolder])
 
   // Compute available iterations from the raw file tree (populated even from shallow fetch)
   const availableIterations = useMemo(() => {
@@ -518,6 +531,30 @@ export default function Workspace({
     }
     return latestIteration
   }, [workspaceDisplayedIteration, selectedRunFolder, latestIteration])
+
+  useEffect(() => {
+    if (selectedModeCategory !== 'workflow' || workflowWorkspaceView !== 'builder' || availableIterations.length === 0) {
+      return
+    }
+
+    const builderIteration = selectedRunFolder && selectedRunFolder !== 'new'
+      ? selectedRunFolder.split('/')[0]
+      : 'iteration-0'
+
+    if (!builderIteration || !availableIterations.includes(builderIteration)) {
+      return
+    }
+
+    if (workspaceDisplayedIteration !== builderIteration) {
+      setWorkspaceDisplayedIteration(builderIteration)
+    }
+  }, [
+    selectedModeCategory,
+    workflowWorkspaceView,
+    selectedRunFolder,
+    availableIterations,
+    workspaceDisplayedIteration
+  ])
 
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
@@ -671,6 +708,7 @@ export default function Workspace({
   // Lazy-load the selected/latest iteration's full files when it changes
   useEffect(() => {
     if (selectedModeCategory !== 'workflow' || !activeFolder || !effectiveDisplayedIteration) return
+    if (!availableIterations.includes(effectiveDisplayedIteration)) return
 
     const loaded = loadedIterationsRef.current.get(activeFolder)
     if (loaded?.has(effectiveDisplayedIteration)) return // Already fetched this session
@@ -679,8 +717,10 @@ export default function Workspace({
       loadedIterationsRef.current.set(activeFolder, new Set())
     }
     loadedIterationsRef.current.get(activeFolder)!.add(effectiveDisplayedIteration)
-    fetchFiles(activeFolder + '/runs/' + effectiveDisplayedIteration)
-  }, [selectedModeCategory, activeFolder, effectiveDisplayedIteration, fetchFiles])
+    fetchFiles(activeFolder + '/runs/' + effectiveDisplayedIteration).catch(() => {
+      loadedIterationsRef.current.get(activeFolder)?.delete(effectiveDisplayedIteration)
+    })
+  }, [selectedModeCategory, activeFolder, effectiveDisplayedIteration, availableIterations, fetchFiles])
 
   // Close dropdown when clicking outside
   useEffect(() => {

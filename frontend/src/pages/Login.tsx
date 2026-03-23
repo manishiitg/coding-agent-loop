@@ -4,8 +4,9 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../components/ui/Card'
 import { Alert, AlertDescription } from '../components/ui/alert'
-import { Loader2, Bot, KeyRound, Mail, Lock, AlertCircle } from 'lucide-react'
+import { Loader2, KeyRound, Mail, Lock, AlertCircle } from 'lucide-react'
 import type { AuthProvider } from '../services/api'
+import { AgentForgeMark } from '../components/branding/AgentForgeLogo'
 
 // Google icon SVG component
 const GoogleIcon = () => (
@@ -153,8 +154,8 @@ export function Login() {
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center pb-2">
           {/* Logo / Branding */}
-          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4">
-            <Bot className="w-8 h-8 text-primary" />
+          <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-[1.75rem] bg-slate-950/95 shadow-[0_24px_60px_-30px_rgba(15,23,42,0.95)] ring-1 ring-slate-700/40">
+            <AgentForgeMark className="h-14 w-14" />
           </div>
           <CardTitle className="text-2xl">Welcome Back</CardTitle>
           <CardDescription className="text-base">

@@ -431,6 +431,34 @@ func (r *WorkshopStepRegistry) Cancel(id string) {
 	}
 }
 
+// CancelAll cancels all running executions and returns the list of cancelled execution IDs.
+func (r *WorkshopStepRegistry) CancelAll() []string {
+	r.mu.RLock()
+	// Collect running executions
+	var toCancel []*WorkshopStepExecution
+	for _, exec := range r.executions {
+		exec.mu.RLock()
+		isRunning := exec.Status == WorkshopStepRunning
+		exec.mu.RUnlock()
+		if isRunning {
+			toCancel = append(toCancel, exec)
+		}
+	}
+	r.mu.RUnlock()
+
+	var cancelledIDs []string
+	for _, exec := range toCancel {
+		if exec.cancel != nil {
+			exec.cancel()
+		}
+		exec.mu.Lock()
+		exec.Status = WorkshopStepCancelled
+		exec.mu.Unlock()
+		cancelledIDs = append(cancelledIDs, exec.ID+" (step: "+exec.StepID+")")
+	}
+	return cancelledIDs
+}
+
 // List returns all tracked executions
 func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 	r.mu.RLock()
@@ -1049,8 +1077,11 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls. When running: shows status and which tools the step is calling in real time. When done: shows result. Pass tool_call_id to drill into a specific tool call's full input/output.
 - **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, iteration details for complex steps, log paths. Use after a step completes or to inspect a running complex step.
 - **list_executions(status_filter?)** — List all background executions with their execution_id, step_id, and status. Use to find execution IDs for query_step or stop_step.
-- **stop_step(execution_id)** — Cancel a running step
+- **stop_step(execution_id)** — Cancel a specific running step
+- **stop_all_executions()** — Cancel ALL running background executions at once. **Use this when the user asks to stop, cancel, or abort everything.**
 - **run_in_background(name, instruction)** — Spawn an independent background agent with the same tools as the workflow. Use this to offload context-heavy tasks or run multiple things in parallel. The agent gets its own context and tools — it does NOT execute a workflow step. Returns execution_id (use query_step to check status, stop_step to cancel).
+
+**IMPORTANT — Stopping tasks**: When the user asks you to "stop", "cancel", or "abort" running tasks, you MUST actually call stop_all_executions() or stop_step(execution_id). Do NOT just say you stopped things — the tasks run in the background independently and will continue unless you call these tools. Simply responding with text does NOT stop anything.
 
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update step_config.json for a specific step (servers, tools, enabled_skills, disable_learning, lock_learnings, learning_detail_level, learning_mode, use_code_execution_mode, use_tool_search_mode, execution_llm, learning_llm, orchestrator_llm, sub_agent_llm, optimized)
@@ -1991,29 +2022,28 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Update status BEFORE emitting event so query_step sees the final state
 				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
 				// Don't overwrite "cancelled" status — stop_step may have already set it
-				if exec.Status == WorkshopStepCancelled {
-					exec.mu.Unlock()
-					return
-				}
-				if err != nil {
-					// Check if this is a context cancellation (user stop, session timeout, etc.)
-					// — treat as cancelled, not failed. Only real failures (validation, execution errors)
-					// should be reported to the agent for debugging.
-					if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = err
+				if !alreadyCancelled {
+					if err != nil {
+						// Check if this is a context cancellation (user stop, session timeout, etc.)
+						// — treat as cancelled, not failed. Only real failures (validation, execution errors)
+						// should be reported to the agent for debugging.
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+							exec.Err = err
+						} else {
+							exec.Status = WorkshopStepFailed
+							exec.Err = err
+						}
 					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = err
+						exec.Status = WorkshopStepDone
+						exec.Result = result
 					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
 				}
 				exec.mu.Unlock()
 
-				// Emit orchestrator_agent_end to close the grouping card
+				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
 				if eventBridge != nil {
 					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
@@ -2171,27 +2201,26 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Update status BEFORE emitting event so query_step sees the final state
 				exec.mu.Lock()
-				if exec.Status == WorkshopStepCancelled {
-					exec.mu.Unlock()
-					return
-				}
-				if err != nil {
-					if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = err
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+							exec.Err = err
+						} else {
+							exec.Status = WorkshopStepFailed
+							exec.Err = err
+						}
 					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = err
+						exec.Status = WorkshopStepDone
+						exec.Result = result
 					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
 				}
 				exec.mu.Unlock()
 
-				// Emit orchestrator_agent_end to close the grouping card
+				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
 				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-background-task",
@@ -2597,6 +2626,32 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register stop_step tool: %v", err))
+	}
+
+	// Tool 3b: stop_all_executions — cancel all running background executions at once
+	if err := mcpAgent.RegisterCustomTool(
+		"stop_all_executions",
+		"Cancel ALL running background executions (steps, learnings, optimizations, background agents). Use this when the user asks to stop, cancel, or abort everything.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			cancelledIDs := iwm.stepRegistry.CancelAll()
+			if len(cancelledIDs) == 0 {
+				return "No running executions found to cancel.", nil
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("Cancelled %d running execution(s):\n", len(cancelledIDs)))
+			for _, id := range cancelledIDs {
+				sb.WriteString(fmt.Sprintf("- %s\n", id))
+			}
+			logger.Info(fmt.Sprintf("🛑 Workshop: cancelled all %d running executions", len(cancelledIDs)))
+			return sb.String(), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register stop_all_executions tool: %v", err))
 	}
 
 	// === Builder tools: config, optimization, learning ===
@@ -4073,25 +4128,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Update status BEFORE emitting event so query_step sees the final state
 				exec.mu.Lock()
-				if exec.Status == WorkshopStepCancelled {
-					exec.mu.Unlock()
-					return
-				}
-				if execErr != nil {
-					if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = execErr
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if execErr != nil {
+						if execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+							exec.Err = execErr
+						} else {
+							exec.Status = WorkshopStepFailed
+							exec.Err = execErr
+						}
 					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = execErr
+						exec.Status = WorkshopStepDone
+						exec.Result = result
 					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
 				}
 				exec.mu.Unlock()
 
-				// Emit orchestrator_agent_end to close the grouping card
+				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
 				if eventBridge != nil {
 					isCancelled := execCtx.Err() != nil || errors.Is(execErr, context.Canceled) || errors.Is(execErr, context.DeadlineExceeded)
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
@@ -4222,27 +4276,26 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Update status BEFORE emitting event so query_step sees the final state
 				exec.mu.Lock()
-				if exec.Status == WorkshopStepCancelled {
-					exec.mu.Unlock()
-					return
-				}
-				if err != nil {
-					if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-						exec.Status = WorkshopStepCancelled
-						exec.Err = err
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+							exec.Err = err
+						} else {
+							exec.Status = WorkshopStepFailed
+							exec.Err = err
+						}
 					} else {
-						exec.Status = WorkshopStepFailed
-						exec.Err = err
+						exec.Status = WorkshopStepDone
+						exec.Result = result
 					}
-				} else {
-					exec.Status = WorkshopStepDone
-					exec.Result = result
 				}
 				exec.mu.Unlock()
 
-				// Emit orchestrator_agent_end to close the grouping card
+				// Always emit orchestrator_agent_end to close the grouping card (even for cancelled steps)
 				if eventBridge != nil {
-					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-debug",

@@ -83,7 +83,7 @@ export default function WorkspaceSidebar({
     if (Notification.permission === 'granted') {
       new Notification('Test Notification', {
         body: 'This is a test notification from AgentForge',
-        icon: '/favicon.ico'
+        icon: '/logo.svg'
       })
     } else if (Notification.permission === 'default') {
       Notification.requestPermission().then(permission => {
@@ -91,7 +91,7 @@ export default function WorkspaceSidebar({
         if (permission === 'granted') {
           new Notification('Test Notification', {
             body: 'This is a test notification from AgentForge',
-            icon: '/favicon.ico'
+            icon: '/logo.svg'
           })
         }
       })

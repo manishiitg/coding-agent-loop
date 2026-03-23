@@ -364,7 +364,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   showScrollbar = false
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
-  const scrollClasses = showScrollbar ? `max-h-[${maxHeight}] overflow-y-auto overflow-x-auto` : ""
+  const scrollClasses = showScrollbar ? 'overflow-y-auto overflow-x-auto min-w-0' : ""
+  const containerStyle = showScrollbar && maxHeight !== 'none'
+    ? { maxHeight }
+    : undefined
 
   const highlightFile = useWorkspaceStore(state => state.highlightFile)
   const expandFoldersForFile = useWorkspaceStore(state => state.expandFoldersForFile)
@@ -549,7 +552,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   }, [content])
 
   return (
-    <div className={`${containerClasses} ${scrollClasses} markdown-content`}>
+    <div className={`${containerClasses} ${scrollClasses} markdown-content`} style={containerStyle}>
       <style dangerouslySetInnerHTML={{
         __html: `
           .markdown-content ul ul {

@@ -282,10 +282,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 			learningMode = agentConfigs.LearningMode
 		}
 		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
-		// Locked or optimized steps have built skills — use lowest viable tier
+		// Optimized steps have built skills — use lowest viable tier
 		if agentConfigs != nil &&
-			((agentConfigs.LockLearnings != nil && *agentConfigs.LockLearnings) ||
-				(agentConfigs.Optimized != nil && *agentConfigs.Optimized)) &&
+			agentConfigs.Optimized != nil && *agentConfigs.Optimized &&
 			maturity >= HasLearnings {
 			maturity = LockedLearnings
 		}

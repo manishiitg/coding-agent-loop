@@ -650,10 +650,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			learningMode = stepConfig.LearningMode
 		}
 		maturity := hcpo.getLearningMaturity(ctx, stepID, stepPath, learningMode)
-		// Locked or optimized steps have built skills — use lowest viable tier
+		// Optimized steps have built skills — use lowest viable tier
 		if stepConfig != nil &&
-			((stepConfig.LockLearnings != nil && *stepConfig.LockLearnings) ||
-				(stepConfig.Optimized != nil && *stepConfig.Optimized)) &&
+			stepConfig.Optimized != nil && *stepConfig.Optimized &&
 			maturity >= HasLearnings {
 			maturity = LockedLearnings
 		}

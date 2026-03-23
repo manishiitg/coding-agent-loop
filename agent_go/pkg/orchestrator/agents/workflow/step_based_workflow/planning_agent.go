@@ -233,7 +233,8 @@ type AgentConfigs struct {
 	SubAgentLLM                  *AgentLLMConfig    `json:"sub_agent_llm,omitempty"`                  // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
 	DisableParallelToolExecution *bool              `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
 	DisableTierOptimization      *bool              `json:"disable_tier_optimization,omitempty"`        // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
-	Optimized                    *bool              `json:"optimized,omitempty"`                        // If true, step is considered optimized — skip "debug and optimize" notification after completion
+	Optimized                    *bool              `json:"optimized,omitempty"`                        // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
+	SuccessfulRuns               *int               `json:"successful_runs,omitempty"`                  // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
 }
 
 // ============================================================================

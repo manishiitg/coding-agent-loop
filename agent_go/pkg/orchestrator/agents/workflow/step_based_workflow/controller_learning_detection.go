@@ -148,6 +148,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
 		metadata.SuccessfulRunsSimple++
+		// Sync successful run count to step_config.json so it's visible alongside optimized flag
+		if step != nil {
+			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRunsSimple)
+		}
 	}
 
 	// Add detection result to history
@@ -241,9 +245,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 		stepConfig.AgentConfigs = &AgentConfigs{}
 	}
 
-	// Set LockLearnings = true
+	// Set LockLearnings = true AND Optimized = true together
+	// When the skill is built (3+ successful runs), the step is optimized.
+	// Optimized triggers tier downgrade to lower-cost LLMs at runtime.
 	lockValue := true
 	stepConfig.AgentConfigs.LockLearnings = &lockValue
+	stepConfig.AgentConfigs.Optimized = &lockValue
 
 	// Update the config in the slice
 	for i := range configs {
@@ -267,6 +274,40 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 	}
 
 	return nil
+}
+
+// syncSuccessfulRunsToStepConfig updates the successful_runs count in step_config.json
+// so it's visible alongside the optimized flag for the workflow builder.
+func (hcpo *StepBasedWorkflowOrchestrator) syncSuccessfulRunsToStepConfig(ctx context.Context, stepID string, count int) {
+	configs, err := hcpo.ReadStepConfigs(ctx)
+	if err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step configs for syncing successful_runs: %v", err))
+		return
+	}
+
+	found := false
+	for i := range configs {
+		if configs[i].ID == stepID {
+			if configs[i].AgentConfigs == nil {
+				configs[i].AgentConfigs = &AgentConfigs{}
+			}
+			configs[i].AgentConfigs.SuccessfulRuns = &count
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		newConfig := StepConfig{
+			ID:           stepID,
+			AgentConfigs: &AgentConfigs{SuccessfulRuns: &count},
+		}
+		configs = append(configs, newConfig)
+	}
+
+	if err := hcpo.WriteStepConfigs(ctx, configs); err != nil {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to sync successful_runs to step_config.json: %v", err))
+	}
 }
 
 // updateUnlockMetadata updates the learning metadata file with unlock information
@@ -371,9 +412,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsInConfig(
 		stepConfig.AgentConfigs = &AgentConfigs{}
 	}
 
-	// Set LockLearnings = false (explicitly unlock)
+	// Set LockLearnings = false AND Optimized = false together
+	// Unlocking means the skill needs rework — revert to higher tiers
 	lockValue := false
 	stepConfig.AgentConfigs.LockLearnings = &lockValue
+	stepConfig.AgentConfigs.Optimized = &lockValue
 
 	// Update the config in the slice
 	if configIndex >= 0 {

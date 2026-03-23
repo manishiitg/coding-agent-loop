@@ -824,7 +824,11 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
    - No wasted tool calls (minimum necessary calls only)
    - Learnings guided the agent correctly
    - Output passes validation
-7. **Mark optimized** — When the step runs cleanly: update_step_config(step_id, optimized=true)
+7. **Mark optimized** — When the step has **at least 3 successful runs** (check successful_runs in step_config) and runs cleanly: update_step_config(step_id, optimized=true)
+   - Setting optimized=true also locks learnings automatically (they always move together)
+   - **Cost impact**: optimized steps automatically use **lower-cost LLM tiers** at runtime — execution agents drop to Tier 3 (Low), orchestrators drop to Tier 2 (Medium). The built skill guides the agent.
+   - The system auto-sets optimized=true after 3 successful validations, but you can also set it manually after verifying quality
+   - If an optimized step starts failing later: update_step_config(step_id, optimized=false) — reverts to higher tiers and unlocks learnings for rework
 
 **For todo_task steps (sub-agent steps):**
 Todo task steps contain inner sub-agents (routes). Optimize each sub-agent individually BEFORE optimizing the parent:
@@ -2796,6 +2800,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					// Same protection: don't let accidental false overwrite a true value.
 					if b || targetConfig.AgentConfigs.LockLearnings == nil || !*targetConfig.AgentConfigs.LockLearnings {
 						targetConfig.AgentConfigs.LockLearnings = &b
+						// Sync: lock_learnings and optimized move together
+						targetConfig.AgentConfigs.Optimized = &b
 					}
 				}
 			}
@@ -2890,6 +2896,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						}
 					}
 					targetConfig.AgentConfigs.Optimized = &b
+					// Sync: optimized and lock_learnings move together
+					targetConfig.AgentConfigs.LockLearnings = &b
 				}
 			}
 			if val, ok := args["use_code_execution_mode"]; ok && val != nil {

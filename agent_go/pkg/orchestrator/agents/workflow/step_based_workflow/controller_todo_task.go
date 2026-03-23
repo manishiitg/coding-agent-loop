@@ -483,16 +483,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 		}
 	}
 
-	// 2. Tiered mode: use learning maturity to select tier.
-	// Locked/optimized steps with built skills use Tier 2 (Medium) for the orchestrator.
+	// 2. Tiered mode: use optimization state to select tier.
+	// Optimized steps with built skills use Tier 2 (Medium) for the orchestrator.
 	// The orchestrator still needs some reasoning for task planning and routing, so use Medium not Low.
 	if hcpo.tierResolver == nil {
 		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver is nil for step %s — tiered mode is required for todo task orchestrator", stepPath))
 	}
 	tier := TierHigh
 	if stepConfig != nil &&
-		((stepConfig.LockLearnings != nil && *stepConfig.LockLearnings) ||
-			(stepConfig.Optimized != nil && *stepConfig.Optimized)) {
+		stepConfig.Optimized != nil && *stepConfig.Optimized {
 		// Orchestrator needs more reasoning than execution agents, so Medium not Low
 		tier = TierMedium
 	}

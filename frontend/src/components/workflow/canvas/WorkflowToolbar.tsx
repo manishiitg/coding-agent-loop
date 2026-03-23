@@ -14,6 +14,7 @@ import {
   RefreshCw,
   BookOpen,
   Trash2,
+  Eraser,
   Settings,
   SlidersHorizontal,
   MessageSquare,
@@ -166,6 +167,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView,
     workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView,
+    alwaysUseSameRun,
+    setAlwaysUseSameRun,
+    skipExecutionCleanup,
+    setSkipExecutionCleanup,
     layoutDirection,
     setLayoutDirection
   } = useWorkflowStore(useShallow(state => ({
@@ -190,6 +195,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     workflowWorkspaceView: state.workflowWorkspaceView,
     workflowWorkspaceSelectionTouched: state.workflowWorkspaceSelectionTouched,
     setWorkflowWorkspaceView: state.setWorkflowWorkspaceView,
+    alwaysUseSameRun: state.alwaysUseSameRun,
+    setAlwaysUseSameRun: state.setAlwaysUseSameRun,
+    skipExecutionCleanup: state.skipExecutionCleanup,
+    setSkipExecutionCleanup: state.setSkipExecutionCleanup,
     layoutDirection: state.layoutDirection,
     setLayoutDirection: state.setLayoutDirection
   })))
@@ -473,6 +482,9 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   
   const hasExistingProgress = stepProgress !== null && completedStepIndices.length > 0
   const completedStepCount = completedStepIndices.length
+  const isResumingExecution = selectedStartPoint > 0 || selectedBranchStep !== null
+  const effectiveAlwaysUseSameRun = alwaysUseSameRun || isResumingExecution
+  const clearOutputsBeforeRun = !skipExecutionCleanup
 
 
   // Helper to format the selected run folder display text
@@ -1508,6 +1520,84 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                 </Tooltip>
               </TooltipProvider>
             )}
+
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => {
+                      if (!isResumingExecution) {
+                        setAlwaysUseSameRun(!alwaysUseSameRun)
+                      }
+                    }}
+                    disabled={isResumingExecution}
+                    aria-pressed={effectiveAlwaysUseSameRun}
+                    className={`
+                      flex items-center justify-center w-8 h-8 rounded-md transition-colors border
+                      ${effectiveAlwaysUseSameRun
+                        ? 'bg-primary/10 text-primary border-primary/30'
+                        : 'bg-muted text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'
+                      }
+                      ${isResumingExecution ? 'cursor-not-allowed opacity-70' : ''}
+                    `}
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <div className="space-y-1">
+                    <p>
+                      {isResumingExecution
+                        ? 'Iteration mode is locked while resuming.'
+                        : effectiveAlwaysUseSameRun
+                        ? 'Reuse the same iteration for every run.'
+                        : 'Create a new iteration every time you run.'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {isResumingExecution
+                        ? 'Resume runs continue inside the existing iteration.'
+                        : effectiveAlwaysUseSameRun
+                        ? 'Previous iteration data stays available unless cleanup is enabled.'
+                        : 'Useful when you want each run to start in a fresh iteration.'}
+                    </p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            <TooltipProvider delayDuration={150}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
+                    aria-pressed={clearOutputsBeforeRun}
+                    className={`
+                      flex items-center justify-center w-8 h-8 rounded-md transition-colors border
+                      ${clearOutputsBeforeRun
+                        ? 'bg-primary/10 text-primary border-primary/30'
+                        : 'bg-muted text-muted-foreground border-transparent hover:bg-accent hover:text-accent-foreground'
+                      }
+                    `}
+                  >
+                    <Eraser className="w-3.5 h-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  <div className="space-y-1">
+                    <p>
+                      {clearOutputsBeforeRun
+                        ? 'Clear previous step outputs before running.'
+                        : 'Keep previous step outputs when running again.'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {clearOutputsBeforeRun
+                        ? 'Each execution starts with cleaned output folders for the selected group.'
+                        : 'Useful when you want to reuse existing outputs inside the same group.'}
+                    </p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
 
             {/* Execution Controls - Execute button and configuration dropdowns */}
             {isExecutionWorkspace && (

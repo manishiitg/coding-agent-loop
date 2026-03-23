@@ -294,6 +294,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetLearningMetadata(
 	metadata.StepPath = stepPath
 	metadata.StepHash = newHash
 	metadata.SuccessfulRunsSimple = 0
+	// Sync reset count to step_config.json
+	hcpo.syncSuccessfulRunsToStepConfig(ctx, stepID, 0)
 
 	// Clear auto-lock info to prevent UI from showing "Locked (Auto)" state
 	// The UI checks if AutoLockedAt is set to determine if it's auto-locked

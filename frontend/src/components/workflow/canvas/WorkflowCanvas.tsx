@@ -11,7 +11,7 @@ import {
   type OnSelectionChangeParams,
   SelectionMode
 } from '@xyflow/react'
-import { Brain, Package, Settings, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { Brain, Settings, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { nodeTypes } from '../nodes'
@@ -90,12 +90,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const setLayoutDirection = useWorkflowStore(state => state.setLayoutDirection)
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const workflowWorkspaceSelectionTouched = useWorkflowStore(state => state.workflowWorkspaceSelectionTouched)
-  const selectedStartPoint = useWorkflowStore(state => state.selectedStartPoint)
-  const selectedBranchStep = useWorkflowStore(state => state.selectedBranchStep)
-  const alwaysUseSameRun = useWorkflowStore(state => state.alwaysUseSameRun)
-  const setAlwaysUseSameRun = useWorkflowStore(state => state.setAlwaysUseSameRun)
-  const skipExecutionCleanup = useWorkflowStore(state => state.skipExecutionCleanup)
-  const setSkipExecutionCleanup = useWorkflowStore(state => state.setSkipExecutionCleanup)
   const tempOverrideLLM = useWorkflowStore(state => state.tempOverrideLLM)
   const tempOverrideLLM2 = useWorkflowStore(state => state.tempOverrideLLM2)
   const tempLearningLLM = useWorkflowStore(state => state.tempLearningLLM)
@@ -110,9 +104,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     (workflowWorkspaceSelectionTouched &&
       workflowWorkspaceView === null &&
       (currentPhase === 'execution' || currentPhase === 'evaluation-execution'))
-  const isResumingExecution = selectedStartPoint > 0 || selectedBranchStep !== null
-  const effectiveAlwaysUseSameRun = alwaysUseSameRun || isResumingExecution
-  const clearOutputsBeforeRun = !skipExecutionCleanup
   const hasTempLLMOverrides = !!(tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM)
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
 
@@ -2347,86 +2338,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {isExecutionWorkspace && (
           <div className="absolute top-3 right-3 z-20 w-[260px] rounded-xl border border-border/80 bg-background/95 backdrop-blur shadow-lg">
             <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/70">
-              <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
+              <Brain className="w-4 h-4 text-muted-foreground" />
               <div>
-                <div className="text-xs font-semibold text-foreground">Run Behavior</div>
-                <div className="text-[11px] text-muted-foreground">Execution mode settings</div>
+                <div className="text-xs font-semibold text-foreground">Temp LLM Override</div>
+                <div className="text-[11px] text-muted-foreground">Execution override settings</div>
               </div>
             </div>
 
             <div className="p-2 space-y-2">
-              <button
-                onClick={() => {
-                  if (!isResumingExecution) {
-                    setAlwaysUseSameRun(!alwaysUseSameRun)
-                  }
-                }}
-                disabled={isResumingExecution}
-                aria-pressed={effectiveAlwaysUseSameRun}
-                title={isResumingExecution
-                  ? 'Resume mode always reuses the same iteration'
-                  : effectiveAlwaysUseSameRun
-                  ? 'Always reuse a single iteration for workflow runs'
-                  : 'Create a new iteration for each workflow run'
-                }
-                className={`
-                  w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all border
-                  ${effectiveAlwaysUseSameRun
-                    ? 'bg-primary/10 border-primary/30'
-                    : 'bg-muted/60 border-border hover:bg-muted'
-                  }
-                  ${isResumingExecution ? 'opacity-70 cursor-not-allowed' : ''}
-                `}
-              >
-                <Package className={`w-4 h-4 flex-shrink-0 ${effectiveAlwaysUseSameRun ? 'text-primary' : 'text-muted-foreground'}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-foreground">Single Iteration</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {effectiveAlwaysUseSameRun
-                      ? 'Reuse one iteration for runs'
-                      : 'Create a new iteration each time'}
-                  </div>
-                </div>
-                <div className={`
-                  h-5 min-w-[38px] rounded-full px-1 flex items-center transition-colors
-                  ${effectiveAlwaysUseSameRun ? 'bg-primary/80 justify-end' : 'bg-muted-foreground/30 justify-start'}
-                `}>
-                  <div className="w-3.5 h-3.5 rounded-full bg-white shadow-sm" />
-                </div>
-              </button>
-
-              <button
-                onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
-                aria-pressed={clearOutputsBeforeRun}
-                title={clearOutputsBeforeRun
-                  ? 'Delete previous step outputs before running'
-                  : 'Keep previous step outputs for the selected group'
-                }
-                className={`
-                  w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all border
-                  ${clearOutputsBeforeRun
-                    ? 'bg-primary/10 border-primary/30'
-                    : 'bg-muted/60 border-border hover:bg-muted'
-                  }
-                `}
-              >
-                <Trash2 className={`w-4 h-4 flex-shrink-0 ${clearOutputsBeforeRun ? 'text-primary' : 'text-muted-foreground'}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-foreground">Clear Outputs</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {clearOutputsBeforeRun
-                      ? 'Delete old step outputs before run'
-                      : 'Keep previous step outputs'}
-                  </div>
-                </div>
-                <div className={`
-                  h-5 min-w-[38px] rounded-full px-1 flex items-center transition-colors
-                  ${clearOutputsBeforeRun ? 'bg-primary/80 justify-end' : 'bg-muted-foreground/30 justify-start'}
-                `}>
-                  <div className="w-3.5 h-3.5 rounded-full bg-white shadow-sm" />
-                </div>
-              </button>
-
               <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">

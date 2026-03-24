@@ -1655,10 +1655,8 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 	allSteps := collectAllSteps(plan.Steps)
 	ids := make([]string, 0, len(allSteps))
 	for _, info := range allSteps {
-		label := fmt.Sprintf("%q", info.Step.GetID())
-		if info.TopIndex > 0 {
-			label = fmt.Sprintf("%q (step %d)", info.Step.GetID(), info.TopIndex)
-		} else {
+		label := fmt.Sprintf("%q (step %d)", info.Step.GetID(), info.TopIndex)
+		if info.TopIndex <= 0 {
 			label = fmt.Sprintf("%q (inner, parent=%s, branch=%s)", info.Step.GetID(), info.ParentID, info.BranchName)
 		}
 		ids = append(ids, label)

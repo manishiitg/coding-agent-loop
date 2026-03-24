@@ -150,7 +150,7 @@ type WorkflowOrchestrator struct {
 	toolCallQueryFunc step_based_workflow.ToolCallQueryFunc
 
 	// extraSubAgentNotifier is an additional notifier set by the server layer (e.g. for bgAgentRegistry).
-	// It is chained with the workshop notifier inside runInteractiveWorkshop.
+	// It is reserved for execution paths that need extra sub-agent notifications.
 	extraSubAgentNotifier step_based_workflow.SubAgentNotifier
 }
 
@@ -432,108 +432,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	return wo.runPlanning(ctx, objective, selectedOptions)
-}
-
-// runInteractiveWorkshop runs the interactive workshop phase
-func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info("🔧 Starting Interactive Workshop Phase")
-
-	llmConfig := wo.GetLLMConfig()
-	controller, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
-		ctx,
-		"", // provider (not used — LLM comes from temp override/step config/preset)
-		"", // model (not used — LLM comes from temp override/step config/preset)
-		wo.GetTemperature(),
-		wo.GetAgentMode(),
-		wo.GetSelectedServers(),
-		wo.GetSelectedTools(),
-		wo.GetUseCodeExecutionMode(),
-		wo.GetUseToolSearchMode(),
-		wo.GetPreDiscoveredTools(),
-		wo.GetMCPConfigPath(),
-		llmConfig,
-		wo.GetMaxTurns(),
-		wo.GetLogger(),
-		wo.GetTracer(),
-		wo.GetContextAwareBridge(),
-		wo.WorkspaceTools,
-		wo.WorkspaceToolExecutors,
-		wo.ToolCategories,
-		wo.presetPhaseLLM,
-		wo.useKnowledgebase,
-		wo.tieredConfig,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create controller for interactive workshop: %w", err)
-	}
-
-	// Propagate workspace env ref
-	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
-		controller.SetWorkspaceEnvRef(envRef)
-	}
-
-	// Propagate MCP session ID
-	controller.SetMCPSessionID(wo.getSessionID())
-	if wo.httpSessionID != "" {
-		controller.SetHTTPSessionID(wo.httpSessionID)
-	}
-
-	// Propagate selected skills
-	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
-		controller.SetSelectedSkills(skills)
-	}
-
-	// Propagate secrets
-	if secrets := wo.GetSecrets(); len(secrets) > 0 {
-		controller.SetSecrets(secrets)
-	}
-
-	// Propagate execution options
-	if wo.executionOptions != nil {
-		controller.SetExecutionOptions(wo.executionOptions)
-	}
-
-	// Propagate CDP port for browser mode detection
-	if wo.cdpPort > 0 {
-		controller.SetCdpPort(wo.cdpPort)
-	}
-
-	// Build workshop manager using presetPhaseLLM (same as other phase agents).
-	// NewInteractiveWorkshopManager sets a workshopSubAgentNotifier on the controller.
-	// If server provided an extra notifier (e.g. bgAgentRegistry), chain them together.
-	workshopManager := step_based_workflow.NewInteractiveWorkshopManager(
-		controller,
-		wo.presetPhaseLLM,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-	)
-	if wo.extraSubAgentNotifier != nil {
-		// Chain: workshop notifier (stepRegistry) + server notifier (bgAgentRegistry)
-		controller.SetSubAgentNotifier(step_based_workflow.ChainSubAgentNotifiers(
-			controller.GetSubAgentNotifier(),
-			wo.extraSubAgentNotifier,
-		))
-	}
-
-	// Wire up live tool call query if available
-	if wo.toolCallQueryFunc != nil {
-		workshopManager.SetToolCallQuery(wo.httpSessionID, wo.toolCallQueryFunc)
-	}
-
-	// Resolve run folder from execution options if provided
-	var runFolder string
-	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
-		runFolder = wo.executionOptions.SelectedRunFolder
-		wo.GetLogger().Info(fmt.Sprintf("📁 Using selected_run_folder from execution options: %s", runFolder))
-	}
-
-	result, err := workshopManager.InteractiveWorkshopOnly(ctx, wo.GetWorkspacePath(), runFolder)
-	if err != nil {
-		return "", fmt.Errorf("interactive workshop failed: %w", err)
-	}
-
-	wo.GetLogger().Info("✅ Interactive Workshop completed successfully")
-	return result, nil
 }
 
 // runEvaluationExecutionOnly runs only the evaluation execution phase
@@ -873,13 +771,6 @@ func (wo *WorkflowOrchestrator) SetHTTPSessionID(httpSessionID string) {
 // 0 = headless mode, >0 = CDP mode (connected to user's Chrome).
 func (wo *WorkflowOrchestrator) SetCdpPort(port int) {
 	wo.cdpPort = port
-}
-
-// getWorkflowID returns the workflow ID for this workflow
-func (wo *WorkflowOrchestrator) getWorkflowID() string {
-	// This should be generated when the workflow starts
-	// For now, return a placeholder
-	return "workflow-" + fmt.Sprintf("%d", time.Now().Unix())
 }
 
 // Execute implements the Orchestrator interface

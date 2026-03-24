@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/common"
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/common"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -60,8 +60,8 @@ type StepBasedWorkflowOrchestrator struct {
 	sessionID     string // For human feedback tracking
 	workflowID    string // For human feedback tracking
 	httpSessionID string // HTTP session ID for MCP cleanup scoping
-	cdpPort     int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
-	browserMode string // Browser mode: "playwright", "stealth", "cdp", "headless", "" (auto-detect)
+	cdpPort       int    // CDP port for browser mode detection (0 = headless, >0 = CDP)
+	browserMode   string // Browser mode: "playwright", "stealth", "cdp", "headless", "" (auto-detect)
 
 	// Variable management
 	variablesManifest *VariablesManifest // Extracted variables
@@ -208,11 +208,11 @@ func NewStepBasedWorkflowOrchestrator(
 	// This matches the pattern used by execution and learning agents
 
 	hcpo := &StepBasedWorkflowOrchestrator{
-		BaseOrchestrator:         baseOrchestrator,
-		sessionID:                workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
-		workflowID:               fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
-		presetPhaseLLM: presetPhaseLLM,
-		useKnowledgebase:         useKnowledgebase,
+		BaseOrchestrator: baseOrchestrator,
+		sessionID:        workflowSessionID, // Use the same session ID set on BaseOrchestrator for MCP connection sharing
+		workflowID:       fmt.Sprintf("workflow_%d", time.Now().UnixNano()),
+		presetPhaseLLM:   presetPhaseLLM,
+		useKnowledgebase: useKnowledgebase,
 	}
 
 	// Set up tiered LLM allocation mode
@@ -337,45 +337,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 
 	// Tiered mode is required — if we reach here, tier resolver is nil.
 	panic(fmt.Sprintf("getOrCreateConditionalAgent: tier resolver is nil for step '%s' — tiered mode is required", step.GetTitle()))
-
-	// Use provided agent name, or fallback to default format
-	actualAgentName := agentName
-	if actualAgentName == "" {
-		actualAgentName = "conditional-agent-default"
-	}
-
-	// Use provided phase, or fallback to default
-	actualPhase := phase
-	if actualPhase == "" {
-		actualPhase = "conditional_evaluation"
-	}
-
-	// Create fresh default conditional agent (no caching, matches execution/learning agent pattern)
-	agent, err := hcpo.createConditionalAgent(
-		ctx,
-		actualPhase,     // phase
-		stepIndex,       // step index
-		0,               // iteration
-		actualAgentName, // agent name
-		nil,             // no step config (default agent)
-		llmConfig,       // LLM config
-		stepPath,        // step path for execution folder write access
-		stepID,          // step ID
-	)
-	if err != nil {
-		hcpo.GetLogger().Error(fmt.Sprintf("❌ Failed to create default conditional agent: %v", err), nil)
-		return nil
-	}
-
-	// Type assert to conditional agent
-	defaultConditionalAgent, ok := agent.(*WorkflowConditionalAgent)
-	if !ok {
-		hcpo.GetLogger().Error("❌ Factory returned wrong agent type for default conditional agent", nil)
-		return nil
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Created default conditional agent fresh (no caching, matches execution/learning agent pattern)"))
-	return defaultConditionalAgent
 }
 
 // CreateTodoList orchestrates the human-controlled todo planning process

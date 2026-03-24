@@ -237,48 +237,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to create downloads directory via API %s: %v", downloadsRelativePath, err))
 	}
 
-	// Resolve to absolute path for Playwright MCP server configuration
-	// CRITICAL: workspacePath is relative to workspace-docs root (e.g., "Workflow/ICICI...")
-	// We MUST resolve it relative to workspace-docs root, NOT the current working directory
-	// Using filepath.Abs() on a relative path resolves relative to CWD, which is wrong!
-	var absDownloadsPath string
-	workspaceDocsRoot := getWorkspaceDocsRoot()
-	hcpo.GetLogger().Info(fmt.Sprintf("🔍 [DEBUG] getWorkspaceDocsRoot() returned: %s", workspaceDocsRoot))
-	if workspaceDocsRoot == "" {
-		// Fallback to old behavior if we can't determine workspace-docs root
-		// This should NOT happen - log error and try to calculate it
-		cwd, _ := os.Getwd()
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ getWorkspaceDocsRoot() returned empty! CWD: %s, workspacePath: %s", cwd, workspacePath))
-
-		// Try one more time with explicit calculation
-		calculatedRoot := filepath.Join(cwd, "..", "workspace-docs")
-		if absCalculated, err := filepath.Abs(calculatedRoot); err == nil {
-			workspaceDocsRoot = absCalculated
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Calculated workspace-docs root: %s", workspaceDocsRoot))
-		}
-	}
-
-	if workspaceDocsRoot != "" {
-		// CORRECT: Resolve relative to workspace-docs root
-		// workspacePath is already relative to workspace-docs (e.g., "Workflow/ICICI...")
-		// downloadsRelativePath is relative to workspacePath (e.g., "runs/.../execution/Downloads")
-		// Final path: workspace-docs-root + workspacePath + downloadsRelativePath
-		absDownloadsPath = filepath.Join(workspaceDocsRoot, workspacePath, downloadsRelativePath)
-		absDownloadsPath = filepath.Clean(absDownloadsPath)
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Resolved Downloads path relative to workspace-docs root: %s", absDownloadsPath))
-	} else {
-		// Last resort fallback - this should be avoided as it will resolve relative to CWD (WRONG!)
-		// This path leads to agent_go/Downloads which is incorrect
-		fullDownloadsPath := filepath.Join(workspacePath, downloadsRelativePath)
-		var absErr error
-		absDownloadsPath, absErr = filepath.Abs(fullDownloadsPath)
-		if absErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to resolve absolute path for downloads %s: %v, using relative path", fullDownloadsPath, absErr))
-			absDownloadsPath = fullDownloadsPath
-		} else {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ CRITICAL: Could not determine workspace-docs root, using CWD-relative path (THIS IS WRONG): %s", absDownloadsPath))
-		}
-	}
+	// Resolve Downloads path to host absolute path for Playwright MCP server configuration.
+	// Playwright runs on the host (not in Docker), so it needs the real host filesystem path.
+	// All other prompt-facing paths use GetPromptDocsRoot() (/app/workspace-docs).
+	absDownloadsPath := filepath.Clean(filepath.Join(getWorkspaceDocsRoot(), workspacePath, downloadsRelativePath))
+	hcpo.GetLogger().Info(fmt.Sprintf("✅ Resolved Downloads path: %s", absDownloadsPath))
 
 	// Configure Playwright runtime override (only needed for Playwright MCP server, not agent-browser)
 	// agent-browser uses its own download handling via workspace-api

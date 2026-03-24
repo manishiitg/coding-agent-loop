@@ -18,22 +18,30 @@ type AgentInstructions struct {
 	ResponseFormatting string
 }
 
-// GetAgentInstructions returns the custom instructions for agents
-func GetAgentInstructions() string {
+// GetAgentInstructions returns the custom instructions for agents.
+// workspaceAbsPath is the absolute filesystem path to the workspace root (e.g. "/app/workspace-docs/_users/default").
+// If empty, only relative paths are shown.
+func GetAgentInstructions(workspaceAbsPath string) string {
 	instructions := utils.GetCommonFileInstructions()
+
+	// Add workspace root path info
+	wsPathNote := ""
+	if workspaceAbsPath != "" {
+		wsPathNote = fmt.Sprintf("\n**Workspace root (absolute path):** `%s`\nAll relative paths below are relative to this root.\n", workspaceAbsPath)
+	}
 
 	// Add chat mode folder restriction note
 	instructions += `
 
 ## Workspace Folder Structure
-
+` + wsPathNote + `
 The workspace is organized into the following folders:
 
 - **Chats/** (read/write) - Your personal workspace for this conversation. Save all output files here (e.g., "Chats/output.txt", "Chats/results.json", "Chats/report.md").
 - **skills/** (read-only) - Contains reusable skill definitions that extend agent capabilities. Each skill has a SKILL.md with instructions and optional supporting files.
 - **Workflow/** (read-only) - Stores workflow definitions that automate multi-step processes. Workflows chain together skills and tools into repeatable sequences.
 - **Downloads/** (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).
-- **Plans/** (read-only) - Delegation plans and sub-agent outputs. Used by the multi-agent system to coordinate tasks across agents. Contains Plans/memories/ for persistent agent memory across sessions.
+- **Plans/** (read-only) - Delegation plans and sub-agent outputs. Used by the multi-agent system to coordinate tasks across agents.
 - **subagents/** (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.
 - **_users/** (blocked) - Internal directory, access not allowed.
 
@@ -112,9 +120,10 @@ Use this access to create and update custom skills. You can read other folders t
 	return instructions
 }
 
-// buildSkillPrompt builds the system prompt section for selected skills
-// It provides paths to skills and instructions for the agent to discover them using workspace tools
-func buildSkillPrompt(selectedSkills []string, workspaceAPIURL ...string) string {
+// buildSkillPrompt builds the system prompt section for selected skills.
+// It provides paths to skills and instructions for the agent to discover them using workspace tools.
+// workspaceAbsPath is optional — if provided, absolute paths are also shown alongside relative ones.
+func buildSkillPrompt(selectedSkills []string, workspaceAbsPath string, workspaceAPIURL ...string) string {
 	if len(selectedSkills) == 0 {
 		return ""
 	}
@@ -132,26 +141,29 @@ The following skills are available for this conversation. Each skill extends you
 ### Available Skills:
 `)
 
-	// List each skill with its path
+	// List each skill with its path (relative + absolute)
 	for _, folderName := range selectedSkills {
 		wsURL := ""
 		if len(workspaceAPIURL) > 0 {
 			wsURL = workspaceAPIURL[0]
 		}
 		skill, err := skills.GetSkill(wsURL, folderName)
+		relPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
+		absNote := ""
+		if workspaceAbsPath != "" {
+			absNote = fmt.Sprintf("\n  - Absolute: `%s`", path.Join(workspaceAbsPath, relPath))
+		}
 		if err != nil {
 			log.Printf("[SKILLS] Warning: Failed to load skill metadata %s: %v", folderName, err)
-			// Still add the path even if we can't get metadata
-			skillPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
-			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`", folderName, skillPath))
+			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`%s", folderName, relPath, absNote))
 			continue
 		}
 
-		skillPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
-		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`",
+		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`%s",
 			skill.Frontmatter.Name,
 			skill.Frontmatter.Description,
-			skillPath))
+			relPath,
+			absNote))
 	}
 
 	promptParts = append(promptParts, `

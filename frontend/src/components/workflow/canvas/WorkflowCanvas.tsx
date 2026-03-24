@@ -462,18 +462,15 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (workspaceState) {
       const manifest = workspaceState.variables_manifest || null
       setVariablesManifest(manifest)
-      // CRITICAL: Also sync to store so buildExecutionOptions can access it
-      setVariablesManifestInStore(manifest)
       setIsLoadingVariables(false)
 
     } else if (!isLoadingWorkspaceState) {
       setVariablesManifest(null)
-      setVariablesManifestInStore(null)
       setIsLoadingVariables(false)
     } else {
       setIsLoadingVariables(isLoadingWorkspaceState)
     }
-  }, [workspaceState, isLoadingWorkspaceState, setVariablesManifestInStore])
+  }, [workspaceState, isLoadingWorkspaceState])
 
   // Transform run folders for WorkflowToolbar (memoized to avoid repeated transformations)
   const runFoldersForToolbar = React.useMemo(() => {
@@ -487,7 +484,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
 
     const availableRunFolders = new Set(workspaceState.run_folders.map(folder => folder.name))
-    if (selectedRunFolder && selectedRunFolder !== 'new' && availableRunFolders.has(selectedRunFolder)) {
+    const selectedBuilderIteration = selectedRunFolder && selectedRunFolder !== 'new'
+      ? selectedRunFolder.split('/')[0]
+      : null
+
+    if (
+      selectedRunFolder &&
+      selectedRunFolder !== 'new' &&
+      availableRunFolders.has(selectedRunFolder) &&
+      selectedBuilderIteration === 'iteration-0'
+    ) {
       return
     }
 
@@ -1004,7 +1010,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     variablesManifest,  // Pass variables manifest for Variables node
     onOpenVariablesSidebar: handleOpenVariablesSidebar,  // Callback for opening variables sidebar
     isLoadingVariables,  // Whether variables are loading
-    layoutDirection  // Layout direction: 'LR' for horizontal, 'TB' for vertical
+    layoutDirection,  // Layout direction: 'LR' for horizontal, 'TB' for vertical
+    disabled: toolbarOnly
   })
 
   const augmentedFlow = React.useMemo(() => {

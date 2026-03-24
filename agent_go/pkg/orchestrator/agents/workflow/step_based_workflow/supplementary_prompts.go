@@ -23,7 +23,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 ) {
 	// 1. Skills
 	if len(effectiveSkills) > 0 {
-		skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator)
+		skillPrompt := BuildWorkflowSkillPrompt(ctx, effectiveSkills, hcpo.BaseOrchestrator, GetPromptDocsRoot())
 		if skillPrompt != "" {
 			mcpAgent.AppendSystemPrompt(skillPrompt)
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Added skill prompt to agent (%d skills): %v", len(effectiveSkills), effectiveSkills))
@@ -72,17 +72,22 @@ func (hcpo *StepBasedWorkflowOrchestrator) appendSupplementaryPrompts(
 	}
 }
 
-// resolveBrowserConfig detects browser capabilities from server names and skills.
+// resolveBrowserConfig resolves the browser configuration for prompt instructions.
+// Uses orchestrator-level browserMode as primary, falls back to auto-detection from servers/skills.
 func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []string, skills []string) browserinstructions.BrowserConfig {
 	cfg := browserinstructions.BrowserConfig{
 		CdpPort: hcpo.GetCdpPort(),
 	}
+
+	// Detect browser capabilities from server names and skills
 	for _, s := range serverNames {
 		switch s {
 		case "playwright":
 			cfg.HasPlaywright = true
 		case "camofox":
 			cfg.HasCamofox = true
+		case "workspace_browser":
+			cfg.HasAgentBrowser = true
 		}
 	}
 	for _, skill := range skills {
@@ -91,5 +96,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 			break
 		}
 	}
+
+	// Resolve mode: explicit setting > auto-detect from capabilities
+	if mode := hcpo.GetBrowserMode(); mode != "" {
+		cfg.Mode = mode
+	} else if cfg.HasPlaywright {
+		cfg.Mode = "playwright"
+	} else if cfg.HasCamofox {
+		cfg.Mode = "stealth"
+	} else if cfg.CdpPort > 0 {
+		cfg.Mode = "cdp"
+	} else if cfg.HasAgentBrowser {
+		cfg.Mode = "headless"
+	}
+
 	return cfg
 }

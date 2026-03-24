@@ -353,7 +353,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 
 	// Build shell working directory as absolute path — used in agent prompts so agents know
 	// the exact absolute path to their step folder without ambiguity.
-	shellWorkingDirectory := filepath.Join(getWorkspaceDocsRoot(), hcpo.GetWorkspacePath(), executionPath)
+	shellWorkingDirectory := filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), executionPath)
 
 	// Get step config for code execution mode: step config > workflow/preset default
 	stepConfig := getAgentConfigs(step)
@@ -368,17 +368,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		skipExecutionCleanup = hcpo.executionOptions.SkipExecutionCleanup
 	}
 
-	// Note: CurrentTodos and ProgressSummary are not populated here because
-	// the LLM manages tasks.md directly via shell commands and reads it directly
+	// Build folder guard paths for prompt (same logic as executeTodoTaskStep setup)
+	docsRoot := GetPromptDocsRoot()
+	baseWorkspacePath := hcpo.GetWorkspacePath()
+	stepID := step.GetID()
+	if stepID == "" {
+		stepID = fmt.Sprintf("step-%d", stepIndex+1)
+	}
+	var fgStepExecPath, fgExecPath string
+	if hcpo.selectedRunFolder != "" {
+		fgStepExecPath = filepath.Join(baseWorkspacePath, "runs", hcpo.selectedRunFolder, "execution", stepPath)
+		fgExecPath = filepath.Join(baseWorkspacePath, "runs", hcpo.selectedRunFolder, "execution")
+	} else {
+		fgStepExecPath = filepath.Join(baseWorkspacePath, "execution", stepPath)
+		fgExecPath = filepath.Join(baseWorkspacePath, "execution")
+	}
+	fgLearningsPath := filepath.Join(baseWorkspacePath, "learnings", stepID)
+	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
+	fgReadPaths := []string{fgLearningsPath, fgExecPath, baseWorkspacePath, fgKnowledgebasePath}
+	fgWritePaths := []string{fgStepExecPath, fgKnowledgebasePath, fgLearningsPath}
+
 	templateVars := map[string]string{
 		// Resolve variables in step metadata
 		"StepTitle":               ResolveVariables(step.GetTitle(), hcpo.variableValues),
 		"StepDescription":         ResolveVariables(step.GetDescription(), hcpo.variableValues),
 		"StepSuccessCriteria":     ResolveVariables(step.GetSuccessCriteria(), hcpo.variableValues),
-		"StepContextDependencies": strings.Join(ResolveVariablesArray(previousContextFiles, hcpo.variableValues), ", "),
-		"WorkspacePath":           filepath.Join(getWorkspaceDocsRoot(), hcpo.GetWorkspacePath()),
+		"StepContextDependencies": strings.Join(ResolveDependencyPaths(
+			ResolveVariablesArray(previousContextFiles, hcpo.variableValues),
+			stepIndex, allSteps, fgExecPath, docsRoot, hcpo.variableValues,
+		), ", "),
+		"WorkspacePath":           filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath()),
 		"StepNumber":              fmt.Sprintf("step-%d", stepIndex+1),
-		"StepExecutionPath":       filepath.Join(getWorkspaceDocsRoot(), hcpo.GetWorkspacePath(), executionPath),
+		"StepExecutionPath":       filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), executionPath),
 		"ShellWorkingDirectory":   shellWorkingDirectory,
 		"PredefinedRoutes":        routesBuilder.String(),
 		"EnableGenericAgent":      fmt.Sprintf("%t", step.EnableGenericAgent),
@@ -390,7 +411,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 		// Add code execution mode and knowledgebase flags
 		"IsCodeExecutionMode":    fmt.Sprintf("%v", isCodeExecutionMode),
 		"UseKnowledgebase":       fmt.Sprintf("%v", useKnowledgebase),
-		"SkipExecutionCleanup":   fmt.Sprintf("%v", skipExecutionCleanup), // Skip cleanup mode flag for state verification prompt
+		"SkipExecutionCleanup":   fmt.Sprintf("%v", skipExecutionCleanup),
+		// Workspace paths and folder guard (consistent with execution agent)
+		"FolderGuardReadPaths":  strings.Join(toAbsPaths(docsRoot, fgReadPaths), ", "),
+		"FolderGuardWritePaths": strings.Join(toAbsPaths(docsRoot, fgWritePaths), ", "),
+		"KnowledgebasePath":     filepath.Join(docsRoot, fgKnowledgebasePath),
+		"WorkflowRoot":          filepath.Join(docsRoot, baseWorkspacePath),
 	}
 
 	// Build previous steps summary (includes descriptions, output files, and execution results like human_input responses)
@@ -483,18 +509,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 		}
 	}
 
-	// 2. Tiered mode: use optimization state to select tier.
-	// Optimized steps with built skills use Tier 2 (Medium) for the orchestrator.
-	// The orchestrator still needs some reasoning for task planning and routing, so use Medium not Low.
+	// 2. Tiered mode: todo task orchestrators default to Tier 1 (High).
+	// Keep the orchestrator on the highest tier even for optimized steps so routing
+	// and recovery decisions always use the most capable model unless explicitly overridden.
 	if hcpo.tierResolver == nil {
 		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver is nil for step %s — tiered mode is required for todo task orchestrator", stepPath))
 	}
 	tier := TierHigh
-	if stepConfig != nil &&
-		stepConfig.Optimized != nil && *stepConfig.Optimized {
-		// Orchestrator needs more reasoning than execution agents, so Medium not Low
-		tier = TierMedium
-	}
 	llmConfig := hcpo.tierResolver.ResolveTier(tier)
 	if llmConfig == nil {
 		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver returned nil for Tier %d (%s) on step %s", int(tier), TierLevelLabel(tier), stepPath))
@@ -578,11 +599,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	}
 	defer agent.Close()
 
-	// CLI providers (claude-code, gemini-cli) keep IsCodeExecutionMode=true because they ARE
-	// code execution environments. Set ShowToolsSection so they get an explicit tool listing.
+	// Sync template vars with actual agent config — the factory may have overridden
+	// code execution mode (for CLI providers) or tool search mode after template vars were built.
 	if agent.GetConfig() != nil {
+		if agent.GetConfig().UseCodeExecutionMode {
+			templateVars["IsCodeExecutionMode"] = "true"
+		}
+		if agent.GetConfig().UseToolSearchMode {
+			templateVars["UseToolSearchMode"] = "true"
+		}
+		// Show tools reference section for CLI providers ONLY when NOT in code execution mode.
+		// In code exec mode, the {{TOOL_STRUCTURE}} JSON already provides the authoritative tool index.
 		provider := agent.GetConfig().LLMConfig.Primary.Provider
-		if isCliProviderForPrompt(provider) {
+		if isCliProviderForPrompt(provider) && !agent.GetConfig().UseCodeExecutionMode {
 			templateVars["ShowToolsSection"] = "true"
 		}
 	}

@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { prism } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Loader2, Bot, User, Zap, XCircle, CheckCircle, Clock } from 'lucide-react';
@@ -80,6 +81,7 @@ const MessageList: React.FC<MessageListProps> = ({ messages, isStreaming }) => (
               <div className="text-base whitespace-pre-wrap break-words">
                 {message.type === 'assistant' ? (
                   <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
                     components={{
                       code(props: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
                         const { className, children, inline, ...rest } = props;

@@ -4,6 +4,7 @@ import { EventList } from './events'
 import { BackgroundAgentsStatusBar } from './events/BackgroundAgentsStatusBar'
 import { Card, CardContent } from './ui/Card'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useChatStore } from '../stores'
 import { agentApi, getApiBaseUrl } from '../services/api'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -48,6 +49,26 @@ const getMarkdownComponents = (compact: boolean) => ({
   ),
   strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold text-gray-900 dark:text-gray-100">{children}</strong>,
   em: ({ children }: { children?: React.ReactNode }) => <em className="italic text-gray-800 dark:text-gray-200">{children}</em>,
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="overflow-x-auto my-4 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+      <table className="min-w-full border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }: { children?: React.ReactNode }) => (
+    <thead className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">{children}</thead>
+  ),
+  tbody: ({ children }: { children?: React.ReactNode }) => (
+    <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">{children}</tbody>
+  ),
+  tr: ({ children }: { children?: React.ReactNode }) => (
+    <tr className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800">{children}</tr>
+  ),
+  th: ({ children }: { children?: React.ReactNode }) => (
+    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">{children}</th>
+  ),
+  td: ({ children }: { children?: React.ReactNode }) => (
+    <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{children}</td>
+  ),
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
     const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
     const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
@@ -210,7 +231,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
             </div>
             {currentStreamingText && (
               <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[10px]' : 'text-xs'}`}>
-                <ReactMarkdown components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {currentStreamingText}
                 </ReactMarkdown>
                 <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
@@ -234,7 +255,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
           </summary>
           <div className="mt-1 border-l-2 border-gray-200 dark:border-gray-700 pl-2">
             <div className={`prose prose-xs max-w-none dark:prose-invert min-w-0 ${compact ? 'text-[9px]' : 'text-[10px]'} opacity-75`}>
-              <ReactMarkdown components={markdownComponents}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                 {completedStreamingText}
               </ReactMarkdown>
             </div>
@@ -259,7 +280,7 @@ export const EventDisplay = React.memo<EventDisplayProps>(({ onFeedbackSubmitted
           <Card className="border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20 shadow-lg min-w-0">
             <CardContent className={`${compact ? 'p-3' : 'p-6'} min-w-0`}>
               <div className={`prose ${compact ? 'prose-xs' : 'prose-sm'} max-w-none dark:prose-invert min-w-0`}>
-                <ReactMarkdown components={markdownComponents}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                   {finalResponse}
                 </ReactMarkdown>
               </div>

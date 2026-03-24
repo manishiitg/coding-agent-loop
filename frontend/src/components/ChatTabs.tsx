@@ -26,9 +26,9 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   } = useChatStore()
 
   const isHiddenOrganizationTab = useCallback((tab: ChatTab) => {
-    if (tab.metadata?.isOrganizationAssistant === true) return true
-    const normalizedName = tab.name.toLowerCase()
-    return normalizedName === 'organization assistant' || normalizedName.startsWith('org chat ')
+    // Only hide tabs explicitly marked as org assistant via metadata.
+    // Never match by tab name — that can hide normal chat tabs.
+    return tab.metadata?.isOrganizationAssistant === true
   }, [])
   
   // Use prop if provided, otherwise use store value

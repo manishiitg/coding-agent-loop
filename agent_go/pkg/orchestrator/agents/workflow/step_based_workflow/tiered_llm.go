@@ -134,11 +134,6 @@ func (tr *TierResolver) ResolveForLearning(maturity LearningMaturity) (*orchestr
 	}
 }
 
-// ResolveForValidation returns the LLM for validation agents (always Tier 3)
-func (tr *TierResolver) ResolveForValidation() (*orchestrator.LLMConfig, TierLevel) {
-	return tr.ResolveTier(TierLow), TierLow
-}
-
 // Note: Phase agents use presetPhaseLLM which is independently configured (not part of tiered allocation).
 // No resolver method is needed since phase agents don't have maturity-based selection.
 

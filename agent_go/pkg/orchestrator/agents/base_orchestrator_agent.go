@@ -129,7 +129,7 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.MaxTurns,
 		boa.config.LLMConfig.Primary.Provider,
 		boa.logger,
-		false,                                 // cacheOnly - not used in orchestrator agents
+		false, // cacheOnly - not used in orchestrator agents
 		boa.config.EnableContextOffloading,
 		boa.config.LargeOutputThreshold,       // Token threshold for context offloading
 		boa.config.EnableContextSummarization, // Context summarization configuration
@@ -142,16 +142,24 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 		boa.config.ContextEditingThreshold,
 		boa.config.ContextEditingTurnThreshold,
 		boa.config.EnableParallelToolExecution, // Parallel tool execution
-		&boa.config.LLMConfig,        // Pass LLMConfig
-		boa.config.APIKeys,          // Pass API keys
-		boa.config.MCPSessionID,     // MCP session ID for connection sharing
-		boa.config.RuntimeOverrides, // Runtime config overrides for MCP servers
+		&boa.config.LLMConfig,                  // Pass LLMConfig
+		boa.config.APIKeys,                     // Pass API keys
+		boa.config.MCPSessionID,                // MCP session ID for connection sharing
+		boa.config.RuntimeOverrides,            // Runtime config overrides for MCP servers
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create base agent: %w", err)
 	}
 
 	boa.baseAgent = baseAgent
+
+	// Set prompt log label for agent prompt logging
+	// Prefer the unique agent name (e.g. "step-5-execution-review-trades") over the generic type
+	if boa.config.AgentName != "" {
+		boa.baseAgent.agent.PromptLogLabel = boa.config.AgentName
+	} else {
+		boa.baseAgent.agent.PromptLogLabel = string(boa.agentType)
+	}
 
 	// Append the agent-specific prompt to the existing system prompt
 	boa.baseAgent.agent.AppendSystemPrompt(boa.systemPrompt)
@@ -162,15 +170,6 @@ func (boa *BaseOrchestratorAgent) Initialize(ctx context.Context) error {
 func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llmtypes.MessageContent, schema string, systemPrompt string, overwriteSystemPrompt bool) (T, []llmtypes.MessageContent, error) {
 	startTime := time.Now()
 
-	// Auto-emit agent start event
-	boa.emitAgentStartEvent(ctx, templateVars)
-
-	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
-	// with this agent's correlation ID (BaseOrchestratorAgent is only used
-	// for orchestrator step agents, never the main chat agent).
-	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
-	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
-
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
 	if boa.userMessageProcessor != nil {
@@ -178,6 +177,15 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 	} else {
 		userMessage = inputProcessor(templateVars)
 	}
+
+	// Auto-emit agent start event (after computing user message so it can be included)
+	boa.emitAgentStartEvent(ctx, templateVars, systemPrompt, userMessage)
+
+	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
+	// with this agent's correlation ID (BaseOrchestratorAgent is only used
+	// for orchestrator step agents, never the main chat agent).
+	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
+	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
 
 	// Get the base agent for structured output
 	baseAgent := boa.baseAgent
@@ -256,15 +264,6 @@ func ExecuteStructuredWithInputProcessor[T any](boa *BaseOrchestratorAgent, ctx 
 func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgent, ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llmtypes.MessageContent, schema string, systemPrompt string, overwriteSystemPrompt bool, toolName string, toolDescription string) (T, []llmtypes.MessageContent, error) {
 	startTime := time.Now()
 
-	// Auto-emit agent start event
-	boa.emitAgentStartEvent(ctx, templateVars)
-
-	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
-	// with this agent's correlation ID (BaseOrchestratorAgent is only used
-	// for orchestrator step agents, never the main chat agent).
-	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
-	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
-
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
 	if boa.userMessageProcessor != nil {
@@ -272,6 +271,15 @@ func ExecuteStructuredWithInputProcessorViaTool[T any](boa *BaseOrchestratorAgen
 	} else {
 		userMessage = inputProcessor(templateVars)
 	}
+
+	// Auto-emit agent start event (after computing user message so it can be included)
+	boa.emitAgentStartEvent(ctx, templateVars, systemPrompt, userMessage)
+
+	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
+	// with this agent's correlation ID (BaseOrchestratorAgent is only used
+	// for orchestrator step agents, never the main chat agent).
+	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
+	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
 
 	// Get the base agent for structured output
 	baseAgent := boa.baseAgent
@@ -386,15 +394,6 @@ func (boa *BaseOrchestratorAgent) ExecuteWithInputProcessor(ctx context.Context,
 func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Context, templateVars map[string]string, inputProcessor func(map[string]string) string, conversationHistory []llmtypes.MessageContent, templateData interface{}, systemPrompt string, overwriteSystemPrompt bool) (string, []llmtypes.MessageContent, error) {
 	startTime := time.Now()
 
-	// Auto-emit agent start event
-	boa.emitAgentStartEvent(ctx, templateVars)
-
-	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
-	// with this agent's correlation ID (BaseOrchestratorAgent is only used
-	// for orchestrator step agents, never the main chat agent).
-	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
-	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
-
 	// Use userMessageProcessor if set, otherwise use provided inputProcessor
 	var userMessage string
 	if boa.userMessageProcessor != nil {
@@ -402,6 +401,15 @@ func (boa *BaseOrchestratorAgent) ExecuteWithTemplateValidation(ctx context.Cont
 	} else {
 		userMessage = inputProcessor(templateVars)
 	}
+
+	// Auto-emit agent start event (after computing user message so it can be included)
+	boa.emitAgentStartEvent(ctx, templateVars, systemPrompt, userMessage)
+
+	// Always mark as sub-agent so ContextAwareEventBridge tags tool events
+	// with this agent's correlation ID (BaseOrchestratorAgent is only used
+	// for orchestrator step agents, never the main chat agent).
+	agentCtx := context.WithValue(ctx, events.AgentSessionIDKey, boa.agentSessionID)
+	agentCtx = context.WithValue(agentCtx, events.IsSubAgentContextKey, true)
 
 	// Validate template fields at compile time (skip validation if templateData is nil)
 	if templateData != nil {
@@ -514,7 +522,7 @@ func (boa *BaseOrchestratorAgent) emitEvent(ctx context.Context, eventType basee
 }
 
 // emitAgentStartEvent emits an agent start event automatically
-func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string) {
+func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templateVars map[string]string, systemPrompt string, userMessage string) {
 	// Removed verbose logging
 
 	// Generate unique agent session ID for correlating start/end events
@@ -523,6 +531,31 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 	agentName := string(boa.agentType)
 	if boa.baseAgent != nil {
 		agentName = boa.baseAgent.name
+	}
+
+	// Build full system prompt for the event
+	// If a systemPrompt override is provided, combine it with appended supplementary prompts.
+	// Otherwise, read the current full prompt from the agent (which already includes appended prompts).
+	// Note: {{TOOL_STRUCTURE}} placeholder is resolved later by SetSystemPrompt, so replace it
+	// with a short marker for the event to keep the prompt readable.
+	var fullSystemPrompt string
+	if boa.baseAgent != nil {
+		if mcpAg := boa.baseAgent.Agent(); mcpAg != nil {
+			if systemPrompt != "" {
+				fullSystemPrompt = systemPrompt
+				for _, p := range mcpAg.GetAppendedSystemPrompts() {
+					fullSystemPrompt += "\n\n" + p
+				}
+			} else {
+				fullSystemPrompt = mcpAg.GetSystemPrompt()
+			}
+		}
+	}
+	// Resolve {{TOOL_STRUCTURE}} placeholder with actual tool index
+	if boa.baseAgent != nil {
+		if mcpAg := boa.baseAgent.Agent(); mcpAg != nil {
+			fullSystemPrompt = mcpAg.ResolveToolStructure(fullSystemPrompt)
+		}
 	}
 
 	eventData := &events.OrchestratorAgentStartEvent{
@@ -539,6 +572,8 @@ func (boa *BaseOrchestratorAgent) emitAgentStartEvent(ctx context.Context, templ
 		MaxTurns:             boa.config.MaxTurns,
 		UseCodeExecutionMode: boa.config.UseCodeExecutionMode,
 		UseToolSearchMode:    boa.config.UseToolSearchMode,
+		SystemPrompt:         fullSystemPrompt,
+		UserMessage:          userMessage,
 	}
 
 	boa.emitEvent(ctx, events.OrchestratorAgentStart, eventData)
@@ -599,6 +634,10 @@ func (boa *BaseOrchestratorAgent) emitAgentEndEventWithStructuredResponse(ctx co
 // createLLM creates an LLM instance based on the agent configuration
 // Uses the unified LLMConfig (Primary + Fallbacks) as the source of truth
 func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
+	if boa.config != nil && boa.config.LLMFactory != nil {
+		return boa.config.LLMFactory()
+	}
+
 	// Generate trace ID for this agent session
 	traceID := observability.TraceID(fmt.Sprintf("%s-agent-%d", boa.agentType, time.Now().UnixNano()))
 
@@ -637,11 +676,11 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 	var llmAPIKeys *llm.ProviderAPIKeys
 	if boa.config.APIKeys != nil {
 		llmAPIKeys = &llm.ProviderAPIKeys{
-			OpenRouter: boa.config.APIKeys.OpenRouter,
-			OpenAI:     boa.config.APIKeys.OpenAI,
-			Anthropic:  boa.config.APIKeys.Anthropic,
-			Vertex:     boa.config.APIKeys.Vertex,
-			GeminiCLI:  boa.config.APIKeys.GeminiCLI,
+			OpenRouter:        boa.config.APIKeys.OpenRouter,
+			OpenAI:            boa.config.APIKeys.OpenAI,
+			Anthropic:         boa.config.APIKeys.Anthropic,
+			Vertex:            boa.config.APIKeys.Vertex,
+			GeminiCLI:         boa.config.APIKeys.GeminiCLI,
 			MiniMax:           boa.config.APIKeys.MiniMax,
 			MiniMaxCodingPlan: boa.config.APIKeys.MiniMaxCodingPlan,
 		}

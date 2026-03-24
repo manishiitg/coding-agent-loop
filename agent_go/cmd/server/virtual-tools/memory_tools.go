@@ -14,7 +14,7 @@ import (
 )
 
 // MemoryFolderPath is the default workspace folder for agent memories
-const MemoryFolderPath = "Plans/memories"
+const MemoryFolderPath = "Chats/memories"
 
 // MemoryFolderKey is the context key for overriding the memory folder (e.g. per-project memories)
 const MemoryFolderKey delegationContextKey = "memory_folder"
@@ -40,7 +40,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "save_memory",
-			Description: "Save important information to persistent memory with full detail. Spawns a background memory agent that intelligently categorizes and stores the memory in Plans/memories/. Returns immediately — the agent runs in the background. Use this for decisions (including reasoning and alternatives), preferences, learnings, debugging insights, architectural context, and important project context that should persist across sessions. Include relevant code snippets, file paths, and commands.",
+			Description: "Save important information to persistent memory with full detail. Spawns a background memory agent that intelligently categorizes and stores the memory in Chats/memories/. Returns immediately — the agent runs in the background. Use this for decisions (including reasoning and alternatives), preferences, learnings, debugging insights, architectural context, and important project context that should persist across sessions. Include relevant code snippets, file paths, and commands.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -63,7 +63,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "recall_memory",
-			Description: "Search and retrieve relevant memories from persistent storage. Spawns a background memory agent that searches Plans/memories/ and returns a synthesized summary of matching memories. Returns immediately — you will be notified when results are ready.",
+			Description: "Search and retrieve relevant memories from persistent storage. Spawns a background memory agent that searches Chats/memories/ and returns a synthesized summary of matching memories. Returns immediately — you will be notified when results are ready.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -82,7 +82,7 @@ func CreateMemoryTools() []llmtypes.Tool {
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "compress_memory",
-			Description: "Compress and consolidate persistent memories. Spawns a background agent that reads all memory files in Plans/memories/, identifies redundant/superseded/verbose entries, merges related content, and rewrites the files cleanly. Returns immediately — the agent runs in the background.",
+			Description: "Compress and consolidate persistent memories. Spawns a background agent that reads all memory files in Chats/memories/, identifies redundant/superseded/verbose entries, merges related content, and rewrites the files cleanly. Returns immediately — the agent runs in the background.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -135,7 +135,7 @@ func loadCustomMemoryPrompt(ctx context.Context, wsClient *workspace.Client) str
 	return strings.TrimSpace(content)
 }
 
-// handleSaveMemory spawns a background agent to save a memory to Plans/memories/
+// handleSaveMemory spawns a background agent to save a memory to Chats/memories/
 func handleSaveMemory(ctx context.Context, args map[string]interface{}) (string, error) {
 	content, ok := args["content"].(string)
 	if !ok || content == "" {
@@ -525,7 +525,7 @@ Last updated: {current timestamp}
 }
 
 // GetMemoryInstructions returns system prompt instructions for the memory system.
-// Pass memoryFolder="" to use the default (Plans/memories).
+// Pass memoryFolder="" to use the default (Chats/memories).
 func GetMemoryInstructions(memoryFolder string) string {
 	if memoryFolder == "" {
 		memoryFolder = MemoryFolderPath

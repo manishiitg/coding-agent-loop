@@ -43,8 +43,8 @@ In standard Chat Mode, the agent operates in a shared workspace but is heavily r
 
 ### 2. Plan Mode (Multi-Agent Chat)
 Plan Mode (Multi-Agent Chat) isolates agents into specific task contexts.
-- **Write Restrictions**: Writes are restricted to a specific `Plans/{planID}/` folder via the `PlanFolderKey` injected into the context.
-- **Shared Memory**: The agent has read/write access to `Plans/memories/` for cross-session knowledge storage (handled by the memory tools).
+- **Write Restrictions**: Writes are restricted to a specific `Chats/{planID}/` folder via the `PlanFolderKey` injected into the context.
+- **Shared Memory**: The agent has read/write access to `Chats/memories/` for cross-session knowledge storage (handled by the memory tools).
 
 ### 3. Workflow Mode
 Workflow mode dynamically configures the folder guard for **each individual step** in the graph, providing the highest level of isolation.

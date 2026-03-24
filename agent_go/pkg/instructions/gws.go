@@ -36,5 +36,5 @@ You have access to Google Workspace services via the ` + "`gws`" + ` CLI tool. R
 ### Tips
 - Use ` + "`--params`" + ` for query parameters and ` + "`--body`" + ` for request body (JSON strings)
 - All IDs are Google resource IDs (long alphanumeric strings)
-- For detailed usage per service, read the gws-* skill files: execute_shell_command(command="cat skills/gws-drive/SKILL.md")`
+- For detailed usage per service, read the gws-* skill files: execute_shell_command(command="cat /app/workspace-docs/skills/gws-drive/SKILL.md")`
 }

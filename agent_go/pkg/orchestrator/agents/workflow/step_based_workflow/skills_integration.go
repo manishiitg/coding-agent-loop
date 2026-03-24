@@ -3,6 +3,7 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
@@ -21,57 +22,39 @@ func GetEffectiveSkills(stepConfig *AgentConfigs, orchestrator *orchestrator.Bas
 }
 
 // BuildWorkflowSkillPrompt builds the system prompt section for skills in workflow mode.
-// It provides paths to skills and instructions for the workflow agent to discover them.
-func BuildWorkflowSkillPrompt(ctx context.Context, selectedSkills []string, bo *orchestrator.BaseOrchestrator) string {
+// It provides skill metadata, absolute paths, and instructions for the agent to read them.
+// docsRoot is the absolute workspace docs path (e.g., "/app/workspace-docs/") for building absolute skill paths.
+func BuildWorkflowSkillPrompt(ctx context.Context, selectedSkills []string, bo *orchestrator.BaseOrchestrator, docsRoot string) string {
 	if len(selectedSkills) == 0 {
 		return ""
 	}
 
-	var promptParts []string
+	var sb strings.Builder
+	sb.WriteString("\n## Active Skills\n\n")
+	sb.WriteString("Skills provide reusable instructions for specific tasks. **Read each skill's SKILL.md before executing the step.**\n\n")
 
-	// Add skills discovery instructions for workflow agents
-	promptParts = append(promptParts, `
-## 🎯 Active Skills
-
-### What is a Skill?
-A skill is a reusable set of instructions that guides you on how to handle specific tasks or workflows. Skills are stored in the workspace under the "skills/" folder. Each skill contains:
-- **SKILL.md**: The main instruction file with detailed guidance
-- **Additional files**: Some skills may include reference files, templates, or examples
-
-### How to Use Skills in Workflow:
-1. **Read the skill**: Read the SKILL.md file from the workspace
-2. **Follow the instructions**: Apply the skill's methodology to the current step
-3. **Check for additional files**: List the skill folder to find supporting files
-
-**IMPORTANT: Before executing the step, read and understand the relevant skill instructions.**
-
-### Activated Skills:
-`)
-
-	// List each skill with its path
 	for _, folderName := range selectedSkills {
-		// Try to get skill metadata
+		skillPath := filepath.Join(docsRoot, "skills", folderName, "SKILL.md")
+
 		skill, err := skills.GetSkill("", folderName)
 		if err != nil {
-			// Still add the path even if we can't get metadata
-			skillPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
-			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`", folderName, skillPath))
+			// Skill not found — provide folder name and path so agent can still attempt to read it
+			sb.WriteString(fmt.Sprintf("- **%s** — `%s`\n", folderName, skillPath))
 			continue
 		}
 
-		skillPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
-		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`",
-			skill.Frontmatter.Name,
-			skill.Frontmatter.Description,
-			skillPath))
+		name := skill.Frontmatter.Name
+		if name == "" {
+			name = folderName
+		}
+		sb.WriteString(fmt.Sprintf("- **%s** — `%s`", name, skillPath))
+		if skill.Frontmatter.Description != "" {
+			sb.WriteString(fmt.Sprintf("\n  %s", skill.Frontmatter.Description))
+		}
+		sb.WriteString("\n")
 	}
 
-	promptParts = append(promptParts, `
-
-**Action Required:** Read each skill's SKILL.md from the workspace before executing the step.
-`)
-
-	return strings.Join(promptParts, "\n")
+	return sb.String()
 }
 
 // BuildSkillFolderGuardPaths builds the folder guard paths for skills.

@@ -11,6 +11,8 @@
 agent_go/configs/mcp_server_actual.json
 
 *.log
+logs/
+**/logs/
 
 bin/*
 

@@ -233,6 +233,7 @@ interface UsePlanToFlowOptions {
   onOpenVariablesSidebar?: () => void  // Callback for opening variables sidebar
   isLoadingVariables?: boolean  // Whether variables are being loaded
   layoutDirection?: 'LR' | 'TB'  // Layout direction: 'LR' = horizontal, 'TB' = vertical
+  disabled?: boolean  // Keep the last computed graph and skip layout work when hidden
 }
 
 // Dagre layout configuration - returns config based on layout direction
@@ -2056,7 +2057,8 @@ export function usePlanToFlow(
     variablesManifest = null,
     onOpenVariablesSidebar,
     isLoadingVariables = false,
-    layoutDirection = 'LR'
+    layoutDirection = 'LR',
+    disabled = false
   } = options
 
   // Get preset for code execution mode default
@@ -2111,9 +2113,17 @@ export function usePlanToFlow(
       : undefined
   )
 
+  const lastComputedFlowRef = useRef<UsePlanToFlowResult>({ nodes: [], edges: [] })
+
   return useMemo(() => {
+    if (disabled) {
+      return lastComputedFlowRef.current
+    }
+
     if (!plan || !plan.steps || plan.steps.length === 0) {
-      return { nodes: [], edges: [] }
+      const emptyResult = { nodes: [], edges: [] }
+      lastComputedFlowRef.current = emptyResult
+      return emptyResult
     }
 
     // Convert completedStepIndices to completedStepIds (Set of step IDs) for step_id-based matching
@@ -3010,12 +3020,13 @@ export function usePlanToFlow(
       })
     }
 
+    lastComputedFlowRef.current = layoutedResult
     return layoutedResult
   // Note: stepStatusMapAsMap is intentionally NOT a dependency here.
   // Status updates are handled by the fast-path effect in WorkflowCanvas (surgical node updates),
   // so we avoid recalculating the entire node/edge layout on every status change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
+  }, [disabled, plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, presetLearningLLM, availableLLMs, onRunFromStep, onOpenSidebar, isExecuting, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
 }
 
 export default usePlanToFlow

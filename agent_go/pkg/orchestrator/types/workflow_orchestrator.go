@@ -434,37 +434,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	return wo.runPlanning(ctx, objective, selectedOptions)
 }
 
-// runExecutionDebugger runs only the execution debugger phase (read-only)
-func (wo *WorkflowOrchestrator) runExecutionDebugger(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Execution Debugger Phase"))
-
-	// Create execution debugger manager directly (independent from controller)
-	debuggerManager := step_based_workflow.NewExecutionDebuggerManager(
-		wo.BaseOrchestrator,
-		wo.presetPhaseLLM, // Use phase LLM for debugging
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-	)
-
-	// Extract selected_run_folder from execution options if available
-	var runPath string
-	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
-		runPath = wo.executionOptions.SelectedRunFolder
-		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
-	} else {
-		wo.GetLogger().Info("📊 No selected_run_folder in execution options, will ask user for path")
-	}
-
-	// Run only execution debugger
-	result, err := debuggerManager.ExecutionDebuggerOnly(ctx, wo.GetWorkspacePath(), runPath)
-	if err != nil {
-		return "", fmt.Errorf("execution debugger failed: %w", err)
-	}
-
-	wo.GetLogger().Info("✅ Execution debugger completed successfully")
-	return result, nil
-}
-
 // runInteractiveWorkshop runs the interactive workshop phase
 func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
 	wo.GetLogger().Info("🔧 Starting Interactive Workshop Phase")
@@ -564,59 +533,6 @@ func (wo *WorkflowOrchestrator) runInteractiveWorkshop(ctx context.Context, obje
 	}
 
 	wo.GetLogger().Info("✅ Interactive Workshop completed successfully")
-	return result, nil
-}
-
-// runEvaluationDesignerOnly runs only the evaluation designer phase
-func (wo *WorkflowOrchestrator) runEvaluationDesignerOnly(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("📋 Starting Evaluation Designer Phase"))
-
-	// Create evaluation manager directly (independent from controller)
-	evaluationManager := step_based_workflow.NewEvaluationManager(
-		wo.BaseOrchestrator,
-		wo.presetPhaseLLM,
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-	)
-
-	// Run evaluation designer
-	result, err := evaluationManager.CreateEvaluationPlanOnly(ctx, objective, wo.GetWorkspacePath())
-	if err != nil {
-		return "", fmt.Errorf("evaluation designer failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation Designer completed successfully"))
-	return result, nil
-}
-
-// runEvaluationDebugger runs only the evaluation debugger phase
-func (wo *WorkflowOrchestrator) runEvaluationDebugger(ctx context.Context, objective string, selectedOptions *database.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info(fmt.Sprintf("🔍 Starting Evaluation Debugger Phase"))
-
-	// Create evaluation debugger manager directly
-	debuggerManager := step_based_workflow.NewEvaluationDebuggerManager(
-		wo.BaseOrchestrator,
-		wo.presetPhaseLLM, // Use phase LLM for debugging
-		wo.getSessionID(),
-		wo.getWorkflowID(),
-	)
-
-	// Extract selected_run_folder from execution options if available
-	var runPath string
-	if wo.executionOptions != nil && wo.executionOptions.SelectedRunFolder != "" {
-		runPath = wo.executionOptions.SelectedRunFolder
-		wo.GetLogger().Info(fmt.Sprintf("📊 Using selected_run_folder from execution options: %s", runPath))
-	} else {
-		wo.GetLogger().Info(fmt.Sprintf("📊 No selected_run_folder in execution options, will ask user for path"))
-	}
-
-	// Run only evaluation debugger
-	result, err := debuggerManager.EvaluationDebuggerOnly(ctx, wo.GetWorkspacePath(), runPath)
-	if err != nil {
-		return "", fmt.Errorf("evaluation debugger failed: %w", err)
-	}
-
-	wo.GetLogger().Info(fmt.Sprintf("✅ Evaluation debugger completed successfully"))
 	return result, nil
 }
 
@@ -985,10 +901,8 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				// Validate it's a known workflow status
 				validStatuses := []string{
 					database.WorkflowStatusPreVerification, // Execution phase
-					"evaluation-designer",                  // Evaluation Designer phase
 					"evaluation-execution",                 // Evaluation execution phase
 					"report-execution",                     // Final report execution phase
-					"evaluation-debugger",                  // Evaluation debugger phase
 					"workflow-builder",                     // Interactive workshop phase
 				}
 				valid := false

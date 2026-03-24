@@ -1471,15 +1471,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setVariablesManifest: (manifest: VariablesManifest | null) => {
-        const prevManifest = get().variablesManifest
-        console.log('[EXECUTION_OPTIONS_DEBUG] [useWorkflowStore] setVariablesManifest called:', {
-          hasManifest: !!manifest,
-          groupsCount: manifest?.groups?.length || 0,
-          groupIds: manifest?.groups?.map(g => g.group_id) || [],
-          prevHasManifest: !!prevManifest,
-          prevGroupsCount: prevManifest?.groups?.length || 0,
-          stackTrace: new Error().stack?.split('\n').slice(1, 4).join('\n') // First 3 stack frames
-        })
         set({ variablesManifest: manifest })
       },
 

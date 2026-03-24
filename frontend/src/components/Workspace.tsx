@@ -255,6 +255,8 @@ export default function Workspace({
   const autoExpandedChatRef = useRef(false)
   // Track whether we've auto-expanded Plans/ for multi-agent mode
   const autoExpandedMultiAgentRef = useRef(false)
+  // Track workflow folders that already have a full tree in memory
+  const fullyLoadedWorkflowFoldersRef = useRef<Set<string>>(new Set())
   // Tracks which iterations have been lazy-loaded, keyed by workflowFolder
   const loadedIterationsRef = useRef<Map<string, Set<string>>>(new Map())
   // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
@@ -537,9 +539,11 @@ export default function Workspace({
       return
     }
 
-    const builderIteration = selectedRunFolder && selectedRunFolder !== 'new'
-      ? selectedRunFolder.split('/')[0]
-      : 'iteration-0'
+    const builderIteration = availableIterations.includes('iteration-0')
+      ? 'iteration-0'
+      : (selectedRunFolder && selectedRunFolder !== 'new'
+          ? selectedRunFolder.split('/')[0]
+          : availableIterations[0] ?? null)
 
     if (!builderIteration || !availableIterations.includes(builderIteration)) {
       return
@@ -708,6 +712,7 @@ export default function Workspace({
   // Lazy-load the selected/latest iteration's full files when it changes
   useEffect(() => {
     if (selectedModeCategory !== 'workflow' || !activeFolder || !effectiveDisplayedIteration) return
+    if (fullyLoadedWorkflowFoldersRef.current.has(activeFolder)) return
     if (!availableIterations.includes(effectiveDisplayedIteration)) return
 
     const loaded = loadedIterationsRef.current.get(activeFolder)
@@ -753,8 +758,7 @@ export default function Workspace({
 
   // on data the user can't see. When the user opens the panel (minimized transitions false → true),
   // this effect re-runs and triggers the fetch automatically.
-  // In workflow mode, use max_depth=1 for the initial fetch to avoid loading all iteration files
-  // (which can be slow with many iterations). The selected/latest iteration is loaded separately.
+  // Workflow folders now prefer the full tree on first load so the files panel is complete immediately.
   useEffect(() => {
     if (!minimized) {
       // PERF: Use getState() to avoid re-running this effect when fetchFiles reference changes.
@@ -762,7 +766,18 @@ export default function Workspace({
       // which would cause this effect to re-run and re-fetch on every render.
       const { fetchFiles: fetch } = useWorkspaceStore.getState()
       if (selectedModeCategory === 'workflow') {
-        fetch(activeFolder, { maxDepth: 1 })
+        const targetFolder = activeFolder
+        fetch(targetFolder)
+          .then(() => {
+            if (targetFolder) {
+              fullyLoadedWorkflowFoldersRef.current.add(targetFolder)
+            }
+          })
+          .catch(() => {
+            if (targetFolder) {
+              fullyLoadedWorkflowFoldersRef.current.delete(targetFolder)
+            }
+          })
       } else {
         fetch(activeFolder)
       }

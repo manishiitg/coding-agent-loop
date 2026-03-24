@@ -91,7 +91,7 @@ When tiered mode is active, todo_task steps gain two additional capabilities con
 
 - Field: `todo_task_orchestrator_tier` (integer, 1/2/3)
 - Controls which tier the todo task orchestrator agent itself uses
-- When set, `selectTodoTaskOrchestratorLLM` resolves directly from the configured tier instead of falling through to maturity-based auto-resolution
+- Current default behavior: todo task orchestrators stay on Tier 1 (High) unless an explicit direct override is configured
 - UI: Dropdown in the BulkStepConfigModal tiered mode section (only shown when todo_task steps exist)
 
 ### Dynamic Sub-Agent Tier Selection

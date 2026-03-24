@@ -451,6 +451,11 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	// Set the agent's provider field
 	agent.SetProvider(config.Provider)
 
+	// Set prompt log label for agent prompt logging
+	if config.Name != "" {
+		agent.PromptLogLabel = config.Name
+	}
+
 	// Set the agent's API keys for fallback LLM creation
 	if config.APIKeys != nil {
 		// Convert from wrapper API keys to agent API keys

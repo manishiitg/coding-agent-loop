@@ -120,6 +120,9 @@ export MULTI_USER_MODE="false"
 # Enable local mode (enables CDP browser connection and other local-only features)
 export LOCAL_MODE="true"
 
+# Log all agent prompts (system prompt + user message) to logs/agent_prompts/
+export LOG_AGENT_PROMPTS="true"
+
 # Enable split execution learning feature (separates learning reading from execution)
 export SPLIT_EXECUTION_LEARNING="true"
 
@@ -165,6 +168,10 @@ export DEEP_SEARCH_MAIN_LLM_MAX_TOKENS="40000"
 export AGENT_PROVIDER="${AGENT_PROVIDER:-azure}"
 export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 
+# Gemini CLI bridge safety: restrict Gemini tool usage to execute_shell_command and get_api_spec
+# for server-launched sessions. Callers can still override by pre-setting the env var.
+export MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING="${MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING:-true}"
+
 # Available models for each provider (optional - set in .env to customize; unset = empty lists, users add custom models)
 # Removed hardcoded restrictions - use .env or leave unset for maximum flexibility
 # BEDROCK_AVAILABLE_MODELS, OPENROUTER_AVAILABLE_MODELS, OPENAI_AVAILABLE_MODELS, AZURE_AVAILABLE_MODELS
@@ -187,6 +194,16 @@ echo "✅ LLM log file truncated: logs/llm_debug.log"
 
 # Log rotation cap (used by background daemon)
 LOG_ROTATE_LINES=500000
+
+# Clean up agent prompt logs to start fresh
+echo "🧹 Cleaning logs/agent_prompts..."
+if [ -d "logs/agent_prompts" ]; then
+    rm -rf logs/agent_prompts/*
+    echo "✅ logs/agent_prompts cleaned"
+else
+    mkdir -p logs/agent_prompts
+    echo "✅ logs/agent_prompts created"
+fi
 
 # Clean up tool_output_folder to start fresh
 echo "🧹 Cleaning tool_output_folder..."

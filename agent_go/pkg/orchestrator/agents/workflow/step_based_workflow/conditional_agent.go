@@ -18,10 +18,8 @@ var conditionalSystemTemplate = MustRegisterTemplate("conditionalSystem", `## �
 **Task**: Evaluate a workflow condition (TRUE/FALSE).
 **Constraint**: Context is historical. Use tools to verify CURRENT state.
 
-{{if .CodeExecution}}
-## ⚡ CODE EXECUTION
-- Use 'execute_shell_command' with Python to verify state if needed.
-- Follow safety rules (no destructive ops).
+{{if .CodeExecutionSection}}
+{{.CodeExecutionSection}}
 {{end}}
 
 ## 🔍 PROCESS
@@ -150,11 +148,11 @@ func NewWorkflowConditionalAgent(config *agents.OrchestratorAgentConfig, logger 
 // variableValues: Variable names with actual values ({{VAR_NAME}} = value - description)
 func (hctpca *WorkflowConditionalAgent) conditionalSystemPromptProcessor(templateVars map[string]string, isCodeExecutionMode bool) string {
 	templateData := map[string]interface{}{
-		"Description":     templateVars["Description"],
-		"LearningHistory": templateVars["LearningHistory"],
-		"VariableNames":   templateVars["VariableNames"],
-		"VariableValues":  templateVars["VariableValues"],
-		"CodeExecution":   isCodeExecutionMode,
+		"Description":          templateVars["Description"],
+		"LearningHistory":      templateVars["LearningHistory"],
+		"VariableNames":        templateVars["VariableNames"],
+		"VariableValues":       templateVars["VariableValues"],
+		"CodeExecutionSection": BuildCodeExecutionSection(isCodeExecutionMode, false, ""),
 	}
 
 	var result strings.Builder

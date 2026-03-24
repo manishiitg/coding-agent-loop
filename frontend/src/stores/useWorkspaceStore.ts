@@ -346,8 +346,49 @@ const initialState = {
   autoRefresh: false
 }
 
-// Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder
-let inflightFetch: { folder: string | undefined; promise: Promise<void> } | null = null
+interface FileTreeCacheEntry {
+  files: PlannerFile[]
+  fileIndex: Map<string, PlannerFile>
+}
+
+const ROOT_FOLDER_CACHE_KEY = '__root__'
+const FILE_TREE_CACHE_LIMIT = 2
+const fileTreeCache = new Map<string, FileTreeCacheEntry>()
+
+function getFileTreeCacheKey(folder: string | undefined, maxDepth?: number): string {
+  return `${folder ?? ROOT_FOLDER_CACHE_KEY}::${maxDepth ?? 'full'}`
+}
+
+function findReusableFileTreeCacheEntry(folder: string | undefined, maxDepth?: number): FileTreeCacheEntry | null {
+  const exact = fileTreeCache.get(getFileTreeCacheKey(folder, maxDepth))
+  if (exact) return exact
+
+  if (maxDepth !== undefined) {
+    return fileTreeCache.get(getFileTreeCacheKey(folder, undefined)) ?? null
+  }
+
+  return null
+}
+
+function clearFileTreeCache() {
+  fileTreeCache.clear()
+}
+
+function setFileTreeCacheEntry(key: string, entry: FileTreeCacheEntry) {
+  if (fileTreeCache.has(key)) {
+    fileTreeCache.delete(key)
+  }
+  fileTreeCache.set(key, entry)
+
+  while (fileTreeCache.size > FILE_TREE_CACHE_LIMIT) {
+    const oldestKey = fileTreeCache.keys().next().value
+    if (!oldestKey) break
+    fileTreeCache.delete(oldestKey)
+  }
+}
+
+// Tracks in-flight fetchFiles requests to deduplicate concurrent calls for the same folder/depth
+let inflightFetch: { key: string; promise: Promise<void> } | null = null
 
 // Merge a fetched subfolder node into an existing file tree (replaces the matching stub node)
 function mergeSubfolderIntoTree(tree: PlannerFile[], targetPath: string, replacement: PlannerFile): PlannerFile[] {
@@ -368,6 +409,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       
       // File Management
       setFiles: (files) => {
+        clearFileTreeCache()
         const index = buildFileIndex(files)
         set({ files, fileIndex: index })
       },
@@ -556,6 +598,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
       // File Operations
       addFile: (file) => set((state) => {
+        clearFileTreeCache()
         const updatedFiles = [...state.files, file]
         const index = buildFileIndex(updatedFiles)
         return { files: updatedFiles, fileIndex: index }
@@ -564,6 +607,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // hierarchical tree without re-fetching the entire file list from the server.
       // Called from processWorkspaceEvent when a tool creates/updates a file not yet in the tree.
       addFileToTree: (filepath: string) => set((state) => {
+        clearFileTreeCache()
         // Skip if file already exists in the index — no work needed
         const normalizedPath = filepath.trim()
         if (state.fileIndex.has(normalizedPath)) {
@@ -592,6 +636,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         return { files: updatedFiles, fileIndex: index }
       }),
       removeFile: (filepath) => set((state) => {
+        clearFileTreeCache()
         // IMPORTANT: In workflow mode, state.files is already filtered to only contain files
         // within the workflow folder (this filtering happens in Workspace component).
         // This means we can only remove files that are within the workflow folder scope,
@@ -671,6 +716,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
       }),
       updateFile: (filepath, updates) => set((state) => {
+        clearFileTreeCache()
         const updateItem = (files: PlannerFile[]): PlannerFile[] => {
           return files.map(file => {
             if (file.filepath === filepath) {
@@ -704,57 +750,60 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         // When an explicit folder IS passed (including undefined from Workspace.tsx chat mode),
         // callers who want to update the scope should call setActiveFolder() separately.
         const effectiveFolder = folder ?? get().activeFolder ?? undefined
+        const requestKey = getFileTreeCacheKey(effectiveFolder, options?.maxDepth)
 
-        // Deduplicate: if a fetch for the same folder is already in flight, reuse it
-        if (inflightFetch && inflightFetch.folder === effectiveFolder) {
+        const applyProcessedFiles = (processedFiles: PlannerFile[]) => {
+          const currentActiveFolder = get().activeFolder
+
+          if (!effectiveFolder && currentActiveFolder) {
+            return
+          }
+
+          if (
+            effectiveFolder &&
+            currentActiveFolder &&
+            effectiveFolder !== currentActiveFolder &&
+            effectiveFolder.startsWith(currentActiveFolder + '/')
+          ) {
+            const rootNode = processedFiles.length === 1
+              ? processedFiles[0]
+              : processedFiles.find(file => file.filepath === effectiveFolder)
+
+            if (rootNode) {
+              const mergedFiles = mergeSubfolderIntoTree(get().files, effectiveFolder, rootNode)
+              const index = buildFileIndex(mergedFiles)
+              set({ files: mergedFiles, fileIndex: index, needsRefresh: false, error: null })
+            }
+            return
+          }
+
+          const index = buildFileIndex(processedFiles)
+          set({ files: processedFiles, fileIndex: index, needsRefresh: false, error: null })
+        }
+
+        const cachedEntry = findReusableFileTreeCacheEntry(effectiveFolder, options?.maxDepth)
+        if (cachedEntry) {
+          applyProcessedFiles(cachedEntry.files)
+          return
+        }
+
+        // Deduplicate: if a fetch for the same folder/depth is already in flight, reuse it
+        if (inflightFetch && inflightFetch.key === requestKey) {
           return inflightFetch.promise
         }
 
         const promise = (async () => {
           try {
             set({ loading: true, error: null })
-            console.time(`[PERF] fetchFiles (folder=${effectiveFolder || 'root'})`)
-            console.trace(`[PERF] fetchFiles called (folder=${effectiveFolder || 'root'})`)
-            console.time(`[PERF] fetchFiles-network (folder=${effectiveFolder || 'root'})`)
             const response = await agentApi.getPlannerFiles(effectiveFolder, -1, options?.maxDepth)
-            console.timeEnd(`[PERF] fetchFiles-network (folder=${effectiveFolder || 'root'})`)
             if (response.success && response.data) {
-              // Guard against mount race condition: if this fetch was unscoped (effectiveFolder
-              // was undefined) but by the time the response arrived, activeFolder has been set,
-              // it means a scoped fetch is already in flight or completed. Storing these unscoped
-              // results would replace the correctly scoped tree with the full root tree.
-              const currentActiveFolder = get().activeFolder
-              if (!effectiveFolder && currentActiveFolder) {
-                return
-              }
-
               const allFiles = response.data
-
-              // Process hierarchical structure from API
-              console.time(`[PERF] processHierarchicalFiles (${allFiles.length} files)`)
               const processedFiles = processHierarchicalFiles(allFiles)
-              console.timeEnd(`[PERF] processHierarchicalFiles (${allFiles.length} files)`)
-
-              // If fetching a subfolder of activeFolder, merge into the existing tree
-              // instead of replacing — used for lazy-loading iteration contents
-              if (effectiveFolder && currentActiveFolder &&
-                  effectiveFolder !== currentActiveFolder &&
-                  effectiveFolder.startsWith(currentActiveFolder + '/')) {
-                const rootNode = processedFiles.length === 1 ? processedFiles[0] : processedFiles.find(f => f.filepath === effectiveFolder)
-                if (rootNode) {
-                  const mergedFiles = mergeSubfolderIntoTree(get().files, effectiveFolder, rootNode)
-                  const index = buildFileIndex(mergedFiles)
-                  set({ files: mergedFiles, fileIndex: index, needsRefresh: false })
-                }
-                // If rootNode not found (e.g., iteration doesn't exist), silently skip
-              } else {
-                const index = buildFileIndex(processedFiles)
-                set({ files: processedFiles, fileIndex: index, needsRefresh: false })
-              }
-
-              // NOTE: Expansion restoration is now handled by the Workspace component
-              // which has the necessary context about workflow mode and filtered files
-              // The store just fetches and stores raw data
+              setFileTreeCacheEntry(requestKey, {
+                files: processedFiles,
+                fileIndex: buildFileIndex(processedFiles)
+              })
+              applyProcessedFiles(processedFiles)
             } else {
               const currentActiveFolder = get().activeFolder
               const isScopedSubfolderFetch = !!(
@@ -790,13 +839,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
             set({ error: message })
           } finally {
-            console.timeEnd(`[PERF] fetchFiles (folder=${effectiveFolder || 'root'})`)
             set({ loading: false })
             inflightFetch = null
           }
         })()
 
-        inflightFetch = { folder: effectiveFolder, promise }
+        inflightFetch = { key: requestKey, promise }
         return promise
       },
       
@@ -1106,6 +1154,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Reset all state
       resetWorkspaceState: () => {
         recentlyProcessedWorkspaceEvents.clear()
+        clearFileTreeCache()
         set({
           ...initialState,
           fileIndex: new Map<string, PlannerFile>(),

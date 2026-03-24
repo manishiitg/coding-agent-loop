@@ -184,7 +184,9 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
   };
 
   const colors = getColorClasses(agentColor);
-  const hasExpandableContent = event.objective || (event.input_data && event.input_data.context) || hasInputData;
+  const hasSystemPrompt = !!(event as OrchestratorAgentStartEvent & { system_prompt?: string }).system_prompt;
+  const hasUserMessage = !!(event as OrchestratorAgentStartEvent & { user_message?: string }).user_message;
+  const hasExpandableContent = event.objective || (event.input_data && event.input_data.context) || hasInputData || hasSystemPrompt || hasUserMessage;
 
   return (
     <div className={`p-2 ${colors.bg} border ${colors.border} rounded transition-all duration-200 ${isWorkshopStep ? 'border-l-4 ml-2' : ''}`}>
@@ -256,6 +258,34 @@ export const OrchestratorAgentStartEventDisplay: React.FC<OrchestratorAgentStart
                 <ConversationMarkdownRenderer 
                   content={event.input_data.context} 
                   maxHeight="400px" 
+                />
+              </div>
+            </div>
+          )}
+
+          {/* System Prompt */}
+          {hasSystemPrompt && (
+            <div>
+              <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>System Prompt:</div>
+              <div className={`${colors.bg} rounded p-3 text-sm border ${colors.border} max-h-[400px] overflow-y-auto`}>
+                <ConversationMarkdownRenderer
+                  content={(event as OrchestratorAgentStartEvent & { system_prompt?: string }).system_prompt || ''}
+                  maxHeight="400px"
+                  disablePathLinking
+                />
+              </div>
+            </div>
+          )}
+
+          {/* User Message */}
+          {hasUserMessage && (
+            <div>
+              <div className={`text-xs font-medium ${colors.textSecondary} mb-2`}>User Message:</div>
+              <div className={`${colors.bg} rounded p-3 text-sm border ${colors.border} max-h-[400px] overflow-y-auto`}>
+                <ConversationMarkdownRenderer
+                  content={(event as OrchestratorAgentStartEvent & { user_message?: string }).user_message || ''}
+                  maxHeight="400px"
+                  disablePathLinking
                 />
               </div>
             </div>

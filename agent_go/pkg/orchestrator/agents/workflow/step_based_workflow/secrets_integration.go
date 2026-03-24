@@ -23,7 +23,7 @@ func BuildWorkflowSecretPrompt(secrets []orchestrator.SecretEntry) string {
 
 	var parts []string
 	parts = append(parts, `
-## 🔐 Secrets
+## Secrets
 
 The following secrets/credentials have been provided for this task. Use them as needed.
 These are also available as environment variables in execute_shell_command (e.g., os.environ["SECRET_NAME"] in Python or $SECRET_NAME in bash).

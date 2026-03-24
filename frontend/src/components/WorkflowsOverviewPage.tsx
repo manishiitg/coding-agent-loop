@@ -726,16 +726,14 @@ const OrganizationChatPanel: React.FC<{
 
     const ensureOrgTab = async () => {
       const chatStore = useChatStore.getState()
+      // Only match tabs that were explicitly created as org assistant (via metadata flag).
+      // Never match by tab name — that can co-opt normal chat tabs.
       const orgTabs = Object.values(chatStore.chatTabs).filter(
-        tab => tab.metadata?.mode === 'multi-agent' && (
-          tab.metadata?.isOrganizationAssistant ||
-          tab.name.toLowerCase() === 'organization assistant' ||
-          tab.name.toLowerCase().startsWith('org chat ')
-        )
+        tab => tab.metadata?.isOrganizationAssistant === true
       )
 
       const primaryOrgTab = orgTabs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0]
-        const tabId = primaryOrgTab
+      const tabId = primaryOrgTab
         ? primaryOrgTab.tabId
         : await chatStore.createChatTab('Organization Assistant', {
           mode: 'multi-agent',
@@ -744,14 +742,6 @@ const OrganizationChatPanel: React.FC<{
 
       if (!primaryOrgTab) {
         chatStore.setTabConfig(tabId, { inputText: ORG_CHAT_STARTER_PROMPT })
-      } else if (
-        !primaryOrgTab.metadata?.isOrganizationAssistant ||
-        primaryOrgTab.metadata?.mode !== 'multi-agent'
-      ) {
-        chatStore.setTabMetadata(tabId, {
-          isOrganizationAssistant: true,
-          mode: 'multi-agent'
-        })
       }
 
       // Keep exactly one Organization tab.

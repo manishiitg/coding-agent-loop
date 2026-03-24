@@ -49,7 +49,10 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
       hideHeader={hideHeader}
       hideInput={effectiveHideInput}
       compact={compact}
-      tabId={workflowTabId ?? undefined}
+      // Pass null (not undefined) when no tab matches the active workflow preset.
+      // Otherwise ChatArea falls back to the global activeTabId and can briefly
+      // render the previous workflow's blocking human-feedback/auth prompt.
+      tabId={workflowTabId ?? null}
     />
   )
 })
@@ -634,23 +637,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Reconnect workflow tabs on page refresh — database-driven (not localStorage)
   // Only runs ONCE on initial mount, not on every preset switch
   useEffect(() => {
-    console.warn('[DEBUG preset_query_id] useEffect fired', { activePresetId, hasReconnected: hasReconnectedRef.current })
     if (!activePresetId) {
-      console.warn('[DEBUG preset_query_id] No activePresetId, skipping')
       return
     }
     if (hasReconnectedRef.current) {
-      console.warn('[DEBUG preset_query_id] Already reconnected, skipping')
       return
     }
 
     const reconnectWorkflowTabs = async () => {
       hasReconnectedRef.current = true
-      console.warn('[DEBUG preset_query_id] Waiting for hydration...')
       // Wait for zustand to rehydrate persisted tabs from localStorage.
       // Without this, chatTabs is empty and dedup fails → duplicate tabs.
       await waitForChatStoreHydration()
-      console.warn('[DEBUG preset_query_id] Hydration done. Starting for preset:', activePresetId)
       try {
         const { createChatTab, switchTab, getTabEvents, setTabStreaming } = useChatStore.getState()
         const { getPhaseById } = useWorkflowStore.getState()
@@ -658,11 +656,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // 1. Get active (running) sessions from in-memory cache
         //    Include both 'workflow' (execution) and 'workflow_phase' (workflow builder, plan-improvement)
         const activeSessions = await useChatStore.getState().getActiveSessions()
-        console.warn('[DEBUG preset_query_id] Active sessions:', activeSessions.length)
         const activeWorkflowSessions = activeSessions.filter(s =>
           s.agent_mode === 'workflow' || s.agent_mode === 'workflow_phase'
         )
-        console.warn('[DEBUG preset_query_id] Active workflow sessions:', activeWorkflowSessions.length)
 
         // 2. Skip DB session restore — only active (running) sessions should auto-create tabs.
         //    Old completed sessions from DB were creating unwanted tabs every time you
@@ -704,11 +700,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Add the most recent DB session not already in active list
         // Only show completed/running/error sessions (skip dismissed/inactive)
         // Only restore the latest session — older ones stay in history
-        console.warn('[DEBUG preset_query_id] DB sessions before filter:', dbSessions.map(s => ({ id: s.session_id.slice(0,8), status: s.status, mode: s.agent_mode, title: s.title?.slice(0,30) })))
         const recentDbSessions = dbSessions
           .filter(s => !activeSessionIds.has(s.session_id) && s.status !== 'dismissed' && s.status !== 'inactive')
           .slice(0, 1)
-        console.warn('[DEBUG preset_query_id] DB sessions after filter:', recentDbSessions.length)
         for (const s of recentDbSessions) {
           const wfMeta = (s.config as any)?.workflow_metadata
           // Try to extract phaseId from metadata, config, or agent_mode
@@ -733,11 +727,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           })
         }
 
-        console.warn('[DEBUG preset_query_id] Sessions to restore:', sessionsToRestore.length,
-          'active:', activeWorkflowSessions.length, 'db:', dbSessions.length)
-
         if (sessionsToRestore.length === 0) {
-          console.warn('[DEBUG preset_query_id] Nothing to restore, done')
           return
         }
 
@@ -749,10 +739,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             .map(t => t.sessionId!)
         )
         const newSessions = sessionsToRestore.filter(s => !existingSessionIds.has(s.sessionId))
-        console.warn('[DEBUG preset_query_id] New sessions (after dedup):', newSessions.length, 'existing tabs:', existingSessionIds.size)
 
         if (newSessions.length === 0) {
-          console.warn('[DEBUG preset_query_id] No new sessions to restore, done')
           return
         }
         // Only restore sessions that don't have tabs yet
@@ -763,7 +751,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         }
 
         // 4. Create tabs and load events for new sessions only
-        console.warn('[DEBUG preset_query_id] Restoring', sessionsToActuallyRestore.length, 'sessions:', sessionsToActuallyRestore.map(s => ({ id: s.sessionId.slice(0,8), status: s.status, title: s.title?.slice(0,30) })))
         let lastTabId: string | null = null
         for (const session of sessionsToActuallyRestore) {
           // Extract phase ID from workflow metadata, query, or title
@@ -817,7 +804,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             t.metadata?.mode === 'workflow' && t.metadata?.presetQueryId === activePresetId
           )
           if (existingWorkflowTabs.length === 0) {
-            console.warn('[DEBUG preset_query_id] No workflow tabs found, creating default Workflow Builder tab')
             const defaultTabId = await createChatTab('Workflow Builder', {
               mode: 'workflow',
               phaseId: 'workflow-builder',
@@ -833,10 +819,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             setShowChatArea(true)
           }
         }
-
-        console.warn('[DEBUG preset_query_id] Done — restored', sessionsToActuallyRestore.length, 'new tabs')
       } catch (error) {
-        console.warn('[DEBUG preset_query_id] Error:', error)
+        console.warn('[WorkflowReconnect] Failed to reconnect workflow tabs:', error)
       } finally {
         setIsRestoringWorkflowSessions(false)
       }

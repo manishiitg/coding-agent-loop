@@ -47,18 +47,15 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	// Build command arguments
 	var cmdArgs []string
 
-	// If CDP mode is enabled, connect to existing Chrome instead of launching headless
-	// agent-browser runs inside Docker, so we pass a full URL using host.docker.internal
-	// to reach Chrome on the host machine. Chrome rejects non-localhost Host headers,
-	// so we resolve host.docker.internal to its IP and use http://<ip>:<port>.
-	if e.CdpPort > 0 {
-		cdpURL := resolveCdpURL(e.CdpPort)
-		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
-	} else {
-		// Add stealth options to avoid bot detection (not needed for user's real Chrome)
+	// Headless mode: add stealth options to avoid bot detection (not needed for CDP/user's real Chrome)
+	// CDP mode: agent passes --cdp in args (prompt instructs it to use --cdp http://host.docker.internal:9222)
+	// The args processing below resolves host.docker.internal to an IP for Chrome compatibility.
+	isCdpMode := e.CdpPort > 0
+	if !isCdpMode {
 		cmdArgs = append(cmdArgs, "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 		cmdArgs = append(cmdArgs, "--args", "--disable-blink-features=AutomationControlled")
 	}
+	log.Printf("[BROWSER] mode=%s command=%s session=%s", map[bool]string{true: "cdp", false: "headless"}[isCdpMode], command, args["session"])
 
 	// Add session flag (required)
 	session, ok := args["session"].(string)
@@ -129,12 +126,36 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	cmdArgs = append(cmdArgs, command)
 
 	// Add command arguments if provided
+	// In CDP mode: intercept --cdp URL from agent and resolve host.docker.internal to IP
+	// If agent forgot --cdp in CDP mode, inject it as fallback
+	agentProvidedCdp := false
 	if argsArray, ok := args["args"].([]interface{}); ok {
-		for _, arg := range argsArray {
+		for i, arg := range argsArray {
 			if argStr, ok := arg.(string); ok {
+				if argStr == "--cdp" && i+1 < len(argsArray) {
+					agentProvidedCdp = true
+					// Agent passed --cdp <url> — resolve to proper CDP URL
+					cdpURL := resolveCdpURL(e.CdpPort)
+					cmdArgs = append(cmdArgs, "--cdp", cdpURL)
+					log.Printf("[BROWSER] CDP: agent passed --cdp, resolved to %s", cdpURL)
+					// Skip the next arg (the URL value the agent passed)
+					continue
+				}
+				// Skip the URL value after --cdp (already handled above)
+				if i > 0 {
+					if prevStr, ok := argsArray[i-1].(string); ok && prevStr == "--cdp" {
+						continue
+					}
+				}
 				cmdArgs = append(cmdArgs, argStr)
 			}
 		}
+	}
+	// Fallback: if CDP mode but agent didn't pass --cdp, inject it
+	if isCdpMode && !agentProvidedCdp {
+		cdpURL := resolveCdpURL(e.CdpPort)
+		cmdArgs = append(cmdArgs, "--cdp", cdpURL)
+		log.Printf("[BROWSER] CDP: agent omitted --cdp, injected fallback %s", cdpURL)
 	}
 
 	// Always add --json for machine-readable output

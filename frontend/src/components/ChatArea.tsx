@@ -37,6 +37,50 @@ import {
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
 const EMPTY_EVENTS: PollingEvent[] = []
+const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
+const AUTO_NOTIFICATION_MAX_AGE_MS = 5 * 60 * 1000
+
+function getEventTimestampMs(event: PollingEvent): number | null {
+  if (!event.timestamp) return null
+  const parsed = Date.parse(event.timestamp)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatAutoNotificationTime(event: PollingEvent): string {
+  const ts = getEventTimestampMs(event)
+  return new Date(ts ?? Date.now()).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  })
+}
+
+function isStaleAutoNotificationEvent(event: PollingEvent): boolean {
+  const ts = getEventTimestampMs(event)
+  return ts !== null && Date.now() - ts > AUTO_NOTIFICATION_MAX_AGE_MS
+}
+
+function getQueuedAutoNotificationTimestampMs(message: string): number | null {
+  const match = message.match(/\[(\d{2}):(\d{2}):(\d{2})\]/)
+  if (!match) return null
+
+  const now = new Date()
+  const parsed = new Date(now)
+  parsed.setHours(Number(match[1]), Number(match[2]), Number(match[3]), 0)
+
+  // Handle notifications carried across midnight.
+  if (parsed.getTime() - now.getTime() > 60 * 1000) {
+    parsed.setDate(parsed.getDate() - 1)
+  }
+
+  return parsed.getTime()
+}
+
+function isStaleQueuedAutoNotification(message: string): boolean {
+  const ts = getQueuedAutoNotificationTimestampMs(message)
+  return ts !== null && Date.now() - ts > AUTO_NOTIFICATION_MAX_AGE_MS
+}
 
 const STEP_TYPES = [
   { name: 'Regular', desc: 'LLM agent executes instructions and writes output files' },
@@ -1192,6 +1236,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // (includes execution, learning, eval, and generic agents)
         const isWorkshopSubAgent = !isWorkshopWrapper && !!workshopStepId
         if ((isWorkshopWrapper || isWorkshopSubAgent) && hasUserSentMessageRef.current) {
+          if (isStaleAutoNotificationEvent(event)) {
+            console.log('[WORKSHOP] Skipping stale auto-notification event', {
+              eventType: event.type,
+              agentType,
+              timestamp: event.timestamp,
+            })
+            continue
+          }
+
           const agentName = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'unknown') as string
           const success = (innerData?.success ?? agentEvent?.success) as boolean
           const result = (innerData?.result ?? agentEvent?.result ?? '') as string
@@ -1206,12 +1259,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             console.log('[WORKSHOP] Skipping notification for step', { agentName, stepType, isCancelled })
           } else {
             const truncated = result.length > 5000 ? result.substring(0, 5000) + '...' : result
-            const timestamp = new Date().toLocaleTimeString()
+            const timestamp = formatAutoNotificationTime(event)
             const runFolder = inputData?.run_folder ?? ''
             const runInfo = runFolder ? ` [run: ${runFolder}]` : ''
 
             // Prefix all notifications so the LLM knows these are automated, not user messages
-            const AUTO_PREFIX = '[AUTO-NOTIFICATION] '
+            const AUTO_PREFIX = `${AUTO_NOTIFICATION_PREFIX} `
             let notification: string
             if (agentType === 'workshop-step-learning') {
               notification = success
@@ -1384,6 +1437,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (selectedModeCategory === 'workflow') {
       for (const event of response.events as PollingEvent[]) {
         if (event.type === 'todo_task_step_completed' && hasUserSentMessageRef.current) {
+          if (isStaleAutoNotificationEvent(event)) {
+            console.log('[WORKFLOW] Skipping stale todo completion auto-notification', {
+              timestamp: event.timestamp,
+            })
+            continue
+          }
+
           const eventData = event.data as Record<string, unknown> | undefined
           const todoStepData = (eventData?.data as Record<string, unknown>) || eventData
           const stepTitle = todoStepData?.step_title as string | undefined
@@ -1391,7 +1451,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             const dedupeKey = `${stepTitle}::todo-step`
             if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
               notifiedWorkshopAgentsRef.current.add(dedupeKey)
-              const notification = `[AUTO-NOTIFICATION] [STEP COMPLETED] [${new Date().toLocaleTimeString()}] ${stepTitle} finished successfully.`
+              const notification = `${AUTO_NOTIFICATION_PREFIX} [STEP COMPLETED] [${formatAutoNotificationTime(event)}] ${stepTitle} finished successfully.`
               const currentQueue = chatStore.getTabConfig(tab.tabId)?.queuedMessages || []
               chatStore.setTabConfig(tab.tabId, { queuedMessages: [...currentQueue, notification] })
             }
@@ -2028,16 +2088,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const freshWorkflowPreset = (selectedModeCategory === 'workflow')
       ? useGlobalPresetStore.getState().getActivePreset('workflow')
       : null
+    // Only include user-added file context (from multi-agent tab config).
+    // Workflow mode passes the workspace folder via workflow_context_paths in execution options,
+    // so it should NOT auto-append the folder to the query text.
     let effectiveFileContext: Array<{ name: string; path: string; type: 'file' | 'folder' }> = []
     if (selectedModeCategory === 'multi-agent' && currentTab?.config) {
       effectiveFileContext = currentTab.config.fileContext
-    } else if (selectedModeCategory === 'workflow' && freshWorkflowPreset?.selectedFolder) {
-      const folderPath = freshWorkflowPreset.selectedFolder.filepath
-      effectiveFileContext = [{
-        name: folderPath.split('/').pop() || folderPath,
-        path: folderPath,
-        type: (freshWorkflowPreset.selectedFolder.type || 'folder') as 'file' | 'folder'
-      }]
     }
 
     const queryWithContext = effectiveFileContext.length > 0
@@ -2148,21 +2204,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       const chatPresetId = chatPreset?.id || null
       const workflowPresetId = workflowPreset?.id || null
-
-      // DEBUG: trace preset_query_id resolution
-      console.log('[DEBUG preset_query_id]', {
-        correctAgentMode,
-        selectedModeCategory,
-        selectedWorkflowPreset,
-        workflowPresetId,
-        chatPresetId,
-        isWorkflowPhaseChat: selectedModeCategory === 'workflow'
-          && currentTab?.metadata?.phaseId
-          && isChatCompatiblePhase(currentTab?.metadata?.phaseId),
-        tabMetadata: currentTab?.metadata,
-        activeWorkflowPresetFromStore: presetStore.getActivePreset('workflow')?.id,
-        activePresetIds: useGlobalPresetStore.getState().activePresetIds,
-      })
 
       // Determine mode flags using helper
       const useCodeExecutionMode = determineModeFlag({
@@ -2392,9 +2433,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     delete lockStore[`queue_lock_${tabId}`]
 
     // Separate human messages from auto-notifications
-    const AUTO_PREFIX = '[AUTO-NOTIFICATION]'
-    const humanMessages = queuedMessages.filter(m => !m.startsWith(AUTO_PREFIX))
-    const autoMessages = queuedMessages.filter(m => m.startsWith(AUTO_PREFIX))
+    const humanMessages = queuedMessages.filter(m => !m.startsWith(AUTO_NOTIFICATION_PREFIX))
+    const autoMessages = queuedMessages.filter(m => m.startsWith(AUTO_NOTIFICATION_PREFIX))
+    const freshAutoMessages = autoMessages.filter(m => !isStaleQueuedAutoNotification(m))
+    const droppedAutoCount = autoMessages.length - freshAutoMessages.length
 
     // Human messages: combine all as-is
     // Auto-notifications: if multiple, condense to first line of each to avoid overwhelming the agent
@@ -2403,16 +2445,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (humanMessages.length > 0) {
       parts.push(humanMessages.map(m => m.trim()).join('\n\n'))
     }
-    if (autoMessages.length > 0) {
-      if (autoMessages.length === 1) {
-        parts.push(autoMessages[0].trim())
+    if (freshAutoMessages.length > 0) {
+      if (freshAutoMessages.length === 1) {
+        parts.push(freshAutoMessages[0].trim())
       } else {
         // Multiple auto-notifications: take first line of each and combine into a compact summary
-        const summaryLines = autoMessages.map(m => {
+        const summaryLines = freshAutoMessages.map(m => {
           const firstLine = m.trim().split('\n')[0]
           return firstLine
         })
-        parts.push(`[AUTO-NOTIFICATION] Multiple step completions:\n${summaryLines.map(l => l.replace(AUTO_PREFIX, '').trim()).map(l => `- ${l}`).join('\n')}`)
+        parts.push(`${AUTO_NOTIFICATION_PREFIX} Multiple step completions:\n${summaryLines.map(l => l.replace(AUTO_NOTIFICATION_PREFIX, '').trim()).map(l => `- ${l}`).join('\n')}`)
       }
     }
     combinedMessage = parts.join('\n\n')
@@ -2423,7 +2465,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Small delay to ensure state is fully processed before sending
     setTimeout(async () => {
       try {
-        const isAutoOnly = humanMessages.length === 0 && autoMessages.length > 0
+        if (droppedAutoCount > 0) {
+          console.log('[QUEUE_DEBUG] Dropped stale auto-notifications before submit', { droppedAutoCount, tabId })
+        }
+
+        if (!combinedMessage.trim()) {
+          return
+        }
+
+        const isAutoOnly = humanMessages.length === 0 && freshAutoMessages.length > 0
         await submitQueryWithQueryRef.current(combinedMessage, undefined, { isAutoNotification: isAutoOnly })
       } catch (error) {
         logger.error('ChatArea', 'Failed to send queued messages:', error)

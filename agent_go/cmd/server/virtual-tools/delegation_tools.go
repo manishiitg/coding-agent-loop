@@ -40,7 +40,7 @@ const (
 	ReasoningLevelKey delegationContextKey = "reasoning_level"
 	// PlanEventEmitterKey is the context key for emitting workspace file events when plans are saved
 	PlanEventEmitterKey delegationContextKey = "plan_event_emitter"
-	// PlanFolderKey is the context key for the plan-specific output folder (e.g. "Plans/{planID}")
+	// PlanFolderKey is the context key for the plan-specific output folder (e.g. "Chats/{planID}")
 	PlanFolderKey delegationContextKey = "plan_folder"
 	// CapabilitiesContextKey is the context key for available capabilities (MCP servers, skills, etc.)
 	CapabilitiesContextKey delegationContextKey = "capabilities_context"
@@ -311,7 +311,7 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 					"reasoning_level": reasoningLevelParam,
 					"plan_folder": map[string]interface{}{
 						"type":        "string",
-						"description": "Optional plan folder path (e.g. 'Plans/{plan_id}'). When set, the worker's write access is restricted to this folder only. Always pass this when executing tasks from a plan.",
+						"description": "Optional plan folder path (e.g. 'Chats/{plan_id}'). When set, the worker's write access is restricted to this folder only. Always pass this when executing tasks from a plan.",
 					},
 					"tool_mode": map[string]interface{}{
 						"type":        "string",
@@ -350,13 +350,13 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "create_delegation_plan",
-			Description: "Delegate planning to a sub-agent that analyzes the objective, creates a strategy, and writes a plan.md todo list to workspace. The plan file appears in Plans/{plan_name}/ for tracking. After the plan is created, read plan.md and delegate tasks from it using the delegate tool.",
+			Description: "Delegate planning to a sub-agent that analyzes the objective, creates a strategy, and writes a plan.md todo list to workspace. The plan file appears in Chats/{plan_name}/ for tracking. After the plan is created, read plan.md and delegate tasks from it using the delegate tool.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"plan_name": map[string]interface{}{
 						"type":        "string",
-						"description": "Short kebab-case name for the plan folder (e.g. 'user-auth', 'api-refactor', 'bug-fix-login'). This becomes the folder name under Plans/. Keep it concise (2-4 words, kebab-case).",
+						"description": "Short kebab-case name for the plan folder (e.g. 'user-auth', 'api-refactor', 'bug-fix-login'). This becomes the folder name under Chats/. Keep it concise (2-4 words, kebab-case).",
 					},
 					"objective": map[string]interface{}{
 						"type":        "string",
@@ -1403,8 +1403,8 @@ You are a fully capable agent — you can do any task yourself using your tools.
 
 1. If requirements are unclear, use ` + "`human_questions`" + ` to clarify first. Skip if the request is already clear.
 2. **If the task will produce file outputs** (reports, scripts, data, code), create an output folder first:
-   execute_shell_command(command: "mkdir -p Plans/{kebab-task-name}")
-   Then pass ` + "`plan_folder: \"Plans/{kebab-task-name}\"`" + ` in the delegate call so the worker saves there.
+   execute_shell_command(command: "mkdir -p Chats/{kebab-task-name}")
+   Then pass ` + "`plan_folder: \"Chats/{kebab-task-name}\"`" + ` in the delegate call so the worker saves there.
    Skip this step for in-place tasks (e.g. editing an existing file, running a test) that don't produce new output files.
 3. Delegate the task: call ` + "`delegate(name, instruction, reasoning_level)`" + `. Call multiple times in one turn for parallel execution.
 4. **END YOUR TURN** after delegating. Tell the user what's being worked on in natural language.
@@ -1413,14 +1413,14 @@ You are a fully capable agent — you can do any task yourself using your tools.
 ### Plan Workflow (for complex multi-phase tasks)
 
 #### If an existing plan is pre-seeded (user selected a plan folder):
-1. Read the plan: execute_shell_command(command: "cat Plans/{folder}/plan.md")
-2. List existing files: execute_shell_command(command: "find Plans/{folder} -type f | sort 2>/dev/null")
+1. Read the plan: execute_shell_command(command: "cat Chats/{folder}/plan.md")
+2. List existing files: execute_shell_command(command: "find Chats/{folder} -type f | sort 2>/dev/null")
 3. **Immediately delegate the remaining unchecked tasks** — the plan already exists. Call ` + "`delegate()`" + ` for all pending tasks, passing plan_folder on each call.
 4. When tasks complete, re-read plan.md for learnings, then delegate the next batch.
 
 #### If no plan exists yet:
 1. If the user's request is vague, use ` + "`human_questions`" + ` to clarify first.
-2. Check for related existing plans: execute_shell_command(command: "ls -1 Plans/ 2>/dev/null")
+2. Check for related existing plans: execute_shell_command(command: "ls -1 Chats/ 2>/dev/null")
 3. Call ` + "`create_delegation_plan`" + ` — **END YOUR TURN** immediately after.
 4. When planning completes, call ` + "`confirm_plan_execution(plan_summary)`" + ` to present the plan for approval. **END YOUR TURN**.
 5. User approves → delegate all tasks from the first phase. User gives feedback → re-plan.
@@ -1435,7 +1435,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 
 ### Plan Folder Structure
 ` + "```" + `
-Plans/{plan_id}/
+Chats/{plan_id}/
   plan.md              ← Current active plan (ONLY this + plan_tracking.md at root)
   plan_tracking.md     ← Auto-generated: archived previous plans with timestamps
   research/            ← Research and analysis outputs
@@ -1481,21 +1481,19 @@ You are an intelligent assistant that executes tasks efficiently using delegatio
 7. When ALL work is done, summarize results to the user.
 
 ### Important
-- **Do NOT call create_delegation_plan** — skip planning entirely.
-- **Do NOT call confirm_plan_execution** — there is no plan to approve.
-- Delegate tasks directly based on the user's request.
+- **Default: delegate directly** without creating a plan — just break into sub-tasks and delegate.
 - You can still use ` + "`human_questions`" + ` or ` + "`human_feedback`" + ` if you need clarification.
-- **If the task turns out to be significantly more complex than expected** and would benefit from a structured plan, switch to plan mode: call create_delegation_plan, get user approval, then execute.
+- **Only create a plan** (via create_delegation_plan) when the task is large and complex with 3+ interdependent phases that require careful sequencing, or when the user explicitly asks for a plan.
 
 ### Output Organization
 - If an active plan folder exists for this session, first check what work is already done:
-  execute_shell_command(command: "find Plans/{folder} -type f | sort 2>/dev/null")
+  execute_shell_command(command: "find Chats/{folder} -type f | sort 2>/dev/null")
   Skip tasks whose output files already exist. Then pass plan_folder to every delegate call so workers save outputs there.
 - If no plan folder exists but the task will produce file outputs (reports, scripts, data, code), create a task folder first:
-  execute_shell_command(command: "mkdir -p Plans/{kebab-task-name}")
-  Then pass ` + "`plan_folder: \"Plans/{kebab-task-name}\"`" + ` to every delegate call so outputs land in one place.
+  execute_shell_command(command: "mkdir -p Chats/{kebab-task-name}")
+  Then pass ` + "`plan_folder: \"Chats/{kebab-task-name}\"`" + ` to every delegate call so outputs land in one place.
 - For in-place tasks (editing existing files, running tests, applying patches) that produce no new output files, no folder is needed — skip this step.
-- **NEVER instruct workers to dump files at the workspace root** — always use a descriptive sub-folder under Plans/.
+- **NEVER instruct workers to dump files at the workspace root** — always use a descriptive sub-folder under Chats/.
 - In your final summary, reference any saved file paths so the user can access them. The system will automatically convert these paths to clickable links.
 
 ### Communication Style
@@ -1561,8 +1559,8 @@ Your native tools (Bash, Read, Write, etc.) are **disabled**. All tool access go
 
 ### Tool Name Mapping
 Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, call ` + "`mcp__api-bridge__execute_shell_command`" + ` instead. Example:
-- Instructions say: execute_shell_command(command: "ls Plans/")
-- You call: mcp__api-bridge__execute_shell_command(command: "ls Plans/")
+- Instructions say: execute_shell_command(command: "ls Chats/")
+- You call: mcp__api-bridge__execute_shell_command(command: "ls Chats/")
 
 ### Calling Human Tools via HTTP API
 The following tools are NOT available as direct function calls — call them via curl through ` + "`mcp__api-bridge__execute_shell_command`" + `:

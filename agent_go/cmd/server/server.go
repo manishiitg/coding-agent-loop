@@ -104,7 +104,7 @@ type ActiveSessionInfo struct {
 	CreatedAt       time.Time `json:"created_at"`
 	Query           string    `json:"query,omitempty"`
 	LLMGuidance     string    `json:"llm_guidance,omitempty"`  // LLM guidance message for this session
-	MemoryFolder    string    `json:"memory_folder,omitempty"` // Override memory folder (default: Plans/memories)
+	MemoryFolder    string    `json:"memory_folder,omitempty"` // Override memory folder (default: Chats/memories)
 	UserID          string    `json:"-"`                       // User ID for session isolation (not exposed in JSON)
 	IsSyntheticTurn bool      `json:"is_synthetic_turn"`       // True when running an auto-notification turn (not user-initiated)
 }
@@ -2285,6 +2285,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if workflowBrowserMode == "" && preset.EnableBrowserAccess {
 					workflowBrowserMode = "headless"
 				}
+				// Propagate preset browser mode to request so getCdpPort() picks it up
+				if req.BrowserMode == "" && workflowBrowserMode != "" {
+					req.BrowserMode = workflowBrowserMode
+				}
 				if workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
 					// Resolve CDP port: prefer request, fall back to preset browser_mode
 					wfCdpPort := getCdpPort(req)
@@ -2506,9 +2510,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		workflowOrchestrator.SetHTTPSessionID(sessionID)
 
 		// Propagate CDP port for browser mode detection in execution agents
+		// getCdpPort already checks req.BrowserMode == "cdp" and defaults to 9222
 		if cdpPort := getCdpPort(req); cdpPort > 0 {
 			workflowOrchestrator.SetCdpPort(cdpPort)
-			log.Printf("[WORKFLOW] Set CDP port on orchestrator: %d", cdpPort)
+			log.Printf("[WORKFLOW] Set CDP port on orchestrator: %d (browser_mode=%s)", cdpPort, req.BrowserMode)
 		}
 
 		// Wire up live tool call query for workshop query_step_tools
@@ -3263,7 +3268,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Create new agent with streamCtx instead of r.Context()
 		log.Printf("[AGENT CONFIG DEBUG] Creating agent with ServerName: %s, UseCodeExecutionMode: %v, UseToolSearchMode: %v", serverList, useCodeExecutionMode, useToolSearchMode)
 		agentConfig := agent.LLMAgentConfig{
-			Name:               sessionID,
+			Name:               "chat-agent",
 			ServerName:         serverList, // Use full server list, not just first one
 			ConfigPath:         api.mcpConfigPath,
 			Provider:           llm.Provider(finalProvider),
@@ -4302,12 +4307,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add base instructions — skip for plan mode (multi-agent) since the
 			// main agent is an orchestrator, not a file writer. The Chats/ folder
 			// rules don't apply; background sub-agents get their own instructions.
-			if req.DelegationMode != "plan" {
-				underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
-			}
+			// Also skip for organization chat — it has its own dedicated role and tools.
+			// Resolve workspace absolute path for use in instructions.
+			// In Docker: resolves to /app/workspace-docs. Locally: resolves to the dev path.
+			// Uses the shared root (not per-user) since skills/, subagents/, etc. live there.
+			wsAbsPath, _ := filepath.Abs("../workspace-docs")
 
 			if isOrganizationChat {
 				underlyingAgent.AppendSystemPrompt(getOrganizationChatInstructions())
+			} else if req.DelegationMode != "plan" {
+				underlyingAgent.AppendSystemPrompt(GetAgentInstructions(wsAbsPath))
 			}
 
 			// Add skill builder instructions when skill-creator is active
@@ -4324,7 +4333,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Add skill instructions if skills are selected
 			if len(req.SelectedSkills) > 0 {
-				skillPrompt := buildSkillPrompt(req.SelectedSkills, getWorkspaceAPIURL())
+				skillPrompt := buildSkillPrompt(req.SelectedSkills, wsAbsPath, getWorkspaceAPIURL())
 				if skillPrompt != "" {
 					underlyingAgent.AppendSystemPrompt(skillPrompt)
 					log.Printf("[SKILLS] Added skill instructions to system prompt (%d skills)", len(req.SelectedSkills))
@@ -4355,7 +4364,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Add delegation instructions — unified autonomous mode for all delegation modes
-			if req.DelegationMode == "plan" || req.DelegationMode == "spawn" {
+			// Skip for organization chat — it has its own role and tools, delegation doesn't apply.
+			if !isOrganizationChat && (req.DelegationMode == "plan" || req.DelegationMode == "spawn") {
 				if req.PlanPhase == "execution" {
 					// Execution-only mode: skip planning, delegate directly
 					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
@@ -4538,10 +4548,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						phaseRunFolder = resolveLatestRunFolder(context.WithoutCancel(r.Context()), phaseWorkspacePath, phaseWSClient)
 					}
 				}
+				// Determine execution mode from the DB preset's resolved provider (finalProvider).
+				// CLI providers (claude-code, gemini-cli, codex-cli) use code execution mode;
+				// all others default to tool search mode for the workshop agent.
+				// This mirrors the logic in interactive_workshop_manager.go:730-732.
+				phaseIsCodeExec := finalProvider == "claude-code" || finalProvider == "gemini-cli" || finalProvider == "codex-cli"
+				phaseIsToolSearch := !phaseIsCodeExec
+				log.Printf("[WORKFLOW_PHASE] Mode detection: finalProvider=%q, isCodeExec=%v, isToolSearch=%v", finalProvider, phaseIsCodeExec, phaseIsToolSearch)
 				phaseTemplateVars := map[string]string{
 					"Objective":           phaseObjective,
 					"WorkspacePath":       phaseWorkspacePath,
-					"IsCodeExecutionMode": "true",
+					"IsCodeExecutionMode": fmt.Sprintf("%v", phaseIsCodeExec),
+					"UseToolSearchMode":   fmt.Sprintf("%v", phaseIsToolSearch),
 				}
 
 				// Pass workshop mode from frontend override (auto-detection happens after plan is loaded below)
@@ -4653,12 +4671,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Append code execution / tool search instructions from mcpagent.
 				// These tell the LLM HOW to call tools (via HTTP API, get_api_spec, etc.)
 				// Without these, the LLM guesses parameter names instead of discovering them.
-				if req.UseCodeExecutionMode {
-					codeExecInstructions := prompt.GetCodeExecutionInstructions("")
-					phaseSystemPrompt += "\n\n## Code Execution Mode\n" + codeExecInstructions
-				} else if req.UseToolSearchMode {
+				if phaseIsCodeExec {
+					codeExecInstructions := prompt.GetCodeExecutionInstructions(phaseWorkspacePath)
+					phaseSystemPrompt += "\n\n" + codeExecInstructions
+				} else if phaseIsToolSearch {
 					toolSearchInstructions := prompt.GetToolSearchInstructions()
-					phaseSystemPrompt += "\n\n## Tool Search Mode\n" + toolSearchInstructions
+					phaseSystemPrompt += "\n\n" + toolSearchInstructions
 				}
 
 				// Override the agent's system prompt — use SetSystemPrompt to properly set tracking flags
@@ -5170,13 +5188,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		chatQuery := req.Query
 
 
+		// Skip secret prompt injection for workflow phases — they inject secrets in the phase setup above.
+		// Only inject here for non-workflow chat agents (multi-agent, plain chat, etc.)
+		isWorkflowPhase := req.PhaseID != ""
 		allChatSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
-		if len(allChatSecrets) > 0 {
+		if len(allChatSecrets) > 0 && !isWorkflowPhase {
 			var secretParts []string
 			for _, s := range allChatSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
 			if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 				underlyingAgent.AppendSystemPrompt(secretPrompt)
 				log.Printf("[SECRETS] Injected %d secrets (%d global + %d user) into system prompt", len(allChatSecrets), len(allChatSecrets)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
@@ -7415,7 +7436,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
-		Name:       fmt.Sprintf("%s-sub-%d-%d", sessionID, currentDepth, time.Now().UnixNano()),
+		Name:       fmt.Sprintf("sub-agent-depth-%d", currentDepth),
 		ServerName: serverName,
 		ConfigPath: api.mcpConfigPath,
 		Provider:   provider,
@@ -7601,9 +7622,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		underlyingAgent.AddEventListener(subAgentObserver)
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
+		// Resolve workspace absolute path for sub-agent instructions (shared root, not per-user)
+		subWsAbs, _ := filepath.Abs("../workspace-docs")
+
 		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
 		if len(parentReq.SelectedSkills) > 0 {
-			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills, getWorkspaceAPIURL())
+			skillPrompt := buildSkillPrompt(parentReq.SelectedSkills, subWsAbs, getWorkspaceAPIURL())
 			if skillPrompt != "" {
 				underlyingAgent.AppendSystemPrompt(skillPrompt)
 				log.Printf("[DELEGATION] Added skill instructions to sub-agent (%d skills)", len(parentReq.SelectedSkills))
@@ -7638,7 +7662,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			for _, s := range allDelegationSecrets {
 				secretParts = append(secretParts, fmt.Sprintf("### %s\n```\n%s\n```", s.Name, s.Value))
 			}
-			secretPrompt := "\n## 🔐 Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
+			secretPrompt := "\n## Secrets\n\nThe following secrets/credentials have been provided. They are also available as environment variables in execute_shell_command with a SECRET_ prefix (e.g., os.environ[\"SECRET_MY_KEY\"] in Python or $SECRET_MY_KEY in bash).\n\n" + strings.Join(secretParts, "\n")
 			underlyingAgent.AppendSystemPrompt(secretPrompt)
 			log.Printf("[DELEGATION] Injected %d secrets (%d global + %d user) into sub-agent system prompt", len(allDelegationSecrets), len(allDelegationSecrets)-len(parentReq.DecryptedSecrets), len(parentReq.DecryptedSecrets))
 		}
@@ -7647,11 +7671,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// read/write files (Chats/, Plans/, skills/, etc.).
 		// The main agent skips this in plan mode (it's an orchestrator), but sub-agents
 		// are actual file workers that need this orientation.
-		underlyingAgent.AppendSystemPrompt(GetAgentInstructions())
+		underlyingAgent.AppendSystemPrompt(GetAgentInstructions(subWsAbs))
 		log.Printf("[DELEGATION] Added workspace folder instructions to sub-agent")
 
 		// Give sub-agents access to memory tools so they can persist key discoveries
-		// across tasks (reads from Plans/memories/ by default).
+		// across tasks (reads from Chats/memories/ by default).
 		api.activeSessionsMux.RLock()
 		subAgentMemFolder := ""
 		if sess, ok := api.activeSessions[sessionID]; ok {

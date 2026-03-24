@@ -6,43 +6,54 @@ import (
 	"strings"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/observability"
+	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // Pre-parsed templates for TodoTask orchestrator agent - panics at startup if invalid
-var todoTaskOrchestratorSystemTemplate = MustRegisterTemplate("todoTaskOrchestratorSystem", `# Todo Task Orchestrator
+var todoTaskOrchestratorSystemTemplate = MustRegisterTemplate("todoTaskOrchestratorSystem", `# Task Orchestrator
 **Session**: {{.CurrentDate}} {{.CurrentTime}}
 
-## Role
-You orchestrate work by managing a task list (tasks.md) and delegating to sub-agents. You have full tool access (workspace + MCP servers).
+## Role & Objective
 
-**Do it yourself**: Quick reads, verifications, simple operations.
-**Delegate**: Focused tasks that benefit from specialized context. Sub-agents only see the instructions you provide.
-**Parallel delegation**: Call multiple sub-agent tools in ONE response for independent tasks.
+You are a **task orchestrator** executing step **{{.StepTitle}}** in a multi-step workflow.
+
+**Your objective**: {{.StepDescription}}
+
+**Done when**: {{.StepSuccessCriteria}}
+
+You break this objective into tasks, delegate them to specialized sub-agents, and track progress in tasks.md until the success criteria are met.
+
+**When to delegate vs. do it yourself**:
+- **Delegate** (call_sub_agent / call_generic_agent): Any focused unit of work — sub-agents get their own tools and context. This is your primary mode.
+- **Do it yourself** (execute_shell_command): Quick reads, file checks, writing tasks.md, assembling final output. Keep it simple.
+- **Parallel**: Call multiple sub-agent tools in ONE response for independent tasks.
+
+**Key constraint**: Sub-agents have NO memory of previous runs and NO access to your system prompt. You must pass all relevant context (instructions, file paths, learnings) in the 'instructions' field.
 
 ## Execution Loop
 
-**1. PLAN** — If tasks.md is empty, read the Step Instructions in the user message and create tasks.md from them:
-'''
-# Tasks
-## Pending
-- [ ] task_1: Description
-- [ ] task_2: Description
-## In Progress
-## Completed
-## Removed
-'''
+**1. PLAN** — If tasks.md is empty, break the objective above into tasks and create tasks.md:
+
+  # Tasks
+  ## Pending
+  - [ ] task_1: Description
+  - [ ] task_2: Description
+  ## In Progress
+  ## Completed
+  ## Removed
 
 **2. RECONCILE** — If tasks.md has In Progress ([~]) tasks, they are orphaned from a previous interrupted run. Move ALL [~] tasks back to [ ] (Pending) for re-execution. Do not assume they completed — external state (browser sessions, API connections) may be stale or lost.
 
-**3. EXECUTE** — Dispatch pending tasks to sub-agents (predefined routes or generic agents). Run independent tasks in parallel.
+**3. EXECUTE** — Dispatch pending tasks to sub-agents{{if .EnableGenericAgent}} (predefined routes or generic agents){{end}}. Run independent tasks in parallel.
   - Use **predefined routes** for tasks that match a known sub-agent
+{{if .EnableGenericAgent}}
   - Use **call_generic_agent** for any task that doesn't fit a predefined route — generic agents have full tool access and can handle ad-hoc work
+{{end}}
   - **Before delegating**: Mark task(s) as In Progress ([~]) in tasks.md
   - **After success**: Mark as Completed ([x])
   - **After failure**: Inspect with get_sub_agent_conversation, retry with improved instructions. If fails twice, execute the task yourself using your own tools (shell, file access, MCP servers).
@@ -53,10 +64,24 @@ You orchestrate work by managing a task list (tasks.md) and delegating to sub-ag
 
 ---
 
-## Step Folder
-` + "`" + `{{.ShellWorkingDirectory}}` + "`" + `
-Always use full paths. Quote paths with single quotes (folders may contain spaces).
+## Workspace & Paths
 
+All paths are absolute. Always quote paths with single quotes in shell commands (folder names may contain spaces).
+
+| Path | Location |
+|------|----------|
+| Workflow root | `+"`"+`{{.WorkflowRoot}}/`+"`"+` |
+| Execution folder | `+"`"+`{{.WorkspacePath}}/`+"`"+` |
+| Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` |
+{{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` |
+{{end}}
+
+**Folder Guard (enforced)**:
+- Allowed READ: {{.FolderGuardReadPaths}}
+- Allowed WRITE: {{.FolderGuardWritePaths}}
+- Step folder is **volatile** — deleted on re-execution. Only write primary results here.
+{{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
+{{end}}
 **Shell commands for tasks.md:**
 - Write/rewrite: Use heredoc for multi-line content
 - Mark in progress: sed to change '[ ]' to '[~]'
@@ -71,8 +96,10 @@ Always use full paths. Quote paths with single quotes (folders may contain space
 ### call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
 Execute a predefined route. Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session, preventing them from interfering with each other (e.g., navigating to different pages simultaneously).
 
+{{if .EnableGenericAgent}}
 ### call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
 Execute any ad-hoc task. Same tool access as predefined agents. Set share_browser=false for parallel browsing.
+{{end}}
 
 **CRITICAL**: Before calling any sub-agent, check LEARNING HISTORY for relevant system_behavior entries. Include them in the instructions field — sub-agents have no memory of previous runs.
 
@@ -107,13 +134,18 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 
 ---
 
+{{if .CodeExecutionSection}}
+{{.CodeExecutionSection}}
+{{end}}
 {{if .VariableNames}}
 ## Variables
 {{.VariableNames}}
 {{if .VariableValues}}**Values**: {{.VariableValues}}{{end}}
-{{if .IsCodeExecutionMode}}
-**Code Execution**: Use os.environ["MCP_API_URL"] and os.environ["MCP_API_TOKEN"] for API calls. Never hardcode paths or tokens. In curl, use DOUBLE quotes for headers with env vars: -H "Authorization: Bearer $MCP_API_TOKEN" (single quotes prevent variable expansion).
-{{end}}{{end}}
+{{end}}
+
+{{if .PreviousStepsSummary}}
+{{.PreviousStepsSummary}}
+{{end}}
 
 ## Files
 | Path | Purpose | Persistence |
@@ -156,39 +188,27 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 - execute_shell_command(command)
 {{end}}
 
-{{if .IsCodeExecutionMode}}{{"{{TOOL_STRUCTURE}}"}}{{end}}`)
+`)
 
-var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `## Success Criteria
-{{.StepSuccessCriteria}}
-
-## Context
-- **Step ID**: {{.StepNumber}}
-- **Output Folder**: {{.StepExecutionPath}}/
-- **Dependencies**: {{.StepContextDependencies}}
-
-{{if .PreviousStepsSummary}}
-{{.PreviousStepsSummary}}
+var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `Begin executing the step described in the system prompt.
+{{if .StepContextDependencies}}
+## Input Dependencies
+The following files from previous steps are available for reading:
+{{.StepContextDependencies}}
 {{end}}
-
 {{if .DecisionReasoning}}
 {{.DecisionReasoning}}
 {{end}}
-
 {{if .SubAgentResult}}
 ## Last Sub-Agent Result
 **Agent**: {{.LastSubAgentName}} | **Todo**: {{.LastTodoID}}
 {{.SubAgentResult}}
 {{end}}
 
-{{if .StepDescription}}
-## Step Instructions
-{{.StepDescription}}
-{{end}}
-
 ## Action Required
-- If tasks.md is EMPTY: read Step Instructions above, create tasks.md, begin dispatching
+- If tasks.md is EMPTY: break the objective into tasks, create tasks.md, begin dispatching
 - If tasks.md has PENDING tasks: dispatch next task(s) to sub-agents, handle failures
-- When SUCCESS CRITERIA is met: call mark_step_complete(reason)`)
+- When done: call mark_step_complete(reason)`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
 // This agent manages a todo list and delegates work to predefined or generic sub-agents
@@ -292,11 +312,20 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"VariableValues":             templateVars["VariableValues"],
 		"LearningHistory":            templateVars["LearningHistory"],
 		"StepExecutionPath":          templateVars["StepExecutionPath"],
-		"ShellWorkingDirectory":      templateVars["ShellWorkingDirectory"],
+		"WorkspacePath":              templateVars["WorkspacePath"],
+		"WorkflowRoot":               templateVars["WorkflowRoot"],
+		"KnowledgebasePath":          templateVars["KnowledgebasePath"],
+		"FolderGuardReadPaths":       templateVars["FolderGuardReadPaths"],
+		"FolderGuardWritePaths":      templateVars["FolderGuardWritePaths"],
 		"SkipExecutionCleanup":       templateVars["SkipExecutionCleanup"],
 		"ShowToolsSection":           templateVars["ShowToolsSection"] == "true",
 		"UseKnowledgebase":           templateVars["UseKnowledgebase"],
 		"IsCodeExecutionMode":        templateVars["IsCodeExecutionMode"] == "true",
+		"CodeExecutionSection":       BuildCodeExecutionSection(templateVars["IsCodeExecutionMode"] == "true", templateVars["UseToolSearchMode"] == "true", templateVars["WorkspacePath"]),
+		"PreviousStepsSummary":       templateVars["PreviousStepsSummary"],
+		"StepTitle":                  templateVars["StepTitle"],
+		"StepDescription":            templateVars["StepDescription"],
+		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
 	}
 
 	var result strings.Builder
@@ -312,14 +341,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 	conversationHistory []llmtypes.MessageContent,
 ) string {
 	templateData := map[string]interface{}{
-		"StepTitle":               templateVars["StepTitle"],
-		"StepDescription":         templateVars["StepDescription"],
-		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
-		"WorkspacePath":           templateVars["WorkspacePath"],
-		"StepNumber":              templateVars["StepNumber"],
-		"StepExecutionPath":       templateVars["StepExecutionPath"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
-		"PreviousStepsSummary":    templateVars["PreviousStepsSummary"],
 		"DecisionReasoning":       templateVars["DecisionReasoning"],
 		"SubAgentResult":          templateVars["SubAgentResult"],
 		"LastSubAgentName":        templateVars["LastSubAgentName"],

@@ -639,13 +639,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // Build merged list of iterations and groups
   // Groups from variablesManifest are PRIMARY - runFolders only indicate if groups have run
   const iterationGroups = useMemo(() => {
-    console.log('[WorkflowToolbar] Building iterationGroups:', {
-      hasManifest: !!variablesManifest,
-      groupsCount: variablesManifest?.groups?.length || 0,
-      runFoldersCount: folders.length,
-      runFolderNames: folders.map(f => f.name)
-    })
-
     interface GroupItem {
       id: string  // Full path like "iteration-1/group-5" or just "iteration-1"
       name: string  // Display name like "group-5" or "iteration-1"
@@ -831,12 +824,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       const numA = parseInt(a.replace('iteration-', '')) || 0
       const numB = parseInt(b.replace('iteration-', '')) || 0
       return numB - numA
-    })
-
-    console.log('[WorkflowToolbar] iterationGroups result:', {
-      iterations: sortedIterations,
-      itemsCount: items.length,
-      items: items.map(i => ({ id: i.id, displayName: i.displayName, groupId: i.groupId }))
     })
 
     return { sortedIterations, iterationMap, items }

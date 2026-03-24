@@ -44,12 +44,6 @@ func getToolNamesByCategory(category string) map[string]bool {
 		for toolName := range executors {
 			toolNames[toolName] = true
 		}
-	case "todo_tools":
-		// Todo management tools (5 tools: create_todo, update_todo, complete_todo, list_todos, get_todo)
-		executors := virtualtools.CreateTodoToolExecutors()
-		for toolName := range executors {
-			toolNames[toolName] = true
-		}
 	}
 
 	return toolNames
@@ -80,7 +74,7 @@ func ConvertOldFormatToNewFormat(enabledCategories []string, enabledTools []stri
 
 	// Convert specific tools - need to determine category for each tool
 	allCategoryTools := make(map[string]string) // toolName -> category
-	for _, category := range []string{"workspace_tools", "human_tools", "todo_tools"} {
+	for _, category := range []string{"workspace_tools", "human_tools"} {
 		categoryToolNames := getToolNamesByCategory(category)
 		for toolName := range categoryToolNames {
 			allCategoryTools[toolName] = category

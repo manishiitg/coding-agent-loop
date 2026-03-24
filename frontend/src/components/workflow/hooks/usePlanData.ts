@@ -5,23 +5,27 @@ import { isConditionalStep, isDecisionStep, isTodoTaskStep } from '../../../util
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
-// This prevents duplicate API calls when multiple components use usePlanData
-interface PlanCache {
-  workspacePath: string | null
+// and to preserve per-workspace data across workflow switches.
+interface PlanCacheEntry {
   promise: Promise<PlanningResponse | null> | null
   data: PlanningResponse | null
   timestamp: number
 }
 
-const planCache: PlanCache = {
-  workspacePath: null,
-  promise: null,
-  data: null,
-  timestamp: 0
-}
+const planCache = new Map<string, PlanCacheEntry>()
 
-// Cache expiry time (5 seconds) - allows refetch after mutations
-const CACHE_EXPIRY_MS = 5000
+function getPlanCacheEntry(workspacePath: string): PlanCacheEntry {
+  const existing = planCache.get(workspacePath)
+  if (existing) return existing
+
+  const created: PlanCacheEntry = {
+    promise: null,
+    data: null,
+    timestamp: 0
+  }
+  planCache.set(workspacePath, created)
+  return created
+}
 
 /**
  * Signal that plan.json was modified externally (e.g., by an LLM tool call).
@@ -196,12 +200,10 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       throw new Error('No workspace path provided')
     }
 
-    console.log('[WorkflowPlanUpdate] Fetching plan from:', planPath)
     const response = await agentApi.getPlannerFileContent(planPath)
 
     if (response.success && response.data && response.data.content && typeof response.data.content === 'string') {
       let planData: PlanningResponse = JSON.parse(response.data.content)
-      console.log('[WorkflowPlanUpdate] Plan loaded:', { stepCount: planData.steps?.length || 0 })
 
       // Also load step_config.json to merge agent_configs
       if (stepConfigPath) {
@@ -211,11 +213,9 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
             const rawStepConfig = JSON.parse(stepConfigResponse.data.content)
             const stepConfigs = normalizeStepConfigFile(rawStepConfig)
             planData = mergeStepConfigs(planData, stepConfigs)
-            console.log('[WorkflowPlanUpdate] Merged step_config.json:', { stepConfigCount: stepConfigs.length })
           }
         } catch {
           // step_config.json doesn't exist or couldn't be loaded - that's okay
-          console.log('[WorkflowPlanUpdate] No step_config.json found')
         }
       }
 
@@ -225,14 +225,12 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
           const overrideResponse = await agentApi.getStepOverride(workspacePath)
           if (overrideResponse.success && overrideResponse.data?.agent_configs) {
             setStepOverride(overrideResponse.data.agent_configs)
-            console.log('[WorkflowPlanUpdate] Loaded step_override.json')
           } else {
             setStepOverride(null)
           }
         } catch {
           // step_override.json doesn't exist - that's okay
           setStepOverride(null)
-          console.log('[WorkflowPlanUpdate] No step_override.json found')
         }
 
       }
@@ -250,24 +248,18 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       return
     }
 
-    const now = Date.now()
+    const cacheEntry = getPlanCacheEntry(workspacePath)
 
-    // Check if we have a valid cached result for this workspace
-    if (
-      planCache.workspacePath === workspacePath &&
-      planCache.data !== null &&
-      (now - planCache.timestamp) < CACHE_EXPIRY_MS
-    ) {
-      console.log('[WorkflowPlanUpdate] Using cached plan data')
-      setPlan(planCache.data)
+    // Reuse the cached plan for this workspace across workflow switches.
+    if (cacheEntry.data !== null) {
+      setPlan(cacheEntry.data)
       return
     }
 
     // Check if a load is already in progress for this workspace
-    if (planCache.workspacePath === workspacePath && planCache.promise) {
-      console.log('[WorkflowPlanUpdate] Load already in progress, waiting...')
+    if (cacheEntry.promise) {
       try {
-        const data = await planCache.promise
+        const data = await cacheEntry.promise
         setPlan(data)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load plan')
@@ -279,13 +271,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     const isWorkspaceChange = currentWorkspaceRef.current !== workspacePath
     if (isWorkspaceChange) {
       currentWorkspaceRef.current = workspacePath
-      // Clear cache for different workspace
-      planCache.workspacePath = workspacePath
-      planCache.data = null
-      planCache.promise = null
-      console.log('[WorkflowPlanUpdate] Workspace changed, loading plan')
-    } else {
-      console.log('[WorkflowPlanUpdate] loadPlan called for same workspace')
     }
 
     setLoading(true)
@@ -293,23 +278,19 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
 
     // Create the promise and cache it
     const loadPromise = fetchPlanData()
-    planCache.promise = loadPromise
-    planCache.workspacePath = workspacePath
+    cacheEntry.promise = loadPromise
 
     try {
       const planData = await loadPromise
 
       // Update cache
-      planCache.data = planData
-      planCache.timestamp = Date.now()
-      planCache.promise = null
+      cacheEntry.data = planData
+      cacheEntry.timestamp = Date.now()
+      cacheEntry.promise = null
 
       setPlan(planData)
-      if (!planData) {
-        console.log('[usePlanData] No plan found')
-      }
     } catch (err) {
-      planCache.promise = null
+      cacheEntry.promise = null
 
       // Check if it's a 404 or "not found" error (plan doesn't exist yet)
       const is404 = err && typeof err === 'object' && 'response' in err &&
@@ -320,22 +301,12 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
       const errMsg = err instanceof Error ? err.message : String(err)
       const isNotFound = is404 || /not found|does not exist|no such file/i.test(errMsg)
 
-      console.log('[WORKFLOW_BUILDER] usePlanData catch:', {
-        is404,
-        httpStatus,
-        errMsg,
-        isNotFound,
-        errType: typeof err,
-        errKeys: err && typeof err === 'object' ? Object.keys(err) : [],
-      })
-
       if (isNotFound) {
         setPlan(null)
-        console.log('[WORKFLOW_BUILDER] usePlanData: Plan not found, treating as empty plan state')
         return
       }
 
-      console.error('[WORKFLOW_BUILDER] usePlanData: Setting error state:', errMsg)
+      console.error('[usePlanData] Failed to load plan:', { httpStatus, errMsg })
       setError(errMsg || 'Failed to load plan')
       return
     } finally {
@@ -368,10 +339,12 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
    */
   // Helper to invalidate the plan cache (call after mutations)
   const invalidatePlanCache = useCallback(() => {
-    planCache.data = null
-    planCache.timestamp = 0
-    planCache.promise = null
-  }, [])
+    if (!workspacePath) return
+    const cacheEntry = getPlanCacheEntry(workspacePath)
+    cacheEntry.data = null
+    cacheEntry.timestamp = 0
+    cacheEntry.promise = null
+  }, [workspacePath])
 
   const savePlan = useCallback(async (updatedPlan: PlanningResponse) => {
     const planPath = getPlanFilePath()
@@ -393,13 +366,16 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
 
       // Update local state and cache
       setPlan(updatedPlan)
-      planCache.data = updatedPlan
-      planCache.timestamp = Date.now()
+      if (workspacePath) {
+        const cacheEntry = getPlanCacheEntry(workspacePath)
+        cacheEntry.data = updatedPlan
+        cacheEntry.timestamp = Date.now()
+      }
     } catch (err) {
       console.error('[usePlanData] Failed to save plan:', err)
       throw err
     }
-  }, [getPlanFilePath])
+  }, [getPlanFilePath, workspacePath])
 
   /**
    * LEGACY METHOD: Direct file save for step_config.json
@@ -743,7 +719,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   useEffect(() => {
     if (!workspacePath) return
     const handler = () => {
-      console.log('[usePlanData] plan-modified event received, refreshing...')
       invalidatePlanCache()
       loadPlan()
     }

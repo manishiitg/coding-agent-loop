@@ -196,22 +196,8 @@ func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface
 			}
 		}
 
-		// Add todo tools for todo task orchestrator
-		todoCategory := virtualtools.GetTodoToolCategory()
-		todoTools := virtualtools.CreateTodoTools()
-		todoExecutors := virtualtools.CreateTodoToolExecutors()
-
-		allTools = append(allTools, todoTools...)
-		for name, executor := range todoExecutors {
-			allExecutors[name] = executor
-		}
-
-		// Assign category to todo tools
-		for _, tool := range todoTools {
-			if tool.Function != nil {
-				toolCategories[tool.Function.Name] = todoCategory
-			}
-		}
+		// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.
+		// The todo task orchestrator now manages tasks via tasks.md using shell commands.
 
 		// Note: Browser tools are NOT added unconditionally here.
 		// They are added conditionally based on preset.EnableBrowserAccess in workflow initialization.

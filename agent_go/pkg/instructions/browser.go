@@ -5,7 +5,8 @@ type BrowserConfig struct {
 	HasPlaywright   bool
 	HasCamofox      bool
 	HasAgentBrowser bool
-	CdpPort         int // >0 means CDP mode, 0 means headless
+	CdpPort         int    // >0 means CDP mode, 0 means headless (legacy, use Mode when set)
+	Mode            string // "cdp", "headless", "playwright", "stealth", "" (empty = fallback to CdpPort)
 }
 
 // BuildBrowserInstructions returns the complete browser system prompt
@@ -15,18 +16,21 @@ func BuildBrowserInstructions(cfg BrowserConfig) string {
 		return ""
 	}
 
-	result := GetBrowserUploadInstructions()
+	result := ""
 
-	if cfg.HasPlaywright {
+	// Use Mode as primary decision, fall back to legacy CdpPort/Has* flags
+	isCdp := cfg.Mode == "cdp" || (cfg.Mode == "" && cfg.CdpPort > 0)
+	isPlaywright := cfg.Mode == "playwright" || (cfg.Mode == "" && cfg.HasPlaywright)
+	isStealth := cfg.Mode == "stealth" || (cfg.Mode == "" && cfg.HasCamofox)
+
+	if isPlaywright {
 		result += "\n" + GetPlaywrightModeInstructions()
-	} else if cfg.HasCamofox {
+	} else if isStealth {
 		result += "\n" + GetCamofoxInstructions()
-	} else if cfg.CdpPort > 0 {
-		result += "\n" + GetAgentBrowserQuickStartInstructions()
-		result += "\n" + GetCdpModeInstructions()
+	} else if isCdp {
+		result += "\n" + GetCdpBrowserInstructions()
 	} else {
-		result += "\n" + GetAgentBrowserQuickStartInstructions()
-		result += "\n" + GetHeadlessModeInstructions()
+		result += "\n" + GetHeadlessBrowserInstructions()
 	}
 
 	return result
@@ -151,9 +155,81 @@ You have the ` + "`agent_browser`" + ` tool for browser automation. Basic workfl
 
 Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
 
-**In code execution mode:** Use get_api_spec(server_name="agent_browser") to get the HTTP API spec, then call via HTTP POST.
+**In code execution mode:** Call agent_browser via HTTP API:
+` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
 
-For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat /app/workspace-docs/skills/agent-browser/SKILL.md")`
+}
+
+// GetCdpBrowserInstructions returns a single merged section for CDP mode (agent_browser + CDP behaviors).
+func GetCdpBrowserInstructions() string {
+	return `## Browser Automation (CDP — Connected to User's Chrome)
+
+You have the ` + "`agent_browser`" + ` tool controlling the **user's real Chrome browser** via Chrome DevTools Protocol.
+
+### Basic Workflow
+1. **Open a page:** agent_browser(command="open", args=["--cdp", "http://host.docker.internal:9222", "https://example.com"], session="default")
+2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["--cdp", "http://host.docker.internal:9222", "-i"], session="default")
+3. **Interact** using element refs from snapshot:
+   - Click: agent_browser(command="click", args=["--cdp", "http://host.docker.internal:9222", "@e1"], session="default")
+   - Fill text: agent_browser(command="fill", args=["--cdp", "http://host.docker.internal:9222", "@e2", "search query"], session="default")
+   - Press key: agent_browser(command="press", args=["--cdp", "http://host.docker.internal:9222", "Enter"], session="default")
+4. **Re-snapshot** after each interaction to see the updated page state
+5. **Screenshot:** agent_browser(command="screenshot", args=["--cdp", "http://host.docker.internal:9222", "page.png"], session="default")
+
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
+
+### CDP-Specific Behaviors
+- The user can **see everything you do** in their browser — actions are visible in real-time
+- The browser may have **existing cookies, login sessions, and tabs** — leverage authenticated sessions without re-logging in
+- **Do NOT call close** unless the user asks — it will close their browser tab
+- Sessions **persist across tool calls** — you don't need to re-open pages between interactions
+- If a site requires login and the user is already logged in, navigate directly to the target page
+
+### CDP Connection
+Always pass ` + "`--cdp http://host.docker.internal:9222`" + ` in the args array for every agent_browser call. Do NOT use localhost.
+
+**In code execution mode:** Call agent_browser via HTTP API:
+` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"--cdp\", \"http://host.docker.internal:9222\", \"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
+**As direct tool call:** agent_browser(command="snapshot", args=["--cdp", "http://host.docker.internal:9222", "-i"], session="default")
+
+### Advanced: Direct CDP WebSocket Access
+For operations that need more control (targeting specific tabs, running complex JS, inspecting DOM):
+` + "```python\nimport json, websocket\n\n# 1. List open tabs\nimport requests\ntabs = requests.get('http://host.docker.internal:9222/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = tabs[0]['id']\nws = websocket.create_connection(\n    f'ws://host.docker.internal:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```" + `
+**Rules for direct CDP:** Always use ` + "`Host: localhost`" + ` header and ` + "`suppress_origin=True`" + ` for WebSocket. Prefer agent_browser for standard navigation/interaction — use direct CDP only when you need tab-level control or complex JS evaluation.
+
+For detailed usage, read: execute_shell_command(command="cat /app/workspace-docs/skills/agent-browser/SKILL.md")`
+}
+
+// GetHeadlessBrowserInstructions returns a single merged section for headless mode (agent_browser + headless behaviors).
+func GetHeadlessBrowserInstructions() string {
+	return `## Browser Automation (Headless Container Browser)
+
+You have the ` + "`agent_browser`" + ` tool controlling a **headless Chromium browser** inside a container.
+
+### Basic Workflow
+1. **Open a page:** agent_browser(command="open", args=["https://example.com"], session="default")
+2. **Take a snapshot** to see interactive elements: agent_browser(command="snapshot", args=["-i"], session="default")
+3. **Interact** using element refs from snapshot:
+   - Click: agent_browser(command="click", args=["@e1"], session="default")
+   - Fill text: agent_browser(command="fill", args=["@e2", "search query"], session="default")
+   - Press key: agent_browser(command="press", args=["Enter"], session="default")
+4. **Re-snapshot** after each interaction to see the updated page state
+5. **Screenshot:** agent_browser(command="screenshot", args=["page.png"], session="default")
+
+Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, scroll, select, hover, upload, download, close, eval, back, forward, reload.
+
+### Headless-Specific Behaviors
+- The browser is **fresh** — no existing cookies, sessions, or tabs. You must login from scratch if needed.
+- The user **cannot see** the browser — take **screenshots** to show them what's happening
+- You can freely **open and close** tabs/sessions without affecting the user
+- Browser state is **ephemeral** — it resets between sessions
+- Handle login flows explicitly (fill credentials, handle 2FA via human_feedback if needed)
+
+**In code execution mode:** Call agent_browser via HTTP API:
+` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
+
+For detailed usage, read: execute_shell_command(command="cat /app/workspace-docs/skills/agent-browser/SKILL.md")`
 }
 
 // GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.

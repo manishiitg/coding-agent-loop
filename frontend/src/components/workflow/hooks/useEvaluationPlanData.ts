@@ -3,22 +3,27 @@ import { agentApi } from '../../../services/api'
 import type { EvaluationPlan, EvaluationStep } from '../../../services/api-types'
 import type { AgentConfigs } from '../../../utils/stepConfigMatching'
 
-// Module-level cache
-interface EvalPlanCache {
-  workspacePath: string | null
+// Module-level cache preserved per workspace across workflow switches.
+interface EvalPlanCacheEntry {
   promise: Promise<EvaluationPlan | null> | null
   data: EvaluationPlan | null
   timestamp: number
 }
 
-const planCache: EvalPlanCache = {
-  workspacePath: null,
-  promise: null,
-  data: null,
-  timestamp: 0
-}
+const planCache = new Map<string, EvalPlanCacheEntry>()
 
-const CACHE_EXPIRY_MS = 5000
+function getEvalPlanCacheEntry(workspacePath: string): EvalPlanCacheEntry {
+  const existing = planCache.get(workspacePath)
+  if (existing) return existing
+
+  const created: EvalPlanCacheEntry = {
+    promise: null,
+    data: null,
+    timestamp: 0
+  }
+  planCache.set(workspacePath, created)
+  return created
+}
 
 export interface UseEvaluationPlanDataReturn {
   evaluationPlan: EvaluationPlan | null
@@ -63,8 +68,6 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
       throw new Error('No workspace path provided')
     }
 
-    console.log('[EvaluationPlan] Fetching plan from:', planPath)
-    
     try {
       const response = await agentApi.getPlannerFileContent(planPath)
       
@@ -93,16 +96,15 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
                 }))
               }
             }
-          } catch (e) {
-            console.log('[EvaluationPlan] No step_config.json found or failed to load', e)
+          } catch {
+            // step_config.json is optional
           }
         }
         
         return planData
       }
-    } catch (err) {
+    } catch {
       // 404 is fine (no plan yet)
-      console.log('[EvaluationPlan] Plan not found or error', err)
     }
     
     return null
@@ -114,19 +116,16 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
       return
     }
 
-    const now = Date.now()
-    if (
-      planCache.workspacePath === workspacePath &&
-      planCache.data !== null &&
-      (now - planCache.timestamp) < CACHE_EXPIRY_MS
-    ) {
-      setEvaluationPlan(planCache.data)
+    const cacheEntry = getEvalPlanCacheEntry(workspacePath)
+
+    if (cacheEntry.data !== null) {
+      setEvaluationPlan(cacheEntry.data)
       return
     }
 
-    if (planCache.workspacePath === workspacePath && planCache.promise) {
+    if (cacheEntry.promise) {
       try {
-        const data = await planCache.promise
+        const data = await cacheEntry.promise
         setEvaluationPlan(data)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load evaluation plan')
@@ -136,25 +135,22 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
 
     if (currentWorkspaceRef.current !== workspacePath) {
       currentWorkspaceRef.current = workspacePath
-      planCache.workspacePath = workspacePath
-      planCache.data = null
-      planCache.promise = null
     }
 
     setLoading(true)
     setError(null)
 
     const loadPromise = fetchPlanData()
-    planCache.promise = loadPromise
+    cacheEntry.promise = loadPromise
     
     try {
       const data = await loadPromise
-      planCache.data = data
-      planCache.timestamp = Date.now()
-      planCache.promise = null
+      cacheEntry.data = data
+      cacheEntry.timestamp = Date.now()
+      cacheEntry.promise = null
       setEvaluationPlan(data)
     } catch (err) {
-      planCache.promise = null
+      cacheEntry.promise = null
       setError(err instanceof Error ? err.message : 'Failed to load evaluation plan')
     } finally {
       setLoading(false)
@@ -184,13 +180,16 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
       
       // Update cache and state
       setEvaluationPlan(updatedPlan)
-      planCache.data = updatedPlan
-      planCache.timestamp = Date.now()
+      if (workspacePath) {
+        const cacheEntry = getEvalPlanCacheEntry(workspacePath)
+        cacheEntry.data = updatedPlan
+        cacheEntry.timestamp = Date.now()
+      }
     } catch (err) {
       console.error('[EvaluationPlan] Failed to save plan:', err)
       throw err
     }
-  }, [getPlanFilePath])
+  }, [getPlanFilePath, workspacePath])
 
   const saveEvaluationStepConfig = useCallback(async (stepId: string, agentConfigs: AgentConfigs | undefined) => {
     const configPath = getStepConfigFilePath()
@@ -258,11 +257,14 @@ export function useEvaluationPlanData(workspacePath: string | null): UseEvaluati
   }, [evaluationPlan, saveEvaluationPlan, saveEvaluationStepConfig])
 
   const refresh = useCallback(async () => {
-    planCache.data = null
-    planCache.timestamp = 0
-    planCache.promise = null
+    if (workspacePath) {
+      const cacheEntry = getEvalPlanCacheEntry(workspacePath)
+      cacheEntry.data = null
+      cacheEntry.timestamp = 0
+      cacheEntry.promise = null
+    }
     await loadEvaluationPlan()
-  }, [loadEvaluationPlan])
+  }, [workspacePath, loadEvaluationPlan])
 
   useEffect(() => {
     if (workspacePath) {

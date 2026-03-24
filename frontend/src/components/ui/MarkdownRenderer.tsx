@@ -16,6 +16,7 @@ interface MarkdownRendererProps {
   className?: string
   maxHeight?: string
   showScrollbar?: boolean
+  disablePathLinking?: boolean
 }
 
 interface ChartDatum {
@@ -361,7 +362,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   className = "",
   maxHeight = "none",
-  showScrollbar = false
+  showScrollbar = false,
+  disablePathLinking = false
 }) => {
   const containerClasses = `prose prose-sm max-w-none dark:prose-invert ${className}`
   const scrollClasses = showScrollbar ? 'overflow-y-auto overflow-x-auto min-w-0' : ""
@@ -481,7 +483,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     // Matches content between --- and --- where the content looks like key-value pairs
     let processed = content.replace(/(^|\n)---\n([a-zA-Z0-9_-]+:[\s\S]+?)\n---(\n|$)/g, '$1\n```tool-definition\n$2\n```\n$3')
 
-    // 2. Auto-link workspace paths
+    // 2. Auto-link workspace paths (skip when disablePathLinking is true)
+    if (disablePathLinking) return processed
     // Regex matches paths starting with specific prefixes: Chats/, Downloads/, Workflow/, Plans/, skills/
     // Optionally matches surrounding backticks to unwrap them
     // CRITICAL FIX: We must handle paths wrapped in backticks (e.g., `Chats/foo.md`) because LLMs often format them as code.
@@ -859,10 +862,10 @@ export const SystemMarkdownRenderer: React.FC<{ content: string; maxHeight?: str
   </div>
 )
 
-export const ConversationMarkdownRenderer: React.FC<{ content: string; maxHeight?: string }> = ({ content, maxHeight = "384px" }) => (
+export const ConversationMarkdownRenderer: React.FC<{ content: string; maxHeight?: string; disablePathLinking?: boolean }> = ({ content, maxHeight = "384px", disablePathLinking }) => (
   <div className={`border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 overflow-y-auto overflow-x-hidden min-w-0`} style={{ maxHeight }}>
     <div className="p-3 min-w-0">
-      <MarkdownRenderer content={content} />
+      <MarkdownRenderer content={content} disablePathLinking={disablePathLinking} />
     </div>
   </div>
 )

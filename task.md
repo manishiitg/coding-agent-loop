@@ -29,8 +29,6 @@
 
 55. look at playwrite headless also
 
-56. we have routing / conditional / branch... is branch step relevent anymore? depricate loop also -- done
-
 58. workflow view page.. to see crons/ runs / etc and manage them as a team / company
 
 59. simply the query tools tu automatically query real time logs vs file system depending on if the agent is running or not

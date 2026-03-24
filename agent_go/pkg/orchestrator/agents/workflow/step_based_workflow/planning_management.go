@@ -7,21 +7,12 @@ import (
 	"strings"
 	"time"
 
+	baseevents "github.com/manishiitg/mcpagent/events"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
-	baseevents "github.com/manishiitg/mcpagent/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
-
-// Pre-parsed templates for planning management - panics at startup if invalid
-var planningUpdateValidationErrorTemplate = MustRegisterTemplate("planningUpdateValidationError",
-	`Review the existing plan, fix the following validation issues, and then update the plan based on the objective and my feedback: {{.ValidationErr}}. Always use the human_feedback tool first to confirm any changes with me.`)
-
-var planningCreateUserMessageTemplate = MustRegisterTemplate("planningCreateUserMessage",
-	`Objective: {{.Objective}}
-
-Generate a comprehensive structured plan to achieve this objective.`)
 
 // EnhancedPlanWithMetadata stores enhanced plan with caching metadata
 type EnhancedPlanWithMetadata struct {
@@ -185,28 +176,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) checkExistingPlan(ctx context.Context
 	return true, &planResponse, nil
 }
 
-// requestPlanApproval requests human approval for the generated plan
-// Returns: (approved bool, feedback string, error)
-func (hcpo *StepBasedWorkflowOrchestrator) requestPlanApproval(
-	ctx context.Context,
-	revisionAttempt int,
-) (bool, string, error) {
-	hcpo.GetLogger().Info(fmt.Sprintf("⏸️ Requesting human approval for plan (attempt %d)", revisionAttempt))
-
-	// Generate unique request ID
-	requestID := fmt.Sprintf("plan_approval_%d_%d", time.Now().UnixNano(), revisionAttempt)
-
-	// Use common human feedback function
-	return hcpo.RequestHumanFeedback(
-		ctx,
-		requestID,
-		"Please review the plan and provide approval or feedback",
-		"", // No additional context for plan approval
-		hcpo.getSessionID(),
-		hcpo.getWorkflowID(),
-	)
-}
-
 // populateRuntimeFields populates runtime fields (AgentConfigs, etc.) on plan steps in-place
 // This maintains type safety by working directly with plan step types
 func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig) error {
@@ -287,7 +256,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
 					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
 				}
-				}
+			}
 		}
 
 		// Populate runtime field directly on plan step
@@ -354,7 +323,7 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
 					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
 				}
-				}
+			}
 		}
 
 		// Populate runtime field directly on plan step
@@ -424,160 +393,6 @@ func populateStepRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepCo
 
 	// Return the step with populated runtime fields
 	return typedStep, nil
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) populateStepsRuntimeFields(ctx context.Context, planSteps []PlanStepInterface) ([]PlanStepInterface, error) {
-	// Read step configs from step_config.json
-	stepConfigs, err := hcpo.ReadStepConfigs(ctx)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_config.json: %v (using defaults for all steps)", err))
-		stepConfigs = []StepConfig{}
-	}
-
-	// Read global step overrides from step_override.json (applied after per-step configs)
-	stepOverrides, err := hcpo.ReadStepOverrides(ctx)
-	if err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read step_override.json: %v (skipping global overrides)", err))
-		stepOverrides = nil
-	}
-	if stepOverrides != nil {
-		hcpo.GetLogger().Info(fmt.Sprintf("📋 Loaded global step overrides from step_override.json"))
-	}
-
-	// Log available config IDs for debugging
-	if len(stepConfigs) > 0 {
-		configIDs := make([]string, 0, len(stepConfigs))
-		for _, config := range stepConfigs {
-			if config.ID != "" {
-				configIDs = append(configIDs, config.ID)
-			}
-		}
-	} else {
-	}
-
-	// Match configs by step index (0-based)
-	matchedConfigs, err := MatchStepConfigs(planSteps, stepConfigs)
-	if err != nil {
-		return nil, fmt.Errorf("failed to match step configs: %w", err)
-	}
-
-	todoSteps := make([]PlanStepInterface, len(planSteps))
-	for i, step := range planSteps {
-		// Step is already PlanStepInterface, no conversion needed
-
-		// Get matched config for this step (may be nil if no match)
-		var agentConfigs *AgentConfigs
-		if config, found := matchedConfigs[i]; found {
-			agentConfigs = config
-			// Log code execution mode for debugging
-			if agentConfigs.UseCodeExecutionMode != nil {
-			} else {
-				hcpo.GetLogger().Info(fmt.Sprintf("📋 Step '%s' (ID: %s) matched config - use_code_execution_mode: nil (will use preset default)", step.GetTitle(), step.GetID()))
-			}
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("⚠️ Step '%s' (ID: %s) has NO config match in step_config.json - will use preset defaults", step.GetTitle(), step.GetID()))
-		}
-
-		// Populate runtime fields (this properly handles inner steps for decision/orchestration)
-		todoStep, err := populateStepRuntimeFields(step, stepConfigs)
-		if err != nil {
-			return nil, fmt.Errorf("failed to populate runtime fields for step %d (title: %q, ID: %s): %w", i, step.GetTitle(), step.GetID(), err)
-		}
-
-		// Merge matched configs with existing configs (if any)
-		// This preserves any configs set during conversion and merges in step_config.json configs
-		if agentConfigs != nil {
-			existingConfigs := getAgentConfigs(todoStep)
-			if existingConfigs == nil {
-				// Set AgentConfigs on the step if it doesn't exist
-				switch s := todoStep.(type) {
-				case *RegularPlanStep:
-					s.AgentConfigs = agentConfigs
-				case *ConditionalPlanStep:
-					s.AgentConfigs = agentConfigs
-				case *DecisionPlanStep:
-					s.AgentConfigs = agentConfigs
-				case *OrchestrationPlanStep:
-					s.AgentConfigs = agentConfigs
-				case *EvaluationStep:
-					s.AgentConfigs = agentConfigs
-				case *RoutingPlanStep:
-					s.AgentConfigs = agentConfigs
-				}
-			} else {
-				// Merge configs from step_config.json into existing configs
-				MergeAgentConfigFields(existingConfigs, agentConfigs, step.GetID(), hcpo.GetLogger())
-			}
-
-			// Note: Inner orchestration steps should NOT inherit config from wrapper steps
-			// Each step (wrapper and inner) loads its own config by its own ID only
-			// The inner step will get its config when ApplyStepConfigFromFile is called for it during execution
-		}
-
-		// Apply global overrides from step_override.json (highest priority - wins over per-step config)
-		if stepOverrides != nil {
-			existingConfigs := getAgentConfigs(todoStep)
-			if existingConfigs == nil {
-				// Set AgentConfigs on the step with override values
-				switch s := todoStep.(type) {
-				case *RegularPlanStep:
-					overrideCopy := *stepOverrides
-					s.AgentConfigs = &overrideCopy
-				case *ConditionalPlanStep:
-					overrideCopy := *stepOverrides
-					s.AgentConfigs = &overrideCopy
-				case *DecisionPlanStep:
-					overrideCopy := *stepOverrides
-					s.AgentConfigs = &overrideCopy
-				case *OrchestrationPlanStep:
-					overrideCopy := *stepOverrides
-					s.AgentConfigs = &overrideCopy
-				case *EvaluationStep:
-					overrideCopy := *stepOverrides
-					s.AgentConfigs = &overrideCopy
-				case *RoutingPlanStep:
-					overrideCopy := *stepOverrides
-					s.AgentConfigs = &overrideCopy
-				}
-			} else {
-				MergeAgentConfigFields(existingConfigs, stepOverrides, step.GetID(), hcpo.GetLogger())
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Applied global overrides for step '%s' (ID: %s)", step.GetTitle(), step.GetID()))
-		}
-
-		// Log config matching results for nested steps
-		switch s := todoStep.(type) {
-		case *DecisionPlanStep:
-			// Decision step is now flattened - configs are directly on the step
-			innerConfigs := getAgentConfigs(s)
-			if innerConfigs != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("✅ Decision step '%s' (ID: %s) matched config from step_config.json", s.GetTitle(), s.GetID()))
-			}
-		case *OrchestrationPlanStep:
-			if s.OrchestrationStep != nil {
-				innerConfigs := getAgentConfigs(s.OrchestrationStep)
-				if innerConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Orchestration step '%s' (ID: %s) matched config from step_config.json", s.OrchestrationStep.GetTitle(), s.OrchestrationStep.GetID()))
-				}
-			}
-		case *ConditionalPlanStep:
-			for _, branchStep := range s.IfTrueSteps {
-				branchConfigs := getAgentConfigs(branchStep)
-				if branchConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.GetTitle(), branchStep.GetID()))
-				}
-			}
-			for _, branchStep := range s.IfFalseSteps {
-				branchConfigs := getAgentConfigs(branchStep)
-				if branchConfigs != nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Branch step '%s' (ID: %s) matched config from step_config.json", branchStep.GetTitle(), branchStep.GetID()))
-				}
-			}
-		}
-
-		todoSteps[i] = todoStep
-	}
-	return todoSteps, nil
 }
 
 // EmitTodoStepsExtractedEvent emits an event when todo steps are extracted from a plan

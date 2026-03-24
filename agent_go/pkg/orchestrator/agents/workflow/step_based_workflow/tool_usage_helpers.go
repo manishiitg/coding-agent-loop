@@ -21,20 +21,6 @@ func isCodeExecutionModeEnabled(agentConfigs *AgentConfigs, presetCodeExecMode b
 	return presetCodeExecMode
 }
 
-// isStepCodeExecutionModeEnabled checks if a step has code execution mode enabled by looking up its config
-func isStepCodeExecutionModeEnabled(stepID string, stepConfigs []StepConfig, presetCodeExecMode bool) bool {
-	// Find step config by ID
-	var agentConfigs *AgentConfigs
-	for i := range stepConfigs {
-		if stepConfigs[i].ID == stepID {
-			agentConfigs = stepConfigs[i].AgentConfigs
-			break
-		}
-	}
-
-	return isCodeExecutionModeEnabled(agentConfigs, presetCodeExecMode)
-}
-
 // ToolUsageEntry represents a single tool's usage statistics
 type ToolUsageEntry struct {
 	ToolName   string `json:"tool_name"`

@@ -27,26 +27,3 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 
 	return body, nil
 }
-
-// Helper functions for safe type conversion from map[string]interface{}
-
-func getStringFromMap(m map[string]interface{}, key string) string {
-	if val, exists := m[key]; exists {
-		if str, ok := val.(string); ok {
-			return str
-		}
-	}
-	return ""
-}
-
-func getFloatFromMap(m map[string]interface{}, key string) float64 {
-	if val, exists := m[key]; exists {
-		switch v := val.(type) {
-		case float64:
-			return v
-		case int:
-			return float64(v)
-		}
-	}
-	return 0.0
-}

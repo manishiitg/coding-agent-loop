@@ -15,7 +15,6 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 
 	"github.com/PaesslerAG/jsonpath"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/r3labs/diff/v3"
 )
 
@@ -204,37 +203,37 @@ type ConsistencyRule struct {
 
 // AgentConfigs represents per-agent configuration for a step
 type AgentConfigs struct {
-	ExecutionLLM                *AgentLLMConfig    `json:"execution_llm,omitempty"`
-	LearningLLM                 *AgentLLMConfig    `json:"learning_llm,omitempty"`
-	ConditionalLLM              *AgentLLMConfig    `json:"conditional_llm,omitempty"`                // Step-specific conditional LLM for conditional step evaluation
-	ExecutionMaxTurns           *int               `json:"execution_max_turns,omitempty"`            // default: 100
-	LearningMaxTurns            *int               `json:"learning_max_turns,omitempty"`             // default: 100
-	OrchestrationMaxIterations  *int               `json:"orchestration_max_iterations,omitempty"`   // default: orchestrator max turns (typically 100)
-	DisableLearning             *bool              `json:"disable_learning,omitempty"`               // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
-	LockLearnings               *bool              `json:"lock_learnings,omitempty"`                 // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
-	LearningAfterLoopIteration  bool               `json:"learning_after_loop_iteration,omitempty"`  // run learning after each loop iteration
-	LearningDetailLevel         string             `json:"learning_detail_level,omitempty"`          // "exact" or "none" (default: "exact")
-	LearningMode                string             `json:"learning_mode,omitempty"`                  // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
-	SelectedServers             []string           `json:"selected_servers,omitempty"`               // step-level MCP server selection (subset of preset servers)
-	SelectedTools               []string           `json:"selected_tools,omitempty"`                 // step-level tool selection (format: "server:tool" or "server:*" for all tools)
-	EnabledCustomToolCategories []string           `json:"enabled_custom_tool_categories,omitempty"` // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
-	EnabledCustomTools          []string           `json:"enabled_custom_tools,omitempty"`           // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
-	EnableContextOffloading     *bool              `json:"enable_context_offloading,omitempty"`      // Enable/disable context offloading (default: true if nil)
-	UseCodeExecutionMode        *bool              `json:"use_code_execution_mode,omitempty"`        // Step-level code execution mode override (nil = use preset default, true/false = override)
-	UseToolSearchMode           *bool              `json:"use_tool_search_mode,omitempty"`           // Step-level tool search mode override (nil = use preset default, true/false = override)
-	PreDiscoveredTools          []string           `json:"pre_discovered_tools,omitempty"`           // Tools always available without searching (overrides preset if specified)
-	EnabledSkills               []string           `json:"enabled_skills,omitempty"`                 // Step-level skill selection (skill folder names, overrides preset if specified)
-	KeepLearningFull            *bool              `json:"keep_learning_full,omitempty"`             // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
-	DisableKnowledgebase        *bool              `json:"disable_knowledgebase,omitempty"`          // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
-	DisableTempLLM              *bool              `json:"disable_temp_llm,omitempty"`               // If true, skip tempLLM override and use the normal workflow LLM path (step config > tiered)
-	TodoTaskOrchestratorTier    *int               `json:"todo_task_orchestrator_tier,omitempty"`    // Tier for todo task orchestrator agent (1/2/3) in tiered mode
-	EnableDynamicTierSelection  *bool              `json:"enable_dynamic_tier_selection,omitempty"`  // Allow todo task orchestrator to choose tier for sub-agents
-	OrchestratorLLM             *AgentLLMConfig    `json:"orchestrator_llm,omitempty"`               // Direct LLM override for orchestrator (works in both tiered and manual modes)
-	SubAgentLLM                  *AgentLLMConfig    `json:"sub_agent_llm,omitempty"`                  // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
-	DisableParallelToolExecution *bool              `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
-	DisableTierOptimization      *bool              `json:"disable_tier_optimization,omitempty"`        // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
-	Optimized                    *bool              `json:"optimized,omitempty"`                        // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
-	SuccessfulRuns               *int               `json:"successful_runs,omitempty"`                  // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
+	ExecutionLLM                 *AgentLLMConfig `json:"execution_llm,omitempty"`
+	LearningLLM                  *AgentLLMConfig `json:"learning_llm,omitempty"`
+	ConditionalLLM               *AgentLLMConfig `json:"conditional_llm,omitempty"`                 // Step-specific conditional LLM for conditional step evaluation
+	ExecutionMaxTurns            *int            `json:"execution_max_turns,omitempty"`             // default: 100
+	LearningMaxTurns             *int            `json:"learning_max_turns,omitempty"`              // default: 100
+	OrchestrationMaxIterations   *int            `json:"orchestration_max_iterations,omitempty"`    // default: orchestrator max turns (typically 100)
+	DisableLearning              *bool           `json:"disable_learning,omitempty"`                // disable learning for this step (nil = not set/enabled, true = disabled, false = explicitly enabled)
+	LockLearnings                *bool           `json:"lock_learnings,omitempty"`                  // lock learnings - prevents learning agent from running but still uses existing learnings (nil = not set/unlocked, true = locked, false = explicitly unlocked)
+	LearningAfterLoopIteration   bool            `json:"learning_after_loop_iteration,omitempty"`   // run learning after each loop iteration
+	LearningDetailLevel          string          `json:"learning_detail_level,omitempty"`           // "exact" or "none" (default: "exact")
+	LearningMode                 string          `json:"learning_mode,omitempty"`                   // "human_assisted" (default) or "auto". human_assisted = skip automatic learning, use generate_learnings manually. auto = learning runs automatically after execution.
+	SelectedServers              []string        `json:"selected_servers,omitempty"`                // step-level MCP server selection (subset of preset servers)
+	SelectedTools                []string        `json:"selected_tools,omitempty"`                  // step-level tool selection (format: "server:tool" or "server:*" for all tools)
+	EnabledCustomToolCategories  []string        `json:"enabled_custom_tool_categories,omitempty"`  // e.g., ["workspace_tools", "human_tools"] - enables all tools in category
+	EnabledCustomTools           []string        `json:"enabled_custom_tools,omitempty"`            // e.g., ["read_workspace_file", "human_feedback"] - enables specific tools (overrides categories if both specified)
+	EnableContextOffloading      *bool           `json:"enable_context_offloading,omitempty"`       // Enable/disable context offloading (default: true if nil)
+	UseCodeExecutionMode         *bool           `json:"use_code_execution_mode,omitempty"`         // Step-level code execution mode override (nil = use preset default, true/false = override)
+	UseToolSearchMode            *bool           `json:"use_tool_search_mode,omitempty"`            // Step-level tool search mode override (nil = use preset default, true/false = override)
+	PreDiscoveredTools           []string        `json:"pre_discovered_tools,omitempty"`            // Tools always available without searching (overrides preset if specified)
+	EnabledSkills                []string        `json:"enabled_skills,omitempty"`                  // Step-level skill selection (skill folder names, overrides preset if specified)
+	KeepLearningFull             *bool           `json:"keep_learning_full,omitempty"`              // Feature flag: If true, include full learning content in system prompt; if false, only file paths in user message (default: false, can be overridden by KEEP_LEARNING_FULL env var)
+	DisableKnowledgebase         *bool           `json:"disable_knowledgebase,omitempty"`           // If true, disable knowledgebase access for this step (nil = use preset default, true = disabled, false = explicitly enabled)
+	DisableTempLLM               *bool           `json:"disable_temp_llm,omitempty"`                // If true, skip tempLLM override and use the normal workflow LLM path (step config > tiered)
+	TodoTaskOrchestratorTier     *int            `json:"todo_task_orchestrator_tier,omitempty"`     // Tier for todo task orchestrator agent (1/2/3) in tiered mode
+	EnableDynamicTierSelection   *bool           `json:"enable_dynamic_tier_selection,omitempty"`   // Allow todo task orchestrator to choose tier for sub-agents
+	OrchestratorLLM              *AgentLLMConfig `json:"orchestrator_llm,omitempty"`                // Direct LLM override for orchestrator (works in both tiered and manual modes)
+	SubAgentLLM                  *AgentLLMConfig `json:"sub_agent_llm,omitempty"`                   // Direct LLM override for ALL sub-agents spawned by this step (works in both tiered and manual modes)
+	DisableParallelToolExecution *bool           `json:"disable_parallel_tool_execution,omitempty"` // Disable parallel tool execution for this step (nil = enabled by default, true = disabled, false = explicitly enabled)
+	DisableTierOptimization      *bool           `json:"disable_tier_optimization,omitempty"`       // If true, always use Tier 1 (high reasoning) regardless of learning maturity — disables maturity-based tier downgrade
+	Optimized                    *bool           `json:"optimized,omitempty"`                       // If true, step is considered optimized — triggers tier downgrade to lower-cost LLMs
+	SuccessfulRuns               *int            `json:"successful_runs,omitempty"`                 // Count of successful runs — tracks progress toward optimization readiness (3+ = ready to optimize)
 }
 
 // ============================================================================
@@ -256,13 +255,13 @@ const (
 
 // CommonStepFields contains fields shared by all step types
 type CommonStepFields struct {
-	ID                          string                `json:"id"` // Stable step ID (generated from title) - required
-	Title                       string                `json:"title"`
-	Description                 string                `json:"description"`
-	SuccessCriteria             string                `json:"success_criteria"`
-	ContextDependencies         []string              `json:"context_dependencies"`
-	ContextOutput    FlexibleContextOutput `json:"context_output"`                 // Use flexible type to handle string or array
-	ValidationSchema *ValidationSchema     `json:"validation_schema,omitempty"` // Optional structured validation schema for step outputs
+	ID                  string                `json:"id"` // Stable step ID (generated from title) - required
+	Title               string                `json:"title"`
+	Description         string                `json:"description"`
+	SuccessCriteria     string                `json:"success_criteria"`
+	ContextDependencies []string              `json:"context_dependencies"`
+	ContextOutput       FlexibleContextOutput `json:"context_output"`              // Use flexible type to handle string or array
+	ValidationSchema    *ValidationSchema     `json:"validation_schema,omitempty"` // Optional structured validation schema for step outputs
 }
 
 // PlanStepInterface is the interface that all step types must implement
@@ -298,9 +297,9 @@ func (r *RegularPlanStep) GetDescription() string                  { return r.De
 func (r *RegularPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
 func (r *RegularPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
 func (r *RegularPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
-func (r *RegularPlanStep) GetValidationSchema() *ValidationSchema   { return r.ValidationSchema }
-func (r *RegularPlanStep) StepType() StepType                       { return StepTypeRegular }
-func (r *RegularPlanStep) GetCommonFields() CommonStepFields        { return r.CommonStepFields }
+func (r *RegularPlanStep) GetValidationSchema() *ValidationSchema  { return r.ValidationSchema }
+func (r *RegularPlanStep) StepType() StepType                      { return StepTypeRegular }
+func (r *RegularPlanStep) GetCommonFields() CommonStepFields       { return r.CommonStepFields }
 
 // MarshalJSON ensures the type field is always set when marshaling
 func (r *RegularPlanStep) MarshalJSON() ([]byte, error) {
@@ -335,14 +334,14 @@ func (c *ConditionalPlanStep) GetDescription() string                  { return 
 func (c *ConditionalPlanStep) GetSuccessCriteria() string              { return c.SuccessCriteria }
 func (c *ConditionalPlanStep) GetContextDependencies() []string        { return c.ContextDependencies }
 func (c *ConditionalPlanStep) GetContextOutput() FlexibleContextOutput { return c.ContextOutput }
-func (c *ConditionalPlanStep) GetValidationSchema() *ValidationSchema   { return c.ValidationSchema }
-func (c *ConditionalPlanStep) StepType() StepType                       { return StepTypeConditional }
+func (c *ConditionalPlanStep) GetValidationSchema() *ValidationSchema  { return c.ValidationSchema }
+func (c *ConditionalPlanStep) StepType() StepType                      { return StepTypeConditional }
 func (c *ConditionalPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:              c.ID,
-		Title:           c.Title,
-		Description:     c.Description,
-		SuccessCriteria: c.SuccessCriteria,
+		ID:                  c.ID,
+		Title:               c.Title,
+		Description:         c.Description,
+		SuccessCriteria:     c.SuccessCriteria,
 		ContextDependencies: c.ContextDependencies,
 		ContextOutput:       c.ContextOutput,
 		ValidationSchema:    c.ValidationSchema,
@@ -477,14 +476,14 @@ func (d *DecisionPlanStep) GetDescription() string                  { return d.D
 func (d *DecisionPlanStep) GetSuccessCriteria() string              { return d.SuccessCriteria }
 func (d *DecisionPlanStep) GetContextDependencies() []string        { return d.ContextDependencies }
 func (d *DecisionPlanStep) GetContextOutput() FlexibleContextOutput { return d.ContextOutput }
-func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema   { return d.ValidationSchema }
-func (d *DecisionPlanStep) StepType() StepType                       { return StepTypeDecision }
+func (d *DecisionPlanStep) GetValidationSchema() *ValidationSchema  { return d.ValidationSchema }
+func (d *DecisionPlanStep) StepType() StepType                      { return StepTypeDecision }
 func (d *DecisionPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:              d.ID,
-		Title:           d.Title,
-		Description:     d.Description,
-		SuccessCriteria: d.SuccessCriteria,
+		ID:                  d.ID,
+		Title:               d.Title,
+		Description:         d.Description,
+		SuccessCriteria:     d.SuccessCriteria,
 		ContextDependencies: d.ContextDependencies,
 		ContextOutput:       d.ContextOutput,
 		ValidationSchema:    d.ValidationSchema,
@@ -641,14 +640,14 @@ func (r *RoutingPlanStep) GetDescription() string                  { return r.De
 func (r *RoutingPlanStep) GetSuccessCriteria() string              { return r.SuccessCriteria }
 func (r *RoutingPlanStep) GetContextDependencies() []string        { return r.ContextDependencies }
 func (r *RoutingPlanStep) GetContextOutput() FlexibleContextOutput { return r.ContextOutput }
-func (r *RoutingPlanStep) GetValidationSchema() *ValidationSchema   { return r.ValidationSchema }
-func (r *RoutingPlanStep) StepType() StepType                       { return StepTypeRouting }
+func (r *RoutingPlanStep) GetValidationSchema() *ValidationSchema  { return r.ValidationSchema }
+func (r *RoutingPlanStep) StepType() StepType                      { return StepTypeRouting }
 func (r *RoutingPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:              r.ID,
-		Title:           r.Title,
-		Description:     r.Description,
-		SuccessCriteria: r.SuccessCriteria,
+		ID:                  r.ID,
+		Title:               r.Title,
+		Description:         r.Description,
+		SuccessCriteria:     r.SuccessCriteria,
 		ContextDependencies: r.ContextDependencies,
 		ContextOutput:       r.ContextOutput,
 		ValidationSchema:    r.ValidationSchema,
@@ -706,10 +705,10 @@ func (o *OrchestrationPlanStep) GetValidationSchema() *ValidationSchema {
 func (o *OrchestrationPlanStep) StepType() StepType { return StepTypeOrchestration }
 func (o *OrchestrationPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:              o.ID,
-		Title:           o.Title,
-		Description:     "",  // Not used for orchestration wrapper
-		SuccessCriteria: "",  // Not used for orchestration wrapper
+		ID:                  o.ID,
+		Title:               o.Title,
+		Description:         "",  // Not used for orchestration wrapper
+		SuccessCriteria:     "",  // Not used for orchestration wrapper
 		ContextDependencies: nil, // Not used for orchestration wrapper
 		ContextOutput:       "",  // Not used for orchestration wrapper
 		ValidationSchema:    o.GetValidationSchema(),
@@ -776,9 +775,9 @@ func (h *HumanInputPlanStep) GetDescription() string                  { return h
 func (h *HumanInputPlanStep) GetSuccessCriteria() string              { return h.SuccessCriteria }
 func (h *HumanInputPlanStep) GetContextDependencies() []string        { return h.ContextDependencies }
 func (h *HumanInputPlanStep) GetContextOutput() FlexibleContextOutput { return h.ContextOutput }
-func (h *HumanInputPlanStep) GetValidationSchema() *ValidationSchema   { return h.ValidationSchema }
-func (h *HumanInputPlanStep) StepType() StepType                       { return StepTypeHumanInput }
-func (h *HumanInputPlanStep) GetCommonFields() CommonStepFields        { return h.CommonStepFields }
+func (h *HumanInputPlanStep) GetValidationSchema() *ValidationSchema  { return h.ValidationSchema }
+func (h *HumanInputPlanStep) StepType() StepType                      { return StepTypeHumanInput }
+func (h *HumanInputPlanStep) GetCommonFields() CommonStepFields       { return h.CommonStepFields }
 
 // MarshalJSON ensures the type field is always set when marshaling
 func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
@@ -795,15 +794,15 @@ func (h *HumanInputPlanStep) MarshalJSON() ([]byte, error) {
 // NOTE: Todo task steps are orchestration-like wrappers that manage todo lists instead of success criteria.
 // Loops are NOT supported on todo task wrappers - the step completes when all todos are done.
 type TodoTaskPlanStep struct {
-	Type               StepType                 `json:"type"`                            // Always "todo_task" - required for JSON marshaling/unmarshaling
-	ID                 string                   `json:"id"`                              // Stable step ID - required for identification
-	Title              string                   `json:"title"`                           // Display title for the todo task step wrapper
-	TodoTaskStep       PlanStepInterface        `json:"todo_task_step,omitempty"`        // The main orchestrator step metadata (Description, SuccessCriteria, etc.)
-	PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`     // Predefined sub-agents (with learning/prevalidation)
-	EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"`  // Allow generic execution agent (no learning/prevalidation)
-	NextStepID         string                   `json:"next_step_id,omitempty"`          // ID of step after todo task completes (or "end")
-	TodoTaskResponse   *TodoTaskResponse        `json:"-"`                               // runtime: stores orchestrator decisions - not stored in plan.json
-	AgentConfigs       *AgentConfigs            `json:"-"`                               // runtime: per-agent configuration - not stored in plan.json
+	Type               StepType                 `json:"type"`                           // Always "todo_task" - required for JSON marshaling/unmarshaling
+	ID                 string                   `json:"id"`                             // Stable step ID - required for identification
+	Title              string                   `json:"title"`                          // Display title for the todo task step wrapper
+	TodoTaskStep       PlanStepInterface        `json:"todo_task_step,omitempty"`       // The main orchestrator step metadata (Description, SuccessCriteria, etc.)
+	PredefinedRoutes   []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`    // Predefined sub-agents (with learning/prevalidation)
+	EnableGenericAgent bool                     `json:"enable_generic_agent,omitempty"` // Allow generic execution agent (no learning/prevalidation)
+	NextStepID         string                   `json:"next_step_id,omitempty"`         // ID of step after todo task completes (or "end")
+	TodoTaskResponse   *TodoTaskResponse        `json:"-"`                              // runtime: stores orchestrator decisions - not stored in plan.json
+	AgentConfigs       *AgentConfigs            `json:"-"`                              // runtime: per-agent configuration - not stored in plan.json
 }
 
 // TodoTaskResponse represents the structured output from the TodoTask orchestrator agent
@@ -824,8 +823,8 @@ type TodoTaskResponse struct {
 	SuccessCriteriaForSubAgent string `json:"success_criteria_for_sub_agent,omitempty"` // Measurable criteria
 
 	// Overall status
-	AllTasksComplete bool   `json:"all_tasks_complete"`  // True when all todos are completed
-	ProgressSummary  string `json:"progress_summary"`    // Human-readable progress
+	AllTasksComplete bool   `json:"all_tasks_complete"`          // True when all todos are completed
+	ProgressSummary  string `json:"progress_summary"`            // Human-readable progress
 	CompletionReason string `json:"completion_reason,omitempty"` // Why the step is complete
 }
 
@@ -865,10 +864,10 @@ func (t *TodoTaskPlanStep) GetValidationSchema() *ValidationSchema {
 func (t *TodoTaskPlanStep) StepType() StepType { return StepTypeTodoTask }
 func (t *TodoTaskPlanStep) GetCommonFields() CommonStepFields {
 	return CommonStepFields{
-		ID:              t.ID,
-		Title:           t.Title,
-		Description:     t.GetDescription(),
-		SuccessCriteria: t.GetSuccessCriteria(),
+		ID:                  t.ID,
+		Title:               t.Title,
+		Description:         t.GetDescription(),
+		SuccessCriteria:     t.GetSuccessCriteria(),
 		ContextDependencies: t.GetContextDependencies(),
 		ContextOutput:       t.GetContextOutput(),
 		ValidationSchema:    t.GetValidationSchema(),
@@ -1190,16 +1189,16 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 // Nested steps (DecisionStep, OrchestrationStep, IfTrueSteps, IfFalseSteps) are PlanStepInterface.
 // Once plan.json is migrated to use new type-safe types, this struct can be updated accordingly.
 type PartialPlanStep struct {
-	ExistingStepID              string                `json:"existing_step_id"`                        // Required: ID of existing step to update
-	Title                       string                `json:"title,omitempty"`                         // Optional: New title (if renaming)
-	Description                 string                `json:"description,omitempty"`                   // Optional: Updated description
-	SuccessCriteria             string                `json:"success_criteria,omitempty"`              // Optional: Updated success criteria
-	ContextDependencies         []string              `json:"context_dependencies,omitempty"`          // Optional: Updated context dependencies
-	ContextOutput               FlexibleContextOutput `json:"context_output,omitempty"`                // Optional: Updated context output
-	HasLoop                     *bool                 `json:"has_loop,omitempty"`                      // Optional: Updated has_loop (use pointer to distinguish unset from false)
-	LoopCondition               string                `json:"loop_condition,omitempty"`                // Optional: Updated loop condition
-	MaxIterations               *int                  `json:"max_iterations,omitempty"`                // Optional: Updated max iterations (use pointer to distinguish unset from 0)
-	LoopDescription             string                `json:"loop_description,omitempty"`              // Optional: Updated loop description
+	ExistingStepID      string                `json:"existing_step_id"`               // Required: ID of existing step to update
+	Title               string                `json:"title,omitempty"`                // Optional: New title (if renaming)
+	Description         string                `json:"description,omitempty"`          // Optional: Updated description
+	SuccessCriteria     string                `json:"success_criteria,omitempty"`     // Optional: Updated success criteria
+	ContextDependencies []string              `json:"context_dependencies,omitempty"` // Optional: Updated context dependencies
+	ContextOutput       FlexibleContextOutput `json:"context_output,omitempty"`       // Optional: Updated context output
+	HasLoop             *bool                 `json:"has_loop,omitempty"`             // Optional: Updated has_loop (use pointer to distinguish unset from false)
+	LoopCondition       string                `json:"loop_condition,omitempty"`       // Optional: Updated loop condition
+	MaxIterations       *int                  `json:"max_iterations,omitempty"`       // Optional: Updated max iterations (use pointer to distinguish unset from 0)
+	LoopDescription     string                `json:"loop_description,omitempty"`     // Optional: Updated loop description
 	// Conditional step fields
 	HasCondition      *bool                    `json:"has_condition,omitempty"`      // Optional: Updated has_condition (use pointer to distinguish unset from false)
 	ConditionQuestion string                   `json:"condition_question,omitempty"` // Optional: Updated condition question
@@ -1213,7 +1212,7 @@ type PartialPlanStep struct {
 	OrchestrationStep   map[string]interface{}   `json:"orchestration_step,omitempty"`   // Optional: Updated orchestration step - will be converted to PlanStepInterface
 	OrchestrationRoutes []PlanOrchestrationRoute `json:"orchestration_routes,omitempty"` // Optional: Updated orchestration routes
 	// Todo task step fields
-	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`     // Optional: Updated todo task step - will be converted to PlanStepInterface
+	TodoTaskStep     map[string]interface{}   `json:"todo_task_step,omitempty"`    // Optional: Updated todo task step - will be converted to PlanStepInterface
 	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"` // Optional: Updated predefined routes for todo task steps
 	// Routing fields (used by both conditional, decision, and routing steps)
 	IfTrueNextStepID  string `json:"if_true_next_step_id,omitempty"`  // Optional: Updated if_true_next_step_id
@@ -1670,175 +1669,6 @@ func getAddRegularStepSchema() string {
 	}`
 }
 
-// getAddConditionalStepSchema returns the JSON schema for add_conditional_step tool
-func getAddConditionalStepSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"id": {
-				"type": "string",
-				"description": "REQUIRED: Stable step ID for this conditional step. Generate a unique, URL-friendly ID based on the step title."
-			},
-			"title": {
-				"type": "string",
-				"description": "REQUIRED: Short, clear title for the conditional step"
-			},
-			"description": {
-				"type": "string",
-				"description": "OPTIONAL: Description of what this conditional step does. Can be empty string if not needed."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "OPTIONAL: Success criteria for the conditional step wrapper. Can be empty string if not needed."
-			},
-			"context_dependencies": {
-				"type": "array",
-				"items": { "type": "string" },
-				"description": "OPTIONAL: Context files from previous steps that this conditional step depends on. Use empty array [] if no dependencies."
-			},
-			"context_output": {
-				"type": "string",
-				"description": "OPTIONAL: Context file this conditional step wrapper will create. Can be empty string if not needed. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."
-			},
-			"condition_question": {
-				"type": "string",
-				"description": "REQUIRED: Question to ask the ConditionalLLM for decision making (e.g., 'Is the deployment healthy?', 'Is user already logged in?')"
-			},
-			"condition_context": {
-				"type": "string",
-				"description": "OPTIONAL: Context to provide to ConditionalLLM (e.g., context files, status information). Can be empty string if not needed."
-			},
-			"if_true_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
-						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"validation_schema": {
-							"type": "object",
-							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: path MUST point to COUNT/number field (e.g., '$.count', '$.total_expected_count'), compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files'). CORRECT example: If 'count equals items array length', use path='$.count', consistency_check={type='array_length', compare_with_path='$.items'}. CORRECT example: If 'total_expected_count equals downloaded_files array length', use path='$.total_expected_count', consistency_check={type='array_length', compare_with_path='$.downloaded_files'}. INCORRECT (SWAPPED) - DO NOT DO THIS: path='$.items', compare_with_path='$.count' ❌ WRONG! Field name hints: Number fields contain 'count', 'total', 'length', 'size'. Array fields contain 'files', 'items', 'list', 'array', 'entries'. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
-							"properties": {
-								"files": {
-									"type": "array",
-									"items": {
-										"type": "object",
-										"properties": {
-											"file_name": {"type": "string"},
-											"must_exist": {"type": "boolean"},
-											"json_checks": {
-												"type": "array",
-												"items": {
-													"type": "object",
-													"properties": {
-														"path": {"type": "string"},
-														"must_exist": {"type": "boolean"},
-														"value_type": {"type": "string"},
-														"min_length": {"type": "number"},
-														"max_length": {"type": "number"},
-														"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
-														"min_value": {"type": "number"},
-														"max_value": {"type": "number"},
-														"consistency_check": {
-															"type": "object",
-															"properties": {
-																"type": {"type": "string"},
-																"compare_with_path": {"type": "string"}
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
-				},
-				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing') and an 'id' field."
-			},
-			"if_false_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
-						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content, store it in a separate markdown file and reference it from JSON."},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"validation_schema": {
-							"type": "object",
-							"description": "REQUIRED: Structured validation schema for fast code-based pre-validation. Generate by parsing success_criteria. Structure: {files: [{file_name: string, must_exist: boolean, json_checks: [{path: string (JSONPath), must_exist: boolean, value_type?: string, min_length?: number, max_length?: number, pattern?: string (VALID Go regex only - must compile, balanced parentheses, properly escaped), min_value?: number, max_value?: number, consistency_check?: {type: string, compare_with_path: string}}]}]}. CRITICAL FOR array_length CONSISTENCY CHECKS - AVOID COMMON MISTAKE: path MUST point to COUNT/number field (e.g., '$.count', '$.total_expected_count'), compare_with_path MUST point to ARRAY field (e.g., '$.items', '$.downloaded_files'). CORRECT example: If 'count equals items array length', use path='$.count', consistency_check={type='array_length', compare_with_path='$.items'}. CORRECT example: If 'total_expected_count equals downloaded_files array length', use path='$.total_expected_count', consistency_check={type='array_length', compare_with_path='$.downloaded_files'}. INCORRECT (SWAPPED) - DO NOT DO THIS: path='$.items', compare_with_path='$.count' ❌ WRONG! Field name hints: Number fields contain 'count', 'total', 'length', 'size'. Array fields contain 'files', 'items', 'list', 'array', 'entries'. IMPORTANT: Only use pattern field if you can generate a valid Go regex. Invalid patterns will be skipped.",
-							"properties": {
-								"files": {
-									"type": "array",
-									"items": {
-										"type": "object",
-										"properties": {
-											"file_name": {"type": "string"},
-											"must_exist": {"type": "boolean"},
-											"json_checks": {
-												"type": "array",
-												"items": {
-													"type": "object",
-													"properties": {
-														"path": {"type": "string"},
-														"must_exist": {"type": "boolean"},
-														"value_type": {"type": "string"},
-														"min_length": {"type": "number"},
-														"max_length": {"type": "number"},
-														"pattern": {"type": "string", "description": "OPTIONAL: Valid Go regex pattern for string format validation. MUST be valid Go regex syntax (use regexp.Compile). Common patterns: '^[A-Z]+$' (uppercase only), '^\\d{4}-\\d{2}-\\d{2}$' (date format), '^[a-z0-9-]+$' (lowercase alphanumeric with hyphens). CRITICAL: Ensure all parentheses are balanced, escape special characters (use \\\\ for backslash, \\\\( for literal parenthesis), and test your pattern. Invalid patterns will be skipped with a warning. Examples: '^success$', '^\\d+$', '^[A-Za-z0-9_]+$'. Avoid: incomplete patterns like 'VALUE\\\\(SUBSTITUTE\\\\(.*' (missing closing parentheses)."},
-														"min_value": {"type": "number"},
-														"max_value": {"type": "number"},
-														"consistency_check": {
-															"type": "object",
-															"properties": {
-																"type": {"type": "string"},
-																"compare_with_path": {"type": "string"}
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-						}
-					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
-				},
-				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing') and an 'id' field."
-			},
-			"if_true_next_step_id": {
-				"type": "string",
-				"description": "OPTIONAL: ID of step to connect to after true branch completes, or 'end' to end the workflow. REQUIRED when if_true_steps is empty []. Optional when if_true_steps has steps (defaults to next step in main plan if not specified). Use the step's id field from the plan, or 'end' to terminate."
-			},
-			"if_false_next_step_id": {
-				"type": "string",
-				"description": "OPTIONAL: ID of step to connect to after false branch completes, or 'end' to end the workflow. REQUIRED when if_false_steps is empty []. Optional when if_false_steps has steps (defaults to next step in main plan if not specified). Use the step's id field from the plan, or 'end' to terminate."
-			},
-			"insert_after_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
-			}
-		},
-		"required": ["id", "title", "condition_question", "if_true_steps", "if_false_steps", "insert_after_step_id"]
-	}`
-}
-
 // getAddDecisionStepSchema returns the JSON schema for add_decision_step tool
 // Decision steps use a flattened structure: description, success_criteria, context_output, etc. are directly on the step
 func getAddDecisionStepSchema() string {
@@ -2059,57 +1889,6 @@ func getUpdateRoutingStepSchema() string {
 			}
 		},
 		"required": ["existing_step_id"]
-	}`
-}
-
-// getAddLoopStepSchema returns the JSON schema for add_loop_step tool
-func getAddLoopStepSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"id": {
-				"type": "string",
-				"description": "REQUIRED: Stable step ID for this loop step. Generate a unique, URL-friendly ID based on the step title."
-			},
-			"title": {
-				"type": "string",
-				"description": "REQUIRED: Short, clear title for the loop step"
-			},
-			"description": {
-				"type": "string",
-				"description": "REQUIRED: COMPREHENSIVE, DETAILED description of what this step accomplishes in each iteration."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "REQUIRED: Detailed explanation of how to verify this step was completed successfully - must be file-verifiable."
-			},
-			"context_dependencies": {
-				"type": "array",
-				"items": { "type": "string" },
-				"description": "REQUIRED: List of context files from previous steps that this step depends on. Use empty array [] if no dependencies."
-			},
-			"context_output": {
-				"type": "string",
-				"description": "REQUIRED: What context file this step will create for subsequent steps - e.g., 'step_1_results.json'. CRITICAL: Keep JSON files SMALL (< 100KB). For large text content (descriptions, logs, content > 1KB), store it in a separate markdown file (e.g., 'step_1_details.md') and reference it from JSON (e.g., {\"details_file\": \"step_1_details.md\"}). JSON should contain only structured data: counts, IDs, status, file references, brief summaries."
-			},
-			"loop_condition": {
-				"type": "string",
-				"description": "REQUIRED: Condition that must be met to exit the loop. This should be the same as success_criteria and must be file-verifiable."
-			},
-			"max_iterations": {
-				"type": "integer",
-				"description": "OPTIONAL: Maximum number of loop iterations allowed (default: 10). Recommended: 10 for normal operations, 20-50 for long-running operations, 3-5 for quick status checks."
-			},
-			"loop_description": {
-				"type": "string",
-				"description": "REQUIRED: Describe what happens in EACH ITERATION of the loop. Be specific about what the step does in each iteration."
-			},
-			"insert_after_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the step to insert after. Use the step's id field from the plan. Use empty string \"\" to insert at the beginning of the plan (before the first step)."
-			}
-		},
-		"required": ["id", "title", "description", "success_criteria", "context_output", "loop_condition", "loop_description", "insert_after_step_id"]
 	}`
 }
 
@@ -2461,328 +2240,6 @@ func getDeleteTodoTaskRouteSchema() string {
 	}`
 }
 
-// getConvertStepToConditionalSchema returns the JSON schema for convert_step_to_conditional tool
-func getConvertStepToConditionalSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the step to convert to conditional. Use the step's id field from the plan."
-			},
-			"condition_question": {
-				"type": "string",
-				"description": "REQUIRED: Question to ask the ConditionalLLM for decision making (e.g., 'Is the deployment healthy?')"
-			},
-			"condition_context": {
-				"type": "string",
-				"description": "OPTIONAL: Context to provide to ConditionalLLM (e.g., context files, status information). Can be empty string if not needed."
-			},
-			"if_true_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
-						},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"has_condition": {"type": "boolean"},
-						"condition_question": {"type": "string"},
-						"condition_context": {"type": "string"},
-						"if_true_steps": {"type": "array", "items": {"type": "object"}},
-						"if_false_steps": {"type": "array", "items": {"type": "object"}}
-					},
-					"required": ["id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
-				},
-				"description": "REQUIRED: Array of steps to execute if condition is true. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include an 'id' field. **IMPORTANT**: When if_true_steps is empty [], you MUST also provide if_true_next_step_id to specify which step comes next. Example: If checking 'Is user logged in?' and you want to skip to step 5 when true, use empty array [] and set if_true_next_step_id to 'step-5-id'."
-			},
-			"if_false_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"id": {
-							"type": "string",
-							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'rollback-deployment' from 'Rollback Deployment')."
-						},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"has_condition": {"type": "boolean"},
-						"condition_question": {"type": "string"},
-						"condition_context": {"type": "string"},
-						"if_true_steps": {"type": "array", "items": {"type": "object"}},
-						"if_false_steps": {"type": "array", "items": {"type": "object"}}
-					},
-					"required": ["id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
-				},
-				"description": "REQUIRED: Array of steps to execute if condition is false. Can be empty array [] to skip this branch and continue directly to the next step in the main plan. Each step MUST include an 'id' field. **IMPORTANT**: When if_false_steps is empty [], you MUST also provide if_false_next_step_id to specify which step comes next. Example: If checking 'Is user logged in?' and you want to execute login steps when false, provide [login_step1, login_step2]. If you want to skip when false, use empty array [] and set if_false_next_step_id to 'step-5-id'."
-			},
-			"if_true_next_step_id": {
-				"type": "string",
-				"description": "ID of step to connect to after true branch completes, or 'end' to end the workflow. REQUIRED when if_true_steps is empty []. Optional when if_true_steps has steps (defaults to next step in main plan if not specified). Use the step's id field from the main plan, or 'end' to terminate. Example: If conditional step is step 4 and you want to go to step 5 after true branch, set if_true_next_step_id to 'step-5-id'. If you want to end the workflow, set to 'end'."
-			},
-			"if_false_next_step_id": {
-				"type": "string",
-				"description": "ID of step to connect to after false branch completes, or 'end' to end the workflow. REQUIRED when if_false_steps is empty []. Optional when if_false_steps has steps (defaults to next step in main plan if not specified). Use the step's id field from the main plan, or 'end' to terminate. Example: If conditional step is step 4 and you want to go to step 5 after false branch, set if_false_next_step_id to 'step-5-id'. If you want to end the workflow, set to 'end'."
-			}
-		},
-		"required": ["step_id", "condition_question", "if_true_steps", "if_false_steps"]
-	}`
-}
-
-// getAddBranchStepsSchema returns the JSON schema for add_branch_steps tool
-func getAddBranchStepsSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"parent_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the conditional step (parent step). Use the step's id field from the plan."
-			},
-			"branch_type": {
-				"type": "string",
-				"enum": ["if_true", "if_false"],
-				"description": "REQUIRED: Which branch to add steps to - 'if_true' or 'if_false'"
-			},
-			"new_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
-						"id": {
-							"type": "string",
-							"description": "REQUIRED: Stable step ID for this branch step. Generate a unique, URL-friendly ID based on the step title (e.g., 'verify-deployment-health' from 'Verify Deployment Health')."
-						},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"has_condition": {"type": "boolean"},
-						"condition_question": {"type": "string"},
-						"condition_context": {"type": "string"},
-						"if_true_steps": {"type": "array", "items": {"type": "object"}},
-						"if_false_steps": {"type": "array", "items": {"type": "object"}}
-					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
-				},
-				"description": "REQUIRED: New steps to add to the specified branch. Provide complete step definitions with IDs. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing')."
-			}
-		},
-		"required": ["parent_step_id", "branch_type", "new_steps"]
-	}`
-}
-
-// getUpdateBranchStepsSchema returns the JSON schema for update_branch_steps tool
-func getUpdateBranchStepsSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"parent_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the conditional step (parent step). Use the step's id field from the plan."
-			},
-			"branch_type": {
-				"type": "string",
-				"enum": ["if_true", "if_false"],
-				"description": "REQUIRED: Which branch to update - 'if_true' or 'if_false'"
-			},
-			"updated_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"existing_step_id": {
-							"type": "string",
-							"description": "REQUIRED: The ID of the step within the branch to update. Use the step's id field from the plan."
-						},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"has_condition": {"type": "boolean"},
-						"condition_question": {"type": "string"},
-						"condition_context": {"type": "string"}
-					},
-					"required": ["existing_step_id"]
-				},
-				"description": "REQUIRED: Steps to update within the branch. For each step, provide existing_step_id (required) and only include fields you want to change."
-			}
-		},
-		"required": ["parent_step_id", "branch_type", "updated_steps"]
-	}`
-}
-
-// getDeleteBranchStepsSchema returns the JSON schema for delete_branch_steps tool
-func getDeleteBranchStepsSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"parent_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the conditional step (parent step). Use the step's id field from the plan."
-			},
-			"branch_type": {
-				"type": "string",
-				"enum": ["if_true", "if_false"],
-				"description": "REQUIRED: Which branch to delete steps from - 'if_true' or 'if_false'"
-			},
-			"deleted_step_ids": {
-				"type": "array",
-				"items": {"type": "string"},
-				"description": "REQUIRED: IDs of steps to delete from the branch. Use the step's id field from the plan."
-			}
-		},
-		"required": ["parent_step_id", "branch_type", "deleted_step_ids"]
-	}`
-}
-
-// getUpdateConditionalStepSchema returns the JSON schema for update_conditional_step tool
-func getUpdateConditionalStepSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"existing_step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the conditional step to update. Use the step's id field from the plan."
-			},
-			"title": {
-				"type": "string",
-				"description": "OPTIONAL: New title for the step. Only include if you want to rename the step. If omitted, the existing title is preserved."
-			},
-			"description": {
-				"type": "string",
-				"description": "OPTIONAL: Updated description. Only include if you want to change the description. If omitted, the existing description is preserved."
-			},
-			"success_criteria": {
-				"type": "string",
-				"description": "OPTIONAL: Updated success criteria. Only include if you want to change it. If omitted, the existing success criteria is preserved."
-			},
-			"context_dependencies": {
-				"type": "array",
-				"items": { "type": "string" },
-				"description": "OPTIONAL: Updated context dependencies. Only include if you want to change them. If omitted, the existing context dependencies are preserved."
-			},
-			"context_output": {
-				"type": "string",
-				"description": "OPTIONAL: Updated context output. Only include if you want to change it. If omitted, the existing context output is preserved."
-			},
-			"has_loop": {
-				"type": "boolean",
-				"description": "OPTIONAL: Updated has_loop flag. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. Always set to false. If omitted, the existing has_loop value is preserved."
-			},
-			"loop_condition": {
-				"type": "string",
-				"description": "OPTIONAL: Updated loop condition. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing loop condition is preserved."
-			},
-			"max_iterations": {
-				"type": "integer",
-				"description": "OPTIONAL: Updated max iterations. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing max iterations is preserved."
-			},
-			"loop_description": {
-				"type": "string",
-				"description": "OPTIONAL: Updated loop description. Only include if you want to change it. NOTE: Loop support is currently not implemented in agents. This field is ignored. If omitted, the existing loop description is preserved."
-			},
-			"condition_question": {
-				"type": "string",
-				"description": "OPTIONAL: Updated condition question. Only include if you want to change it. Question to ask the ConditionalLLM for decision making (e.g., 'Is the deployment healthy?', 'Is user already logged in?'). If omitted, the existing question is preserved."
-			},
-			"condition_context": {
-				"type": "string",
-				"description": "OPTIONAL: Updated condition context. Only include if you want to change it. Context to provide to ConditionalLLM (e.g., context files, status information). Can be empty string to clear existing context. If omitted, the existing context is preserved."
-			},
-			"if_true_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
-						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"has_condition": {"type": "boolean"},
-						"condition_question": {"type": "string"},
-						"condition_context": {"type": "string"},
-						"if_true_steps": {"type": "array", "items": {"type": "object"}},
-						"if_false_steps": {"type": "array", "items": {"type": "object"}}
-					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
-				},
-				"description": "OPTIONAL: Updated if_true_steps array. Only include if you want to change it. Array of steps to execute if condition is true. Can be empty array [] to clear all steps. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing'). If omitted, the existing if_true_steps are preserved."
-			},
-			"if_false_steps": {
-				"type": "array",
-				"items": {
-					"type": "object",
-					"properties": {
-						"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular', 'conditional', 'decision', 'orchestration', or 'routing'. Most branch steps are 'regular'."},
-						"id": {"type": "string", "description": "REQUIRED: Stable step ID"},
-						"title": {"type": "string"},
-						"description": {"type": "string"},
-						"success_criteria": {"type": "string"},
-						"context_dependencies": {"type": "array", "items": {"type": "string"}},
-						"context_output": {"type": "string"},
-						"has_loop": {"type": "boolean", "description": "REQUIRED: Whether this step needs to loop. NOTE: Loop support is currently not implemented in agents. Always set to false."},
-						"loop_condition": {"type": "string", "description": "OPTIONAL: Condition that must be met to exit the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"max_iterations": {"type": "integer", "description": "OPTIONAL: Maximum number of loop iterations allowed. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"loop_description": {"type": "string", "description": "OPTIONAL: Describe what happens in EACH ITERATION of the loop. NOTE: Loop support is currently not implemented in agents. This field is ignored."},
-						"has_condition": {"type": "boolean"},
-						"condition_question": {"type": "string"},
-						"condition_context": {"type": "string"},
-						"if_true_steps": {"type": "array", "items": {"type": "object"}},
-						"if_false_steps": {"type": "array", "items": {"type": "object"}}
-					},
-					"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop"]
-				},
-				"description": "OPTIONAL: Updated if_false_steps array. Only include if you want to change it. Array of steps to execute if condition is false. Can be empty array [] to clear all steps. Each step MUST include a 'type' field ('regular', 'conditional', 'decision', 'orchestration', or 'routing'). If omitted, the existing if_false_steps are preserved."
-			},
-			"if_true_next_step_id": {
-				"type": "string",
-				"description": "OPTIONAL: Updated if_true_next_step_id. Only include if you want to change it. ID of step to connect to after true branch completes (REQUIRED when if_true_steps is empty []). Use step's id field from the plan, or 'end' to terminate. If omitted, the existing value is preserved."
-			},
-			"if_false_next_step_id": {
-				"type": "string",
-				"description": "OPTIONAL: Updated if_false_next_step_id. Only include if you want to change it. ID of step to connect to after false branch completes (REQUIRED when if_false_steps is empty []). Use step's id field from the plan, or 'end' to terminate. If omitted, the existing value is preserved."
-			}
-		},
-		"required": ["existing_step_id"]
-	}`
-}
-
 // getUpdateDecisionStepSchema returns the JSON schema for update_decision_step tool
 // Decision steps use a flattened structure with description, success_criteria, etc. directly on the step
 func getUpdateDecisionStepSchema() string {
@@ -2905,20 +2362,6 @@ func getUpdateHumanInputStepSchema() string {
 	}`
 }
 
-// getConvertConditionalToRegularSchema returns the JSON schema for convert_conditional_to_regular tool
-func getConvertConditionalToRegularSchema() string {
-	return `{
-		"type": "object",
-		"properties": {
-			"step_id": {
-				"type": "string",
-				"description": "REQUIRED: The ID of the conditional step to convert back to regular. Use the step's id field from the plan. This will remove all conditional properties and branch steps."
-			}
-		},
-		"required": ["step_id"]
-	}`
-}
-
 // getUpdateValidationSchemaSchema returns the JSON schema for update_validation_schema tool
 func getUpdateValidationSchemaSchema() string {
 	return `{
@@ -3034,37 +2477,6 @@ func writePlanToFile(ctx context.Context, workspacePath string, plan *PlanningRe
 
 	if err := writeFile(ctx, planPath, string(data)); err != nil {
 		return fmt.Errorf("failed to write plan.json: %w", err)
-	}
-
-	return nil
-}
-
-// validateNestingDepth checks if the maximum nesting depth (2 levels) is exceeded
-// Returns error if depth > 2, nil otherwise
-func validateNestingDepth(step PlanStepInterface, currentDepth int) error {
-	const maxDepth = 2
-	if currentDepth > maxDepth {
-		return fmt.Errorf("nesting depth exceeds maximum allowed depth of %d (current: %d)", maxDepth, currentDepth)
-	}
-
-	// Check nested steps in branches (only ConditionalPlanStep has branches)
-	if conditionalStep, ok := step.(*ConditionalPlanStep); ok {
-		for _, branchStep := range conditionalStep.IfTrueSteps {
-			// Check if branch step is also conditional
-			if _, isConditional := branchStep.(*ConditionalPlanStep); isConditional {
-				if err := validateNestingDepth(branchStep, currentDepth+1); err != nil {
-					return err
-				}
-			}
-		}
-		for _, branchStep := range conditionalStep.IfFalseSteps {
-			// Check if branch step is also conditional
-			if _, isConditional := branchStep.(*ConditionalPlanStep); isConditional {
-				if err := validateNestingDepth(branchStep, currentDepth+1); err != nil {
-					return err
-				}
-			}
-		}
 	}
 
 	return nil
@@ -3759,16 +3171,6 @@ func equalStringSlices(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-func equalBoolPtrs(a, b *bool) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
 }
 
 func equalValidationSchemas(a, b *ValidationSchema) bool {
@@ -4900,116 +4302,6 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 	}
 }
 
-// createUpdateConditionalStepExecutor creates an executor function for update_conditional_step tool
-func createUpdateConditionalStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		// Convert args to JSON and unmarshal to PartialPlanStep
-		stepJSON, err := json.Marshal(args)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal step: %w", err)
-		}
-
-		var partialUpdate PartialPlanStep
-		if err := json.Unmarshal(stepJSON, &partialUpdate); err != nil {
-			return "", fmt.Errorf("failed to parse step: %w", err)
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the conditional step
-		var existingStep PlanStepInterface
-		stepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == partialUpdate.ExistingStepID {
-				existingStep = step
-				stepIndex = i
-				break
-			}
-		}
-		if existingStep == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", partialUpdate.ExistingStepID, availableIDs)
-		}
-
-		conditionalStep, ok := existingStep.(*ConditionalPlanStep)
-		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", partialUpdate.ExistingStepID)
-		}
-
-		// Track changes for changelog
-		fieldChanges := make([]PlanFieldChange, 0)
-
-		// Handle condition_question and condition_context with explicit empty string support
-		_, conditionQuestionProvided := args["condition_question"]
-		_, conditionContextProvided := args["condition_context"]
-
-		if conditionQuestionProvided {
-			oldValue := conditionalStep.ConditionQuestion
-			newValue, _ := args["condition_question"].(string)
-			if newValue != "" || oldValue != newValue {
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "condition_question",
-					OldValue: oldValue,
-					NewValue: newValue,
-				})
-				conditionalStep.ConditionQuestion = newValue
-			}
-		}
-
-		if conditionContextProvided {
-			oldValue := conditionalStep.ConditionContext
-			newValue, _ := args["condition_context"].(string)
-			fieldChanges = append(fieldChanges, PlanFieldChange{
-				StepID:   partialUpdate.ExistingStepID,
-				Field:    "condition_context",
-				OldValue: oldValue,
-				NewValue: newValue,
-			})
-			conditionalStep.ConditionContext = newValue
-		}
-
-		// Update other conditional fields using the helper
-		if partialUpdate.IfTrueSteps != nil || partialUpdate.IfFalseSteps != nil || partialUpdate.IfTrueNextStepID != "" || partialUpdate.IfFalseNextStepID != "" {
-			_, _, err := updateSingleStep(plan, partialUpdate, &fieldChanges)
-			if err != nil {
-				return "", err
-			}
-		}
-
-		// Validate all steps after update
-		if err := validatePlanStepIDs(plan.Steps); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		// Unlock learnings for updated step
-		if unlockLearningsFunc != nil && stepIndex >= 0 {
-			if err := unlockLearningsFunc(ctx, partialUpdate.ExistingStepID, stepIndex); err != nil {
-				logger.Warn(fmt.Sprintf("⚠️ Failed to unlock learnings for updated step %s: %v", partialUpdate.ExistingStepID, err))
-			} else {
-				logger.Info(fmt.Sprintf("🔓 Unlocked learnings for updated step %s (plan was modified)", partialUpdate.ExistingStepID))
-			}
-		}
-
-		logger.Info(fmt.Sprintf("✅ Updated conditional step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated conditional step '%s' in the plan", partialUpdate.ExistingStepID), nil
-	}
-}
-
 // createUpdateDecisionStepExecutor creates an executor function for update_decision_step tool
 func createUpdateDecisionStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -5555,19 +4847,9 @@ func createAddRegularStepExecutor(workspacePath string, logger loggerv2.Logger, 
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "regular", unlockLearningsFunc)
 }
 
-// createAddConditionalStepExecutor creates an executor function for add_conditional_step tool
-func createAddConditionalStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
-	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "conditional", unlockLearningsFunc)
-}
-
 // createAddDecisionStepExecutor creates an executor function for add_decision_step tool
 func createAddDecisionStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
 	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "decision", unlockLearningsFunc)
-}
-
-// createAddLoopStepExecutor creates an executor function for add_loop_step tool
-func createAddLoopStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, unlockLearningsFunc func(context.Context, string, int) error) func(context.Context, map[string]interface{}) (string, error) {
-	return createSingleStepAdder(workspacePath, logger, readFile, writeFile, moveFile, "loop", unlockLearningsFunc)
 }
 
 // createAddHumanInputStepExecutor creates an executor function for add_human_input_step tool
@@ -5836,28 +5118,6 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		logger.Info(fmt.Sprintf("✅ Added %s step '%s' (ID: %s) to plan", stepType, typedStep.GetTitle(), typedStep.GetID()))
 		return fmt.Sprintf("Successfully added %s step '%s' (ID: %s) to the plan", stepType, typedStep.GetTitle(), typedStep.GetID()), nil
 	}
-}
-
-// extractToolCallsFromMessages scans messages for tool calls and returns the tool names that were called
-func extractToolCallsFromMessages(messages []llmtypes.MessageContent) []string {
-	toolNames := make(map[string]bool)
-	for _, msg := range messages {
-		if msg.Role != llmtypes.ChatMessageTypeAI {
-			continue
-		}
-		for _, part := range msg.Parts {
-			if toolCall, ok := part.(llmtypes.ToolCall); ok {
-				if toolCall.FunctionCall != nil {
-					toolNames[toolCall.FunctionCall.Name] = true
-				}
-			}
-		}
-	}
-	result := make([]string, 0, len(toolNames))
-	for name := range toolNames {
-		result = append(result, name)
-	}
-	return result
 }
 
 // registerPlanModificationTools registers all plan modification tools (plan update tools only)
@@ -6150,589 +5410,6 @@ func registerPlanModificationTools(
 	return nil
 }
 
-// registerVariableExtractionTools registers variable extraction and management tools
-// This allows the planning agent to extract and manage variables based on human input
-func registerVariableExtractionTools(
-	mcpAgent *mcpagent.Agent,
-	workspacePath string,
-	logger loggerv2.Logger,
-	readFile func(context.Context, string) (string, error),
-	writeFile func(context.Context, string, string) error,
-	agentName string, // e.g., "planning agent"
-) error {
-	// Register update_variable tool (reuse from variable_extraction_agent.go)
-	updateVariableSchema := getUpdateVariableSchema()
-	updateVariableParams, err := parseSchemaForToolParameters(updateVariableSchema)
-	if err != nil {
-		return fmt.Errorf("failed to parse update_variable schema: %w", err)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"update_variable",
-		"Update, add, or delete variables in variables.json. Provide action (required: 'update', 'add', or 'delete'), existing_variable_name (required for update/delete), and fields to update. The variables.json file is updated immediately when this tool is called.",
-		updateVariableParams,
-		createUpdateVariableExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_variable tool: %w", err)
-	}
-
-	if logger != nil {
-		logger.Info(fmt.Sprintf("✅ Registered variable extraction tools for %s", agentName))
-	}
-
-	return nil
-}
-
-// createConvertStepToConditionalExecutor creates an executor function for convert_step_to_conditional tool
-func createConvertStepToConditionalExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		stepID, ok := args["step_id"].(string)
-		if !ok || stepID == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid or missing step_id"), nil)
-		}
-
-		conditionQuestion, ok := args["condition_question"].(string)
-		if !ok || conditionQuestion == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid or missing condition_question"), nil)
-		}
-
-		conditionContext, _ := args["condition_context"].(string) // Optional
-
-		// Extract if_true_steps and if_false_steps
-		ifTrueStepsRaw, ok := args["if_true_steps"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("invalid if_true_steps argument"), nil)
-		}
-		ifFalseStepsRaw, ok := args["if_false_steps"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("invalid if_false_steps argument"), nil)
-		}
-
-		// Convert to typed steps
-		ifTrueSteps := make([]PlanStepInterface, 0, len(ifTrueStepsRaw))
-		for _, stepRaw := range ifTrueStepsRaw {
-			stepMap, ok := stepRaw.(map[string]interface{})
-			if !ok {
-				return "", fmt.Errorf(fmt.Sprintf("invalid step in if_true_steps"), nil)
-			}
-			// Ensure type field is set
-			if _, hasType := stepMap["type"]; !hasType {
-				stepMap["type"] = "regular" // Default to regular if not specified
-			}
-			typedStep, err := convertMapToStep(stepMap)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse if_true step: %w", err)
-			}
-			ifTrueSteps = append(ifTrueSteps, typedStep)
-		}
-
-		ifFalseSteps := make([]PlanStepInterface, 0, len(ifFalseStepsRaw))
-		for _, stepRaw := range ifFalseStepsRaw {
-			stepMap, ok := stepRaw.(map[string]interface{})
-			if !ok {
-				return "", fmt.Errorf(fmt.Sprintf("invalid step in if_false_steps"), nil)
-			}
-			// Ensure type field is set
-			if _, hasType := stepMap["type"]; !hasType {
-				stepMap["type"] = "regular" // Default to regular if not specified
-			}
-			typedStep, err := convertMapToStep(stepMap)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse if_false step: %w", err)
-			}
-			ifFalseSteps = append(ifFalseSteps, typedStep)
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the step to convert by ID
-		var stepToConvert PlanStepInterface
-		stepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == stepID {
-				stepToConvert = step
-				stepIndex = i
-				break
-			}
-		}
-		if stepToConvert == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
-		}
-
-		// Validate nesting depth for branch steps (starting from depth 1 since this step becomes conditional)
-		for _, branchStep := range ifTrueSteps {
-			if err := validateNestingDepth(branchStep, 1); err != nil {
-				return "", fmt.Errorf("if_true_steps validation failed: %w", err)
-			}
-		}
-		for _, branchStep := range ifFalseSteps {
-			if err := validateNestingDepth(branchStep, 1); err != nil {
-				return "", fmt.Errorf("if_false_steps validation failed: %w", err)
-			}
-		}
-
-		// Convert step to conditional (create new ConditionalPlanStep)
-		conditionalStep := &ConditionalPlanStep{
-			Type: StepTypeConditional,
-			CommonStepFields: CommonStepFields{
-				ID:    stepToConvert.GetID(),
-				Title: stepToConvert.GetTitle(),
-			},
-			ConditionQuestion: conditionQuestion,
-			ConditionContext:  conditionContext,
-			IfTrueSteps:       ifTrueSteps,
-			IfFalseSteps:      ifFalseSteps,
-		}
-		plan.Steps[stepIndex] = conditionalStep
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		logger.Info(fmt.Sprintf("✅ Converted step '%s' to conditional with %d true branch steps and %d false branch steps", stepToConvert.GetTitle(), len(ifTrueSteps), len(ifFalseSteps)))
-		return fmt.Sprintf("Successfully converted step '%s' to conditional", stepToConvert.GetTitle()), nil
-	}
-}
-
-// createAddBranchStepsExecutor creates an executor function for add_branch_steps tool
-func createAddBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		parentStepID, ok := args["parent_step_id"].(string)
-		if !ok || parentStepID == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid or missing parent_step_id"), nil)
-		}
-
-		branchType, ok := args["branch_type"].(string)
-		if !ok || (branchType != "if_true" && branchType != "if_false") {
-			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
-		}
-
-		newStepsRaw, ok := args["new_steps"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("invalid new_steps argument"), nil)
-		}
-
-		// Convert to typed steps
-		newSteps := make([]PlanStepInterface, 0, len(newStepsRaw))
-		for _, stepRaw := range newStepsRaw {
-			stepMap, ok := stepRaw.(map[string]interface{})
-			if !ok {
-				return "", fmt.Errorf(fmt.Sprintf("invalid step in new_steps"), nil)
-			}
-			// Ensure type field is set
-			if _, hasType := stepMap["type"]; !hasType {
-				stepMap["type"] = "regular" // Default to regular if not specified
-			}
-			typedStep, err := convertMapToStep(stepMap)
-			if err != nil {
-				return "", fmt.Errorf("failed to parse new step: %w", err)
-			}
-			newSteps = append(newSteps, typedStep)
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the parent conditional step by ID
-		var parentStep PlanStepInterface
-		parentStepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == parentStepID {
-				parentStep = step
-				parentStepIndex = i
-				break
-			}
-		}
-		if parentStep == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
-		}
-
-		conditionalStep, ok := parentStep.(*ConditionalPlanStep)
-		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
-		}
-
-		// Validate that all new branch steps have IDs (required for config matching)
-		for i, newStep := range newSteps {
-			if newStep.GetID() == "" {
-				return "", fmt.Errorf("branch step at index %d is missing required ID field. Step title: %q", i, newStep.GetTitle())
-			}
-		}
-
-		// Validate nesting depth for new steps (starting from depth 1 since they're being added to a conditional)
-		for _, newStep := range newSteps {
-			if err := validateNestingDepth(newStep, 1); err != nil {
-				return "", fmt.Errorf("new_steps validation failed: %w", err)
-			}
-		}
-
-		// Capture old branch steps BEFORE adding (for changelog)
-		var oldBranchSteps []PlanStepInterface
-		if branchType == "if_true" {
-			oldBranchSteps = make([]PlanStepInterface, len(conditionalStep.IfTrueSteps))
-			copy(oldBranchSteps, conditionalStep.IfTrueSteps)
-			conditionalStep.IfTrueSteps = append(conditionalStep.IfTrueSteps, newSteps...)
-		} else {
-			oldBranchSteps = make([]PlanStepInterface, len(conditionalStep.IfFalseSteps))
-			copy(oldBranchSteps, conditionalStep.IfFalseSteps)
-			conditionalStep.IfFalseSteps = append(conditionalStep.IfFalseSteps, newSteps...)
-		}
-		plan.Steps[parentStepIndex] = conditionalStep
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		logger.Info(fmt.Sprintf("✅ Added %d steps to %s branch of conditional step '%s'", len(newSteps), branchType, conditionalStep.Title))
-		return fmt.Sprintf("Successfully added %d step(s) to %s branch of conditional step '%s'", len(newSteps), branchType, conditionalStep.Title), nil
-	}
-}
-
-// createUpdateBranchStepsExecutor creates an executor function for update_branch_steps tool
-func createUpdateBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		parentStepID, ok := args["parent_step_id"].(string)
-		if !ok || parentStepID == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid or missing parent_step_id"), nil)
-		}
-
-		branchType, ok := args["branch_type"].(string)
-		if !ok || (branchType != "if_true" && branchType != "if_false") {
-			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
-		}
-
-		updatedStepsRaw, ok := args["updated_steps"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf(fmt.Sprintf("invalid updated_steps argument"), nil)
-		}
-
-		// Convert to JSON and unmarshal to PartialPlanStep array
-		updatedStepsJSON, err := json.Marshal(updatedStepsRaw)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal updated_steps: %w", err)
-		}
-		var partialUpdates []PartialPlanStep
-		if err := json.Unmarshal(updatedStepsJSON, &partialUpdates); err != nil {
-			return "", fmt.Errorf("failed to parse updated_steps: %w", err)
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the parent conditional step by ID
-		var parentStep PlanStepInterface
-		parentStepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == parentStepID {
-				parentStep = step
-				parentStepIndex = i
-				break
-			}
-		}
-		if parentStep == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
-		}
-
-		conditionalStep, ok := parentStep.(*ConditionalPlanStep)
-		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
-		}
-
-		// Get the appropriate branch
-		var branchSteps *[]PlanStepInterface
-		if branchType == "if_true" {
-			branchSteps = &conditionalStep.IfTrueSteps
-		} else {
-			branchSteps = &conditionalStep.IfFalseSteps
-		}
-
-		// Create map of existing branch steps by ID
-		existingStepsMap := make(map[string]PlanStepInterface)
-		for i, step := range *branchSteps {
-			existingStepsMap[step.GetID()] = (*branchSteps)[i]
-		}
-
-		// Track changes for changelog
-		updatedBranchStepIDs := make([]string, 0, len(partialUpdates))
-		fieldChanges := make([]PlanFieldChange, 0)
-
-		// Apply updates
-		for _, partialUpdate := range partialUpdates {
-			existingStep, exists := existingStepsMap[partialUpdate.ExistingStepID]
-			if !exists {
-				availableIDs := make([]string, 0, len(*branchSteps))
-				for _, step := range *branchSteps {
-					availableIDs = append(availableIDs, step.GetID())
-				}
-				return "", fmt.Errorf("step ID '%s' not found in %s branch. Available step IDs: %v", partialUpdate.ExistingStepID, branchType, availableIDs)
-			}
-
-			// Track old values before updating (using interface methods)
-			updatedBranchStepIDs = append(updatedBranchStepIDs, partialUpdate.ExistingStepID)
-
-			// Track each field change with old and new values
-			if partialUpdate.Title != "" {
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "title",
-					OldValue: existingStep.GetTitle(),
-					NewValue: partialUpdate.Title,
-				})
-			}
-			if partialUpdate.Description != "" {
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "description",
-					OldValue: existingStep.GetDescription(),
-					NewValue: partialUpdate.Description,
-				})
-			}
-			if partialUpdate.SuccessCriteria != "" {
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "success_criteria",
-					OldValue: existingStep.GetSuccessCriteria(),
-					NewValue: partialUpdate.SuccessCriteria,
-				})
-			}
-			if partialUpdate.ContextDependencies != nil {
-				oldDeps := existingStep.GetContextDependencies()
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "context_dependencies",
-					OldValue: fmt.Sprintf("%v", oldDeps),
-					NewValue: fmt.Sprintf("%v", partialUpdate.ContextDependencies),
-				})
-			}
-			if partialUpdate.ContextOutput != "" {
-				oldOutput := existingStep.GetContextOutput()
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "context_output",
-					OldValue: oldOutput.String(),
-					NewValue: partialUpdate.ContextOutput,
-				})
-			}
-			if partialUpdate.HasLoop != nil {
-				oldHasLoop := false
-				if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-					oldHasLoop = regularStep.HasLoop
-				}
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "has_loop",
-					OldValue: fmt.Sprintf("%v", oldHasLoop),
-					NewValue: fmt.Sprintf("%v", *partialUpdate.HasLoop),
-				})
-			}
-			if partialUpdate.LoopCondition != "" {
-				oldLoopCondition := ""
-				if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-					oldLoopCondition = regularStep.LoopCondition
-				}
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "loop_condition",
-					OldValue: oldLoopCondition,
-					NewValue: partialUpdate.LoopCondition,
-				})
-			}
-			if partialUpdate.MaxIterations != nil {
-				oldMaxIterations := 0
-				if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-					oldMaxIterations = regularStep.MaxIterations
-				}
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "max_iterations",
-					OldValue: fmt.Sprintf("%d", oldMaxIterations),
-					NewValue: fmt.Sprintf("%d", *partialUpdate.MaxIterations),
-				})
-			}
-			if partialUpdate.LoopDescription != "" {
-				oldLoopDescription := ""
-				if regularStep, ok := existingStep.(*RegularPlanStep); ok {
-					oldLoopDescription = regularStep.LoopDescription
-				}
-				fieldChanges = append(fieldChanges, PlanFieldChange{
-					StepID:   partialUpdate.ExistingStepID,
-					Field:    "loop_description",
-					OldValue: oldLoopDescription,
-					NewValue: partialUpdate.LoopDescription,
-				})
-			}
-
-			// Merge partial update and update the branch step
-			updatedStep := mergePartialStepUpdate(existingStep, partialUpdate)
-			// Find the index in the branch steps and update it
-			for i, step := range *branchSteps {
-				if step.GetID() == partialUpdate.ExistingStepID {
-					(*branchSteps)[i] = updatedStep
-					break
-				}
-			}
-
-			// Validate nesting depth after update
-			if err := validateNestingDepth(updatedStep, 1); err != nil {
-				return "", fmt.Errorf("updated step validation failed: %w", err)
-			}
-		}
-
-		// Update the conditional step in the plan
-		plan.Steps[parentStepIndex] = conditionalStep
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-
-		// Write changelog entry
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		logger.Info(fmt.Sprintf("✅ Updated %d steps in %s branch of conditional step '%s'", len(partialUpdates), branchType, conditionalStep.Title))
-		return fmt.Sprintf("Successfully updated %d step(s) in %s branch of conditional step '%s'", len(partialUpdates), branchType, conditionalStep.Title), nil
-	}
-}
-
-// createDeleteBranchStepsExecutor creates an executor function for delete_branch_steps tool
-func createDeleteBranchStepsExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		parentStepID, ok := args["parent_step_id"].(string)
-		if !ok || parentStepID == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid or missing parent_step_id"), nil)
-		}
-
-		branchType, ok := args["branch_type"].(string)
-		if !ok || (branchType != "if_true" && branchType != "if_false") {
-			return "", fmt.Errorf(fmt.Sprintf("invalid branch_type: must be 'if_true' or 'if_false'"), nil)
-		}
-
-		deletedIDs, err := extractStringArray(args, "deleted_step_ids")
-		if err != nil {
-			return "", err
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the parent conditional step by ID
-		var parentStep PlanStepInterface
-		parentStepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == parentStepID {
-				parentStep = step
-				parentStepIndex = i
-				break
-			}
-		}
-		if parentStep == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available step IDs: %v", parentStepID, availableIDs)
-		}
-
-		conditionalStep, ok := parentStep.(*ConditionalPlanStep)
-		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", parentStepID)
-		}
-
-		// Get the appropriate branch
-		var branchSteps *[]PlanStepInterface
-		if branchType == "if_true" {
-			branchSteps = &conditionalStep.IfTrueSteps
-		} else {
-			branchSteps = &conditionalStep.IfFalseSteps
-		}
-
-		// Capture old branch steps BEFORE deleting (for changelog) - marshal to JSON
-		oldBranchStepsJSON := make([]json.RawMessage, 0, len(*branchSteps))
-		for _, step := range *branchSteps {
-			stepJSON, err := json.Marshal(step)
-			if err == nil {
-				oldBranchStepsJSON = append(oldBranchStepsJSON, stepJSON)
-			}
-		}
-
-		// Create set of deleted step IDs
-		deletedSet := make(map[string]bool)
-		for _, id := range deletedIDs {
-			deletedSet[id] = true
-		}
-
-		// Validate that all deleted steps exist
-		existingStepsMap := make(map[string]bool)
-		for _, step := range *branchSteps {
-			existingStepsMap[step.GetID()] = true
-		}
-		for _, id := range deletedIDs {
-			if !existingStepsMap[id] {
-				availableIDs := make([]string, 0, len(*branchSteps))
-				for _, step := range *branchSteps {
-					availableIDs = append(availableIDs, step.GetID())
-				}
-				return "", fmt.Errorf("step ID '%s' not found in %s branch (cannot delete). Available step IDs: %v", id, branchType, availableIDs)
-			}
-		}
-
-		// Filter out deleted steps
-		filteredSteps := make([]PlanStepInterface, 0, len(*branchSteps))
-		for _, step := range *branchSteps {
-			if !deletedSet[step.GetID()] {
-				filteredSteps = append(filteredSteps, step)
-			}
-		}
-
-		// Update the branch
-		if branchType == "if_true" {
-			conditionalStep.IfTrueSteps = filteredSteps
-		} else {
-			conditionalStep.IfFalseSteps = filteredSteps
-		}
-		plan.Steps[parentStepIndex] = conditionalStep
-
-		// Write updated plan
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		logger.Info(fmt.Sprintf("✅ Deleted %d steps from %s branch of conditional step '%s'", len(deletedIDs), branchType, conditionalStep.Title))
-		return fmt.Sprintf("Successfully deleted %d step(s) from %s branch of conditional step '%s'", len(deletedIDs), branchType, conditionalStep.Title), nil
-	}
-}
-
 // createAddTodoTaskRouteExecutor creates an executor function for add_todo_task_route tool
 func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -6989,66 +5666,6 @@ func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 
 		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title))
 		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, todoTaskStep.Title), nil
-	}
-}
-
-// createConvertConditionalToRegularExecutor creates an executor function for convert_conditional_to_regular tool
-func createConvertConditionalToRegularExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		stepID, ok := args["step_id"].(string)
-		if !ok || stepID == "" {
-			return "", fmt.Errorf(fmt.Sprintf("invalid or missing step_id"), nil)
-		}
-
-		// Read current plan
-		plan, err := readPlanFromFile(ctx, workspacePath, readFile)
-		if err != nil {
-			return "", fmt.Errorf("failed to read plan: %w", err)
-		}
-
-		// Find the conditional step by ID
-		var stepToConvert PlanStepInterface
-		stepIndex := -1
-		for i, step := range plan.Steps {
-			if step.GetID() == stepID {
-				stepToConvert = step
-				stepIndex = i
-				break
-			}
-		}
-		if stepToConvert == nil {
-			availableIDs := make([]string, 0, len(plan.Steps))
-			for _, step := range plan.Steps {
-				availableIDs = append(availableIDs, step.GetID())
-			}
-			return "", fmt.Errorf("step ID '%s' not found in existing plan. Available step IDs: %v", stepID, availableIDs)
-		}
-
-		conditionalStep, ok := stepToConvert.(*ConditionalPlanStep)
-		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a conditional step", stepID)
-		}
-
-		// Convert to regular step (create new RegularPlanStep)
-		regularStep := &RegularPlanStep{
-			Type: StepTypeRegular,
-			CommonStepFields: CommonStepFields{
-				ID:    conditionalStep.ID,
-				Title: conditionalStep.Title,
-			},
-			// Note: RegularPlanStep doesn't have Description, SuccessCriteria, etc. by default
-			// These would need to be provided or extracted from somewhere
-		}
-
-		// Write updated plan
-		plan.Steps[stepIndex] = regularStep
-		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
-			return "", fmt.Errorf("failed to write plan: %w", err)
-		}
-		// Changelog is now generated automatically after agent execution completes (see generateChangelogFromPlanDiff)
-
-		logger.Info(fmt.Sprintf("✅ Converted conditional step '%s' back to regular step", regularStep.Title))
-		return fmt.Sprintf("Successfully converted conditional step '%s' back to regular step", regularStep.Title), nil
 	}
 }
 

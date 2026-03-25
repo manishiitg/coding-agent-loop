@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -52,15 +53,15 @@ type ExecuteShellCommandParams struct {
 
 // ExecuteShellCommand executes a shell command using the REST API: POST /api/execute
 func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCommandParams) (string, error) {
-	// Debug: log ExtraEnv keys
+	// Debug: log ExtraEnv keys, MCP_API_URL value, and client pointer for identity tracking
 	if len(c.ExtraEnv) > 0 {
 		keys := make([]string, 0, len(c.ExtraEnv))
 		for k := range c.ExtraEnv {
 			keys = append(keys, k)
 		}
-		log.Printf("[SHELL_DEBUG] Client.ExtraEnv keys: %v (count=%d)", keys, len(c.ExtraEnv))
+		log.Printf("[SHELL_DEBUG] Client=%p ExtraEnv keys: %v (count=%d) MCP_API_URL=%s MCP_SESSION_ID=%s", c, keys, len(c.ExtraEnv), c.ExtraEnv["MCP_API_URL"], c.ExtraEnv["MCP_SESSION_ID"])
 	} else {
-		log.Printf("[SHELL_DEBUG] Client.ExtraEnv is EMPTY")
+		log.Printf("[SHELL_DEBUG] Client=%p ExtraEnv is EMPTY", c)
 	}
 	// Always use shell execution - removed from tool definition to simplify LLM interface
 	useShell := true
@@ -169,6 +170,17 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			c.BaseURL, c.FolderGuard.ReadPaths, c.FolderGuard.WritePaths, c.FolderGuard.BlockedPaths, params.Command)
 	} else {
 		log.Printf("[FOLDER_GUARD_RESOLVE] NO folder guard at all: URL=%s cmd=%s", c.BaseURL, params.Command)
+	}
+
+	// Block absolute host paths when folder guard is active.
+	// The Docker isolator sandboxes /app/workspace-docs/ but Docker Desktop
+	// for Mac auto-mounts /Users/ into containers via VirtioFS. Commands with
+	// absolute host paths bypass the workspace sandbox entirely.
+	if params.FolderGuard != nil && params.FolderGuard.Enabled {
+		if err := blockAbsoluteHostPaths(params.Command); err != nil {
+			log.Printf("[FOLDER_GUARD] Blocked shell command with absolute host path: %s", params.Command)
+			return "", err
+		}
 	}
 
 	// Inject extra env vars from client (e.g., MCP_API_URL, MCP_API_TOKEN, SECRET_*)
@@ -284,4 +296,37 @@ func rewriteGeminiRelativePaths(command, projectDirID string) string {
 		log.Printf("[SHELL] Rewrote Gemini relative path for project dir %s: %s -> %s", projectDirID, command, rewritten)
 	}
 	return rewritten
+}
+
+// blockAbsoluteHostPaths rejects commands containing absolute paths that
+// reference the host filesystem rather than the Docker workspace.
+// The Docker workspace root /app/workspace-docs/ and /tmp/ are allowed;
+// host paths like /Users/, /home/ are blocked.
+func blockAbsoluteHostPaths(command string) error {
+	if !strings.Contains(command, "/") {
+		return nil
+	}
+
+	// Check both with and without trailing slash to catch:
+	//   "ls /Users/"        → matches "/Users/"
+	//   "find /Users -type" → matches "/Users " (space after)
+	//   "cat /Users"        → matches "/Users" at end of string
+	blockedDirs := []string{
+		"/users",
+		"/home",
+		"/root",
+	}
+
+	cmdLower := strings.ToLower(command)
+	for _, dir := range blockedDirs {
+		if strings.Contains(cmdLower, dir+"/") ||
+			strings.Contains(cmdLower, dir+" ") ||
+			strings.HasSuffix(cmdLower, dir) {
+			return fmt.Errorf(
+				"access denied: shell command references absolute host path (%s). "+
+					"Use workspace-relative paths (e.g. 'Workflow/myproject/file.txt') or "+
+					"absolute Docker paths (/app/workspace-docs/...) instead", dir)
+		}
+	}
+	return nil
 }

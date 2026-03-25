@@ -855,6 +855,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}).Methods("POST", "OPTIONS")
 	toolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
+		log.Printf("[GLOBAL_ROUTE_DEBUG] Global custom tool request: tool=%s url=%s x-session-id=%s", vars["tool"], r.URL.Path, r.Header.Get("X-Session-ID"))
 		executorHandlers.HandlePerToolCustomRequest(w, r, vars["tool"])
 	}).Methods("POST", "OPTIONS")
 	toolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
@@ -877,11 +878,13 @@ func runServer(cmd *cobra.Command, args []string) {
 	sessionToolsRouter.HandleFunc("/custom/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		sid := vars["session_id"]
+		tool := vars["tool"]
+		log.Printf("[SESSION_ROUTE_DEBUG] Session-scoped custom tool request: session=%s tool=%s url=%s", sid, tool, r.URL.Path)
 		r.Header.Set("X-Session-ID", sid)
 		// Inject ChatSessionIDKey so execute_shell_command can look up
 		// the session's working directory and folder guard from the global map.
 		ctx := context.WithValue(r.Context(), common.ChatSessionIDKey, sid)
-		executorHandlers.HandlePerToolCustomRequest(w, r.WithContext(ctx), vars["tool"])
+		executorHandlers.HandlePerToolCustomRequest(w, r.WithContext(ctx), tool)
 	}).Methods("POST", "OPTIONS")
 	sessionToolsRouter.HandleFunc("/virtual/{tool}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
@@ -2184,7 +2187,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// TODO: Memory tools removed from workflow - only needed for individual React agents
 		// memoryTools := virtualtools.CreateMemoryTools()
 		// memoryExecutors := virtualtools.CreateMemoryToolExecutors()
-		allTools, allExecutors, toolCategories := createCustomTools(true) // Workflow mode: all tools (basic + git + advanced + human)
+		allTools, allExecutors, toolCategories := createCustomTools(true, currentUserID, sessionID) // Workflow mode: session-aware
 
 		// NOTE: Workspace executor replacement with session + secrets happens after secrets are merged (see below).
 
@@ -3755,7 +3758,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if underlying := llmAgent.GetUnderlyingAgent(); underlying != nil {
 					virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
 				}
-				_, _, toolCategories := createCustomTools(false) // Get toolCategories map (advanced only)
+				_, _, toolCategories := createCustomTools(false, currentUserID, sessionID)
 
 				// Extract @context file paths for additional write access
 				fileContextFolders := extractFileContextWriteFolders(req.Query)
@@ -4131,7 +4134,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Add custom agent instructions based on agent mode
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			// Create custom tools for chat mode (workspace_advanced only: shell, image, web fetch, PDF)
-			allTools, allExecutors, toolCategories := createCustomTools(false) // Chat mode: workspace_advanced only
+			allTools, allExecutors, toolCategories := createCustomTools(false, currentUserID, sessionID) // Chat mode: session-aware
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
 			// createCustomTools(false) only returns workspace_advanced; human tools need to be added explicitly
@@ -7798,7 +7801,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			if underlying := subAgent.GetUnderlyingAgent(); underlying != nil {
 				virtualtools.SetReadImageFallbackLLMConfig(workspaceExecutors, underlying.GetLLMModelConfig())
 			}
-			_, _, toolCategories := createCustomTools(false)
+			_, _, toolCategories := createCustomTools(false, subAgentUserID, sessionID)
 
 			// Check for skill-creator
 			hasSkillCreator := false
@@ -9439,9 +9442,11 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		EnabledGroupIDs:   enabledGroupIDs,
 	}
 
-	// Build base tools: workspace_advanced + workspace_basic + human + todo
-	// Same as createCustomTools(true) in tool_setup.go
-	allTools, allExecutors, toolCategories := createCustomTools(true)
+	// Build base tools with session-aware workspace executors from the start.
+	// This ensures MCP_API_URL in shell commands includes the session path prefix
+	// (/s/{session_id}/...) so per-tool HTTP calls from inside Docker hit the
+	// session-scoped route and get the correct executor.
+	allTools, allExecutors, toolCategories := createCustomTools(true, currentUserID, sessionID)
 
 	// Track preset's global secret selection (overrides req.SelectedGlobalSecrets which is nil for phase chat)
 	var presetGlobalSecretNames *[]string
@@ -9649,7 +9654,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	cfg.WorkspaceEnvRef = workspaceEnv
 	// Working directory and folder guard are set per-request in handleQuery (line ~4415)
 	// via workspace.SetSessionWorkingDir/SetSessionFolderGuard, not here.
-	log.Printf("[WORKSHOP] Replaced workspace executors with session-aware versions (sessionID=%q, secrets=%d)", sessionID, len(secretEnvVars))
+	log.Printf("[WORKSHOP] Replaced workspace executors with session-aware versions (sessionID=%q, secrets=%d, MCP_API_URL=%s)", sessionID, len(secretEnvVars), workspaceEnv["MCP_API_URL"])
 
 	cfg.CustomTools = allTools
 	cfg.CustomToolExecutors = allExecutors

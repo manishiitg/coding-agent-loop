@@ -28,11 +28,13 @@ func CreateWorkspaceAdvancedTools() []llmtypes.Tool {
 // Includes FolderGuard to protect per-user folders (Chats/, Downloads/) from LLM writes
 // The read_image executor is wrapped with LLM analysis (config read from context at execution time)
 func CreateWorkspaceAdvancedToolExecutors() map[string]func(ctx context.Context, args map[string]any) (string, error) {
+	env := getMCPExtraEnv()
 	client := workspace.NewClient(
 		getWorkspaceAPIURL(),
 		workspace.WithFolderGuard(getDefaultFolderGuard()),
-		workspace.WithExtraEnv(getMCPExtraEnv()),
+		workspace.WithExtraEnv(env),
 	)
+	log.Printf("[GLOBAL_CLIENT_DEBUG] Created global workspace client=%p (no session) MCP_API_URL=%s", client, env["MCP_API_URL"])
 	executors := workspace.NewAdvancedExecutor(client)
 	wrapReadImageExecutor(executors)
 	return executors
@@ -84,6 +86,7 @@ func CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(userID, sessionID str
 		workspace.WithUserID(userID),
 		workspace.WithExtraEnv(env),
 	)
+	log.Printf("[SESSION_CLIENT_DEBUG] Created session-aware workspace client=%p sessionID=%s MCP_API_URL=%s", client, sessionID, env["MCP_API_URL"])
 	executors := workspace.NewAdvancedExecutor(client)
 	wrapReadImageExecutor(executors)
 	return executors, env
@@ -110,13 +113,17 @@ func CreateWorkspaceAdvancedToolExecutorsWithURL(wsURL, userID, sessionID string
 func getMCPExtraEnv(sessionID ...string) map[string]string {
 	env := make(map[string]string)
 	baseURL := os.Getenv("MCP_API_URL")
+	sid := ""
+	if len(sessionID) > 0 {
+		sid = sessionID[0]
+	}
 	if baseURL != "" {
-		if len(sessionID) > 0 && sessionID[0] != "" {
+		if sid != "" {
 			// Embed session_id in the URL path: MCP_API_URL becomes {base}/s/{session_id}
 			// The server registers session-scoped routes at /s/{session_id}/tools/...
 			// so agent code calling {MCP_API_URL}/tools/mcp/{server}/{tool} automatically
 			// includes the session_id without the agent needing to add it to the body.
-			env["MCP_API_URL"] = baseURL + "/s/" + sessionID[0]
+			env["MCP_API_URL"] = baseURL + "/s/" + sid
 		} else {
 			env["MCP_API_URL"] = baseURL
 		}
@@ -124,9 +131,10 @@ func getMCPExtraEnv(sessionID ...string) map[string]string {
 	if token := os.Getenv("MCP_API_TOKEN"); token != "" {
 		env["MCP_API_TOKEN"] = token
 	}
-	if len(sessionID) > 0 && sessionID[0] != "" {
-		env["MCP_SESSION_ID"] = sessionID[0]
+	if sid != "" {
+		env["MCP_SESSION_ID"] = sid
 	}
+	log.Printf("[MCP_ENV_DEBUG] getMCPExtraEnv: baseURL=%s sessionID=%s final_MCP_API_URL=%s", baseURL, sid, env["MCP_API_URL"])
 	return env
 }
 

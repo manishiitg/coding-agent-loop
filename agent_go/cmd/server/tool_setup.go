@@ -144,7 +144,14 @@ func collectVirtualToolNames(toolSets ...[]llmtypes.Tool) []string {
 //
 // Note: workspace_basic and workspace_git tools are deprecated — shell_command covers
 // all file operations and git is handled via shell_command when needed.
-func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
+func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Tool, map[string]interface{}, map[string]string) {
+	// sessionInfo: optional [userID, sessionID] for session-aware workspace executors
+	var userID, sessionID string
+	if len(sessionInfo) >= 2 {
+		userID = sessionInfo[0]
+		sessionID = sessionInfo[1]
+	}
+
 	var allTools []llmtypes.Tool
 	allExecutors := make(map[string]interface{})
 	toolCategories := make(map[string]string)
@@ -152,7 +159,14 @@ func createCustomTools(workflowMode bool) ([]llmtypes.Tool, map[string]interface
 	// Create workspace advanced tools (always included)
 	workspaceAdvancedCategory := virtualtools.GetWorkspaceAdvancedToolCategory()
 	workspaceAdvancedTools := virtualtools.CreateWorkspaceAdvancedTools()
-	workspaceAdvancedExecutors := virtualtools.CreateWorkspaceAdvancedToolExecutors()
+
+	// Use session-aware executors when session info is provided
+	var workspaceAdvancedExecutors map[string]func(ctx context.Context, args map[string]any) (string, error)
+	if sessionID != "" {
+		workspaceAdvancedExecutors, _ = virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSession(userID, sessionID)
+	} else {
+		workspaceAdvancedExecutors = virtualtools.CreateWorkspaceAdvancedToolExecutors()
+	}
 
 	// Add advanced tools
 	allTools = append(allTools, workspaceAdvancedTools...)

@@ -127,9 +127,11 @@ type SchedulerCallbacks struct {
 
 // SkillCallbacks provides skill management operations via callbacks from server.go.
 type SkillCallbacks struct {
-	ListSkills  func(ctx context.Context) (string, error)
-	ImportSkill func(ctx context.Context, githubURL, token string) (string, error)
-	DeleteSkill func(ctx context.Context, folderName string) error
+	ListSkills   func(ctx context.Context) (string, error)
+	ImportSkill  func(ctx context.Context, githubURL, token string) (string, error)
+	DeleteSkill  func(ctx context.Context, folderName string) error
+	SearchSkills func(ctx context.Context, query string) (string, error)          // Search skills registry via CLI
+	InstallSkill func(ctx context.Context, source string) (string, error)         // Install via npx skills add (owner/repo@skill)
 }
 
 // WorkshopChatSession holds the per-session controller and step registry for interactive

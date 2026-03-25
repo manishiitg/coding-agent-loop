@@ -18,6 +18,7 @@ import (
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
 	"github.com/manishiitg/mcpagent/observability"
+	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 	"mcp-agent-builder-go/agent_go/pkg/instructions"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator"
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -941,7 +942,15 @@ Use `+"`cat planning/output_plan.json`"+` to inspect the current report definiti
 {{if and .StepSummary (ne .WorkshopMode "output")}}### Plan Steps
 {{.StepSummary}}
 {{end}}
-{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Use `+"`cat planning/plan.json`"+` for full step details.{{end}}
+{{if .PlanJSON}}`+"```json\n{{.PlanJSON}}\n```"+`{{else}}Do NOT dump the full `+"`planning/plan.json`"+` by default. Read it precisely with targeted `+"`jq`"+` queries. The structure is: root `+"`steps[]`"+` for top-level steps, with nested step containers in `+"`if_true_steps`"+`, `+"`if_false_steps`"+`, `+"`decision_step`"+`, `+"`todo_task_step`"+`, `+"`predefined_routes[].sub_agent_step`"+`, `+"`orchestration_step`"+`, and `+"`orchestration_routes[].sub_agent_step`"+`.
+
+Use `+"`execute_shell_command`"+` with focused queries like:
+- **Top-level overview only**: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`
+- **Single step by `+"`step_id`"+` anywhere in the plan**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid)' planning/plan.json`"+`
+- **Only the fields you need from one step**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, title, type, description, success_criteria, context_output}' planning/plan.json`"+`
+- **Inspect only route structure for a todo/orchestration step**: `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, type, predefined_routes, orchestration_routes}' planning/plan.json`"+`
+
+Use `+"`cat planning/plan.json`"+` only when you genuinely need the entire file.{{end}}
 {{end}}
 
 {{if eq .WorkshopMode "builder"}}
@@ -1314,6 +1323,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Branches**: convert_step_to_conditional, convert_conditional_to_regular, add_branch_steps, update_branch_steps, delete_branch_steps
 - **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
 - **Validation & criteria**: update_validation_schema, update_success_criteria
+- **Versioning**: publish_workflow_version(label), restore_workflow_version(version)
+  To inspect available versions before restoring, use **execute_shell_command** with relative paths like `+"`ls versions/`"+` and `+"`cat versions/v3/version_meta.json`"+`.
 
 ### Variables & Config
 - **update_variable(action, name?, value?, description?)** — Add, update, or delete a variable
@@ -1324,12 +1335,12 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **list_schedules / create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
 
 ### Skills & Evaluation & Output
-- **list_skills / import_skill / delete_skill** — Manage skills
+- **list_skills / search_skills(query) / install_skill(source) / uninstall_skill / import_skill** — Manage skills
 - **validate_evaluation_plan / run_full_evaluation(target_run_folder)** — Evaluation tools
 - **validate_report_plan / run_full_report(target_run_folder)** — Report generation tools
 
 ### Shell & Discovery
-- **execute_shell_command** — Run shell commands. Quick lookups: `+"`cat planning/plan.json`"+`, `+"`cat step_config.json`"+`, `+"`ls runs/`"+`, `+"`cat variables.json`"+`
+- **execute_shell_command** — Run shell commands. Quick lookups: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`, `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, title, type, description, success_criteria, context_output}' planning/plan.json`"+`, `+"`cat planning/step_config.json`"+`, `+"`ls runs/`"+`, `+"`cat variables/variables.json`"+`
 - **human_feedback** — Ask the user a question during a run
 
 {{if or (eq .WorkshopMode "optimizer") (eq .WorkshopMode "debugger")}}
@@ -1662,6 +1673,86 @@ func resolveWorkshopStepID(controller *StepBasedWorkflowOrchestrator, inputID st
 		ids = append(ids, label)
 	}
 	return "", fmt.Errorf("step %q not found in plan. Valid IDs: %s", inputID, strings.Join(ids, ", "))
+}
+
+var workshopVersionedConfigFiles = []string{
+	"planning/plan.json",
+	"planning/step_config.json",
+	"planning/workflow_layout.json",
+	"planning/step_override.json",
+	"planning/output_plan.json",
+	"variables/variables.json",
+	"evaluation/evaluation_plan.json",
+}
+
+var workshopVersionedFolderRoots = []string{
+	"learnings",
+	"evaluation/learnings",
+}
+
+func resolveWorkshopWorkspacePath(controller *StepBasedWorkflowOrchestrator, path string) string {
+	workspacePath := controller.GetWorkspacePath()
+	if workspacePath == "" || path == "" {
+		return path
+	}
+	if path == workspacePath || strings.HasPrefix(path, workspacePath+"/") {
+		return path
+	}
+	return workspacePath + "/" + path
+}
+
+func flattenWorkshopWorkspaceFiles(files []virtualtools.WorkspaceFile) []virtualtools.WorkspaceFile {
+	var result []virtualtools.WorkspaceFile
+	for _, file := range files {
+		result = append(result, file)
+		if len(file.Children) > 0 {
+			result = append(result, flattenWorkshopWorkspaceFiles(file.Children)...)
+		}
+	}
+	return result
+}
+
+func listWorkshopWorkspaceTree(ctx context.Context, controller *StepBasedWorkflowOrchestrator, dirPath string, maxDepth int) ([]virtualtools.WorkspaceFile, error) {
+	listExecutorInterface, exists := controller.WorkspaceToolExecutors["list_workspace_files"]
+	if !exists {
+		return nil, fmt.Errorf("list_workspace_files executor not found")
+	}
+
+	listExecutor, ok := listExecutorInterface.(func(context.Context, map[string]interface{}) (string, error))
+	if !ok {
+		return nil, fmt.Errorf("list_workspace_files executor has wrong type")
+	}
+
+	ctx = context.WithValue(ctx, virtualtools.WorkspaceEventEmitterKey, controller.GetContextAwareBridge())
+	listJSON, err := listExecutor(ctx, map[string]interface{}{
+		"folder":    resolveWorkshopWorkspacePath(controller, dirPath),
+		"max_depth": maxDepth,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.Contains(listJSON, "exists but contains no files") {
+		return []virtualtools.WorkspaceFile{}, nil
+	}
+
+	var filesList []virtualtools.WorkspaceFile
+	if err := json.Unmarshal([]byte(listJSON), &filesList); err != nil {
+		var apiResp struct {
+			Data []virtualtools.WorkspaceFile `json:"data"`
+		}
+		if err2 := json.Unmarshal([]byte(listJSON), &apiResp); err2 != nil {
+			return nil, err
+		}
+		filesList = apiResp.Data
+	}
+
+	resolvedPath := resolveWorkshopWorkspacePath(controller, dirPath)
+	if len(filesList) == 1 && filesList[0].Type == "folder" && filesList[0].FilePath == resolvedPath && len(filesList[0].Children) > 0 {
+		filesList = filesList[0].Children
+	}
+
+	return flattenWorkshopWorkspaceFiles(filesList), nil
 }
 
 // registerInteractiveWorkshopTools registers the custom workshop tools on the agent.
@@ -5180,6 +5271,224 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_workflow_config tool: %v", err))
 	}
 
+	// Tool: publish_workflow_version — snapshot the current workflow config and learnings.
+	if err := mcpAgent.RegisterCustomTool(
+		"publish_workflow_version",
+		"Create a numbered snapshot of the current workflow state. Saves planning/config files plus learnings and evaluation learnings under versions/vN/. Use this before risky edits so you can restore later.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"label": map[string]interface{}{
+					"type":        "string",
+					"description": "Required version label describing this snapshot (for example: 'stable before refactor' or 'added bank validation').",
+				},
+			},
+			"required": []string{"label"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			label, _ := args["label"].(string)
+			label = strings.TrimSpace(label)
+			if label == "" {
+				return "label is required", nil
+			}
+
+			versions, err := iwm.controller.ListWorkspaceFiles(ctx, "versions")
+			nextVersion := 1
+			if err == nil {
+				for _, name := range versions {
+					var versionNum int
+					if _, scanErr := fmt.Sscanf(name, "v%d", &versionNum); scanErr == nil && versionNum >= nextVersion {
+						nextVersion = versionNum + 1
+					}
+				}
+			}
+
+			versionFolder := fmt.Sprintf("versions/v%d", nextVersion)
+			var filesSnapshot []string
+
+			for _, relPath := range workshopVersionedConfigFiles {
+				exists, err := iwm.controller.CheckWorkspaceFileExists(ctx, relPath)
+				if err != nil || !exists {
+					continue
+				}
+
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, relPath)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("⚠️ publish_workflow_version: failed to read %s: %v", relPath, err))
+					continue
+				}
+				if err := iwm.controller.WriteWorkspaceFile(ctx, versionFolder+"/"+relPath, content); err != nil {
+					return "", fmt.Errorf("failed to write snapshot file %s: %w", relPath, err)
+				}
+				filesSnapshot = append(filesSnapshot, relPath)
+			}
+
+			for _, folderRoot := range workshopVersionedFolderRoots {
+				items, err := listWorkshopWorkspaceTree(ctx, iwm.controller, folderRoot, 100)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("⚠️ publish_workflow_version: failed to list %s: %v", folderRoot, err))
+					continue
+				}
+				for _, item := range items {
+					if item.Type == "folder" {
+						continue
+					}
+					relPath := strings.TrimPrefix(item.FilePath, iwm.controller.GetWorkspacePath()+"/")
+					if relPath == "" || relPath == item.FilePath {
+						continue
+					}
+					content, err := iwm.controller.ReadWorkspaceFile(ctx, relPath)
+					if err != nil {
+						logger.Warn(fmt.Sprintf("⚠️ publish_workflow_version: failed to read %s: %v", relPath, err))
+						continue
+					}
+					if err := iwm.controller.WriteWorkspaceFile(ctx, versionFolder+"/"+relPath, content); err != nil {
+						return "", fmt.Errorf("failed to write snapshot file %s: %w", relPath, err)
+					}
+					filesSnapshot = append(filesSnapshot, relPath)
+				}
+			}
+
+			if len(filesSnapshot) == 0 {
+				return "No workflow config or learning files were found to version.", nil
+			}
+
+			meta := map[string]interface{}{
+				"version":         nextVersion,
+				"label":           label,
+				"created_at":      time.Now().UTC().Format(time.RFC3339),
+				"files_snapshot":  filesSnapshot,
+				"managed_files":   workshopVersionedConfigFiles,
+				"managed_folders": workshopVersionedFolderRoots,
+			}
+			metaJSON, _ := json.MarshalIndent(meta, "", "  ")
+			if err := iwm.controller.WriteWorkspaceFile(ctx, versionFolder+"/version_meta.json", string(metaJSON)); err != nil {
+				return "", fmt.Errorf("failed to write version metadata: %w", err)
+			}
+
+			return fmt.Sprintf("Published workflow version v%d (%s) with %d files. Restore later with restore_workflow_version(version=%d).", nextVersion, label, len(filesSnapshot), nextVersion), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register publish_workflow_version tool: %v", err))
+	}
+
+	// Tool: restore_workflow_version — restore a previous snapshot into the live workspace.
+	if err := mcpAgent.RegisterCustomTool(
+		"restore_workflow_version",
+		"Restore a previously published workflow version from versions/vN/. This overwrites the current planning/config files and restores learnings from that snapshot.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"version": map[string]interface{}{
+					"type":        "integer",
+					"description": "Version number to restore (for example: 1 restores versions/v1).",
+				},
+			},
+			"required": []string{"version"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			versionRaw, ok := args["version"].(float64)
+			if !ok {
+				return "version is required", nil
+			}
+			versionNum := int(versionRaw)
+			if versionNum < 1 {
+				return "version must be >= 1", nil
+			}
+
+			versionFolder := fmt.Sprintf("versions/v%d", versionNum)
+			metaContent, err := iwm.controller.ReadWorkspaceFile(ctx, versionFolder+"/version_meta.json")
+			if err != nil {
+				return fmt.Sprintf("Version v%d not found.", versionNum), nil
+			}
+
+			var meta map[string]interface{}
+			if err := json.Unmarshal([]byte(metaContent), &meta); err != nil {
+				return "", fmt.Errorf("failed to parse version metadata: %w", err)
+			}
+
+			rawSnapshot, ok := meta["files_snapshot"].([]interface{})
+			if !ok || len(rawSnapshot) == 0 {
+				return fmt.Sprintf("Version v%d has no files to restore.", versionNum), nil
+			}
+
+			var snapshotPaths []string
+			snapshotSet := make(map[string]struct{}, len(rawSnapshot))
+			for _, item := range rawSnapshot {
+				relPath, ok := item.(string)
+				if !ok || relPath == "" {
+					continue
+				}
+				snapshotPaths = append(snapshotPaths, relPath)
+				snapshotSet[relPath] = struct{}{}
+			}
+
+			toStringSlice := func(value interface{}) []string {
+				items, ok := value.([]interface{})
+				if !ok {
+					return nil
+				}
+				out := make([]string, 0, len(items))
+				for _, item := range items {
+					if s, ok := item.(string); ok && s != "" {
+						out = append(out, s)
+					}
+				}
+				return out
+			}
+
+			managedFiles := toStringSlice(meta["managed_files"])
+			managedFolders := toStringSlice(meta["managed_folders"])
+
+			for _, folderRoot := range managedFolders {
+				fullFolderPath := resolveWorkshopWorkspacePath(iwm.controller, folderRoot)
+				if err := iwm.controller.CleanupDirectory(ctx, fullFolderPath, folderRoot); err != nil {
+					return "", fmt.Errorf("failed to clear %s before restore: %w", folderRoot, err)
+				}
+			}
+
+			for _, relPath := range managedFiles {
+				if _, exists := snapshotSet[relPath]; exists {
+					continue
+				}
+				exists, err := iwm.controller.CheckWorkspaceFileExists(ctx, relPath)
+				if err != nil || !exists {
+					continue
+				}
+				if err := iwm.controller.DeleteWorkspaceFile(ctx, resolveWorkshopWorkspacePath(iwm.controller, relPath)); err != nil {
+					return "", fmt.Errorf("failed to remove %s before restore: %w", relPath, err)
+				}
+			}
+
+			filesRestored := 0
+			for _, relPath := range snapshotPaths {
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, versionFolder+"/"+relPath)
+				if err != nil {
+					logger.Warn(fmt.Sprintf("⚠️ restore_workflow_version: failed to read %s from v%d: %v", relPath, versionNum, err))
+					continue
+				}
+				if err := iwm.controller.WriteWorkspaceFile(ctx, relPath, content); err != nil {
+					return "", fmt.Errorf("failed to restore %s: %w", relPath, err)
+				}
+				filesRestored++
+			}
+
+			label, _ := meta["label"].(string)
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+				logger.Warn(fmt.Sprintf("⚠️ restore_workflow_version: restored files but failed to reload plan: %v", err))
+			}
+
+			if label != "" {
+				return fmt.Sprintf("Restored workflow version v%d (%s). %d files restored.", versionNum, label, filesRestored), nil
+			}
+			return fmt.Sprintf("Restored workflow version v%d. %d files restored.", versionNum, filesRestored), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register restore_workflow_version tool: %v", err))
+	}
+
 	// === Schedule management tools ===
 
 	// Tool: list_schedules — List all cron schedules for this workflow
@@ -5490,16 +5799,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register import_skill tool: %v", err))
 	}
 
-	// Tool: delete_skill — Delete a skill from the workspace
+	// Tool: uninstall_skill — Uninstall a skill from the workspace
 	if err := mcpAgent.RegisterCustomTool(
-		"delete_skill",
-		"Delete a skill from the workspace. Use list_skills first to see available skills and their folder names.",
+		"uninstall_skill",
+		"Uninstall a skill from the workspace. Removes skill files and version tracking. Use list_skills first to see available skills and their folder names.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"folder_name": map[string]interface{}{
 					"type":        "string",
-					"description": "The folder name of the skill to delete (from list_skills).",
+					"description": "The folder name of the skill to uninstall (from list_skills).",
 				},
 			},
 			"required": []string{"folder_name"},
@@ -5513,13 +5822,71 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "folder_name is required.", nil
 			}
 			if err := iwm.skillFuncs.DeleteSkill(ctx, folderName); err != nil {
-				return fmt.Sprintf("Failed to delete skill %q: %v", folderName, err), nil
+				return fmt.Sprintf("Failed to uninstall skill %q: %v", folderName, err), nil
 			}
-			return fmt.Sprintf("Successfully deleted skill %q from workspace.", folderName), nil
+			return fmt.Sprintf("Successfully uninstalled skill %q from workspace.", folderName), nil
 		},
 		"workflow",
 	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register delete_skill tool: %v", err))
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register uninstall_skill tool: %v", err))
+	}
+
+	// Tool: search_skills — Search the skills registry
+	if err := mcpAgent.RegisterCustomTool(
+		"search_skills",
+		"Search for skills in the public skills registry. Returns matching skills with install commands. Use install_skill to install a result.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "Search query (e.g., 'social media', 'browser automation', 'data visualization').",
+				},
+			},
+			"required": []string{"query"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.skillFuncs == nil || iwm.skillFuncs.SearchSkills == nil {
+				return "Skill search not available. The skills CLI (npx) may not be installed.", nil
+			}
+			query, _ := args["query"].(string)
+			if query == "" {
+				return "query is required.", nil
+			}
+			return iwm.skillFuncs.SearchSkills(ctx, query)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register search_skills tool: %v", err))
+	}
+
+	// Tool: install_skill — Install a skill via the skills CLI
+	if err := mcpAgent.RegisterCustomTool(
+		"install_skill",
+		"Install a skill from the public skills registry using owner/repo@skill-name format. Use search_skills first to find available skills.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type":        "string",
+					"description": "Skill source in owner/repo@skill-name format (e.g., 'anthropics/skills@skill-creator', 'vercel-labs/agent-browser@agent-browser').",
+				},
+			},
+			"required": []string{"source"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if iwm.skillFuncs == nil || iwm.skillFuncs.InstallSkill == nil {
+				return "Skill installation not available. The skills CLI (npx) may not be installed.", nil
+			}
+			source, _ := args["source"].(string)
+			if source == "" {
+				return "source is required (e.g., 'owner/repo@skill-name').", nil
+			}
+			return iwm.skillFuncs.InstallSkill(ctx, source)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register install_skill tool: %v", err))
 	}
 
 }

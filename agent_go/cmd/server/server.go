@@ -9906,7 +9906,38 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 		},
 		DeleteSkill: func(ctx context.Context, folderName string) error {
 			workspaceAPIURL := api.GetAPIURL()
-			return skills.DeleteSkill(workspaceAPIURL, folderName)
+			err := skills.DeleteSkill(workspaceAPIURL, folderName)
+			if err == nil {
+				_ = skills.RemoveFromLockFile(workspaceAPIURL, folderName)
+			}
+			return err
+		},
+		SearchSkills: func(ctx context.Context, query string) (string, error) {
+			results, err := skills.FindSkills(ctx, query)
+			if err != nil {
+				return "", fmt.Errorf("failed to search skills: %w", err)
+			}
+			if len(results) == 0 {
+				return "No skills found matching your query.", nil
+			}
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## Search Results (%d found)\n\n", len(results)))
+			sb.WriteString("Install with: `install_skill` tool using the source value.\n\n")
+			for _, r := range results {
+				sb.WriteString(fmt.Sprintf("- **%s** (%s) — %s\n", r.Skill, r.Source, r.Installs))
+			}
+			return sb.String(), nil
+		},
+		InstallSkill: func(ctx context.Context, source string) (string, error) {
+			workspaceAPIURL := api.GetAPIURL()
+			result, err := skills.ImportToWorkspace(ctx, workspaceAPIURL, source)
+			if err != nil {
+				return "", fmt.Errorf("failed to install skill: %w", err)
+			}
+			if len(result.InstalledSkills) == 0 {
+				return "No skills were installed. Check the source format (e.g., 'owner/repo@skill-name').", nil
+			}
+			return fmt.Sprintf("Successfully installed: %s. Use update_workflow_config to add to workflow's selected skills.", strings.Join(result.InstalledSkills, ", ")), nil
 		},
 	}
 }

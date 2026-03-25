@@ -1082,6 +1082,20 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
 
+	// Sync system skills in background (non-blocking)
+	go func() {
+		wsURL := getWorkspaceAPIURL()
+		if wsURL != "" {
+			installed, errs := todo_creation_human.SyncSystemSkills(context.Background(), wsURL)
+			if installed > 0 {
+				log.Printf("[STARTUP] Installed %d system skill(s)", installed)
+			}
+			for _, e := range errs {
+				log.Printf("[STARTUP] System skills warning: %s", e)
+			}
+		}
+	}()
+
 	// Sub-agent template API routes (from subagent_routes.go)
 	RegisterSubAgentRoutes(apiRouter, api)
 
@@ -2261,6 +2275,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[SKILLS] Loaded %d skills from preset: %v", len(skills), skills)
 					}
 				}
+				// Load servers from preset database (authoritative source for workflow config)
+				if preset.SelectedServers != "" {
+					var presetServers []string
+					if err := json.Unmarshal([]byte(preset.SelectedServers), &presetServers); err != nil {
+						log.Printf("[SERVERS] Failed to parse selected servers from preset: %v", err)
+					} else if len(presetServers) > 0 {
+						log.Printf("[SERVERS] Using preset servers from database: %v (was %v from request)", presetServers, selectedServers)
+						selectedServers = presetServers
+						serverList = strings.Join(selectedServers, ",")
+					}
+				}
+
 				// Load global secret selection from preset — override nil req.SelectedGlobalSecrets
 				// which the frontend doesn't send for workflow mode.
 				// NULL (never configured) defaults to NO secrets — global secrets must be explicitly selected.
@@ -4832,6 +4858,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							if refreshErr != nil {
 								log.Printf("[WORKFLOW_PHASE] Warning: Failed to reload preset config: %v", refreshErr)
 							} else if refreshPreset != nil {
+								// Refresh servers from preset (workflow editor may have added/removed MCP servers)
+								if refreshPreset.SelectedServers != "" {
+									var refreshedServers []string
+									if err := json.Unmarshal([]byte(refreshPreset.SelectedServers), &refreshedServers); err != nil {
+										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed servers: %v — keeping existing", err)
+									} else {
+										selectedServers = refreshedServers
+										log.Printf("[WORKFLOW_PHASE] Refreshed servers from preset: %v", selectedServers)
+									}
+								}
+
 								// Refresh non-LLM settings from preset (only apply if parse succeeds)
 								var refreshedTools []string
 								toolsParsed := refreshPreset.SelectedTools == "" // empty = no tools, valid

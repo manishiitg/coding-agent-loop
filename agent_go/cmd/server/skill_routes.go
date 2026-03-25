@@ -22,6 +22,13 @@ func RegisterSkillRoutes(router *mux.Router, api *StreamingAPI) {
 	router.HandleFunc("/skills/{name}", getSkillHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
 	router.HandleFunc("/skills/{name}", updateSkillHandler(workspaceAPIURL)).Methods("PUT", "OPTIONS")
 	router.HandleFunc("/skills/{name}", deleteSkillHandler(workspaceAPIURL)).Methods("DELETE", "OPTIONS")
+
+	// CLI-based routes (Vercel skills CLI)
+	router.HandleFunc("/skills/cli/install", cliInstallHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/skills/cli/check-updates", cliCheckUpdatesHandler(workspaceAPIURL)).Methods("GET", "OPTIONS")
+	router.HandleFunc("/skills/cli/update", cliUpdateHandler(workspaceAPIURL)).Methods("POST", "OPTIONS")
+	router.HandleFunc("/skills/cli/available", cliAvailableHandler()).Methods("GET", "OPTIONS")
+	router.HandleFunc("/skills/cli/search", cliSearchHandler()).Methods("GET", "OPTIONS")
 }
 
 func listSkillsHandler(workspaceAPIURL string) http.HandlerFunc {
@@ -185,6 +192,9 @@ func deleteSkillHandler(workspaceAPIURL string) http.HandlerFunc {
 			return
 		}
 
+		// Also remove from lock file if tracked
+		_ = skills.RemoveFromLockFile(workspaceAPIURL, name)
+
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -210,6 +220,110 @@ func validateSkillZipHandler(workspaceAPIURL string) http.HandlerFunc {
 		defer file.Close()
 
 		result, err := skills.ValidateZipSkill(workspaceAPIURL, file, header)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+// --- CLI-based handlers ---
+
+func cliAvailableHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"available": skills.IsAvailable()})
+	}
+}
+
+func cliSearchHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		query := r.URL.Query().Get("q")
+		if query == "" {
+			http.Error(w, "query parameter 'q' is required", http.StatusBadRequest)
+			return
+		}
+
+		results, err := skills.FindSkills(r.Context(), query)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}
+}
+
+func cliInstallHandler(workspaceAPIURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		var req struct {
+			Source string `json:"source"` // owner/repo, URL, or local path
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Source == "" {
+			http.Error(w, "source is required (e.g., 'owner/repo' or GitHub URL)", http.StatusBadRequest)
+			return
+		}
+
+		result, err := skills.ImportToWorkspace(r.Context(), workspaceAPIURL, req.Source)
+		if err != nil {
+			log.Printf("[SKILLS CLI] Install failed for '%s': %v", req.Source, err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func cliCheckUpdatesHandler(workspaceAPIURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		updates, err := skills.CheckUpdates(r.Context(), workspaceAPIURL)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(updates)
+	}
+}
+
+func cliUpdateHandler(workspaceAPIURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		result, err := skills.UpdateAll(r.Context(), workspaceAPIURL)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

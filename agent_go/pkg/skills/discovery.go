@@ -284,6 +284,17 @@ func DiscoverSkills(workspaceAPIURL string) ([]Skill, error) {
 		processSkillFolder(entry, "")
 	}
 
+	// Enrich with lock file info (source URL + version tracking)
+	lockFile, lockErr := ReadLockFile(workspaceAPIURL)
+	if lockErr == nil && lockFile != nil {
+		for i, skill := range skills {
+			if entry, ok := lockFile.Skills[skill.FolderName]; ok {
+				skills[i].SourceURL = entry.Source
+				skills[i].LockInfo = &entry
+			}
+		}
+	}
+
 	return skills, nil
 }
 

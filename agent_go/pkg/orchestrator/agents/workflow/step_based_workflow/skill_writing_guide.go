@@ -8,35 +8,127 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/skills"
 )
 
-const skillCreatorName = "skill-creator"
-const skillCreatorGitHubURL = "https://github.com/anthropics/skills/tree/main/skills/skill-creator"
+// SystemSkill defines a skill that should be auto-installed on startup
+type SystemSkill struct {
+	Source string // CLI source (owner/repo@skill or owner/repo for all)
+	Name   string // Expected skill folder name after install
+}
+
+// GetSystemSkills returns the list of skills that should be auto-installed on startup.
+// Add new required skills here.
+func GetSystemSkills() []SystemSkill {
+	return []SystemSkill{
+		{Source: "anthropics/skills@skill-creator", Name: "skill-creator"},
+		{Source: "vercel-labs/agent-browser@agent-browser", Name: "agent-browser"},
+		// gws skills — install all from googleworkspace/cli
+		{Source: "googleworkspace/cli@gws-shared", Name: "gws-shared"},
+		{Source: "googleworkspace/cli@gws-gmail", Name: "gws-gmail"},
+		{Source: "googleworkspace/cli@gws-gmail-send", Name: "gws-gmail-send"},
+		{Source: "googleworkspace/cli@gws-drive", Name: "gws-drive"},
+		{Source: "googleworkspace/cli@gws-drive-upload", Name: "gws-drive-upload"},
+		{Source: "googleworkspace/cli@gws-docs", Name: "gws-docs"},
+		{Source: "googleworkspace/cli@gws-docs-write", Name: "gws-docs-write"},
+		{Source: "googleworkspace/cli@gws-calendar", Name: "gws-calendar"},
+		{Source: "googleworkspace/cli@gws-calendar-insert", Name: "gws-calendar-insert"},
+		{Source: "googleworkspace/cli@gws-calendar-agenda", Name: "gws-calendar-agenda"},
+		{Source: "googleworkspace/cli@gws-sheets", Name: "gws-sheets"},
+		{Source: "googleworkspace/cli@gws-sheets-read", Name: "gws-sheets-read"},
+		{Source: "googleworkspace/cli@gws-sheets-append", Name: "gws-sheets-append"},
+		{Source: "googleworkspace/cli@gws-slides", Name: "gws-slides"},
+	}
+}
 
 // ensureSkillCreator ensures the Anthropic skill-creator skill is installed in the workspace.
-// If it doesn't exist, installs it from GitHub. Returns the absolute path to the SKILL.md.
+// If it doesn't exist, installs it via the skills CLI. Returns the absolute path to the SKILL.md.
 func (hcpo *StepBasedWorkflowOrchestrator) ensureSkillCreator(ctx context.Context) (string, error) {
+	return ensureSkillInstalled(ctx, "skill-creator")
+}
+
+// ensureSkillInstalled ensures a skill is installed. Checks workspace first,
+// installs via CLI if not found. Returns the absolute path to the SKILL.md.
+func ensureSkillInstalled(ctx context.Context, skillName string) (string, error) {
 	workspaceAPIURL := getWorkspaceAPIURL()
 	if workspaceAPIURL == "" {
 		return "", fmt.Errorf("workspace API URL not available")
 	}
 
-	skillFilePath := filepath.Join("skills", skillCreatorName, "SKILL.md")
+	skillFilePath := filepath.Join("skills", skillName, "SKILL.md")
 	absPath := filepath.Join(GetPromptDocsRoot(), skillFilePath)
 
 	// Check if it already exists
-	if _, err := skills.GetSkill(workspaceAPIURL, skillCreatorName); err == nil {
+	if _, err := skills.GetSkill(workspaceAPIURL, skillName); err == nil {
 		return absPath, nil
 	}
 
-	// Install from GitHub
-	hcpo.GetLogger().Info(fmt.Sprintf("📦 Installing skill-creator from %s", skillCreatorGitHubURL))
-	result, err := skills.ImportGitHubSkill(workspaceAPIURL, skillCreatorGitHubURL, "")
-	if err != nil {
-		return "", fmt.Errorf("failed to install skill-creator from GitHub: %w", err)
+	// Look up the source from system skills
+	var source string
+	for _, ss := range GetSystemSkills() {
+		if ss.Name == skillName {
+			source = ss.Source
+			break
+		}
 	}
-	if !result.Success {
-		return "", fmt.Errorf("failed to install skill-creator: %s", result.Error)
+	if source == "" {
+		return "", fmt.Errorf("skill '%s' not found and no known source to install from", skillName)
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Installed skill-creator as '%s'", result.SkillName))
-	return absPath, nil
+	// Install via CLI
+	result, err := skills.ImportToWorkspace(ctx, workspaceAPIURL, source)
+	if err != nil {
+		return "", fmt.Errorf("failed to install skill '%s' from %s: %w", skillName, source, err)
+	}
+
+	// Verify it was installed
+	for _, name := range result.InstalledSkills {
+		if name == skillName {
+			return absPath, nil
+		}
+	}
+	return "", fmt.Errorf("skill '%s' was not found in source %s", skillName, source)
+}
+
+// SyncSystemSkills ensures all system skills are installed.
+// Call this on server startup. Skips skills that already exist.
+// Returns the number of newly installed skills and any errors.
+func SyncSystemSkills(ctx context.Context, workspaceAPIURL string) (installed int, errors []string) {
+	if !skills.IsAvailable() {
+		errors = append(errors, "skills CLI (npx) not available — skipping system skills sync")
+		return 0, errors
+	}
+
+	systemSkills := GetSystemSkills()
+
+	// Group by source to batch installs
+	sourceSkills := make(map[string][]string) // source -> list of skill names
+	var toInstall []SystemSkill
+
+	for _, ss := range systemSkills {
+		// Check if already exists
+		if _, err := skills.GetSkill(workspaceAPIURL, ss.Name); err == nil {
+			continue // Already installed
+		}
+		toInstall = append(toInstall, ss)
+		sourceSkills[ss.Source] = append(sourceSkills[ss.Source], ss.Name)
+	}
+
+	if len(toInstall) == 0 {
+		return 0, nil
+	}
+
+	// Install missing skills
+	for _, ss := range toInstall {
+		result, err := skills.ImportToWorkspace(ctx, workspaceAPIURL, ss.Source)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("failed to install %s: %v", ss.Name, err))
+			continue
+		}
+		for _, name := range result.InstalledSkills {
+			if name == ss.Name {
+				installed++
+				break
+			}
+		}
+	}
+
+	return installed, errors
 }

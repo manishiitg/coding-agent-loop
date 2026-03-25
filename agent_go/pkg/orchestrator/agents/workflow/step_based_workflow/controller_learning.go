@@ -235,8 +235,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	} else {
 		validationWorkspacePathForLogs = hcpo.GetWorkspacePath()
 	}
-	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath)
+	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath))
 	successLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
+
+	// Ensure skill writing guide exists and pass its path
+	if guidePath, err := hcpo.ensureSkillCreator(ctx); err == nil {
+		successLearningTemplateVars["SkillCreatorPath"] = guidePath
+	}
 
 	// Add context dependencies as a comma-separated string
 	contextDeps := step.GetContextDependencies()
@@ -251,11 +256,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		successLearningTemplateVars["VariableNames"] = variableNames
 	}
 
-	// Pass existing learnings content directly (already read and formatted above)
-	// This allows the learning agent to see existing patterns and build upon them
-	successLearningTemplateVars["ExistingLearningsContent"] = previousLearningsContent
+	// Note: Existing learnings are no longer inlined — the skill creation agent reads them from disk
 	if previousLearningsContent != "" {
-		hcpo.GetLogger().Info(fmt.Sprintf("📄 Passing existing learnings content to success learning agent (%d chars)", len(previousLearningsContent)))
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Existing learnings available for skill creation agent to read from disk (%d chars)", len(previousLearningsContent)))
 	} else {
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 No existing learnings content to pass (first iteration)"))
 	}
@@ -559,8 +562,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	} else {
 		validationWorkspacePathForLogs = hcpo.GetWorkspacePath()
 	}
-	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath)
+	executionLogsPath := filepath.Join(GetPromptDocsRoot(), getExecutionFolderPathForLogs(validationWorkspacePathForLogs, stepPath))
 	failureLearningTemplateVars["ExecutionLogsPath"] = executionLogsPath
+
+	// Ensure skill writing guide exists and pass its path
+	if guidePath, err := hcpo.ensureSkillCreator(ctx); err == nil {
+		failureLearningTemplateVars["SkillCreatorPath"] = guidePath
+	}
 
 	// Add context dependencies as a comma-separated string
 	contextDeps := step.GetContextDependencies()
@@ -575,9 +583,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 		failureLearningTemplateVars["VariableNames"] = variableNames
 	}
 
-	// Pass existing learnings content directly (already read and formatted above)
-	// This allows the learning agent to see existing patterns and build upon them
-	failureLearningTemplateVars["ExistingLearningsContent"] = previousLearningsContent
+	// Note: Existing learnings are no longer inlined — the skill creation agent reads them from disk
 	if previousLearningsContent != "" {
 		hcpo.GetLogger().Info(fmt.Sprintf("📄 Passing existing learnings content to failure learning agent (%d chars)", len(previousLearningsContent)))
 	} else {

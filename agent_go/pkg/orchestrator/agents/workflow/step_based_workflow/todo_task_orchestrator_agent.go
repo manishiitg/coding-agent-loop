@@ -66,23 +66,19 @@ You break this objective into tasks, delegate them to specialized sub-agents, an
 
 ## Workspace & Paths
 
-All paths are absolute. Always quote paths with single quotes in shell commands (folder names may contain spaces).
+All paths are absolute. Quote paths with single quotes in shell commands (folder names may contain spaces).
 
-| Path | Location |
-|------|----------|
-| Workflow root | `+"`"+`{{.WorkflowRoot}}/`+"`"+` |
-| Execution folder | `+"`"+`{{.WorkspacePath}}/`+"`"+` |
-| Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` |
-{{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` |
-{{end}}
+| Path | Location | Access |
+|------|----------|--------|
+| Workflow root | `+"`"+`{{.WorkflowRoot}}/`+"`"+` | READ |
+| Execution folder | `+"`"+`{{.ExecutionFolderPath}}/`+"`"+` | READ |
+| Step folder (VOLATILE) | `+"`"+`{{.StepExecutionPath}}/`+"`"+` | READ/WRITE |
+{{if eq .UseKnowledgebase "true"}}| Knowledgebase (PERSISTENT) | `+"`"+`{{.KnowledgebasePath}}/`+"`"+` | READ/WRITE |
+{{end}}| tasks.md | `+"`"+`{{.StepExecutionPath}}/tasks.md`+"`"+` | READ/WRITE |
 
-**Folder Guard (enforced)**:
-- Allowed READ: {{.FolderGuardReadPaths}}
-- Allowed WRITE: {{.FolderGuardWritePaths}}
-- Step folder is **volatile** — deleted on re-execution. Only write primary results here.
+- Step folder is **volatile** — deleted on re-execution. Write all output files here.
 {{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
 {{end}}
-**Shell commands for tasks.md:**
 - Write/rewrite: Use heredoc for multi-line content
 - Mark in progress: sed to change '[ ]' to '[~]'
 - Mark complete: sed to change '[~]' or '[ ]' to '[x]'
@@ -93,12 +89,12 @@ All paths are absolute. Always quote paths with single quotes in shell commands 
 
 ## Sub-Agent Tools
 
-### call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
-Execute a predefined route. Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session, preventing them from interfering with each other (e.g., navigating to different pages simultaneously).
+### call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+Execute a predefined route.{{if .HasBrowserAccess}} Set share_browser=false for parallel browser sessions — this gives each sub-agent its own isolated browser session, preventing them from interfering with each other.{{end}}
 
 {{if .EnableGenericAgent}}
-### call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
-Execute any ad-hoc task. Same tool access as predefined agents. Set share_browser=false for parallel browsing.
+### call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+Execute any ad-hoc task. Same tool access as predefined agents.{{if .HasBrowserAccess}} Set share_browser=false for parallel browsing.{{end}}
 {{end}}
 
 **CRITICAL**: Before calling any sub-agent, check LEARNING HISTORY for relevant system_behavior entries. Include them in the instructions field — sub-agents have no memory of previous runs.
@@ -114,6 +110,9 @@ Execute any ad-hoc task. Same tool access as predefined agents. Set share_browse
 **Tier Escalation on Failure**: If a sub-agent fails or pre-validation fails at tier 2/3, retry at tier 1 (high reasoning) with improved instructions. The higher tier may catch edge cases the lower tier missed. If it still fails at tier 1, investigate with get_sub_agent_conversation before retrying — the issue is likely in the instructions or environment, not reasoning capability.
 {{end}}
 
+### get_route_description(route_id)
+Get the full description and instructions for a predefined route. Call this before delegating to understand what the sub-agent does.
+
 ### get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 Inspect a sub-agent's internal tool calls and reasoning. MANDATORY when a sub-agent failed or struggled.
 
@@ -124,7 +123,7 @@ Signal objective achieved. Required to exit — without this, iterations continu
 
 ## Available Sub-Agents
 
-### Predefined Routes
+### Predefined Routes (use get_route_description for details)
 {{.PredefinedRoutes}}
 
 {{if .EnableGenericAgent}}
@@ -167,9 +166,6 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 
 {{if .LearningHistory}}
 ## Learning History
-Learnings from previous executions of this step. These contain exact tool sequences, error recovery patterns, and system behaviors discovered during past runs. Use these to:
-- Inform your own task planning and execution
-- **Include relevant learnings in sub-agent instructions** — sub-agents have no memory of previous runs and will repeat mistakes without this context
 
 {{.LearningHistory}}
 {{end}}
@@ -181,16 +177,20 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 
 {{if .ShowToolsSection}}
 ## Tools Reference (CLI Provider)
-- call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
-{{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}, share_browser)
-{{end}}- get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
+- call_sub_agent(route_id, todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+{{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
+{{end}}- get_route_description(route_id)
+- get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 - mark_step_complete(reason)
 - execute_shell_command(command)
 {{end}}
 
 `)
 
-var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `Begin executing the step described in the system prompt.
+var todoTaskOrchestratorUserTemplate = MustRegisterTemplate("todoTaskOrchestratorUser", `## Step: {{.StepTitle}}
+
+{{.StepDescription}}
+
 {{if .StepContextDependencies}}
 ## Input Dependencies
 The following files from previous steps are available for reading:
@@ -206,8 +206,11 @@ The following files from previous steps are available for reading:
 {{end}}
 
 ## Action Required
-- If tasks.md is EMPTY: break the objective into tasks, create tasks.md, begin dispatching
-- If tasks.md has PENDING tasks: dispatch next task(s) to sub-agents, handle failures
+{{if eq .TasksState "empty"}}- tasks.md does not exist yet. Break the objective into tasks, create tasks.md, and begin dispatching.
+{{else if eq .TasksState "has_in_progress"}}- tasks.md has orphaned in-progress ([~]) tasks from a previous interrupted run. Reconcile them back to pending ([ ]), then dispatch.
+{{else if eq .TasksState "has_pending"}}- Progress: {{.ProgressSummary}}. Dispatch next pending task(s) to sub-agents.
+{{else}}- Progress: {{.ProgressSummary}}. Check if all success criteria are met.
+{{end}}- **Done when**: {{.StepSuccessCriteria}}
 - When done: call mark_step_complete(reason)`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
@@ -312,6 +315,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"VariableValues":             templateVars["VariableValues"],
 		"LearningHistory":            templateVars["LearningHistory"],
 		"StepExecutionPath":          templateVars["StepExecutionPath"],
+		"ExecutionFolderPath":        templateVars["ExecutionFolderPath"],
 		"WorkspacePath":              templateVars["WorkspacePath"],
 		"WorkflowRoot":               templateVars["WorkflowRoot"],
 		"KnowledgebasePath":          templateVars["KnowledgebasePath"],
@@ -326,6 +330,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 		"StepTitle":                  templateVars["StepTitle"],
 		"StepDescription":            templateVars["StepDescription"],
 		"StepSuccessCriteria":        templateVars["StepSuccessCriteria"],
+		"HasBrowserAccess":           templateVars["HasBrowserAccess"] == "true",
 	}
 
 	var result strings.Builder
@@ -340,12 +345,30 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 	templateVars map[string]string,
 	conversationHistory []llmtypes.MessageContent,
 ) string {
+	// Determine tasks state for dynamic user message
+	tasksState := "empty"
+	tasksContent := templateVars["TasksFileContent"]
+	if tasksContent != "" {
+		if strings.Contains(tasksContent, "- [~]") {
+			tasksState = "has_in_progress"
+		} else if strings.Contains(tasksContent, "- [ ]") {
+			tasksState = "has_pending"
+		} else {
+			tasksState = "all_done"
+		}
+	}
+
 	templateData := map[string]interface{}{
+		"StepTitle":               templateVars["StepTitle"],
+		"StepDescription":         templateVars["StepDescription"],
 		"StepContextDependencies": templateVars["StepContextDependencies"],
 		"DecisionReasoning":       templateVars["DecisionReasoning"],
 		"SubAgentResult":          templateVars["SubAgentResult"],
 		"LastSubAgentName":        templateVars["LastSubAgentName"],
 		"LastTodoID":              templateVars["LastTodoID"],
+		"TasksState":              tasksState,
+		"ProgressSummary":         templateVars["ProgressSummary"],
+		"StepSuccessCriteria":     templateVars["StepSuccessCriteria"],
 	}
 
 	var result strings.Builder

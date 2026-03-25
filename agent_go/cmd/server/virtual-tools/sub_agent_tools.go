@@ -37,6 +37,8 @@ const (
 	SubAgentIsolatedSessionIDKey subAgentContextKey = "isolated_session_id"
 	// GetSubAgentConversationKey is the context key for the get_sub_agent_conversation function
 	GetSubAgentConversationKey subAgentContextKey = "get_sub_agent_conversation"
+	// RouteDescriptionsKey is the context key for a map of route_id -> description string
+	RouteDescriptionsKey subAgentContextKey = "route_descriptions"
 )
 
 // GetSubAgentConversationFunc is the function signature for retrieving sub-agent conversation history.
@@ -190,6 +192,26 @@ func CreateSubAgentTools(enableTierSelection bool) []llmtypes.Tool {
 	}
 	tools = append(tools, getSubAgentConversationTool)
 
+	// get_route_description tool - Get the full description/instructions for a predefined route
+	getRouteDescriptionTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_route_description",
+			Description: "Get the full description and instructions for a predefined sub-agent route. Call this before delegating to understand what the route does and what instructions to pass.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"route_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The ID of the predefined route to get the description for",
+					},
+				},
+				"required": []string{"route_id"},
+			}),
+		},
+	}
+	tools = append(tools, getRouteDescriptionTool)
+
 	return tools
 }
 
@@ -201,6 +223,7 @@ func CreateSubAgentToolExecutors() map[string]func(ctx context.Context, args map
 	executors["call_sub_agent"] = handleCallSubAgent
 	executors["call_generic_agent"] = handleCallGenericAgent
 	executors["get_sub_agent_conversation"] = handleGetSubAgentConversation
+	executors["get_route_description"] = handleGetRouteDescription
 
 	return executors
 }
@@ -361,6 +384,37 @@ func isSubAgentResultFailure(result string) bool {
 		strings.Contains(lower, "failed validation after") ||
 		strings.Contains(lower, "execution failed") ||
 		strings.Contains(lower, "error:")
+}
+
+// handleGetRouteDescription returns the full description of a predefined route
+func handleGetRouteDescription(ctx context.Context, args map[string]interface{}) (string, error) {
+	routeID, ok := args["route_id"].(string)
+	if !ok || routeID == "" {
+		return "", fmt.Errorf("route_id is required")
+	}
+
+	// Get route descriptions map from context
+	descriptionsMap, ok := ctx.Value(RouteDescriptionsKey).(map[string]string)
+	if !ok || descriptionsMap == nil {
+		return "", fmt.Errorf("route descriptions not available in context")
+	}
+
+	description, exists := descriptionsMap[routeID]
+	if !exists {
+		// List available routes for the error message
+		var available []string
+		for id := range descriptionsMap {
+			available = append(available, id)
+		}
+		return "", fmt.Errorf("route '%s' not found. Available routes: %s", routeID, strings.Join(available, ", "))
+	}
+
+	result := map[string]string{
+		"route_id":    routeID,
+		"description": description,
+	}
+	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	return string(resultJSON), nil
 }
 
 // handleGetSubAgentConversation retrieves the internal conversation of a previous sub-agent call

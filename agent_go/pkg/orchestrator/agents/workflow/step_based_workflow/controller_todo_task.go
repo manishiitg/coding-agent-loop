@@ -152,21 +152,38 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		default:
 		}
 
-		// Reload orchestrator learnings each iteration (includes learnings saved during this run)
+		// Reload orchestrator learnings each iteration — provide file path reference instead of full content
 		// Check for new SKILL.md format first, fall back to legacy orchestrator_learning.md
 		var orchestratorLearningHistory string
 		if isLearningDisabled {
 			orchestratorLearningHistory = ""
 		} else {
+			docsRoot := GetPromptDocsRoot()
 			orchestratorLearningFilePath := fmt.Sprintf("%s/SKILL.md", learningFolderPath)
-			orchestratorLearnings, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
+			_, err := hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
 			if err != nil {
 				// Fall back to legacy format
 				orchestratorLearningFilePath = fmt.Sprintf("%s/orchestrator_learning.md", learningFolderPath)
-				orchestratorLearnings, err = hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
+				_, err = hcpo.ReadWorkspaceFile(ctx, orchestratorLearningFilePath)
 			}
-			if err == nil && orchestratorLearnings != "" {
-				orchestratorLearningHistory = fmt.Sprintf("## 📚 ORCHESTRATOR LEARNINGS\n\n%s", orchestratorLearnings)
+			if err == nil {
+				absLearningPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), orchestratorLearningFilePath)
+				orchestratorLearningHistory = fmt.Sprintf("📚 **Orchestrator learnings available** at `%s`. Read this file with execute_shell_command before delegating sub-agents — it contains error recovery patterns, system behaviors, and validated sequences from previous runs.", absLearningPath)
+			}
+		}
+
+		// Read tasks.md to build dynamic user message
+		var tasksFileContent string
+		{
+			var tasksFilePath string
+			if hcpo.selectedRunFolder != "" {
+				tasksFilePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", todoTaskStepPath, "tasks.md")
+			} else {
+				tasksFilePath = filepath.Join("execution", todoTaskStepPath, "tasks.md")
+			}
+			content, err := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
+			if err == nil && strings.TrimSpace(content) != "" {
+				tasksFileContent = content
 			}
 		}
 
@@ -184,6 +201,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 			lastTodoID,
 			decisionContext,
 			orchestratorLearningHistory,
+			tasksFileContent,
 		)
 
 		// Execute TodoTaskOrchestratorAgent
@@ -315,6 +333,29 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 	return false, todoTaskStep.NextStepID, nil
 }
 
+// buildCurrentTodosDisplay returns a display string for the CurrentTodos template var
+func buildCurrentTodosDisplay(tasksFileContent string) string {
+	if tasksFileContent == "" {
+		return "(tasks.md does not exist yet — create it)"
+	}
+	return tasksFileContent
+}
+
+// buildProgressSummaryDisplay returns a brief summary of task progress from tasks.md content
+func buildProgressSummaryDisplay(tasksFileContent string) string {
+	if tasksFileContent == "" {
+		return "(No tasks.md yet)"
+	}
+	pending := strings.Count(tasksFileContent, "- [ ]")
+	inProgress := strings.Count(tasksFileContent, "- [~]")
+	completed := strings.Count(tasksFileContent, "- [x]")
+	total := pending + inProgress + completed
+	if total == 0 {
+		return "(tasks.md exists but no tasks found)"
+	}
+	return fmt.Sprintf("%d/%d completed, %d pending, %d in-progress", completed, total, pending, inProgress)
+}
+
 // buildTodoTaskOrchestratorTemplateVars builds template variables for the orchestrator agent
 // Note: Task management is handled via shell commands with tasks.md - the LLM reads it directly
 func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars(
@@ -330,17 +371,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 	lastTodoID string,
 	decisionContext *DecisionContext, // Optional: context from decision step that routed to this step
 	orchestratorLearningHistory string, // Persisted learnings from previous runs
+	tasksFileContent string, // Content of tasks.md (empty if file doesn't exist)
 ) map[string]string {
-	// Build predefined routes description
+	// Build predefined routes list (title + ID only — use get_route_description tool for details)
 	var routesBuilder strings.Builder
 	for i, route := range step.PredefinedRoutes {
 		if i > 0 {
 			routesBuilder.WriteString("\n")
 		}
-		fmt.Fprintf(&routesBuilder, "- **%s** (%s): %s", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID, ResolveVariables(route.Condition, hcpo.variableValues))
-		if route.SubAgentStep != nil {
-			fmt.Fprintf(&routesBuilder, "\n  Description: %s", ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues))
-		}
+		fmt.Fprintf(&routesBuilder, "- **%s** (`%s`)", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID)
 	}
 
 	// Get step execution path (include run folder if set)
@@ -398,16 +437,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 			stepIndex, allSteps, fgExecPath, docsRoot, hcpo.variableValues,
 		), ", "),
 		"WorkspacePath":           filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath()),
+		"ExecutionFolderPath":     filepath.Join(docsRoot, fgExecPath),
 		"StepNumber":              fmt.Sprintf("step-%d", stepIndex+1),
 		"StepExecutionPath":       filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), executionPath),
 		"ShellWorkingDirectory":   shellWorkingDirectory,
 		"PredefinedRoutes":        routesBuilder.String(),
 		"EnableGenericAgent":      fmt.Sprintf("%t", step.EnableGenericAgent),
-		"CurrentTodos":            "(Read tasks.md using shell command)",
-		"ProgressSummary":         "(Check tasks.md for current progress)",
+		"CurrentTodos":            buildCurrentTodosDisplay(tasksFileContent),
+		"ProgressSummary":         buildProgressSummaryDisplay(tasksFileContent),
+		"TasksFileContent":        tasksFileContent,
 		"SubAgentResult":          lastSubAgentResult,
 		"LastSubAgentName":        lastSubAgentName,
 		"LastTodoID":              lastTodoID,
+		"HasBrowserAccess":       fmt.Sprintf("%t", hcpo.GetBrowserMode() != "" && hcpo.GetBrowserMode() != "none"),
 		// Add code execution mode and knowledgebase flags
 		"IsCodeExecutionMode":    fmt.Sprintf("%v", isCodeExecutionMode),
 		"UseKnowledgebase":       fmt.Sprintf("%v", useKnowledgebase),

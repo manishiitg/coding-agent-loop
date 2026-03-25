@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -3513,7 +3514,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) sanitizeTitleForAgentName(title strin
 }
 
 // readLearningHistory reads learning history from the learnings folder
-// Returns the formatted learning history string and any error
+// Returns a file-path reference string (not full content) and any error.
+// The execution agent can read the files on demand via execute_shell_command.
 // Always reads fresh learnings (no caching)
 func (hcpo *StepBasedWorkflowOrchestrator) readLearningHistory(
 	ctx context.Context,
@@ -3537,12 +3539,21 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearningHistory(
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to read learning files from %s: %v - will proceed without learning history", stepLearningsPath, err))
 		formattedLearningHistory = ""
 	} else if len(learningFiles) > 0 {
-		// Format file contents as learning history (only when we have files)
-		formattedLearningHistory, _ = hcpo.formatStepLearningFilesAsHistory(learningFiles)
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Read %d learning file(s) from step folder for %s", len(learningFiles), stepPath))
+		// Build file path reference instead of embedding full content
+		docsRoot := GetPromptDocsRoot()
+		absLearningsPath := filepath.Join(docsRoot, hcpo.GetWorkspacePath(), stepLearningsPath)
 
-		// Note: We no longer save previous learnings content to metadata
-		// Previous learnings are read directly from files before the learning phase runs
+		// List the available files
+		var fileList []string
+		for filename := range learningFiles {
+			fileList = append(fileList, filename)
+		}
+		sort.Strings(fileList)
+
+		formattedLearningHistory = fmt.Sprintf(
+			"📚 **Learning files available** at `%s/` (%d files: %s). Read these files with execute_shell_command before starting — they contain validated workflows, error recovery patterns, and system behaviors from previous runs.",
+			absLearningsPath, len(learningFiles), strings.Join(fileList, ", "))
+		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d learning file(s) from step folder for %s (path reference only)", len(learningFiles), stepPath))
 	} else {
 		// No learning files found
 		hcpo.GetLogger().Info(fmt.Sprintf("⏭️ No learning files found for %s - learnings folder is empty: %s", stepPath, stepLearningsPath))

@@ -1801,6 +1801,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		// Inject predefined routes for route lookup
 		if execCtx.TodoTaskStep != nil {
 			ctx = context.WithValue(ctx, virtualtools.PredefinedRoutesKey, execCtx.TodoTaskStep.PredefinedRoutes)
+
+			// Build route descriptions map for get_route_description tool
+			routeDescriptions := make(map[string]string)
+			for _, route := range execCtx.TodoTaskStep.PredefinedRoutes {
+				desc := ResolveVariables(route.Condition, hcpo.variableValues)
+				if route.SubAgentStep != nil {
+					desc += "\n\nDescription: " + ResolveVariables(route.SubAgentStep.GetDescription(), hcpo.variableValues)
+				}
+				routeDescriptions[route.RouteID] = desc
+			}
+			ctx = context.WithValue(ctx, virtualtools.RouteDescriptionsKey, routeDescriptions)
 		}
 
 		// Inject sub_agent_llm override if configured (works in both tiered and manual modes)
@@ -1845,15 +1856,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 		})
 		ctx = context.WithValue(ctx, virtualtools.GetSubAgentConversationKey, getConvFunc)
 
-		// Before sub-agent: emit current tasks.md state so UI shows pre-execution state
-		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
-		hcpo.flushTodoTaskStatusDebouncer()
+		// Only emit task status updates for tools that change state (call_sub_agent, call_generic_agent),
+		// not for read-only tools (get_route_description, get_sub_agent_conversation).
+		// call_sub_agent and call_generic_agent both require "instructions" parameter.
+		_, isStateChangingTool := args["instructions"]
+
+		if isStateChangingTool {
+			// Before sub-agent: emit current tasks.md state so UI shows pre-execution state
+			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+			hcpo.flushTodoTaskStatusDebouncer()
+		}
 
 		// Call original executor with enriched context
 		result, err := originalExecutor(ctx, args)
 
-		// After sub-agent completes, emit tasks.md state (debounced to coalesce parallel completions)
-		hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+		if isStateChangingTool {
+			// After sub-agent completes, emit tasks.md state (debounced to coalesce parallel completions)
+			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+		}
 
 		return result, err
 	}

@@ -13,116 +13,90 @@ import (
 )
 
 // Pre-parsed templates for code execution learning - panics at startup if invalid
-var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# Code Learning Analysis Agent
+var learningCodeSystemTemplate = MustRegisterTemplate("learningCodeSystem", `# Skill Creation Agent
 
-## Role & Identity
-- **Role**: Code Learning Agent (Code Pattern Extractor).
-- **Goal**: Identify and extract the BEST code that successfully achieved the step goal via execute_shell_command.
-- **Focus**: Efficiency, reliability, and structured error handling.
-- **Languages**: Code may be Python, bash/shell, curl, or other languages. Python is most common but extract whatever was actually used.
+## Role
+You are a Skill Creation Agent. You extract the best code patterns from a completed step execution and persist them as a reusable skill file (SKILL.md + code files).
 
-## CRITICAL CODING PRINCIPLES
-1. **Task-Specific ONLY**: Only save code that solves *this specific problem*.
-2. **Explain the WHY**: For each code pattern, explain *why* it works — what makes it the right approach. Instead of just saving the code, add a brief comment on why this library/method was chosen over alternatives.
-3. **Keep it lean**: Remove code patterns that aren't pulling their weight. If a previously saved script was superseded by a better one, drop the old one. One excellent script is better than three mediocre alternatives.
-4. **Exclude General Bloat**:
-   - No syntax error patterns (general programming knowledge).
-   - No internal infra scripts unless they are part of the core logic.
-   - No execute_shell_command mechanics (timeout) — focus on the code content.
-5. **Extraction Checklist**:
-   - **Best Code**: Complete, runnable code with imports and logic. Preserve the original language used (Python, bash, etc.). If the same helper script was independently written across runs, bundle it as a reusable file in 'code/'.
-   - **Variable Handling**: Replace hardcoded values (IDs, regions) with template variables (e.g., '{{ "{{" }}AWS_ACCOUNT_ID{{ "}}" }}').
-   - **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' (Python) or '$MCP_API_URL' and '$MCP_API_TOKEN' (bash/curl) for per-tool HTTP endpoints — never hardcode URLs or tokens.
-   - **Step Path**: Note the step execution path used so future runs know where to write output.
-   - **JSON Schemas**: Document the exact JSON structure of any files created.
-
-## FILE MANAGEMENT ALGORITHM (MANDATORY)
-**Available tools**: execute_shell_command (for listing, reading, and deleting files) and diff_patch_workspace_file (for writing/updating files).
-{{if .ExistingLearningsContent}}
-**Existing learnings pre-loaded (skip discovery/retrieval):**
-{{.ExistingLearningsContent}}
-{{else}}
-1. **Discover**: Use execute_shell_command with 'ls' on '{{.WritePath}}'. Identify existing 'SKILL.md' or any '*_learning.md' files (legacy format). Also check '{{.CodePath}}' for existing code files.
-2. **Retrieve**: Use execute_shell_command with 'cat' to read all identified files.
-{{end}}
-3. **Optional - Check Execution Logs**: If you need more context about actual code execution, read execution logs from '{{.ExecutionLogsPath}}' (if available).
-4. **Legacy Migration**: If you find '*_learning.md' files (legacy format) but no 'SKILL.md':
-   - Read the legacy content and incorporate it into the new SKILL.md format with proper YAML frontmatter.
-   - Derive the 'description' field from the legacy content (summarize the key code patterns/approaches).
-   - Delete the legacy files after writing SKILL.md.
-5. **Consolidate**:
-{{if .IsSuccess}}
-   - Merge new execution patterns with history. Prune old/inefficient code. Keep ONLY the latest/best code file.
-   - Mark the optimal code pattern that led to validation passing.
-{{else}}
-   - Analyze why the code execution failed validation. Document the root cause clearly.
-   - Preserve existing successful code patterns from history — do NOT discard what worked before.
-   - Add the failure pattern with specific details on what went wrong and how to fix it.
-{{end}}
-5. **Persist**:
-   - Use diff_patch_workspace_file to write ONE consolidated learning file to '{{.WritePath}}/SKILL.md'.
-     The file MUST use YAML frontmatter in the following format:
-     ` + "`" + `` + "`" + `` + "`" + `
-     ---
-     name: {{.StepTitle}}
-     description: "<YOU MUST WRITE THIS: 1-2 sentence summary of the optimal code approach and key pitfalls>"
-     disable-model-invocation: true
-     user-invocable: false{{if .AllowedTools}}
-     allowed-tools:{{range .AllowedToolsList}}
-       - {{.}}{{end}}{{end}}
-     ---
-
-     (learning content here)
-     ` + "`" + `` + "`" + `` + "`" + `
-     **IMPORTANT**: The 'description' field is critical — it determines when this skill gets loaded. Write a specific summary that covers WHAT the optimal code approach is AND common pitfalls with root causes. Example: "Use Python requests with batch POST to /api/records; avoid urllib which lacks timeout handling and causes failures on payloads >5MB."
-   - Save the best code to '{{.CodePath}}/' with an appropriate filename and extension (e.g., '.py' for Python, '.sh' for bash, '.go' for Go).
-   - Reference code files using relative paths from SKILL.md (e.g., 'code/main.py', not absolute paths).
-6. **Clean Up**: Use execute_shell_command with 'rm' to delete all other '*_learning.md' files and old learning files in these folders. Only 'SKILL.md' should remain.
-
-**Note**: Always quote paths with single quotes in shell commands, as folder names may contain spaces.
-
-## OUTPUT FORMAT
-### BEST CODE PATTERNS
-1. **OPTIMAL**: [Pattern Name]
-   - **Language**: Python/Bash/Other
-   - **Why**: Brief reason (e.g., "Best error handling").
-   - **Source**: Relative path to saved code file (e.g., 'code/main.py', 'code/fetch.sh').
-   - **Output Schema**: Document JSON structure of created files.
-
-### FAILURES TO AVOID
-- **Pattern**: [Description]
-- **Reason**: Task-specific root cause.
-- **Correction**: What to do instead.
-
-## FINAL ACTION
-After cleanup, output ONLY the file path:
-'Updated: {{.WritePath}}/SKILL.md'
-Do not add summaries or talkative reports.`)
-
-var learningCodeUserTemplate = MustRegisterTemplate("learningCodeUser", `# Code Pattern Extraction Task
-
-## Context
+## Step Context
 - **Step**: {{.StepTitle}}
 - **Goal**: {{.StepDescription}}
 - **Success Criteria**: {{.SuccessCriteria}}
+{{if .Variables}}
+## Variables
+Replace these hardcoded values with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders in the skill file:
+{{.Variables}}
+{{end}}
+## Validation Result
+{{.ValidationResult}}
 
-## Extraction Focus
-- Identify the language used in the successful execution (Python, bash/shell, curl, etc.).
-- **Dependency Rule**: For Python, use ONLY standard library or 'requests' (pre-installed). For bash/curl, use only standard system tools.
-- **Error Handling**: Include robust error handling appropriate to the language and HTTP response status checks.
-- Document what failed for *this specific task* (ignore general language errors).
+## Understanding the execution logs
+The execution logs contain the full agent conversation for this step. Key elements you'll find:
+- **DESCRIPTION**: The step's task description — what the agent was asked to do.
+- **Orchestrator Instructions**: Additional context/instructions passed by the parent orchestrator (paths, specific requirements). These are run-specific and should NOT be hardcoded into the skill.
+- **Tool calls**: The actual code executed via execute_shell_command, API calls, and their results.
+- **Variables**: Values like ` + "`" + `{{.StepTitle}}` + "`" + ` that were resolved at runtime. In the skill file, replace these with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders so the skill is reusable across runs.
 
-## Variable Handling
-- Replace hardcoded values with {{ "{{" }}VARIABLE_NAME{{ "}}" }} placeholders: {{.Variables}}
-- **API Calls**: Use 'os.environ["MCP_API_URL"]' and 'os.environ["MCP_API_TOKEN"]' (Python) or '$MCP_API_URL' and '$MCP_API_TOKEN' (bash/curl) — never hardcode URLs or tokens.
+## Paths
+| Path | Location |
+|------|----------|
+| Skill folder | ` + "`" + `{{.WritePath}}/` + "`" + ` |
+| Code folder | ` + "`" + `{{.CodePath}}/` + "`" + ` |
+| Execution logs | ` + "`" + `{{.ExecutionLogsPath}}/` + "`" + ` |
+{{if .SkillCreatorPath}}| Skill creator guide | ` + "`" + `{{.SkillCreatorPath}}` + "`" + ` |
+{{end}}
+## Tools
+- **execute_shell_command**: List, read, and delete files
+- **diff_patch_workspace_file**: Write/update files
 
+**Note**: Always quote paths with single quotes in shell commands (folder names may contain spaces).`)
+
+var learningCodeUserTemplate = MustRegisterTemplate("learningCodeUser", `Create/update the skill file for step **{{.StepTitle}}**.
+
+## Steps
+
+### 1. Read existing skill files
+List and read files from the skill folder (` + "`" + `{{.WritePath}}/` + "`" + `) and code folder (` + "`" + `{{.CodePath}}/` + "`" + `) to see what already exists.
+
+### 2. Read execution logs
+List and read the execution log files from ` + "`" + `{{.ExecutionLogsPath}}/` + "`" + `. These contain the full agent conversation — tool calls, code executed via execute_shell_command, and results. Extract the best code patterns from these logs.
+
+### 3. Consolidate
+{{if .IsSuccess}}- Merge new code patterns with existing skill. Prune old/inefficient code — keep ONLY the best.
+- Mark the optimal code pattern that led to validation passing.
+{{else}}- Analyze why execution failed. Document the root cause.
+- Preserve existing successful patterns — do NOT discard what worked.
+- Add the failure pattern with details on what went wrong.
+{{end}}
+### 4. Write skill file
+{{if .SkillCreatorPath}}Read the skill creator guide at ` + "`" + `{{.SkillCreatorPath}}` + "`" + ` for best practices on writing effective skills.
+{{end}}Use diff_patch_workspace_file to write ` + "`" + `{{.WritePath}}/SKILL.md` + "`" + ` with this format:
+` + "`" + `` + "`" + `` + "`" + `
 ---
-## EXECUTION HISTORY
-{{.ExecutionHistory}}
-
+name: {{.StepTitle}}
+description: "<1-2 sentence summary of the optimal code approach and key pitfalls>"
+disable-model-invocation: true
+user-invocable: false{{if .AllowedTools}}
+allowed-tools:{{range .AllowedToolsList}}
+  - {{.}}{{end}}{{end}}
 ---
-## VALIDATION RESULTS
-{{.ValidationResult}}`)
+
+(skill content here)
+` + "`" + `` + "`" + `` + "`" + `
+
+**Skill content should include**:
+- **Best code pattern**: Explain WHY it works. Save the complete runnable code to ` + "`" + `{{.CodePath}}/` + "`" + ` with appropriate extension (.py, .sh). Reference it from SKILL.md using relative paths (e.g., 'code/main.py').
+- **API calls**: Use ` + "`" + `os.environ["MCP_API_URL"]` + "`" + ` and ` + "`" + `os.environ["MCP_API_TOKEN"]` + "`" + ` — never hardcode URLs or tokens.
+- **Output schema**: Document the exact JSON structure of created files.
+- **Failures to avoid**: Task-specific pitfalls with root causes.
+
+**IMPORTANT**: The 'description' field determines when this skill gets loaded. Be specific about the approach AND pitfalls.
+
+### 5. Clean up
+Delete all '*_learning.md' files (legacy format). Only SKILL.md and code files should remain.
+
+## Final output
+After cleanup, output ONLY: ` + "`" + `Updated: {{.WritePath}}/SKILL.md` + "`" + ``)
 
 // WorkflowCodeExecutionLearningAgent analyzes code execution mode executions
 // to capture code patterns (Python, bash, curl, etc.) and improve future code generation
@@ -157,19 +131,17 @@ func (agent *WorkflowCodeExecutionLearningAgent) Execute(ctx context.Context, te
 	executionHistory := templateVars["ExecutionHistory"]
 	validationResult := templateVars["ValidationResult"]
 	variableNames := templateVars["VariableNames"]
-	existingLearningsContent := templateVars["ExistingLearningsContent"] // Existing learnings to build upon
 	// Prepare template variables
 	learningTemplateVars := map[string]string{
-		"StepTitle":                stepTitle,
-		"StepDescription":          stepDescription,
-		"StepSuccessCriteria":      stepSuccessCriteria,
-		"StepContextDependencies":  stepContextDependencies,
-		"StepContextOutput":        stepContextOutput,
-		"WorkspacePath":            workspacePath,
-		"ExecutionHistory":         executionHistory,
-		"ValidationResult":         validationResult,
-		"VariableNames":            variableNames,
-		"ExistingLearningsContent": existingLearningsContent, // Pass existing learnings to build upon
+		"StepTitle":               stepTitle,
+		"StepDescription":         stepDescription,
+		"StepSuccessCriteria":     stepSuccessCriteria,
+		"StepContextDependencies": stepContextDependencies,
+		"StepContextOutput":       stepContextOutput,
+		"WorkspacePath":           workspacePath,
+		"ExecutionHistory":        executionHistory,
+		"ValidationResult":        validationResult,
+		"VariableNames":           variableNames,
 	}
 
 	// Add step-specific paths if provided (when flag is enabled)
@@ -211,11 +183,39 @@ func (agent *WorkflowCodeExecutionLearningAgent) learningSystemPromptProcessorCo
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
 	stepTitle := templateVars["StepTitle"]
-	writePath := workspacePath + "/learnings/" + stepNumber
-	codePath := workspacePath + "/learnings/" + stepNumber + "/code"
+	docsRoot := GetPromptDocsRoot()
+	writePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber
+	codePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber + "/code"
+	executionLogsPath := templateVars["ExecutionLogsPath"]
+
+	var result strings.Builder
+	if err := learningCodeSystemTemplate.Execute(&result, map[string]interface{}{
+		"WritePath":         writePath,
+		"CodePath":          codePath,
+		"StepTitle":         stepTitle,
+		"StepDescription":   templateVars["StepDescription"],
+		"SuccessCriteria":   templateVars["StepSuccessCriteria"],
+		"Variables":         templateVars["VariableNames"],
+		"ValidationResult":      templateVars["ValidationResult"],
+		"ExecutionLogsPath":     executionLogsPath,
+		"SkillCreatorPath": templateVars["SkillCreatorPath"],
+	}); err != nil {
+		return "Error executing learning code system prompt template: " + err.Error()
+	}
+
+	return result.String()
+}
+
+// learningUserMessageProcessorCodeExecution creates the user message for code execution mode learning
+func (agent *WorkflowCodeExecutionLearningAgent) learningUserMessageProcessorCodeExecution(templateVars map[string]string) string {
+	workspacePath := templateVars["WorkspacePath"]
+	stepNumber := templateVars["StepNumber"]
+	stepTitle := templateVars["StepTitle"]
+	docsRoot := GetPromptDocsRoot()
+	writePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber
+	codePath := docsRoot + "/" + workspacePath + "/learnings/" + stepNumber + "/code"
 
 	executionLogsPath := templateVars["ExecutionLogsPath"]
-	existingLearningsContent := templateVars["ExistingLearningsContent"]
 
 	// Determine learning trigger (success or failure)
 	learningTrigger := templateVars["LearningTrigger"]
@@ -237,40 +237,15 @@ func (agent *WorkflowCodeExecutionLearningAgent) learningSystemPromptProcessorCo
 	}
 
 	var result strings.Builder
-	if err := learningCodeSystemTemplate.Execute(&result, map[string]interface{}{
-		"WritePath":                writePath,
-		"CodePath":                 codePath,
-		"StepTitle":                stepTitle,
-		"ExecutionLogsPath":        executionLogsPath,
-		"ExistingLearningsContent": existingLearningsContent,
-		"IsSuccess":                isSuccess,
-		"AllowedTools":             len(allowedToolsList) > 0,
-		"AllowedToolsList":         allowedToolsList,
-	}); err != nil {
-		return "Error executing learning code system prompt template: " + err.Error()
-	}
-
-	return result.String()
-}
-
-// learningUserMessageProcessorCodeExecution creates the user message for code execution mode learning
-func (agent *WorkflowCodeExecutionLearningAgent) learningUserMessageProcessorCodeExecution(templateVars map[string]string) string {
-	workspacePath := templateVars["WorkspacePath"]
-	stepNumber := templateVars["StepNumber"]
-	stepTitle := templateVars["StepTitle"]
-	writePath := workspacePath + "/learnings/" + stepNumber
-	codePath := workspacePath + "/learnings/" + stepNumber + "/code"
-
-	var result strings.Builder
 	if err := learningCodeUserTemplate.Execute(&result, map[string]interface{}{
-		"StepTitle":        stepTitle,
-		"StepDescription":  templateVars["StepDescription"],
-		"SuccessCriteria":  templateVars["StepSuccessCriteria"],
-		"WritePath":        writePath,
-		"CodePath":         codePath,
-		"Variables":        templateVars["VariableNames"],
-		"ExecutionHistory": templateVars["ExecutionHistory"],
-		"ValidationResult": templateVars["ValidationResult"],
+		"StepTitle":              stepTitle,
+		"WritePath":              writePath,
+		"CodePath":               codePath,
+		"ExecutionLogsPath":      executionLogsPath,
+		"IsSuccess":              isSuccess,
+		"AllowedTools":           len(allowedToolsList) > 0,
+		"AllowedToolsList":       allowedToolsList,
+		"SkillCreatorPath":  templateVars["SkillCreatorPath"],
 	}); err != nil {
 		return "Error executing learning code user message template: " + err.Error()
 	}

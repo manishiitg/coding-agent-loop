@@ -73,15 +73,9 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 */}}
 
 {{if eq .HasLearnings "true"}}
-## Learning Application (Secondary Guidance)
-{{.LearningHistory}}
+## Learning History
 
-- **Workflows**: Use validated sequences from learnings, but adapt args to this specific step.
-- **Patterns**: Use tool hints/error recovery patterns from learnings.
-- **Conflict**: If learning conflicts with step requirement, the step wins.
-{{if eq .KeepLearningFull "false"}}
-- **Note**: These learnings are incomplete. Rely primarily on the step description and your own capabilities.
-{{end}}
+{{.LearningHistory}}
 {{end}}
 
 {{if .HasLoop}}

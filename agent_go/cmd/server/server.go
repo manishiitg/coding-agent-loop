@@ -1082,19 +1082,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
 
-	// Sync system skills in background (non-blocking)
-	go func() {
-		wsURL := getWorkspaceAPIURL()
-		if wsURL != "" {
-			installed, errs := todo_creation_human.SyncSystemSkills(context.Background(), wsURL)
-			if installed > 0 {
-				log.Printf("[STARTUP] Installed %d system skill(s)", installed)
-			}
-			for _, e := range errs {
-				log.Printf("[STARTUP] System skills warning: %s", e)
-			}
-		}
-	}()
+	// Note: System skills sync runs inside the workspace Docker container (workspace/skill_sync.go)
+	// The backend server only proxies skill API calls to the workspace.
 
 	// Sub-agent template API routes (from subagent_routes.go)
 	RegisterSubAgentRoutes(apiRouter, api)

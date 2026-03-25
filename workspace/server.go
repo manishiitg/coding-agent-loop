@@ -166,6 +166,9 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Printf("ℹ️  GitHub credentials not configured, skipping sync\n")
 	}
 
+	// Sync system skills on startup (installs missing required skills via npx)
+	go syncSystemSkillsOnStartup(docsDir)
+
 	// Set Gin mode
 	if debug {
 		gin.SetMode(gin.DebugMode)
@@ -236,6 +239,11 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Google Workspace CLI routes
 		api.GET("/gws-auth-status", handlers.CheckGWSAuthStatus)
 		api.POST("/gws-sync-skills", handlers.SyncGWSSkills)
+
+		// Skills CLI routes (npx skills — runs inside container)
+		api.POST("/skills/cli/install", handleSkillInstall)
+		api.GET("/skills/cli/search", handleSkillSearch)
+		api.GET("/skills/cli/available", handleSkillCLIAvailable)
 
 		// Version management routes (separate from wildcard routes)
 		api.GET("/versions/*filepath", handlers.GetFileVersionHistory)

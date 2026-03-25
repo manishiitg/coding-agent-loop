@@ -9865,15 +9865,15 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 // buildSkillCallbacks creates SkillCallbacks that bridge the workshop tools
 // to the workspace skills API. Returns nil-safe callbacks.
 func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbacks {
+	wsURL := getWorkspaceAPIURL() // workspace container URL, not backend URL
 	return &todo_creation_human.SkillCallbacks{
 		ListSkills: func(ctx context.Context) (string, error) {
-			workspaceAPIURL := api.GetAPIURL()
-			allSkills, err := skills.DiscoverSkills(workspaceAPIURL)
+			allSkills, err := skills.DiscoverSkills(wsURL)
 			if err != nil {
 				return "", fmt.Errorf("failed to discover skills: %w", err)
 			}
 			if len(allSkills) == 0 {
-				return "No skills found in the workspace. Use import_skill to add skills from GitHub.", nil
+				return "No skills found in the workspace. Use install_skill to add skills.", nil
 			}
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("## Skills (%d found)\n\n", len(allSkills)))
@@ -9883,13 +9883,15 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 				if sk.Frontmatter.Description != "" {
 					sb.WriteString(fmt.Sprintf("- **Description**: %s\n", sk.Frontmatter.Description))
 				}
+				if sk.SourceURL != "" {
+					sb.WriteString(fmt.Sprintf("- **Source**: %s\n", sk.SourceURL))
+				}
 				sb.WriteString("\n")
 			}
 			return sb.String(), nil
 		},
 		ImportSkill: func(ctx context.Context, githubURL, token string) (string, error) {
-			workspaceAPIURL := api.GetAPIURL()
-			resp, err := skills.ImportGitHubSkill(workspaceAPIURL, githubURL, token)
+			resp, err := skills.ImportGitHubSkill(wsURL, githubURL, token)
 			if err != nil {
 				return "", fmt.Errorf("failed to import skill: %w", err)
 			}
@@ -9899,10 +9901,9 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 			return fmt.Sprintf("Successfully imported skill **%s**. Use update_workflow_config to add it to the workflow's selected skills.", resp.SkillName), nil
 		},
 		DeleteSkill: func(ctx context.Context, folderName string) error {
-			workspaceAPIURL := api.GetAPIURL()
-			err := skills.DeleteSkill(workspaceAPIURL, folderName)
+			err := skills.DeleteSkill(wsURL, folderName)
 			if err == nil {
-				_ = skills.RemoveFromLockFile(workspaceAPIURL, folderName)
+				_ = skills.RemoveFromLockFile(wsURL, folderName)
 			}
 			return err
 		},
@@ -9923,8 +9924,7 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 			return sb.String(), nil
 		},
 		InstallSkill: func(ctx context.Context, source string) (string, error) {
-			workspaceAPIURL := api.GetAPIURL()
-			result, err := skills.ImportToWorkspace(ctx, workspaceAPIURL, source)
+			result, err := skills.ImportToWorkspace(ctx, wsURL, source)
 			if err != nil {
 				return "", fmt.Errorf("failed to install skill: %w", err)
 			}

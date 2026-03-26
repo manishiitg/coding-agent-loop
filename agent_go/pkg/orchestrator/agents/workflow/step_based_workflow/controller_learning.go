@@ -241,6 +241,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	// Ensure skill writing guide exists and pass its path
 	if guidePath, err := hcpo.ensureSkillCreator(ctx); err == nil {
 		successLearningTemplateVars["SkillCreatorPath"] = guidePath
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Skill creator guide available at: %s", guidePath))
+	} else {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skill creator guide not available: %v", err))
 	}
 
 	// Add context dependencies as a comma-separated string
@@ -568,6 +571,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	// Ensure skill writing guide exists and pass its path
 	if guidePath, err := hcpo.ensureSkillCreator(ctx); err == nil {
 		failureLearningTemplateVars["SkillCreatorPath"] = guidePath
+		hcpo.GetLogger().Info(fmt.Sprintf("📄 Skill creator guide available at: %s", guidePath))
+	} else {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skill creator guide not available: %v", err))
 	}
 
 	// Add context dependencies as a comma-separated string

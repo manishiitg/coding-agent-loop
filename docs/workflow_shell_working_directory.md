@@ -120,4 +120,4 @@ directory remains `Workflow/HRMS` — correct for a builder that reads/writes pl
 | After run folder selected | `Workflow/HRMS/runs/run-001/execution` | `common.SetSessionWorkingDir` in `controller.go` / `execution_manager.go` |
 | Chat agent | `Chats/` | `DefaultWorkingDirKey` context injection in `tool_setup.go` |
 | Phase chat agent | `phaseWorkspacePath` | `SetSessionWorkingDir` in `server.go:4472` |
-| Plans agent | `Plans/` | `SetSessionWorkingDir` in `server.go:3756` |
+| Plans agent | `Chats/` | `SetSessionWorkingDir` in `server.go:3756` |

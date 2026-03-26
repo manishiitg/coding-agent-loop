@@ -11,7 +11,7 @@ interface FileSelectionDialogProps {
   onNavigateIntoFolder?: (folderPath: string) => void
   searchQuery: string
   position: { top: number; left: number }
-  /** Extra top-level files/folders to show alongside workspace files (e.g., Chats/, Plans/) */
+  /** Extra top-level files/folders to show alongside workspace files (e.g., Chats/) */
   extraFiles?: PlannerFile[]
 }
 

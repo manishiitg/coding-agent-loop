@@ -989,7 +989,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const [fileDialogPosition, setFileDialogPosition] = useState({ top: 0, left: 0 })
   const [fileSearchQuery, setFileSearchQuery] = useState('')
   const [atPosition, setAtPosition] = useState(-1) // Position of @ in text
-  // Extra files for @ dialog (Chats/, Plans/ — loaded on demand so workflow-scoped trees still show them)
+  // Extra files for @ dialog (Chats/ — loaded on demand so workflow-scoped trees still show them)
   const [extraAtFiles, setExtraAtFiles] = useState<PlannerFile[]>([])
 
   // Command selection dialog state
@@ -1121,7 +1121,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [enableWorkspaceAccess, setWorkspaceMinimized, showFileDialog])
 
-  // Fetch Chats/ and Plans/ on demand when @ dialog opens (these may not be in the
+  // Fetch Chats/ on demand when @ dialog opens (these may not be in the
   // workspace tree when it's scoped to a workflow folder).
   // The API returns the CONTENTS of a folder, so we wrap them in synthetic folder entries.
   useEffect(() => {
@@ -1129,17 +1129,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     let cancelled = false
     const fetchExtraFolders = async () => {
       try {
-        const [chats, plans] = await Promise.all([
-          agentApi.getPlannerFiles('Chats', -1, 2).catch(() => null),
-          agentApi.getPlannerFiles('Plans', -1, 2).catch(() => null),
-        ])
+        const chats = await agentApi.getPlannerFiles('Chats', -1, 2).catch(() => null)
         if (cancelled) return
         const extra: PlannerFile[] = []
         if (chats?.success && chats.data?.length) {
           extra.push({ filepath: 'Chats', content: '', last_modified: '', type: 'folder', children: chats.data })
-        }
-        if (plans?.success && plans.data?.length) {
-          extra.push({ filepath: 'Plans', content: '', last_modified: '', type: 'folder', children: plans.data })
         }
         setExtraAtFiles(extra)
       } catch {
@@ -2086,8 +2080,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       scrollToFile(file.filepath)
     }
 
-    // If the selected file is a direct Plans/ subfolder, write .last_used timestamp
-    const isPlanFolder = file.type === 'folder' && /^Plans\/[^/]+$/.test(file.filepath)
+    // If the selected file is a direct multi-agent plan folder, write .last_used timestamp
+    const isPlanFolder = file.type === 'folder' && /^Chats\/[^/]+$/.test(file.filepath)
     if (isPlanFolder) {
       agentApi.updatePlannerFile(`${file.filepath}/.last_used`, new Date().toISOString()).catch(() => {})
     }

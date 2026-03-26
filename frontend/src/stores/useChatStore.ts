@@ -210,7 +210,7 @@ export interface ChatTab {
   metadata?: {
     phaseId?: string  // For workflow mode: phase ID
     phaseName?: string  // For workflow mode: phase name
-    mode?: 'workflow' | 'multi-agent'  // Which mode this tab belongs to
+    mode?: 'workflow' | 'multi-agent' | 'organization'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
     isOrganizationAssistant?: boolean // True when tab is reserved for Organization panel
     isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
@@ -221,18 +221,21 @@ export interface ChatTab {
 
 // Helper function to get default tab config from current global state
 // Uses mode-specific configs for LLM and server selections
-const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): ChatTabConfig => {
+const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' | 'organization' = 'multi-agent'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
   const appStore = useAppStore?.getState?.()
 
   // Get mode-specific server selection (multi-agent uses chat settings)
-  const selectedServers = mode === 'workflow'
+  const isWorkflowMode = mode === 'workflow'
+  const isMultiAgentMode = mode === 'multi-agent'
+
+  const selectedServers = isWorkflowMode
     ? (mcpStore?.workflowSelectedServers || mcpStore?.selectedServers || [])
     : (mcpStore?.chatSelectedServers || mcpStore?.selectedServers || [])
 
   // Get mode-specific LLM config (multi-agent uses chat settings)
-  const llmConfig = mode === 'workflow'
+  const llmConfig = isWorkflowMode
     ? (llmStore?.workflowPrimaryConfig || llmStore?.primaryConfig)
     : (llmStore?.chatPrimaryConfig || llmStore?.primaryConfig)
 
@@ -262,10 +265,10 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     enableGWSAccess: appStore?.lastGWSAccess ?? false,
     selectedSkills: appStore?.lastSelectedSkills ?? [],
     selectedSubAgents: appStore?.lastSelectedSubAgents ?? [],
-    delegationTierConfig: mode === 'multi-agent' ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
+    delegationTierConfig: isMultiAgentMode ? (llmStore?.delegationTierConfig ?? undefined) : undefined,
     queuedMessages: [],
     autoRun: false,
-    planPhaseOverride: mode === 'multi-agent' ? (appStore?.lastMultiAgentPlanPhase ?? 'planning') : undefined,
+    planPhaseOverride: isMultiAgentMode ? (appStore?.lastMultiAgentPlanPhase ?? 'planning') : undefined,
   }
 }
 
@@ -442,7 +445,7 @@ interface ChatState extends StoreActions {
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
-  getTabsByMode: (mode: 'multi-agent' | 'workflow') => ChatTab[]
+  getTabsByMode: (mode: 'multi-agent' | 'workflow' | 'organization') => ChatTab[]
   getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => ChatTab[]  // Find workflow tabs by phaseId (optionally scoped to preset)
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
@@ -1535,7 +1538,7 @@ export const useChatStore = create<ChatState>()(
         return state.chatTabs[state.activeTabId]
       },
       
-      getTabsByMode: (mode: 'multi-agent' | 'workflow') => {
+      getTabsByMode: (mode: 'multi-agent' | 'workflow' | 'organization') => {
         const state = get()
         return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
       },
@@ -2145,7 +2148,7 @@ export const useChatStore = create<ChatState>()(
           chatTabs: Object.fromEntries(
             Object.entries(state.chatTabs)
               .filter(([, tab]) => {
-                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent'
+                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'organization'
                 if (!isRelevantMode) return false
                 // Drop tabs older than 24 hours - they won't have active sessions
                 const MAX_TAB_AGE = 24 * 60 * 60 * 1000
@@ -2182,7 +2185,7 @@ export const useChatStore = create<ChatState>()(
           // Persist activeTabId for workflow and multi-agent tabs
           activeTabId: (() => {
             const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
+            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent' || activeTab?.metadata?.mode === 'organization') ? state.activeTabId : null
           })()
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         }),

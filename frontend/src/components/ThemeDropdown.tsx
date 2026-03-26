@@ -7,7 +7,11 @@ const themeOptions = [
   { value: 'dark', label: 'Dark', icon: Moon },
 ]
 
-export default function ThemeDropdown() {
+type ThemeDropdownProps = {
+  compact?: boolean
+}
+
+export default function ThemeDropdown({ compact = false }: ThemeDropdownProps) {
   const { theme, setTheme } = useTheme()
   const [isOpen, setIsOpen] = useState(false)
 
@@ -23,13 +27,17 @@ export default function ThemeDropdown() {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm"
+        className={`flex items-center rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-sm ${
+          compact ? 'gap-1 px-2 py-1.5' : 'gap-2 px-3 py-1.5'
+        }`}
         title="Select theme"
       >
         <CurrentIcon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
-        <span className="text-gray-700 dark:text-gray-300">
-          {currentTheme.label}
-        </span>
+        {!compact && (
+          <span className="text-gray-700 dark:text-gray-300">
+            {currentTheme.label}
+          </span>
+        )}
         <ChevronDown className="w-3 h-3 text-gray-500 dark:text-gray-500" />
       </button>
 

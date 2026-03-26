@@ -493,7 +493,7 @@ func ListDocuments(c *gin.Context) {
 	// Determine the logical root for path relativization.
 	// For per-user folders (Chats/, Downloads/), the physical path is under _users/{userID}/
 	// but the logical path should be relative to the user directory so that
-	// paths like "Plans" appear correctly (not "_users/default-user/Plans")
+	// paths like "Chats" appear correctly (not "_users/default-user/Chats")
 	logicalDocsDir := docsDir
 	if normalizedFolder != "" && utils.IsPerUserPath(normalizedFolder) {
 		logicalDocsDir = filepath.Join(docsDir, utils.UsersDirectory, userID)
@@ -2504,4 +2504,3 @@ func isTextBasedFile(filename, contentType string) bool {
 	// If neither extension nor MIME type is recognized, default to false (reject)
 	return false
 }
-

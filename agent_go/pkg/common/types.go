@@ -35,7 +35,7 @@ const (
 	// Used by execute_shell_command as a safety-net: if the LLM passes "." it is replaced
 	// with this value so commands run in the correct folder.
 	// Set per mode:
-	//   - plan mode  → "Plans"  (wrapExecutorsWithPlanFolderGuard)
+	//   - plan mode  → "Chats"  (wrapExecutorsWithPlanFolderGuard)
 	//   - chat mode  → "Chats"  (wrapExecutorsWithChatModeFolderGuard)
 	DefaultWorkingDirKey ContextKey = "default_working_dir"
 	// ChatSessionIDKey is the context key for the chat/workflow session ID.
@@ -45,7 +45,7 @@ const (
 
 // PerUserFolders are folders isolated per-user in the workspace.
 // Must stay in sync with workspace/utils/path.go PerUserFolders.
-var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
+var PerUserFolders = []string{"Chats", "Downloads"}
 
 // SessionShellConfig holds per-session shell execution settings.
 // Shared by execute_shell_command and agent_browser to ensure identical sandboxing.

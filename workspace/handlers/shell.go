@@ -118,7 +118,7 @@ func ExecuteShellCommand(c *gin.Context) {
 	// Check if folder guard is enabled
 	if req.FolderGuard != nil && req.FolderGuard.Enabled {
 		// Build per-user write path mappings for filesystem isolation.
-		// Shell commands see logical paths (e.g., Plans/{planID}/),
+		// Shell commands see logical paths (e.g., Chats/{planID}/),
 		// but the physical location is under _users/{userID}/.
 		// WritePathMappings tells the Isolator to source files from the physical per-user path
 		// while mounting them at the logical path the shell command expects.

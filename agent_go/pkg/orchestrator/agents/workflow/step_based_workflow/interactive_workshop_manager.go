@@ -700,7 +700,6 @@ func (iwm *InteractiveWorkshopManager) createInteractiveWorkshopAgent(ctx contex
 		learningsPath,
 		planningPath,
 		"Chats", // Allow reading chat history for context
-		"Plans", // Allow reading plans for reference
 	}
 	// Write to full workspace — the workshop agent and its background agents need to write
 	// to learnings, knowledgebase, execution, memory/, and other workspace files.
@@ -6447,7 +6446,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgent(ctx context.Contex
 		fmt.Sprintf("%s/planning", workspacePath),
 		knowledgebasePath,
 		"Chats",
-		"Plans",
 	}
 	writePaths := []string{
 		workspacePath,

@@ -736,7 +736,7 @@ const OrganizationChatPanel: React.FC<{
       const tabId = primaryOrgTab
         ? primaryOrgTab.tabId
         : await chatStore.createChatTab('Organization Assistant', {
-          mode: 'multi-agent',
+          mode: 'organization',
           isOrganizationAssistant: true
         })
 

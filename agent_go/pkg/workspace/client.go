@@ -70,7 +70,7 @@ func WithExtraEnv(env map[string]string) ClientOption {
 }
 
 // WithDefaultWorkingDir sets the default working directory for shell commands
-// (relative to docs-dir, e.g., "Chats/", "Plans/", "Workflow/my-project/").
+// (relative to docs-dir, e.g., "Chats/", "Workflow/my-project/").
 func WithDefaultWorkingDir(dir string) ClientOption {
 	return func(c *Client) {
 		c.DefaultWorkingDir = dir
@@ -315,4 +315,3 @@ func (c *Client) CreateFolder(ctx context.Context, folderPath string) error {
 	_, err := c.request(ctx, "POST", "/api/folders", body)
 	return err
 }
-

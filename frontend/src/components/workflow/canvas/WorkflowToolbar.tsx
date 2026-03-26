@@ -868,6 +868,38 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       runFolder: buildGroupFolderPath(fallbackGroupId, targetIteration, variablesManifest) || targetIteration
     }
   }, [iterationGroups.iterationMap, iterationGroups.sortedIterations, selectedRunFolder, variablesManifest])
+
+  const latestExecutionSelection = useMemo(() => {
+    const latestIteration = iterationGroups.sortedIterations[0] || null
+    if (!latestIteration) {
+      return null
+    }
+
+    const groupsInLatestIteration = iterationGroups.iterationMap.get(latestIteration) || []
+    const selectedEnabledGroupId = selectedGroupIds.find(groupId =>
+      groupsInLatestIteration.some(group => group.groupId === groupId && group.enabled !== false)
+    )
+
+    if (selectedEnabledGroupId) {
+      return {
+        groupIds: [selectedEnabledGroupId],
+        runFolder: buildGroupFolderPath(selectedEnabledGroupId, latestIteration, variablesManifest) || latestIteration
+      }
+    }
+
+    const firstEnabledGroup = groupsInLatestIteration.find(group => group.groupId && group.enabled !== false)
+    if (firstEnabledGroup?.groupId) {
+      return {
+        groupIds: [firstEnabledGroup.groupId],
+        runFolder: firstEnabledGroup.id
+      }
+    }
+
+    return {
+      groupIds: [],
+      runFolder: latestIteration
+    }
+  }, [iterationGroups.iterationMap, iterationGroups.sortedIterations, selectedGroupIds, variablesManifest])
   
   // Auto-expand the iteration containing the selected run folder
   useEffect(() => {
@@ -1490,7 +1522,17 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               Builder
             </button>
             <button
-              onClick={() => setWorkflowWorkspaceView('execution')}
+              onClick={() => {
+                setWorkflowWorkspaceView('execution')
+                if (latestExecutionSelection?.runFolder) {
+                  setSelectedRunFolder(latestExecutionSelection.runFolder)
+                  if (latestExecutionSelection.groupIds.length > 0) {
+                    setSelectedGroupIds(latestExecutionSelection.groupIds)
+                  } else {
+                    clearSelectedGroupIds()
+                  }
+                }
+              }}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
                 isExecutionWorkspace
                   ? 'bg-background text-foreground shadow-sm'

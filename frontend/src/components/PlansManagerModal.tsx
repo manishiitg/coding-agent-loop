@@ -33,16 +33,24 @@ function parsePlans(files: PlannerFile[]): PlanInfo[] {
   const items: PlanInfo[] = []
   for (const entry of files) {
     if (entry.type !== 'folder') continue
-    if (!/^Plans\/[^/]+$/.test(entry.filepath)) continue
+    if (!/^Chats\/[^/]+$/.test(entry.filepath)) continue
 
     const planName = entry.filepath.split('/').pop() || entry.filepath
     let lastUsed: string | undefined
     let hasPlanMd = false
+    let hasPlanTracking = false
 
     for (const child of (entry.children ?? [])) {
       const childName = child.filepath.split('/').pop()
       if (childName === 'plan.md') hasPlanMd = true
+      if (childName === 'plan_tracking.md') hasPlanTracking = true
       if (childName === '.last_used') lastUsed = child.last_modified
+    }
+
+    // Chats/ is shared with regular chat outputs, so only show folders that
+    // look like multi-agent plan folders.
+    if (!hasPlanMd && !hasPlanTracking && !lastUsed) {
+      continue
     }
 
     items.push({
@@ -75,10 +83,16 @@ export default function PlansManagerModal({ isOpen, onClose, onSelectPlan }: Pro
   const loadPlans = useCallback(async () => {
     setLoading(true)
     try {
-      const response: PlannerFilesResponse = await agentApi.getPlannerFiles('Plans', -1, 2)
-      console.log('[PlansManager] API response:', response)
-      if (response.success && response.data) {
-        setPlans(parsePlans(response.data))
+      const chatsResponse = await agentApi.getPlannerFiles('Chats', -1, 2).catch(() => null)
+
+      console.log('[PlansManager] Chats API response:', chatsResponse)
+
+      const merged: PlannerFile[] = [
+        ...(chatsResponse?.success && chatsResponse.data ? chatsResponse.data : []),
+      ]
+
+      if (merged.length > 0) {
+        setPlans(parsePlans(merged))
       } else {
         setPlans([])
       }
@@ -119,7 +133,7 @@ export default function PlansManagerModal({ isOpen, onClose, onSelectPlan }: Pro
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
           <div className="flex items-center gap-2">
             <GitBranch className="w-5 h-5 text-blue-400" />
-            <h3 className="text-base font-semibold text-white">Plans Manager</h3>
+            <h3 className="text-base font-semibold text-white">Plan Folders</h3>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-200 transition-colors">
             <X className="w-5 h-5" />

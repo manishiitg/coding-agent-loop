@@ -1119,6 +1119,25 @@ func runServer(cmd *cobra.Command, args []string) {
 	fmt.Printf("🔄 Initializing tool cache on server startup...\n")
 	api.initializeToolCache()
 
+	// Sync system skills (skill-creator, agent-browser, etc.) in background
+	go func() {
+		syncCtx, syncCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer syncCancel()
+		workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
+		if workspaceAPIURL == "" {
+			workspaceAPIURL = "http://localhost:8081"
+		}
+		installed, errs := todo_creation_human.SyncSystemSkills(syncCtx, workspaceAPIURL)
+		if len(errs) > 0 {
+			for _, e := range errs {
+				log.Printf("[SKILLS] %s", e)
+			}
+		}
+		if installed > 0 {
+			log.Printf("[SKILLS] ✅ Installed %d system skills on startup", installed)
+		}
+	}()
+
 	// Start server in a goroutine
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -3646,7 +3665,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var memoryBgDelegate virtualtools.BackgroundDelegateFunc
-		var workspaceEnv map[string]string // hoisted so secrets can be injected after allChatSecrets is computed
+		var workspaceEnv map[string]string             // hoisted so secrets can be injected after allChatSecrets is computed
+		workspaceAccessEnabledForChat := false
 		log.Printf("[CHAT_TOOLS_DEBUG] isChatMode=%v agentNonNil=%v enableImageGenPtr=%v", isChatMode, llmAgent.GetUnderlyingAgent() != nil, req.EnableImageGeneration)
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Check if workspace access is enabled
@@ -3720,6 +3740,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			workspaceAccessEnabledForChat = enableWorkspaceAccess
+
 			if enableWorkspaceAccess {
 				// Create Chats/ folder if it doesn't exist
 				if err := skills.CreateFolder("Chats"); err != nil {
@@ -3778,10 +3800,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 
 				// Apply folder guard to restrict writes based on mode
-				// Multi-agent (plan) mode: primary write folder is Plans/, Chats/ also writable
+				// Multi-agent (plan) mode: primary write folder is Chats/
 				// Chat mode: writes go to Chats/
 				if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-					additionalFolders := []string{"Chats/"}
+					additionalFolders := []string{}
 					if hasSkillCreator {
 						additionalFolders = append(additionalFolders, "skills/custom/")
 					}
@@ -3789,13 +3811,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						additionalFolders = append(additionalFolders, "subagents/custom/")
 					}
 					additionalFolders = append(additionalFolders, fileContextFolders...)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, "Plans", additionalFolders...)
-					workspace.SetSessionWorkingDir(sessionID, "Plans/")
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, virtualtools.PlanFileFolderPath, additionalFolders...)
+					workspace.SetSessionWorkingDir(sessionID, virtualtools.PlanFileFolderPath+"/")
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{"Plans/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
-						[]string{"Plans/"},
+						append([]string{virtualtools.PlanFileFolderPath + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
+						append([]string{virtualtools.PlanFileFolderPath + "/"}, additionalFolders...),
 					)
-					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied Plans/ folder restriction (additional: %v)", additionalFolders)
+					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied %s/ folder restriction (additional: %v)", virtualtools.PlanFileFolderPath, additionalFolders)
 				} else {
 					extraFolders := []string{}
 					if hasSkillCreator {
@@ -3808,7 +3830,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "Chats/")
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{"Chats/", "Downloads/", "Plans/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
+						append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
 						append([]string{"Chats/", "Downloads/"}, extraFolders...),
 					)
 					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
@@ -3884,12 +3906,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
 					if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-						additionalFolders := []string{"Chats/"}
+						additionalFolders := []string{}
 						if hasSkillCreator {
 							additionalFolders = append(additionalFolders, "skills/custom/")
 						}
 						additionalFolders = append(additionalFolders, fileContextFolders...)
-						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, "Plans", additionalFolders...)
+						browserExecutors = wrapExecutorsWithPlanFolderGuard(browserExecutors, virtualtools.PlanFileFolderPath, additionalFolders...)
 					} else {
 						browserExtraFolders := []string{}
 						if hasSkillCreator {
@@ -4023,7 +4045,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 
 					// Create workspace client for plan file I/O.
-					planWriteFolder := "Plans"
+					planWriteFolder := virtualtools.PlanFileFolderPath
 					planWorkspaceClient := workspace.NewClient(
 						getWorkspaceAPIURL(),
 						workspace.WithFolderGuard(&workspace.FolderGuardConfig{
@@ -4234,7 +4256,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			memoryExecutors := virtualtools.CreateMemoryToolExecutors()
 			memoryCategory := virtualtools.GetDelegationToolCategory()
 			var memoryWritePaths []string
-			memoryWritePaths = []string{"Plans"}
+			memoryWritePaths = []string{virtualtools.PlanFileFolderPath}
 			memoryWorkspaceClient := workspace.NewClient(
 				getWorkspaceAPIURL(),
 				workspace.WithFolderGuard(&workspace.FolderGuardConfig{
@@ -4298,6 +4320,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[MEMORY TOOLS] Registered memory tool: %s (category: %s)", toolName, memoryCategory)
 			}
 			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
+
+			isMultiAgentChat := req.DelegationMode == "plan" || req.DelegationMode == "spawn"
+			if workspaceAccessEnabledForChat && !isOrganizationChat && isMultiAgentChat {
+				if err := api.registerMultiAgentSkillTools(underlyingAgent); err != nil {
+					log.Printf("[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register multi-agent skill tools: %v", err), true)
+					return
+				}
+				log.Printf("[SKILL TOOLS] Registered multi-agent skill tools")
+			}
+			if !isOrganizationChat && isMultiAgentChat {
+				if err := api.registerMultiAgentMCPServerTools(underlyingAgent); err != nil {
+					log.Printf("[MCP SERVER TOOLS] Failed to register multi-agent MCP server tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register multi-agent MCP server tools: %v", err), true)
+					return
+				}
+				log.Printf("[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
+			}
 
 			if isOrganizationChat {
 				if err := api.registerOrganizationChatTools(underlyingAgent, currentUserID, sessionID); err != nil {
@@ -4514,7 +4554,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					workspace.SetSessionWorkingDir(sessionID, phaseWorkspacePath)
 					// Restrict shell commands to the workflow folder via Isolator
 					workspace.SetSessionFolderGuard(sessionID,
-						[]string{phaseWorkspacePath, "Chats", "Plans", "skills", "subagents", "Downloads"},
+						[]string{phaseWorkspacePath, "Chats", "skills", "subagents", "Downloads"},
 						[]string{phaseWorkspacePath},
 					)
 				}
@@ -7697,7 +7737,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		}
 
 		// Give sub-agents the workspace folder structure so they know where to
-		// read/write files (Chats/, Plans/, skills/, etc.).
+		// read/write files (Chats/, skills/, etc.).
 		// The main agent skips this in plan mode (it's an orchestrator), but sub-agents
 		// are actual file workers that need this orientation.
 		underlyingAgent.AppendSystemPrompt(GetAgentInstructions(subWsAbs))
@@ -7832,7 +7872,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// All others: default Chats/ guard
 			planFolder, _ := ctx.Value(virtualtools.PlanFolderKey).(string)
 			if planFolder != "" {
-				// Tighter restriction: only allow writes to plan folder (e.g. Plans/{planID}/)
+				// Tighter restriction: only allow writes to the assigned chat-backed plan folder.
 				additionalFolders := []string{}
 				if hasSkillCreator {
 					additionalFolders = append(additionalFolders, "skills/custom/")
@@ -7860,7 +7900,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, "Chats/")
 				workspace.SetSessionFolderGuard(sessionID,
-					append([]string{"Chats/", "Downloads/", "Plans/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
+					append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
 					append([]string{"Chats/", "Downloads/"}, extraFolders...),
 				)
 			}
@@ -9936,6 +9976,626 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 	}
 }
 
+func (api *StreamingAPI) registerMultiAgentSkillTools(underlyingAgent *mcpagent.Agent) error {
+	if underlyingAgent == nil {
+		return fmt.Errorf("underlying agent is nil")
+	}
+
+	skillFuncs := api.buildSkillCallbacks()
+	if skillFuncs == nil {
+		return fmt.Errorf("skill callbacks unavailable")
+	}
+
+	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
+		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "skill_tools")
+	}
+
+	if err := registerTool(
+		"list_skills",
+		"List skills available in the workspace. Use this to inspect installed skills before selecting them in chat settings or reading their files directly.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return skillFuncs.ListSkills(ctx)
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"import_skill",
+		"Import a skill from GitHub into the workspace. Imported skills become available for future chats and can also be read directly from the skills folder.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"github_url": map[string]interface{}{
+					"type":        "string",
+					"description": "GitHub URL of the skill to import, either a repo URL or a direct path to a skill folder.",
+				},
+				"token": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional GitHub personal access token for private repositories.",
+				},
+			},
+			"required": []string{"github_url"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			githubURL, _ := args["github_url"].(string)
+			if strings.TrimSpace(githubURL) == "" {
+				return "github_url is required.", nil
+			}
+			token, _ := args["token"].(string)
+			return skillFuncs.ImportSkill(ctx, githubURL, token)
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"uninstall_skill",
+		"Remove an installed skill from the workspace. Use list_skills first to confirm the folder name.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_name": map[string]interface{}{
+					"type":        "string",
+					"description": "The skill folder name returned by list_skills.",
+				},
+			},
+			"required": []string{"folder_name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			folderName, _ := args["folder_name"].(string)
+			if strings.TrimSpace(folderName) == "" {
+				return "folder_name is required.", nil
+			}
+			if err := skillFuncs.DeleteSkill(ctx, folderName); err != nil {
+				return fmt.Sprintf("Failed to uninstall skill %q: %v", folderName, err), nil
+			}
+			return fmt.Sprintf("Successfully uninstalled skill %q from workspace.", folderName), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"search_skills",
+		"Search the public skills registry for installable skills. Use install_skill with a returned source value to install one.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"query": map[string]interface{}{
+					"type":        "string",
+					"description": "Search terms such as 'browser automation', 'social media', or 'data analysis'.",
+				},
+			},
+			"required": []string{"query"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			query, _ := args["query"].(string)
+			if strings.TrimSpace(query) == "" {
+				return "query is required.", nil
+			}
+			return skillFuncs.SearchSkills(ctx, query)
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"install_skill",
+		"Install a skill from the public skills registry using owner/repo@skill-name format. Use search_skills first to find valid sources.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"source": map[string]interface{}{
+					"type":        "string",
+					"description": "Skill source in owner/repo@skill-name format.",
+				},
+			},
+			"required": []string{"source"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			source, _ := args["source"].(string)
+			if strings.TrimSpace(source) == "" {
+				return "source is required (e.g. 'owner/repo@skill-name').", nil
+			}
+			return skillFuncs.InstallSkill(ctx, source)
+		},
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (api *StreamingAPI) registerMultiAgentMCPServerTools(underlyingAgent *mcpagent.Agent) error {
+	if underlyingAgent == nil {
+		return fmt.Errorf("underlying agent is nil")
+	}
+
+	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
+		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "mcp_server_tools")
+	}
+
+	toStringSlice := func(raw interface{}) []string {
+		items, ok := raw.([]interface{})
+		if !ok {
+			return nil
+		}
+		result := make([]string, 0, len(items))
+		for _, item := range items {
+			value, ok := item.(string)
+			if !ok {
+				continue
+			}
+			value = strings.TrimSpace(value)
+			if value != "" {
+				result = append(result, value)
+			}
+		}
+		return result
+	}
+
+	toStringMap := func(raw interface{}) map[string]string {
+		items, ok := raw.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		result := make(map[string]string, len(items))
+		for key, value := range items {
+			strValue, ok := value.(string)
+			if !ok {
+				continue
+			}
+			trimmedKey := strings.TrimSpace(key)
+			if trimmedKey == "" {
+				continue
+			}
+			result[trimmedKey] = strValue
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
+	}
+
+	loadUserConfig := func() (string, *mcpclient.MCPConfig, error) {
+		userConfigPath := strings.Replace(api.mcpConfigPath, ".json", "_user.json", 1)
+		userConfig, err := mcpclient.LoadConfig(userConfigPath, api.logger)
+		if err != nil {
+			userConfig = &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig)}
+		}
+		if userConfig.MCPServers == nil {
+			userConfig.MCPServers = make(map[string]mcpclient.MCPServerConfig)
+		}
+		return userConfigPath, userConfig, nil
+	}
+
+	buildServerConfig := func(args map[string]interface{}) (mcpclient.MCPServerConfig, error) {
+		server := mcpclient.MCPServerConfig{
+			Args:       toStringSlice(args["args"]),
+			Env:        toStringMap(args["env"]),
+			Headers:    toStringMap(args["headers"]),
+			PoolConfig: nil,
+		}
+		if value, ok := args["command"].(string); ok {
+			server.Command = strings.TrimSpace(value)
+		}
+		if value, ok := args["working_dir"].(string); ok {
+			server.WorkingDir = strings.TrimSpace(value)
+		}
+		if value, ok := args["description"].(string); ok {
+			server.Description = strings.TrimSpace(value)
+		}
+		if value, ok := args["url"].(string); ok {
+			server.URL = strings.TrimSpace(value)
+		}
+		if value, ok := args["protocol"].(string); ok {
+			server.Protocol = mcpclient.ProtocolType(strings.TrimSpace(value))
+		}
+		return server, nil
+	}
+
+	if err := registerTool(
+		"list_mcp_servers",
+		"List configured MCP servers, including whether they come from the base config or user config and whether discovery has succeeded.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			mergedConfig, err := api.loadMergedConfig()
+			if err != nil {
+				return "", fmt.Errorf("failed to load MCP config: %w", err)
+			}
+
+			userConfigPath, userConfig, err := loadUserConfig()
+			if err != nil {
+				return "", err
+			}
+
+			api.toolStatusMux.RLock()
+			toolStatusCopy := make(map[string]ToolStatus, len(api.toolStatus))
+			for name, status := range api.toolStatus {
+				toolStatusCopy[name] = status
+			}
+			api.toolStatusMux.RUnlock()
+
+			names := make([]string, 0, len(mergedConfig.MCPServers))
+			for name := range mergedConfig.MCPServers {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+
+			var sb strings.Builder
+			sb.WriteString("## MCP Servers\n\n")
+			if len(names) == 0 {
+				sb.WriteString("No MCP servers are configured.\n")
+				return sb.String(), nil
+			}
+
+			if isMCPConfigLocked() {
+				sb.WriteString("Configuration mode: locked (read-only)\n\n")
+			} else {
+				sb.WriteString(fmt.Sprintf("User config path: `%s`\n\n", userConfigPath))
+			}
+
+			for _, name := range names {
+				server := mergedConfig.MCPServers[name]
+				source := "base"
+				if _, ok := userConfig.MCPServers[name]; ok {
+					source = "user"
+				}
+
+				statusLabel := "not yet discovered"
+				if status, ok := toolStatusCopy[name]; ok {
+					switch status.Status {
+					case "ok":
+						statusLabel = fmt.Sprintf("discovered (%d tools)", len(status.FunctionNames))
+					case "error":
+						statusLabel = "discovery failed"
+					default:
+						statusLabel = status.Status
+					}
+				}
+
+				sb.WriteString(fmt.Sprintf("- `%s` [%s] [%s]\n", name, source, statusLabel))
+				if server.Description != "" {
+					sb.WriteString(fmt.Sprintf("  %s\n", server.Description))
+				}
+				protocol := server.GetProtocol()
+				if server.URL != "" {
+					sb.WriteString(fmt.Sprintf("  protocol: `%s`, url: `%s`\n", protocol, server.URL))
+				} else {
+					sb.WriteString(fmt.Sprintf("  protocol: `%s`, command: `%s`\n", protocol, server.Command))
+				}
+				if status, ok := toolStatusCopy[name]; ok && status.Error != "" {
+					sb.WriteString(fmt.Sprintf("  last error: %s\n", status.Error))
+				}
+			}
+
+			return sb.String(), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"add_mcp_server",
+		"Add a new user-defined MCP server configuration, then trigger discovery. This does not modify admin/base servers.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Unique server name.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional human-readable description.",
+				},
+				"protocol": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"stdio", "sse", "http"},
+					"description": "Optional explicit protocol. If omitted, the backend infers it from url or command when possible.",
+				},
+				"command": map[string]interface{}{
+					"type":        "string",
+					"description": "Command to run for stdio servers.",
+				},
+				"args": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Command arguments for stdio servers.",
+				},
+				"env": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Optional environment variables for stdio servers.",
+				},
+				"working_dir": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional working directory for stdio servers.",
+				},
+				"url": map[string]interface{}{
+					"type":        "string",
+					"description": "URL for SSE or HTTP MCP servers.",
+				},
+				"headers": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Optional HTTP headers for SSE or HTTP MCP servers.",
+				},
+			},
+			"required": []string{"name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if isMCPConfigLocked() {
+				return "MCP configuration is locked by the administrator, so chat cannot add or update servers.", nil
+			}
+
+			name, _ := args["name"].(string)
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return "name is required.", nil
+			}
+
+			if _, exists := api.mcpConfig.MCPServers[name]; exists {
+				return fmt.Sprintf("Server %q is part of the base/admin config and can't be modified from chat. Use a new name or update the base config directly.", name), nil
+			}
+
+			userConfigPath, userConfig, err := loadUserConfig()
+			if err != nil {
+				return "", err
+			}
+			if _, exists := userConfig.MCPServers[name]; exists {
+				return fmt.Sprintf("User-defined MCP server %q already exists. Use edit_mcp_server to change it.", name), nil
+			}
+
+			server, err := buildServerConfig(args)
+			if err != nil {
+				return "", err
+			}
+
+			if err := api.validateMCPConfig(&mcpclient.MCPConfig{
+				MCPServers: map[string]mcpclient.MCPServerConfig{name: server},
+			}); err != nil {
+				return fmt.Sprintf("Invalid MCP server config: %v", err), nil
+			}
+
+			userConfig.MCPServers[name] = server
+			if err := mcpclient.SaveConfig(userConfigPath, userConfig); err != nil {
+				return "", fmt.Errorf("failed to save user MCP config: %w", err)
+			}
+
+			api.appendServerLog(name, "info", "Server configuration saved from multi-agent chat, triggering discovery...")
+			go api.triggerMCPDiscovery()
+
+			return fmt.Sprintf("Saved user MCP server %q and started discovery. It will be available to future chats and sessions after discovery completes.", name), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"edit_mcp_server",
+		"Edit an existing user-defined MCP server configuration, then trigger discovery. Base/admin servers cannot be edited from chat.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Existing user-defined server name.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional human-readable description.",
+				},
+				"protocol": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"stdio", "sse", "http"},
+					"description": "Optional explicit protocol. If omitted, the backend infers it from url or command when possible.",
+				},
+				"command": map[string]interface{}{
+					"type":        "string",
+					"description": "Command to run for stdio servers.",
+				},
+				"args": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Command arguments for stdio servers.",
+				},
+				"env": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Optional environment variables for stdio servers.",
+				},
+				"working_dir": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional working directory for stdio servers.",
+				},
+				"url": map[string]interface{}{
+					"type":        "string",
+					"description": "URL for SSE or HTTP MCP servers.",
+				},
+				"headers": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "Optional HTTP headers for SSE or HTTP MCP servers.",
+				},
+			},
+			"required": []string{"name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if isMCPConfigLocked() {
+				return "MCP configuration is locked by the administrator, so chat cannot edit servers.", nil
+			}
+
+			name, _ := args["name"].(string)
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return "name is required.", nil
+			}
+
+			if _, exists := api.mcpConfig.MCPServers[name]; exists {
+				return fmt.Sprintf("Server %q is part of the base/admin config and can't be edited from chat.", name), nil
+			}
+
+			userConfigPath, userConfig, err := loadUserConfig()
+			if err != nil {
+				return "", err
+			}
+			if _, exists := userConfig.MCPServers[name]; !exists {
+				return fmt.Sprintf("User-defined MCP server %q does not exist. Use add_mcp_server first.", name), nil
+			}
+
+			server, err := buildServerConfig(args)
+			if err != nil {
+				return "", err
+			}
+			if err := api.validateMCPConfig(&mcpclient.MCPConfig{
+				MCPServers: map[string]mcpclient.MCPServerConfig{name: server},
+			}); err != nil {
+				return fmt.Sprintf("Invalid MCP server config: %v", err), nil
+			}
+
+			userConfig.MCPServers[name] = server
+			if err := mcpclient.SaveConfig(userConfigPath, userConfig); err != nil {
+				return "", fmt.Errorf("failed to save user MCP config: %w", err)
+			}
+
+			api.appendServerLog(name, "info", "Server configuration edited from multi-agent chat, triggering discovery...")
+			go api.triggerMCPDiscovery()
+
+			return fmt.Sprintf("Updated user MCP server %q and started discovery refresh.", name), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"remove_mcp_server",
+		"Remove a user-defined MCP server configuration. Base/admin servers cannot be removed from chat.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Server name to remove.",
+				},
+			},
+			"required": []string{"name"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			if isMCPConfigLocked() {
+				return "MCP configuration is locked by the administrator, so chat cannot remove servers.", nil
+			}
+
+			name, _ := args["name"].(string)
+			name = strings.TrimSpace(name)
+			if name == "" {
+				return "name is required.", nil
+			}
+
+			if _, exists := api.mcpConfig.MCPServers[name]; exists {
+				return fmt.Sprintf("Server %q is part of the base/admin config and can't be removed from chat.", name), nil
+			}
+
+			userConfigPath, userConfig, err := loadUserConfig()
+			if err != nil {
+				return "", err
+			}
+			if _, exists := userConfig.MCPServers[name]; !exists {
+				return fmt.Sprintf("User-defined MCP server %q was not found.", name), nil
+			}
+
+			delete(userConfig.MCPServers, name)
+			if err := mcpclient.SaveConfig(userConfigPath, userConfig); err != nil {
+				return "", fmt.Errorf("failed to save user MCP config: %w", err)
+			}
+
+			api.appendServerLog(name, "info", "Server removed from user MCP config")
+			go api.triggerMCPDiscovery()
+
+			return fmt.Sprintf("Removed user MCP server %q and started discovery refresh.", name), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"get_mcp_server_logs",
+		"Show recent logs for a specific MCP server, or list which servers currently have logs.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional server name. If omitted, the tool lists servers that currently have stored logs.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			name, _ := args["name"].(string)
+			name = strings.TrimSpace(name)
+
+			api.serverLogsMux.RLock()
+			defer api.serverLogsMux.RUnlock()
+
+			if name == "" {
+				if len(api.serverLogs) == 0 {
+					return "No MCP server logs are currently stored.", nil
+				}
+				names := make([]string, 0, len(api.serverLogs))
+				for serverName := range api.serverLogs {
+					names = append(names, serverName)
+				}
+				sort.Strings(names)
+				return fmt.Sprintf("Servers with stored MCP logs: %s", strings.Join(names, ", ")), nil
+			}
+
+			logs := api.serverLogs[name]
+			if len(logs) == 0 {
+				return fmt.Sprintf("No stored logs for MCP server %q.", name), nil
+			}
+
+			start := 0
+			if len(logs) > 20 {
+				start = len(logs) - 20
+			}
+
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("## MCP Server Logs: %s\n\n", name))
+			for _, entry := range logs[start:] {
+				sb.WriteString(fmt.Sprintf("- %s [%s] %s\n", entry.Timestamp.Format(time.RFC3339), entry.Level, entry.Message))
+			}
+			return sb.String(), nil
+		},
+	); err != nil {
+		return err
+	}
+
+	if err := registerTool(
+		"trigger_mcp_discovery",
+		"Trigger MCP server discovery in the background after config changes or when you want to refresh server tool metadata.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			go api.triggerMCPDiscovery()
+			return "Triggered MCP discovery in the background.", nil
+		},
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // truncateString truncates s to maxLen and appends "..." if truncated.
 func truncateString(s string, maxLen int) string {
 	if len(s) <= maxLen {
@@ -10491,7 +11151,7 @@ func (api *StreamingAPI) registerOrganizationChatTools(underlyingAgent *mcpagent
 
 	workspace.SetSessionWorkingDir(sessionID, "Workflow/")
 	workspace.SetSessionFolderGuard(sessionID,
-		[]string{"Workflow/", "Chats/", "Downloads/", "Plans/", "skills/", "subagents/"},
+		[]string{"Workflow/", "Chats/", "Downloads/", "skills/", "subagents/"},
 		[]string{"Chats/", "Downloads/"},
 	)
 

@@ -172,6 +172,10 @@ export AGENT_MODEL="${AGENT_MODEL:-gpt-5.2}"
 # for server-launched sessions. Callers can still override by pre-setting the env var.
 export MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING="${MCPAGENT_GEMINI_ENFORCE_HTTP_TOOL_ROUTING:-true}"
 
+# Claude Code bridge safety: restrict tool usage to execute_shell_command and get_api_spec
+# for server-launched sessions. Callers can still override by pre-setting the env var.
+export MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING="${MCPAGENT_CLAUDE_ENFORCE_HTTP_TOOL_ROUTING:-true}"
+
 # Available models for each provider (optional - set in .env to customize; unset = empty lists, users add custom models)
 # Removed hardcoded restrictions - use .env or leave unset for maximum flexibility
 # BEDROCK_AVAILABLE_MODELS, OPENROUTER_AVAILABLE_MODELS, OPENAI_AVAILABLE_MODELS, AZURE_AVAILABLE_MODELS

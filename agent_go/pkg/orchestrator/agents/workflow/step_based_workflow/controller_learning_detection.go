@@ -24,7 +24,8 @@ type LearningMetadata struct {
 	StepHash            string                  `json:"step_hash,omitempty"`             // SHA256 of step definition
 	LearningContentHash string                  `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
 	TotalIterations     int                     `json:"total_iterations"`
-	SuccessfulRunsSimple int                    `json:"successful_runs_simple"` // Count of successful runs (used for auto-lock threshold)
+	SuccessfulRunsSimple  int                    `json:"successful_runs_simple"`  // Count of successful runs (used for auto-lock threshold)
+	FailureLearningRuns   int                    `json:"failure_learning_runs"`   // Count of failure learning runs (persisted across iterations)
 	LastTurnCount       int                     `json:"last_turn_count"`        // Last recorded TurnCount
 	LastExecutionLLM    string                  `json:"last_execution_llm,omitempty"`
 	LastLearningLLM     string                  `json:"last_learning_llm,omitempty"`
@@ -148,6 +149,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
 		metadata.SuccessfulRunsSimple++
+		// Reset failure learning counter on success — future failures can learn again
+		metadata.FailureLearningRuns = 0
 		// Sync successful run count to step_config.json so it's visible alongside optimized flag
 		if step != nil {
 			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRunsSimple)

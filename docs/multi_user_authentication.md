@@ -140,13 +140,11 @@ The workspace uses a hybrid folder model:
 │   ├── default/               # Fallback for single-user mode
 │   │   ├── Chats/             # User's chat history
 │   │   ├── Downloads/         # User's downloads
-│   │   └── Plans/             # User's delegation plans
+│   │   └── (plan folders live under Chats/)
 │   └── user-abc123/           # Multi-user: each user gets own folder
 │       ├── Chats/
-│       ├── Downloads/
-│       └── Plans/
+│       └── Downloads/
 ├── Chats -> _users/default/Chats   # Symlink (for shell command access)
-├── Plans -> _users/default/Plans   # Symlink (for shell command access)
 ├── Downloads -> _users/default/Downloads
 ├── skills/                    # Shared across all users
 └── Workflow/                  # Shared across all users
@@ -156,9 +154,8 @@ The workspace uses a hybrid folder model:
 
 | Folder | Type | Description |
 |--------|------|-------------|
-| `Chats/` | **Per-User** | Chat session outputs, skill files, user scripts |
+| `Chats/` | **Per-User** | Chat session outputs, skill files, user scripts, multi-agent plan folders |
 | `Downloads/` | **Per-User** | User downloads and imports |
-| `Plans/` | **Per-User** | Delegation plans (multi-agent mode) |
 | `skills/` | **Shared** | Installed skills/templates |
 | `Workflow/` | **Shared** | Workflow definitions and runs |
 
@@ -169,7 +166,7 @@ The workspace uses a hybrid folder model:
    - Single-user mode: Default user ID from environment (`"default"`)
 
 2. **Path Routing (Document/File API):**
-   - Requests to `Chats/*`, `Downloads/*`, or `Plans/*` → `/_users/{userID}/Chats/*` etc.
+   - Requests to `Chats/*` or `Downloads/*` → `/_users/{userID}/...`
    - Requests to `skills/*`, `Workflow/*` → root level (shared)
    - Implemented in `workspace/utils/path.go` via `ResolveUserPath()`
 
@@ -179,7 +176,7 @@ The workspace uses a hybrid folder model:
    - Symlinks are per the default user in single-user mode; multi-user deployments use the Isolator's WritePathMappings instead
 
 4. **Automatic Migration:**
-   - On startup, existing `Chats/`, `Downloads/`, `Plans/` at root level are migrated to `/_users/default/`
+   - On startup, existing `Chats/` and `Downloads/` at root level are migrated to `/_users/default/`
    - One-time migration for backwards compatibility
 
 ### User ID Flow
@@ -226,7 +223,7 @@ When delegation mode is active, `wrapExecutorsWithPlanFolderGuard()` injects a F
 
 ```
 ReadPaths:  ["."]            # Entire workspace mounted read-only
-WritePaths: ["Plans/", "Chats/"]   # Only these folders writable
+WritePaths: ["Chats/"]   # Only this folder is writable in multi-agent mode
 ```
 
 The Isolator creates a mount namespace:
@@ -237,12 +234,11 @@ The Isolator creates a mount namespace:
 
 #### Per-User Write Path Mappings
 
-For per-user folders (Chats/, Plans/), the shell handler creates `WritePathMappings` that map logical paths to physical per-user paths:
+For per-user folders (Chats/), the shell handler creates `WritePathMappings` that map logical paths to physical per-user paths:
 
 ```
-WritePaths:        ["Plans/", "Chats/"]
+WritePaths:        ["Chats/"]
 WritePathMappings: {
-  "Plans/": "_users/default/Plans/",
   "Chats/": "_users/default/Chats/"
 }
 ```
@@ -529,7 +525,7 @@ Tests for the core path routing logic that enforces per-user isolation.
 - `TestSanitizeUserID` — Empty/invalid user IDs fall back to `"default"`
 
 **Path Routing:**
-- `TestIsPerUserPath` — Correctly classifies `Chats/`, `Downloads/`, `Plans/` as per-user and `skills/`, `Workflow/` as shared
+- `TestIsPerUserPath` — Correctly classifies `Chats/` and `Downloads/` as per-user and `skills/`, `Workflow/` as shared
 - `TestResolveUserPath` — Per-user paths routed to `_users/{userID}/`, shared paths pass through unchanged, `_users/` direct access blocked, invalid/empty user IDs fall back to default, full internal paths sanitized
 - `TestConvertToUserRelativePath` — Strips `_users/{userID}/` prefix for API responses
 - `TestSanitizeInputPath` — Handles relative paths, full-path stripping, `..` cleaning
@@ -548,7 +544,7 @@ Tests for the core path routing logic that enforces per-user isolation.
 HTTP-level tests using `httptest` and a real Gin router to verify the document listing API.
 
 **Root Listing Security:**
-- `TestRootListingFiltersUsersDirectory` — `_users/` directory never appears in root listing; per-user folders (`Chats/`, `Plans/`, `Downloads/`) are injected from the user's isolated directory
+- `TestRootListingFiltersUsersDirectory` — `_users/` directory never appears in root listing; per-user folders (`Chats/`, `Downloads/`) are injected from the user's isolated directory
 - `TestRootListingWithDotFolder` — `folder=.` parameter treated as root listing (same `_users/` filtering applies)
 
 **Per-User Isolation:**

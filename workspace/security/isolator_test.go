@@ -457,9 +457,9 @@ func TestDenyListSymlinkFixup(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Create _users/default/Chats, _users/default/Plans, _users/default/Downloads
+	// Create _users/default/Chats and _users/default/Downloads
 	usersDir := filepath.Join(tempDir, "_users", "default")
-	for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+	for _, folder := range []string{"Chats", "Downloads"} {
 		if err := os.MkdirAll(filepath.Join(usersDir, folder), 0755); err != nil {
 			t.Fatalf("Failed to create dir: %v", err)
 		}
@@ -470,7 +470,7 @@ func TestDenyListSymlinkFixup(t *testing.T) {
 	}
 
 	// Create symlinks: Chats -> _users/default/Chats, etc.
-	for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+	for _, folder := range []string{"Chats", "Downloads"} {
 		symlinkPath := filepath.Join(tempDir, folder)
 		target := filepath.Join("_users", "default", folder)
 		if err := os.Symlink(target, symlinkPath); err != nil {
@@ -513,7 +513,7 @@ func TestDenyListSymlinkFixup(t *testing.T) {
 		}
 
 		// Should fix each symlink target
-		for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+		for _, folder := range []string{"Chats", "Downloads"} {
 			expectedTarget := filepath.Join("_users", "default", folder)
 			if !strings.Contains(script, expectedTarget) {
 				t.Errorf("Mount script should fix symlink for %s (target: %s)", folder, expectedTarget)
@@ -537,7 +537,7 @@ func TestDenyListSymlinkFixup(t *testing.T) {
 		}
 
 		// Should re-allow symlink targets within _users/default/
-		for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+		for _, folder := range []string{"Chats", "Downloads"} {
 			expectedPath := filepath.Join(tempDir, "_users", "default", folder)
 			if !strings.Contains(profile, expectedPath) {
 				t.Errorf("Sandbox profile should allow symlink target: %s", expectedPath)
@@ -602,7 +602,7 @@ func TestDenyListWithMultiUser(t *testing.T) {
 
 	// Create multiple user directories
 	for _, user := range []string{"default", "alice", "bob"} {
-		for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+		for _, folder := range []string{"Chats", "Downloads"} {
 			if err := os.MkdirAll(filepath.Join(tempDir, "_users", user, folder), 0755); err != nil {
 				t.Fatalf("Failed to create dir: %v", err)
 			}
@@ -610,7 +610,7 @@ func TestDenyListWithMultiUser(t *testing.T) {
 	}
 
 	// Symlinks point to default user (single-user mode)
-	for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+	for _, folder := range []string{"Chats", "Downloads"} {
 		target := filepath.Join("_users", "default", folder)
 		if err := os.Symlink(target, filepath.Join(tempDir, folder)); err != nil {
 			t.Fatalf("Failed to create symlink: %v", err)
@@ -634,7 +634,7 @@ func TestDenyListWithMultiUser(t *testing.T) {
 	}
 
 	// Should expose default user's symlink targets
-	for _, folder := range []string{"Chats", "Plans", "Downloads"} {
+	for _, folder := range []string{"Chats", "Downloads"} {
 		target := filepath.Join("_users", "default", folder)
 		if !strings.Contains(script, target) {
 			t.Errorf("Mount script should expose default user's %s", folder)

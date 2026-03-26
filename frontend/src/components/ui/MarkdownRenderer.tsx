@@ -385,7 +385,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
     try {
       // In workflow mode, paths like "knowledgebase/..." are adjusted (prefix stripped).
       // We need to prepend the workflow folder path for the API call.
-      const standardPrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+      const standardPrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/']
       const isStandardPath = standardPrefixes.some(p => filepath.startsWith(p))
       let resolvedPath = filepath
 
@@ -404,14 +404,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         }
       }
 
-      // Auto-resolve folder paths to their default file (e.g. Plans/foo -> Plans/foo/plan.md)
-      if (resolvedPath.startsWith('Plans/') && !resolvedPath.includes('.')) {
-        resolvedPath = resolvedPath + '/plan.md'
-      }
-
       // displayPath is what the workspace tree uses (adjusted path without workflow prefix)
       // resolvedPath is the full path for API calls
-      const displayPath = filepath.startsWith('Plans/') && !filepath.includes('.') ? filepath + '/plan.md' : filepath
+      const displayPath = filepath
 
       const fileName = resolvedPath.split('/').pop() || resolvedPath
       const ext = fileName.split('.').pop()?.toLowerCase() || ''
@@ -485,14 +480,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
 
     // 2. Auto-link workspace paths (skip when disablePathLinking is true)
     if (disablePathLinking) return processed
-    // Regex matches paths starting with specific prefixes: Chats/, Downloads/, Workflow/, Plans/, skills/
+    // Regex matches paths starting with specific prefixes: Chats/, Downloads/, Workflow/, skills/
     // Optionally matches surrounding backticks to unwrap them
     // CRITICAL FIX: We must handle paths wrapped in backticks (e.g., `Chats/foo.md`) because LLMs often format them as code.
     // The regex captures:
     // Group 1: Optional opening backtick
     // Group 2: The actual path (starting with allowed prefixes)
     // \1: Matches the closing backtick if Group 1 matched (ensuring balanced quotes)
-    const pathRegex = /(`?)\b((?:Chats|Downloads|Workflow|Plans|skills|knowledgebase)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
+    const pathRegex = /(`?)\b((?:Chats|Downloads|Workflow|skills|knowledgebase)\/(?:[\w\-./]+(?:[ ]+[\w\-./]+)*\.\w+|[\w\-./]+))\1/g
     
     // Replace with custom link protocol "#workspace/" to avoid sanitization issues
     // CHALLENGE 1: ReactMarkdown sanitizes unknown protocols like "workspace://", stripping the href.
@@ -747,7 +742,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
           strong: ({ children }) => <strong className="font-semibold break-words overflow-wrap-anywhere text-gray-900 dark:text-gray-100">{children}</strong>,
           em: ({ children }) => <em className="italic break-words overflow-wrap-anywhere">{children}</em>,
           a: ({ href, children }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/', 'knowledgebase/']
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/']
             const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
             const workspaceFilepath = href?.startsWith('#workspace/')
               ? decodeURIComponent(href.replace('#workspace/', ''))
@@ -782,7 +777,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
             )
           },
           img: ({ src, alt }) => {
-            const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/', 'knowledgebase/']
+            const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/', 'knowledgebase/']
             const isWorkspacePath = !!src && workspacePrefixes.some(p => src.startsWith(p))
             const resolvedSrc = isWorkspacePath
               ? `${getApiBaseUrl()}/api/public/file?path=${btoa(src!)}`

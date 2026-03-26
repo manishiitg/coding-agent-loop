@@ -245,8 +245,8 @@ execute_shell_command(command: "cat > ` + dateDir + `/{category}.md << 'MEMEOF'\
 
 	// Set medium reasoning level for memory save — needs judgment to write detailed, well-structured memories
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
-	// Restrict writes to Plans folder
-	bgCtx = context.WithValue(bgCtx, PlanFolderKey, "Plans")
+	// Restrict writes to the chat-backed plan folder root
+	bgCtx = context.WithValue(bgCtx, PlanFolderKey, PlanFileFolderPath)
 
 	agentName := "Save Memory"
 	log.Printf("[MEMORY] Starting background save_memory agent: %s", truncateString(content, 80))
@@ -353,8 +353,8 @@ You are a memory retrieval agent. Search the persistent memory system at ` + mem
 
 	// Set low reasoning level for memory ops (simple search/read)
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "low")
-	// Restrict writes to Plans folder (recall mostly reads, but keep consistent)
-	bgCtx = context.WithValue(bgCtx, PlanFolderKey, "Plans")
+	// Restrict writes to the chat-backed plan folder root (recall mostly reads, but keep consistent)
+	bgCtx = context.WithValue(bgCtx, PlanFolderKey, PlanFileFolderPath)
 
 	agentName := "Recall Memory"
 	log.Printf("[MEMORY] Starting background recall_memory agent: %s", truncateString(query, 80))
@@ -497,8 +497,8 @@ Last updated: {current timestamp}
 
 	// Use medium reasoning level — compression requires judgment about what to keep/merge
 	bgCtx := context.WithValue(ctx, ReasoningLevelKey, "medium")
-	// Restrict writes to Plans folder
-	bgCtx = context.WithValue(bgCtx, PlanFolderKey, "Plans")
+	// Restrict writes to the chat-backed plan folder root
+	bgCtx = context.WithValue(bgCtx, PlanFolderKey, PlanFileFolderPath)
 
 	agentName := "Compress Memory"
 	if focus != "" {

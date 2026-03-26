@@ -25,8 +25,9 @@
       <stop offset="1" stop-color="#0F172A" stop-opacity="0" />
     </radialGradient>
   </defs>
-  <rect x="4" y="4" width="56" height="56" rx="18" fill="url(#shell)" />
-  <rect x="4.75" y="4.75" width="54.5" height="54.5" rx="17.25" stroke="url(#rim)" stroke-opacity="0.9" stroke-width="1.5" />
+  <path d="M32 4C44.8 4 51.6 4.3 55.7 8.3C59.7 12.4 60 19.2 60 32C60 44.8 59.7 51.6 55.7 55.7C51.6 59.7 44.8 60 32 60C19.2 60 12.4 59.7 8.3 55.7C4.3 51.6 4 44.8 4 32C4 19.2 4.3 12.4 8.3 8.3C12.4 4.3 19.2 4 32 4Z" fill="url(#shell)" />
+  <path d="M32 5.8C43.9 5.8 50.2 6.1 54 9.8C57.7 13.6 58 19.9 58 31.8C58 43.7 57.7 50 54 53.8C50.2 57.5 43.9 57.8 32 57.8C20.1 57.8 13.8 57.5 10 53.8C6.3 50 6 43.7 6 31.8C6 19.9 6.3 13.6 10 9.8C13.8 6.1 20.1 5.8 32 5.8Z" stroke="url(#rim)" stroke-opacity="0.9" stroke-width="1.5" />
+  <ellipse cx="32" cy="14" rx="19" ry="9" fill="#FFFFFF" opacity="0.08" />
   <path d="M32 11L47.5 19.5V44.5L32 53L16.5 44.5V19.5L32 11Z" fill="url(#glow)" stroke="#94A3B8" stroke-opacity="0.18" />
   <path d="M20.5 20.5L27.5 25" stroke="url(#signal)" stroke-width="2.2" stroke-linecap="round" />
   <path d="M43.5 20.5L36.5 25" stroke="url(#signal)" stroke-width="2.2" stroke-linecap="round" />

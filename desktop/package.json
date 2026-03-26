@@ -17,6 +17,7 @@
       "github"
     ],
     "mac": {
+      "icon": "resources/icons/icon.png",
       "category": "public.app-category.developer-tools",
       "target": [
         "dmg",
@@ -24,6 +25,10 @@
       ]
     },
     "extraResources": [
+      {
+        "from": "resources/icons",
+        "to": "icons"
+      },
       {
         "from": "resources/agent-server",
         "to": "agent-server"

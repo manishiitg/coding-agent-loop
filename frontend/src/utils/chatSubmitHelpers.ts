@@ -139,13 +139,15 @@ export function buildQueryRequestPayload(params: {
 
   const isMultiAgentMode = selectedModeCategory === 'multi-agent'
   const isOrganizationAssistant = !!currentTab?.metadata?.isOrganizationAssistant
+  const isOrganizationMode = selectedModeCategory === 'organization'
+  const isOrganizationChat = isOrganizationAssistant || isOrganizationMode
   // Detect workflow phase chat mode: tab has a phaseId and the phase supports conversational editing
-  const isWorkflowPhaseChat = !isOrganizationAssistant
+  const isWorkflowPhaseChat = !isOrganizationChat
     && selectedModeCategory === 'workflow'
     && currentTab?.metadata?.phaseId
     && CHAT_COMPATIBLE_PHASES.has(currentTab.metadata.phaseId)
   // isChatLikeMode: includes phase chat for basic settings (context summarization, workspace access)
-  const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat || isOrganizationAssistant
+  const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat || isOrganizationChat
   // isChatWithExtras: only multi-agent mode gets optional extras (browser, GWS, skills, secrets, etc.)
   const isChatWithExtras = isMultiAgentMode
 
@@ -191,7 +193,7 @@ export function buildQueryRequestPayload(params: {
 
   return {
     query: queryWithContext,
-    agent_mode: (isOrganizationAssistant
+    agent_mode: (isOrganizationChat
       ? 'organization_chat'
       : isWorkflowPhaseChat
         ? 'workflow_phase'
@@ -247,7 +249,7 @@ export function buildQueryRequestPayload(params: {
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
     plan_folder: isMultiAgentMode
-      ? (currentTab?.config?.fileContext?.find(f => /^Plans\/[^/]+$/.test(f.path))?.path ?? undefined)
+      ? (currentTab?.config?.fileContext?.find(f => /^Chats\/[^/]+$/.test(f.path))?.path ?? undefined)
       : undefined,
     enable_image_generation: isChatWithExtras ? (currentTab?.config?.enableImageGeneration ?? false) : undefined,
     image_gen_config: (() => {
@@ -275,7 +277,7 @@ export async function resolveOrCreateTab(params: {
   const { freshActiveTab, selectedModeCategory } = params
   let currentTab = freshActiveTab
 
-  if (!currentTab && selectedModeCategory === 'multi-agent') {
+  if (!currentTab && (selectedModeCategory === 'multi-agent' || selectedModeCategory === 'organization')) {
     const chatStore = useChatStore.getState()
     const tabs = Object.values(chatStore.chatTabs).filter(tab =>
       tab.metadata?.mode === selectedModeCategory
@@ -283,8 +285,11 @@ export async function resolveOrCreateTab(params: {
 
     if (tabs.length === 0) {
       try {
-        const tabName = 'Agent Chat 1'
-        const newTabId = await chatStore.createChatTab(tabName, { mode: selectedModeCategory })
+        const tabName = selectedModeCategory === 'organization' ? 'Organization Assistant' : 'Agent Chat 1'
+        const newTabId = await chatStore.createChatTab(tabName, {
+          mode: selectedModeCategory,
+          isOrganizationAssistant: selectedModeCategory === 'organization' || undefined
+        })
         currentTab = chatStore.getTab(newTabId)
         logger.debug('ChatArea', `Created new ${selectedModeCategory} tab: ${newTabId}`)
       } catch (error) {

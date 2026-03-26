@@ -236,10 +236,10 @@ Note: Full response text is shown without truncation. Meta stats (turns/duration
 
 The event filter automatically converts workspace file paths in outgoing messages to clickable shareable URLs. This works in two passes:
 
-1. **Markdown links**: `[Report](Plans/xxx/report.md)` → `[Report](https://app.example.com/file?path=<base64>&uid=default)`
-2. **Bare paths**: `Plans/xxx/report.md` → `[Plans/xxx/report.md](https://app.example.com/file?path=<base64>&uid=default)`
+1. **Markdown links**: `[Report](Chats/xxx/report.md)` → `[Report](https://app.example.com/file?path=<base64>&uid=default)`
+2. **Bare paths**: `Chats/xxx/report.md` → `[Chats/xxx/report.md](https://app.example.com/file?path=<base64>&uid=default)`
 
-Matches paths starting with `Plans/` or `Downloads/` that contain at least one subfolder and a file extension.
+Matches paths starting with `Chats/` or `Downloads/` that contain at least one subfolder and a file extension.
 
 **Requires**: `PUBLIC_URL` environment variable set to the app's public base URL. Without it, paths are left as-is.
 

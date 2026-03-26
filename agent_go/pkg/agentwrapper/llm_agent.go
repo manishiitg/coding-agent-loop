@@ -103,7 +103,7 @@ type LLMAgentConfig struct {
 	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.
 	// Used to dynamically set Playwright's working_dir and --output-dir to the user-specific
 	// workspace folder (e.g., _users/{userId}/), so Playwright's file access guard permits
-	// uploads from Downloads/, Chats/, Plans/, etc. Built from currentUserID at agent creation time.
+	// uploads from Downloads/, Chats/, etc. Built from currentUserID at agent creation time.
 	RuntimeOverrides mcpclient.RuntimeOverrides
 }
 

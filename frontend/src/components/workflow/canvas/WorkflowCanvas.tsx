@@ -114,6 +114,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       currentPhase === 'workflow-builder')
   const hasTempLLMOverrides = !!(tempOverrideLLM || tempOverrideLLM2 || tempLearningLLM)
   const [showLLMOverrideModal, setShowLLMOverrideModal] = useState(false)
+  const [showTempLLMPanel, setShowTempLLMPanel] = useState(true)
+
+  useEffect(() => {
+    setShowTempLLMPanel(true)
+  }, [workspacePath, isExecutionWorkspace])
 
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
@@ -2386,7 +2391,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {/* Batch Progress Header - Above Legend */}
         <BatchProgressHeader position="canvas" />
 
-        {isExecutionWorkspace && (
+        {isExecutionWorkspace && showTempLLMPanel && (
           <div className="absolute top-3 right-3 z-20 w-[260px] rounded-xl border border-border/80 bg-background/95 backdrop-blur shadow-lg">
             <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border/70">
               <Brain className="w-4 h-4 text-muted-foreground" />
@@ -2394,6 +2399,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 <div className="text-xs font-semibold text-foreground">Temp LLM Override</div>
                 <div className="text-[11px] text-muted-foreground">Execution override settings</div>
               </div>
+              <button
+                onClick={() => setShowTempLLMPanel(false)}
+                className="ml-auto p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
+                title="Hide temp LLM panel"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
             </div>
 
             <div className="p-2 space-y-2">
@@ -2472,6 +2484,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
               </div>
             </div>
           </div>
+        )}
+
+        {isExecutionWorkspace && !showTempLLMPanel && (
+          <button
+            onClick={() => setShowTempLLMPanel(true)}
+            className="absolute top-3 right-3 z-20 inline-flex items-center gap-2 rounded-md border border-border/80 bg-background/95 px-3 py-2 text-xs font-medium text-foreground shadow-lg backdrop-blur hover:bg-muted transition-colors"
+            title="Show temp LLM panel"
+          >
+            <Brain className="w-3.5 h-3.5 text-muted-foreground" />
+            <span>Temp LLM</span>
+          </button>
         )}
 
         {/* Step Legend - Bottom Left */}

@@ -16,6 +16,8 @@ export function AgentForgeMark({
   const forgeGradientId = `${id}-forge`
   const signalGradientId = `${id}-signal`
   const glowGradientId = `${id}-glow`
+  const shellPath = 'M32 4C44.8 4 51.6 4.3 55.7 8.3C59.7 12.4 60 19.2 60 32C60 44.8 59.7 51.6 55.7 55.7C51.6 59.7 44.8 60 32 60C19.2 60 12.4 59.7 8.3 55.7C4.3 51.6 4 44.8 4 32C4 19.2 4.3 12.4 8.3 8.3C12.4 4.3 19.2 4 32 4Z'
+  const shellInsetPath = 'M32 5.8C43.9 5.8 50.2 6.1 54 9.8C57.7 13.6 58 19.9 58 31.8C58 43.7 57.7 50 54 53.8C50.2 57.5 43.9 57.8 32 57.8C20.1 57.8 13.8 57.5 10 53.8C6.3 50 6 43.7 6 31.8C6 19.9 6.3 13.6 10 9.8C13.8 6.1 20.1 5.8 32 5.8Z'
 
   return (
     <svg
@@ -54,8 +56,9 @@ export function AgentForgeMark({
         </radialGradient>
       </defs>
 
-      <rect x="4" y="4" width="56" height="56" rx="18" fill={`url(#${shellGradientId})`} />
-      <rect x="4.75" y="4.75" width="54.5" height="54.5" rx="17.25" stroke={`url(#${rimGradientId})`} strokeOpacity="0.9" strokeWidth="1.5" />
+      <path d={shellPath} fill={`url(#${shellGradientId})`} />
+      <path d={shellInsetPath} stroke={`url(#${rimGradientId})`} strokeOpacity="0.9" strokeWidth="1.5" />
+      <ellipse cx="32" cy="14" rx="19" ry="9" fill="#FFFFFF" opacity="0.08" />
       <path
         d="M32 11L47.5 19.5V44.5L32 53L16.5 44.5V19.5L32 11Z"
         fill={`url(#${glowGradientId})`}
@@ -89,20 +92,22 @@ type AgentForgeLockupProps = {
 
 export function AgentForgeLockup({
   className,
-  subtitle = 'Desktop workspace',
+  subtitle,
 }: AgentForgeLockupProps) {
   return (
     <div className={cn('flex items-center gap-3 min-w-0', className)}>
-      <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-slate-950/90 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.95)] ring-1 ring-slate-700/40">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-slate-950/90 shadow-[0_14px_28px_-18px_rgba(15,23,42,0.95)] ring-1 ring-slate-700/40">
         <AgentForgeMark className="h-7 w-7" />
       </div>
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold tracking-tight text-slate-900 dark:text-slate-100">
           AgentForge
         </div>
-        <div className="truncate text-[11px] uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
-          {subtitle}
-        </div>
+        {subtitle ? (
+          <div className="truncate text-[11px] uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+            {subtitle}
+          </div>
+        ) : null}
       </div>
     </div>
   )

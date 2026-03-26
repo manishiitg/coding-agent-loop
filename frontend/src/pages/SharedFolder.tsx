@@ -172,8 +172,8 @@ export function SharedFolder({ encodedPath, uid, onBack }: SharedFolderProps) {
           .map((d: { filepath: string }) => d.filepath)
           .sort()
         setWorkspaceFolders(folders)
-        // Default to Plans if available, otherwise first folder
-        setSelectedDestination(folders.includes('Plans') ? 'Plans' : folders[0] || '')
+        // Default to Chats if available, otherwise first folder
+        setSelectedDestination(folders.includes('Chats') ? 'Chats' : folders[0] || '')
       }
     } catch {
       setWorkspaceFolders([])

@@ -224,7 +224,6 @@ func CreateSubAgentToolExecutors() map[string]func(ctx context.Context, args map
 	executors["call_generic_agent"] = handleCallGenericAgent
 	executors["get_sub_agent_conversation"] = handleGetSubAgentConversation
 	executors["get_route_description"] = handleGetRouteDescription
-
 	return executors
 }
 
@@ -452,3 +451,4 @@ func handleGetSubAgentConversation(ctx context.Context, args map[string]interfac
 
 	return getConvFunc(ctx, todoID, fromLastX, offsetLastX)
 }
+

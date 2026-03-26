@@ -371,15 +371,32 @@ func (hcpo *StepBasedWorkflowOrchestrator) getToolSearchMode(stepConfig *AgentCo
 	return isToolSearchMode
 }
 
-// getPreDiscoveredTools determines pre-discovered tools with priority: step config > preset default
+// getPreDiscoveredTools determines pre-discovered tools with priority: step config > preset default.
+// Always ensures execute_shell_command is included (needed for file operations in both tool search and code exec modes).
 func (hcpo *StepBasedWorkflowOrchestrator) getPreDiscoveredTools(stepConfig *AgentConfigs) []string {
+	var tools []string
 	if stepConfig != nil && len(stepConfig.PreDiscoveredTools) > 0 {
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific pre-discovered tools: %v", stepConfig.PreDiscoveredTools))
-		return stepConfig.PreDiscoveredTools
+		tools = stepConfig.PreDiscoveredTools
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific pre-discovered tools: %v", tools))
+	} else {
+		tools = hcpo.GetPreDiscoveredTools()
+		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset pre-discovered tools: %v", tools))
 	}
-	preDiscoveredTools := hcpo.GetPreDiscoveredTools()
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using preset pre-discovered tools: %v", preDiscoveredTools))
-	return preDiscoveredTools
+	// Always ensure core workspace tools are pre-discovered
+	required := []string{"execute_shell_command", "diff_patch_workspace_file"}
+	for _, req := range required {
+		found := false
+		for _, t := range tools {
+			if t == req {
+				found = true
+				break
+			}
+		}
+		if !found {
+			tools = append(tools, req)
+		}
+	}
+	return tools
 }
 
 // getExecutionMaxTurns determines max turns with priority: step config > orchestrator default
@@ -894,6 +911,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupLearningFolderGuard(learningPath
 	executionLogsPath := getExecutionFolderPathForLogs(validationWorkspacePath, stepPath)
 	readPaths = append(readPaths, executionLogsPath)
 
+	// Add skills folder so learning agents can read skill-creator guide and other installed skills
+	readPaths = append(readPaths, "skills")
+
 	writePaths = []string{learningsPath}
 	return readPaths, writePaths
 }
@@ -1244,16 +1264,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createLearningAgentInternal(ctx conte
 	// This ensures learning costs are correctly attributed to the step, even if stepPath parsing fails
 	stepNumberForContext := stepIndex // stepIndex is already 0-based
 
-	// Create agent factory function based on code execution mode
-	var createAgentFunc func(*agents.OrchestratorAgentConfig, loggerv2.Logger, observability.Tracer, mcpagent.AgentEventListener) agents.OrchestratorAgent
-	if wasCodeExecutionMode {
-		createAgentFunc = func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowCodeExecutionLearningAgent(config, logger, tracer, eventBridge)
-		}
-	} else {
-		createAgentFunc = func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowLearningAgent(config, logger, tracer, eventBridge)
-		}
+	// Always use the unified learning agent — same prompt for both code execution and non-code execution modes
+	createAgentFunc := func(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return NewWorkflowLearningAgent(config, logger, tracer, eventBridge)
 	}
 
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(

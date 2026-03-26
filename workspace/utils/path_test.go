@@ -70,8 +70,6 @@ func TestIsPerUserPath(t *testing.T) {
 		{"chats-subpath", "Chats/session.json", true},
 		{"downloads-folder", "Downloads", true},
 		{"downloads-subpath", "Downloads/file.txt", true},
-		{"plans-folder", "Plans", true},
-		{"plans-subpath", "Plans/plan1/plan.md", true},
 		{"skills-shared", "skills", false},
 		{"skills-subpath", "skills/my-skill.json", false},
 		{"workflow-shared", "Workflow", false},
@@ -168,7 +166,7 @@ func TestResolveUserPath(t *testing.T) {
 	})
 
 	t.Run("EmptyUserIDFallsToDefault", func(t *testing.T) {
-		resolved, err := ResolveUserPath(docsDir, "Plans/plan.md", "")
+		resolved, err := ResolveUserPath(docsDir, "Chats/plan.md", "")
 		if err != nil {
 			t.Fatalf("ResolveUserPath failed: %v", err)
 		}
@@ -321,7 +319,7 @@ func TestEnsurePerUserSymlinks(t *testing.T) {
 
 	t.Run("SkipsNonEmptyDirectory", func(t *testing.T) {
 		// Remove existing symlink, create non-empty dir
-		testFolder := "Plans"
+		testFolder := "Chats"
 		symlinkPath := filepath.Join(docsDir, testFolder)
 		os.Remove(symlinkPath)
 		os.MkdirAll(symlinkPath, 0755)

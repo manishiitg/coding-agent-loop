@@ -61,11 +61,11 @@ func SanitizeInputPath(inputPath, docsDir string) string {
 
 // --- Per-User Folder Isolation ---
 // These utilities support hybrid user/shared folder routing:
-// - Per-user folders (Chats/, Downloads/, Plans/) are stored under /_users/{userID}/
+// - Per-user folders (Chats/, Downloads/) are stored under /_users/{userID}/
 // - Shared folders (skills/, Workflow/) remain at root level
 
 // PerUserFolders defines folders that are isolated per-user
-var PerUserFolders = []string{"Chats", "Downloads", "Plans"}
+var PerUserFolders = []string{"Chats", "Downloads"}
 
 // SharedFolders defines folders that are shared across all users
 var SharedFolders = []string{"skills", "Workflow"}
@@ -149,10 +149,10 @@ func ResolveUserPath(docsDir, requestedPath, userID string) (string, error) {
 	cleanPath := SanitizeInputPath(requestedPath, docsDir)
 
 	// Block direct access to _users/ directory — prevents cross-user data access.
-	// Per-user folders (Chats/, Downloads/, Plans/) are the correct access paths;
+	// Per-user folders (Chats/, Downloads/) are the correct access paths;
 	// they get routed to _users/{userID}/ by this function.
 	if cleanPath == UsersDirectory || strings.HasPrefix(cleanPath, UsersDirectory+"/") || strings.HasPrefix(cleanPath, UsersDirectory+string(filepath.Separator)) {
-		return "", fmt.Errorf("direct access to %s/ directory is not allowed; use Chats/, Downloads/, or Plans/ instead", UsersDirectory)
+		return "", fmt.Errorf("direct access to %s/ directory is not allowed; use Chats/ or Downloads/ instead", UsersDirectory)
 	}
 
 	// Check if this is a per-user path
@@ -230,7 +230,7 @@ func EnsureUserDirectories(docsDir, userID string) error {
 
 // EnsurePerUserSymlinks creates root-level symlinks for per-user folders pointing
 // to the given user's directories. This allows shell commands to access per-user
-// folders (Chats/, Plans/, Downloads/) via their logical paths, since the physical
+// folders (Chats/, Downloads/) via their logical paths, since the physical
 // files live under _users/{userID}/.
 func EnsurePerUserSymlinks(docsDir, userID string) error {
 	safeUserID := SanitizeUserID(userID)

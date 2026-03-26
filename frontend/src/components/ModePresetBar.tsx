@@ -29,6 +29,8 @@ const getModeIcon = (category: string) => {
       return <Workflow className="w-3 h-3" />
     case 'multi-agent':
       return <Users className="w-3 h-3" />
+    case 'organization':
+      return <Building2 className="w-3 h-3" />
     default:
       return <Users className="w-3 h-3" />
   }
@@ -40,6 +42,8 @@ const getModeName = (category: string) => {
       return 'Workflow Mode'
     case 'multi-agent':
       return 'Chat'
+    case 'organization':
+      return 'Organization'
     default:
       return 'Chat'
   }
@@ -80,6 +84,9 @@ const shortModelName = (modelId: string): string => {
  */
 export const ModePresetBar: React.FC = () => {
   const { selectedModeCategory, setModeCategory, getAgentModeFromCategory } = useModeStore()
+  const presetModeCategory = selectedModeCategory === 'workflow' || selectedModeCategory === 'multi-agent'
+    ? selectedModeCategory
+    : null
   const { setWorkspaceMinimized, workspaceMinimized, agentMode } = useAppStore()
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
@@ -106,12 +113,16 @@ export const ModePresetBar: React.FC = () => {
   } = usePresetApplication()
 
   // Get active preset for current mode (for schedule popup, supports all modes)
-  const activePreset = getActivePreset(selectedModeCategory as 'workflow' | 'multi-agent')
+  const activePreset = presetModeCategory === null
+    ? null
+    : getActivePreset(presetModeCategory)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const activePresetForSchedule = (getActivePreset as any)(selectedModeCategory) as ReturnType<typeof getActivePreset>
 
   // Get presets for current mode
-  const presetsForMode = getPresetsForMode(selectedModeCategory as 'workflow' | 'multi-agent')
+  const presetsForMode = presetModeCategory === null
+    ? []
+    : getPresetsForMode(presetModeCategory)
 
   const [showPresetDropdown, setShowPresetDropdown] = useState(false)
   const [showPresetModal, setShowPresetModal] = useState(false)
@@ -129,11 +140,11 @@ export const ModePresetBar: React.FC = () => {
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
-  const isOrganizationView = showWorkflowsOverview
+  const isOrganizationView = selectedModeCategory === 'organization' || showWorkflowsOverview
 
   const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow' | 'organization') => {
     if (modeKey === 'organization') {
-      setModeCategory('workflow')
+      setModeCategory('organization')
       setShowWorkflowsOverview(true)
       setWorkspaceMinimized(true)
       return
@@ -180,7 +191,11 @@ export const ModePresetBar: React.FC = () => {
   const workspaceFiles = useWorkspaceStore(state => state.files)
 
   const hasPlansFolder = useMemo(() => {
-    return workspaceFiles.some(f => f.filepath === 'Plans' || f.filepath === 'Plans/' || f.filepath.startsWith('Plans/'))
+    return workspaceFiles.some(f =>
+      f.filepath === 'Chats' ||
+      f.filepath === 'Chats/' ||
+      f.filepath.startsWith('Chats/')
+    )
   }, [workspaceFiles])
 
   const tierLines = useMemo(() => {
@@ -233,13 +248,15 @@ export const ModePresetBar: React.FC = () => {
   useEffect(() => {
     if (showPresetSettings) {
       useCommandDialogStore.getState().closeDialog('presetSettings')
-      const preset = getActivePreset(selectedModeCategory as 'workflow' | 'multi-agent')
+      const preset = presetModeCategory === null
+        ? null
+        : getActivePreset(presetModeCategory)
       if (preset && customPresets.some(cp => cp.id === preset.id)) {
         setEditingPreset(preset as CustomPreset)
         setShowPresetModal(true)
       }
     }
-  }, [showPresetSettings, selectedModeCategory, getActivePreset, customPresets])
+  }, [showPresetSettings, presetModeCategory, getActivePreset, customPresets])
 
   // Preset click handler - now uses the global store
   const handlePresetClick = useCallback((preset: CustomPreset | PredefinedPreset) => {
@@ -545,7 +562,7 @@ export const ModePresetBar: React.FC = () => {
                                       setShowPresetDropdown(false)
                                     }}
                                     className={`flex-1 text-left p-2 rounded-md text-sm transition-colors ${
-                                      isPresetActive(preset.id, selectedModeCategory as 'workflow' | 'multi-agent')
+                                      presetModeCategory !== null && isPresetActive(preset.id, presetModeCategory)
                                         ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100'
                                         : 'hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-300'
                                     }`}
@@ -561,7 +578,7 @@ export const ModePresetBar: React.FC = () => {
                                   {/* Edit/Duplicate/Delete buttons - only show for custom presets */}
                                   {customPresets.some(cp => cp.id === preset.id) && (
                                     <div className="flex gap-1">
-                                      {isPresetActive(preset.id, selectedModeCategory as 'workflow' | 'multi-agent') && (
+                                      {presetModeCategory !== null && isPresetActive(preset.id, presetModeCategory) && (
                                         <button
                                           onClick={(e) => {
                                             e.stopPropagation()
@@ -658,7 +675,7 @@ export const ModePresetBar: React.FC = () => {
                           <GitBranch className="w-4 h-4" />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom">Manage Plans</TooltipContent>
+                      <TooltipContent side="bottom">Manage Plan Folders</TooltipContent>
                     </Tooltip>
                   )}
                   <Tooltip>
@@ -865,7 +882,7 @@ export const ModePresetBar: React.FC = () => {
         onClose={() => setShowWorkflowsPopup(false)}
       />
 
-      {/* Plans Manager Modal (Multi-agent mode) */}
+      {/* Plan folders modal (Multi-agent mode) */}
       <PlansManagerModal
         isOpen={showPlansManager}
         onClose={() => setShowPlansManager(false)}

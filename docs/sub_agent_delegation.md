@@ -19,8 +19,8 @@ When delegation is enabled, the agent receives delegation tools and can spawn su
 
 - Select **Multi Agent Chat** from the mode switcher or mode selection modal
 - Auto tool mode chip + tier config chip appear automatically in the chat input
-- Plans are stored in `Plans/{planID}/plan.md` (visible in the workspace sidebar)
-- The `Plans/` folder is a **per-user folder** (auto-created, isolated under `_users/{userID}/Plans/`)
+- Plans are stored in `Chats/{planID}/plan.md` (visible in the workspace sidebar)
+- The `Chats/` folder is a **per-user folder** (auto-created, isolated under `_users/{userID}/Chats/`)
 
 ### Simple Delegation (Chat Mode)
 
@@ -48,9 +48,9 @@ Spawns a sub-agent with a single instruction. Used for both one-off tasks and ex
   "name": "delegate",
   "parameters": {
     "instruction": "Clear, detailed instructions for the sub-agent",
-    "reasoning_level": "high | medium | low (optional — LLM decides)",
+    "reasoning_level": "high | medium | low (required in Multi Agent Chat)",
     "tool_mode": "simple | code_execution | tool_search (optional — default: simple)",
-    "plan_folder": "Plans/{planID} (optional — restricts write access)"
+    "plan_folder": "Chats/{planID} (optional — restricts write access)"
   }
 }
 ```
@@ -68,7 +68,7 @@ Spawns a sub-agent with a single instruction. Used for both one-off tasks and ex
 
 ### 2. `create_delegation_plan` — Create a Plan
 
-Spawns a planner sub-agent that analyzes the objective and writes a `plan.md` todo list to `Plans/{planID}/`. The planner has workspace tools for **research only** (reading files, querying data, reading skill instructions) — it does NOT execute plan steps.
+Spawns a planner sub-agent that analyzes the objective and writes a `plan.md` todo list to `Chats/{planID}/`. The planner has workspace tools for **research only** (reading files, querying data, reading skill instructions) — it does NOT execute plan steps.
 
 ```json
 {
@@ -87,9 +87,9 @@ Spawns a planner sub-agent that analyzes the objective and writes a `plan.md` to
 
 After creating a plan, the manager agent reads and updates `plan.md` directly:
 
-- **Read plan**: Use `read_workspace_file` with filepath `Plans/{plan_id}/plan.md` (workspace API handles per-user path resolution)
+- **Read plan**: Use `read_workspace_file` with filepath `Chats/{plan_id}/plan.md` (workspace API handles per-user path resolution)
 - **Check status**: Re-read plan.md and check checkboxes
-- **Mark complete**: `execute_shell_command("sed -i 's/- \\[ \\] \\*\\*task-N\\*\\*/- [x] **task-N**/' Plans/{plan_id}/plan.md")`
+- **Mark complete**: `execute_shell_command("sed -i 's/- \\[ \\] \\*\\*task-N\\*\\*/- [x] **task-N**/' Chats/{plan_id}/plan.md")`
 - **Add notes**: `create_or_update_workspace_file` to append results
 
 **Note**: Use `read_workspace_file` instead of shell `cat` for reading plan files. The workspace API handles per-user path resolution correctly, while shell commands go through mount namespace isolation which may not always resolve per-user paths.
@@ -114,7 +114,7 @@ The planner uses this information to reference specific servers, tools, and skil
 
 ## Plan File Format
 
-Plans are stored as a single `plan.md` file in `Plans/{planID}/`:
+Plans are stored as a single `plan.md` file in `Chats/{planID}/`:
 
 ```markdown
 # Plan: Short title
@@ -138,7 +138,7 @@ High-level approach description
   - Reasoning level: low
 ```
 
-The workspace API routes `Plans/` to `_users/{userID}/Plans/` via per-user isolation (same as `Chats/` and `Downloads/`).
+The workspace API routes `Chats/` to `_users/{userID}/Chats/` via per-user isolation.
 
 ---
 
@@ -218,7 +218,7 @@ Delegation tools (`delegate`, `create_delegation_plan`) use `RegisterCustomToolW
 | Mode | Allowed Write Folders |
 |------|----------------------|
 | **Simple delegate** | `Chats/` (chat mode) |
-| **Plan task (via PlanFolderKey)** | `Plans/{planID}/` only |
+| **Plan task (via PlanFolderKey)** | `Chats/{planID}/` only |
 | **With skill-creator** | Adds `skills/custom/` to allowed list |
 
 All modes block `_users/` directory access. Per-user isolation is handled by the workspace API via `X-User-ID` header.
@@ -304,7 +304,7 @@ When plans are created, a `workspace_file_operation` event is emitted via `PlanE
 
 | Mode | Delegation | Tier Config | Workspace Sidebar |
 |------|-----------|-------------|-------------------|
-| **Multi Agent Chat** | Plan-driven (always on) | Tier chip in chat input + sidebar section | Shows `Plans/` and `skills/` |
+| **Multi Agent Chat** | Plan-driven (always on) | Tier chip in chat input + sidebar section | Shows `Chats/` and `skills/` |
 | **Chat** | Simple via `/spawn` | LLM dropdown (no tiers) | Shows `Chats/` and `skills/` |
 | **Workflow** | Not available | N/A | Shows workflow folder |
 
@@ -349,7 +349,7 @@ When plans are created, a `workspace_file_operation` event is emitted via `PlanE
 | **Mode Store** | `frontend/src/stores/useModeStore.ts` | `ModeCategory` type (`'chat' | 'workflow' | 'multi-agent' | null`) |
 | **App Store** | `frontend/src/stores/useAppStore.ts` | `delegationMode` (`'off' | 'spawn'`) — plan is implicit in multi-agent mode |
 | **Mode Selection** | `frontend/src/components/ModeSelectionModal.tsx` | 3-mode selection (Chat, Multi Agent Chat, Workflow) |
-| **Workspace Sidebar** | `frontend/src/components/Workspace.tsx` | `Plans/` folder filtering for multi-agent mode |
+| **Workspace Sidebar** | `frontend/src/components/Workspace.tsx` | `Chats/` folder filtering for multi-agent mode |
 
 ---
 
@@ -365,7 +365,7 @@ Defined in `delegation_tools.go`:
 | `DelegationTierConfigKey` | `*DelegationTierConfig` | Multi-LLM tier configuration |
 | `ReasoningLevelKey` | `string` | Reasoning level for current delegation |
 | `PlanEventEmitterKey` | `PlanEventEmitter` | Emits workspace file events for plan files |
-| `PlanFolderKey` | `string` | Plan-specific output folder (e.g., `Plans/{planID}`) |
+| `PlanFolderKey` | `string` | Plan-specific output folder (e.g., `Chats/{planID}`) |
 | `CapabilitiesContextKey` | `*CapabilitiesContext` | Available MCP servers, tools, skills for planner |
 
 ---

@@ -649,10 +649,11 @@ func (f *BotEventFilter) sendMessage(ctx context.Context, content string) {
 }
 
 // workspacePathPattern is the core pattern for workspace file paths.
-// Matches Plans/xxx/yyy.ext or Downloads/xxx/yyy.ext (at least one subfolder + file with extension).
-const workspacePathPattern = `(?:Plans|Downloads)/[\w][\w. -]*/[\w][\w./ -]*\.\w+`
+// Matches Chats/xxx/yyy.ext or Downloads/xxx/yyy.ext
+// (at least one subfolder + file with extension).
+const workspacePathPattern = `(?:Chats|Downloads)/[\w][\w. -]*/[\w][\w./ -]*\.\w+`
 
-// mdLinkWithWorkspacePath matches markdown links whose URL is a workspace path: [text](Plans/xxx/file.md)
+// mdLinkWithWorkspacePath matches markdown links whose URL is a workspace path: [text](Chats/xxx/file.md)
 var mdLinkWithWorkspacePath = regexp.MustCompile(`\[([^\]]+)\]\((` + workspacePathPattern + `)\)`)
 
 // bareWorkspacePath matches workspace file paths not inside markdown link syntax.
@@ -666,7 +667,7 @@ func (f *BotEventFilter) replaceWorkspacePaths(text string) string {
 		return text
 	}
 
-	// Pass 1: Replace workspace paths already inside markdown links [text](Plans/xxx/file.md)
+	// Pass 1: Replace workspace paths already inside markdown links [text](Chats/xxx/file.md)
 	text = mdLinkWithWorkspacePath.ReplaceAllStringFunc(text, func(match string) string {
 		parts := mdLinkWithWorkspacePath.FindStringSubmatch(match)
 		if len(parts) != 3 {

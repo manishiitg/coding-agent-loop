@@ -36,3 +36,7 @@
 60. add claude clode reasoing effort also
 
 61. add a steer option like in codex
+
+62. add cli for workflows management and org manemengt? so this can be done via claude code etc directly?
+
+63. should we add secretes to propmt? 

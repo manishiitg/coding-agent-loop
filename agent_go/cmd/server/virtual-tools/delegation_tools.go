@@ -57,7 +57,7 @@ const (
 	// DelegationServersKey is the context key for sub-agent specific MCP server selection
 	DelegationServersKey delegationContextKey = "delegation_servers"
 	// PlanFileFolderPath is the workspace folder for delegation plan files
-	PlanFileFolderPath = "Plans"
+	PlanFileFolderPath = "Chats"
 	// BGAgentRegistryKey is the context key for the background agent registry
 	BGAgentRegistryKey delegationContextKey = "bg_agent_registry"
 	// BGAgentSessionIDKey is the context key for the session ID used by background agents
@@ -316,7 +316,7 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 					"tool_mode": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"simple", "code_execution", "tool_search"},
-						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Go code that calls MCP tools programmatically — ONLY use when the user explicitly requests code execution mode. Do NOT choose this on your own. 'tool_search': worker discovers tools on-demand via search — use when 3+ MCP servers are available so the worker can efficiently find the right tools.",
+						"description": "Tool access mode for the worker. 'simple' (default): worker gets all tools directly and calls them normally — use this for most tasks including writing scripts, file editing, shell commands. 'code_execution': worker writes Python code that calls MCP tools programmatically via HTTP API — use this for data analysis, batch operations, loops over MCP tool results, or programmatic orchestration of multiple tool calls. 'tool_search': worker discovers tools on-demand via search — use when 3+ MCP servers are available so the worker can efficiently find the right tools.",
 					},
 					"agent_template": map[string]interface{}{
 						"type":        "string",
@@ -374,12 +374,12 @@ func CreateDelegationTools(tierConfig *DelegationTierConfig, requireReasoningLev
 	}
 	tools = append(tools, createPlanTool)
 
-	// confirm_plan_execution - Blocking approval tool for plan execution
+	// confirm_plan_execution - Present the plan for approval and return immediately
 	confirmPlanTool := llmtypes.Tool{
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "confirm_plan_execution",
-			Description: "Present the plan to the user for approval. This tool BLOCKS until the user responds. If approved, switches to Execution Mode. If rejected, returns the user's feedback so you can adjust the plan. Call this after creating a plan and summarizing it.",
+			Description: "Present the plan to the user for approval and return immediately. The user responds in their next chat message. If approved, continue execution on the next turn. If rejected, use their feedback to adjust the plan.",
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -1278,7 +1278,8 @@ func BuildSpawnCapabilitiesSection(caps *CapabilitiesContext) string {
 	return sb.String()
 }
 
-// handleConfirmPlanExecution handles the confirm_plan_execution tool — blocks until user approves or rejects
+// handleConfirmPlanExecution handles the confirm_plan_execution tool.
+// It is non-blocking: the approval UI is emitted and the user replies on the next turn.
 func handleConfirmPlanExecution(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Try PlanSessionStateKey first, fall back to PlanTrackerKey
 	var planState *PlanSessionState
@@ -1370,7 +1371,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 **` + "`delegate`" + `** — Spawn a sub-agent for a task (returns immediately, runs in background):
 - Provide comprehensive, self-contained instructions (sub-agents have no shared memory)
 - Call multiple times in one turn for **parallel execution** — this is the key advantage
-- Optional ` + "`reasoning_level`" + `: "high" (architecture, complex logic), "medium" (standard implementation), "low" (formatting, tests, config)
+- Required ` + "`reasoning_level`" + `: "high" (architecture, complex logic), "medium" (standard implementation), "low" (formatting, tests, config)
 - Optional ` + "`plan_folder`" + `: restricts worker writes to this folder (always pass when executing plan tasks)
 - Optional ` + "`agent_template`" + `: sub-agent template folder name (e.g. "code-review"). Loads specialized instructions and defaults from subagents/<name>/SUBAGENT.md
 - Optional ` + "`servers`" + `: list of MCP server names for this sub-agent. When specified, the worker only connects to these servers instead of all available ones.
@@ -1380,7 +1381,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 - Returns plan_id, plan_folder, and plan_content directly
 - Then execute tasks phase by phase using ` + "`delegate`" + `
 
-**` + "`confirm_plan_execution`" + `** — Present plan to user for approval (returns immediately)
+**` + "`confirm_plan_execution`" + `** — Present plan to user for approval (returns immediately; the user replies next turn)
 
 **` + "`query_agent`" + `** — Check status/progress of a running task
 
@@ -1394,7 +1395,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 
 ### Tool Mode (optional, for ` + "`delegate`" + `):
 - **"simple"** (default): Worker gets all tools directly. Best for most tasks, including **writing Python/Bash scripts** — use workspace shell tools (` + "`execute_shell_command`" + `) to create and run scripts.
-- **"code_execution"**: Worker writes Go code to call tools programmatically. Best for **data analysis with MCP tools** — e.g., fetching data from MCP servers, transforming responses, batch operations, loops over tool results. NOT recommended for simple script writing.
+- **"code_execution"**: Worker writes Python code to call MCP tools via HTTP API. Best for **data analysis with MCP tools** — e.g., fetching data from MCP servers, transforming responses, batch operations, loops over tool results. NOT recommended for simple script writing.
 - **"tool_search"**: Worker discovers tools on-demand via search. Use when 3+ MCP servers are available.
 
 **Guideline**: For writing Python scripts, shell scripts, or any file-based work, always prefer **"simple"** mode with workspace shell tools. Use **"code_execution"** only when you need to programmatically orchestrate multiple MCP tool calls and analyze their responses.

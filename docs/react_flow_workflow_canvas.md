@@ -33,10 +33,11 @@ The system uses a variety of specialized nodes, each with its own UI and configu
 A critical recent addition is the **Version Publishing** system, which allows users to snapshot the entire workflow configuration.
 
 - **Storage**: Versions are snapshotted in `versions/v{N}/` within the workspace.
+- **Snapshot scope**: Includes planning/config files plus workflow learnings from `learnings/` and `evaluation/learnings/`.
 - **Components**: `WorkflowVersionsPopup.tsx` provides the UI for listing, publishing, and reverting.
 - **Endpoints**:
   - `GET /api/workflow/versions`: List all published versions.
-  - `POST /api/workflow/versions/publish`: Create a new snapshot with an optional label.
+  - `POST /api/workflow/versions/publish`: Create a new snapshot with a required label.
   - `POST /api/workflow/versions/revert`: Restore config files from a previous version.
   - `DELETE /api/workflow/versions`: Remove a version.
 

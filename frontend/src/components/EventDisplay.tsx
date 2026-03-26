@@ -70,7 +70,7 @@ const getMarkdownComponents = (compact: boolean) => ({
     <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{children}</td>
   ),
   a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
-    const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+    const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/']
     const isWorkspacePath = href && workspacePrefixes.some(p => href.startsWith(p))
     const workspaceFilepath = href?.startsWith('#workspace/')
       ? decodeURIComponent(href.replace('#workspace/', ''))
@@ -82,10 +82,7 @@ const getMarkdownComponents = (compact: boolean) => ({
         e.stopPropagation()
         const { setSelectedFile, setShowFileContent, setLoadingFileContent, highlightFile, expandFoldersForFile } = useWorkspaceStore.getState()
         const { setWorkspaceMinimized } = useAppStore.getState()
-        let resolvedPath = workspaceFilepath
-        if (workspaceFilepath.startsWith('Plans/') && !workspaceFilepath.includes('.')) {
-          resolvedPath = workspaceFilepath + '/plan.md'
-        }
+        const resolvedPath = workspaceFilepath
         const fileName = resolvedPath.split('/').pop() || resolvedPath
         setWorkspaceMinimized(false)
         expandFoldersForFile(resolvedPath)
@@ -110,7 +107,7 @@ const getMarkdownComponents = (compact: boolean) => ({
     )
   },
   img: ({ src, alt }: { src?: string; alt?: string }) => {
-    const workspacePrefixes = ['Chats/', 'Downloads/', 'Plans/', 'skills/', 'Workflow/']
+    const workspacePrefixes = ['Chats/', 'Downloads/', 'skills/', 'Workflow/']
     const isWorkspacePath = !!src && workspacePrefixes.some(p => src.startsWith(p))
     const resolvedSrc = isWorkspacePath
       ? `${getApiBaseUrl()}/api/public/file?path=${btoa(src!)}`

@@ -75,7 +75,7 @@ export const DelegationToolCallDisplay: React.FC<DelegationToolCallDisplayProps>
               </div>
             )}
             <div className="flex items-center gap-3 text-[10px] text-purple-500 dark:text-purple-400">
-              <span>Folder: Plans/{planName}/</span>
+              <span>Folder: Chats/{planName}/</span>
               {reasoningLevel && <span>Reasoning: {reasoningLevel}</span>}
             </div>
           </div>

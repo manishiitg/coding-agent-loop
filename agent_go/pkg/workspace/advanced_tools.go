@@ -130,7 +130,7 @@ func diffPatchToolDef() llmtypes.Tool {
 				"properties": map[string]interface{}{
 					"filepath": map[string]interface{}{
 						"type":        "string",
-						"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'Plans/plan-123/plan.md')",
+						"description": "Full file path of the file to patch (e.g., 'docs/guide.md', 'Chats/plan-123/plan.md')",
 					},
 					"diff": map[string]interface{}{
 						"type":        "string",

@@ -58,7 +58,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   // Filter tabs by current mode
   // In workflow mode, only show chat tabs in global ChatTabs (workflow tabs show in chat area)
   const modeTabs = useMemo(() => {
-    if (selectedModeCategory === 'workflow') {
+    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'organization') {
       // In workflow mode, only show multi-agent tabs (workflow tabs are shown in the chat area panel)
       return Object.values(chatTabs).filter(tab => 
         tab.metadata?.mode === 'multi-agent'

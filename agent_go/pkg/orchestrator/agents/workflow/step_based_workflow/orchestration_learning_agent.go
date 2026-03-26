@@ -2,6 +2,7 @@ package step_based_workflow
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
@@ -205,7 +206,7 @@ func (agent *WorkflowOrchestrationLearningAgent) orchestrationLearningSystemProm
 	if err := orchestrationLearningSystemTemplate.Execute(&result, map[string]interface{}{
 		"WritePath": templateVars["WorkspacePath"] + "/learnings/" + templateVars["StepNumber"],
 	}); err != nil {
-		return "Error executing orchestration learning system prompt template: " + err.Error()
+		panic(fmt.Sprintf("orchestration learning system prompt template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -227,7 +228,7 @@ func (agent *WorkflowOrchestrationLearningAgent) orchestrationLearningUserMessag
 		"OrchestrationHistory": templateVars["OrchestrationHistory"],
 		"ValidationResult":     templateVars["ValidationResult"],
 	}); err != nil {
-		return "Error executing orchestration learning user message template: " + err.Error()
+		panic(fmt.Sprintf("orchestration learning user message template execution failed (missing variable?): %v", err))
 	}
 
 	return result.String()

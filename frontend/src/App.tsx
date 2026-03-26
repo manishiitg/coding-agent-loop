@@ -831,7 +831,9 @@ function App() {
     if (hasCompletedInitialSetup && selectedModeCategory) {
       // Add a small delay to ensure stores are fully initialized
       const timer = setTimeout(() => {
-        const activePreset = getActivePreset(selectedModeCategory)
+        const activePreset = selectedModeCategory === 'organization'
+          ? null
+          : getActivePreset(selectedModeCategory)
         if (activePreset) {
           hasRestoredPresetRef.current = true
           const result = applyPreset(activePreset.id, selectedModeCategory)
@@ -982,7 +984,7 @@ function App() {
       if ((event.metaKey || event.ctrlKey) && event.key === '3') {
         event.preventDefault()
         const { setModeCategory } = useModeStore.getState()
-        setModeCategory('workflow')
+        setModeCategory('organization')
         setShowWorkflowsOverview(true)
       }
 
@@ -1061,10 +1063,10 @@ function App() {
             />
             
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                <div className={showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                <div className={showWorkflowsOverview || selectedModeCategory === 'organization' ? 'h-full' : 'hidden'}>
                   <WorkflowsOverviewPage />
                 </div>
-                <div className={!showWorkflowsOverview ? 'h-full' : 'hidden'}>
+                <div className={!showWorkflowsOverview && selectedModeCategory !== 'organization' ? 'h-full' : 'hidden'}>
                   <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
                     <WorkflowLayout
                       className="h-full"

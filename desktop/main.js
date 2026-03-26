@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, shell, nativeTheme, Menu, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -270,6 +270,31 @@ function getResourcesDir() {
 function getBinaryPath(name) {
   const base = getResourcesDir();
   return path.join(base, name);
+}
+
+function getAppIconPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icons', 'icon.png');
+  }
+  return path.join(__dirname, 'resources', 'icons', 'icon.png');
+}
+
+function applyAppIcon() {
+  const iconPath = getAppIconPath();
+  if (!fs.existsSync(iconPath)) {
+    console.warn(`[main] App icon not found at ${iconPath}`);
+    return;
+  }
+
+  const icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    console.warn(`[main] Failed to load app icon from ${iconPath}`);
+    return;
+  }
+
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(icon);
+  }
 }
 
 // isPortInUse function is no longer needed with dynamic ports
@@ -622,6 +647,7 @@ function createWindow(initialUrl) {
 }
 
 app.whenReady().then(async () => {
+  applyAppIcon();
   createMenu();
   
   // If DEV_URL is set (e.g. http://localhost:5173), skip spawning servers and just load that URL

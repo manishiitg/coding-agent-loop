@@ -88,11 +88,25 @@ func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
 		return nil
 	}
 
-	// Check against each allowed path
+	// Strip common absolute workspace prefixes so absolute paths work with relative allowed paths
+	// Agents may use absolute paths like /app/workspace-docs/Workflow/... while allowed paths are relative
+	normalizedInput := inputPath
+	for _, prefix := range []string{"/app/workspace-docs/", "/workspace-docs/"} {
+		if strings.HasPrefix(normalizedInput, prefix) {
+			normalizedInput = strings.TrimPrefix(normalizedInput, prefix)
+			break
+		}
+	}
+
+	// Check against each allowed path (try both original and normalized)
 	for _, allowedPath := range allowedPaths {
-		if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
-			// Path is valid within this allowed path
+		if err := validatePathInWorkspace(allowedPath, normalizedInput); err == nil {
 			return nil
+		}
+		if normalizedInput != inputPath {
+			if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
+				return nil
+			}
 		}
 	}
 

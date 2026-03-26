@@ -253,7 +253,6 @@ export default function Workspace({
   const autoExpandedWorkflowRef = useRef<string | null>(null)
   // Track whether we've auto-expanded Chats/ for multi-agent mode
   const autoExpandedChatRef = useRef(false)
-  // Track whether we've auto-expanded Plans/ for multi-agent mode
   const autoExpandedMultiAgentRef = useRef(false)
   // Track workflow folders that already have a full tree in memory
   const fullyLoadedWorkflowFoldersRef = useRef<Set<string>>(new Set())
@@ -329,10 +328,10 @@ export default function Workspace({
       // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, effectiveWorkflowFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
+      // Multi Agent Chat mode: show Chats/, Downloads/, skills/ and subagents/ folders
       result = filesToProcess.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
     }
 
@@ -560,6 +559,40 @@ export default function Workspace({
     workspaceDisplayedIteration
   ])
 
+  const prevWorkflowWorkspaceViewRef = useRef<typeof workflowWorkspaceView>(workflowWorkspaceView)
+  useEffect(() => {
+    const previousView = prevWorkflowWorkspaceViewRef.current
+    prevWorkflowWorkspaceViewRef.current = workflowWorkspaceView
+
+    if (
+      selectedModeCategory !== 'workflow' ||
+      workflowWorkspaceView !== 'execution' ||
+      previousView === 'execution' ||
+      availableIterations.length === 0
+    ) {
+      return
+    }
+
+    const executionIteration = selectedRunFolder && selectedRunFolder !== 'new'
+      ? selectedRunFolder.split('/')[0]
+      : latestIteration
+
+    if (!executionIteration || !availableIterations.includes(executionIteration)) {
+      return
+    }
+
+    if (workspaceDisplayedIteration !== executionIteration) {
+      setWorkspaceDisplayedIteration(executionIteration)
+    }
+  }, [
+    selectedModeCategory,
+    workflowWorkspaceView,
+    selectedRunFolder,
+    availableIterations,
+    latestIteration,
+    workspaceDisplayedIteration
+  ])
+
   // Get filtered files - first filter to workflow folder if preset is active, then apply search
   const filteredFiles = useMemo(() => {
     let result = files
@@ -591,10 +624,10 @@ export default function Workspace({
         result = result.map(node => pruneRunsToIteration(node, effectiveDisplayedIteration))
       }
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Plans/, Chats/, Downloads/, skills/ and subagents/ folders
+      // Multi Agent Chat mode: show Chats/, Downloads/, skills/ and subagents/ folders
       result = files.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Plans' || topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
       })
     }
 
@@ -685,14 +718,12 @@ export default function Workspace({
   }, [selectedModeCategory, filteredFiles, setExpandedFolders])
 
   // In multi-agent mode, auto-expand Chats/ by default.
-  // Plans/ remains visible when it exists, but is no longer the default focus.
   useEffect(() => {
     if (selectedModeCategory === 'multi-agent' && filteredFiles.length > 0 && !autoExpandedMultiAgentRef.current) {
       const hasChatsFolder = filteredFiles.some(f => f.filepath === 'Chats' || f.filepath === 'Chats/')
-      const hasPlansFolder = filteredFiles.some(f => f.filepath === 'Plans' || f.filepath === 'Plans/')
-      if (hasChatsFolder || hasPlansFolder) {
+      if (hasChatsFolder) {
         autoExpandedMultiAgentRef.current = true
-        setExpandedFolders(new Set([hasChatsFolder ? 'Chats' : 'Plans']))
+        setExpandedFolders(new Set(['Chats']))
       }
     } else if (selectedModeCategory !== 'multi-agent') {
       autoExpandedMultiAgentRef.current = false

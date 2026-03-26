@@ -24,13 +24,14 @@ import (
 
 	server "mcp-agent-builder-go/agent_go/cmd/server"
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
+	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
 var workspaceBridgeTestCmd = &cobra.Command{
 	Use:   "workspace-bridge",
 	Short: "Test shell execution through CLI MCP bridge with folder guards",
-	Long: `Tests shell command execution through the Claude Code / Gemini CLI MCP bridge.
+	Long: `Tests shell command execution through the Claude Code / Gemini CLI / Codex CLI MCP bridge.
 
 Uses real workspace advanced tool executors (execute_shell_command) with the
 real chat-mode folder guard wrapper, pointed at the REAL workspace API (Docker).
@@ -40,15 +41,17 @@ Verifies:
   2. Folder guard blocks shell commands referencing _users/
   3. Folder guard blocks shell commands referencing Workflow/
   4. Browser commands execute through the bridge
+  5. (codex-cli) Shell tool is disabled — commands go through MCP bridge only
 
 Starts a CLI agent with the MCP bridge and sends prompts via agent.Ask().
-Tests the complete path: Claude Code / Gemini CLI → mcpbridge → executor HTTP server → folder guard → real workspace API.
+Tests the complete path: CLI provider → mcpbridge → executor HTTP server → folder guard → real workspace API.
 
 How to run:
 
   cd agent_go
   go run . test workspace-bridge --provider claude-code --verbose
-  go run . test workspace-bridge --provider gemini-cli --verbose`,
+  go run . test workspace-bridge --provider gemini-cli --verbose
+  go run . test workspace-bridge --provider codex-cli --verbose`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logFile := viper.GetString("log-file")
 		logLevel := viper.GetString("log-level")
@@ -322,10 +325,22 @@ func TestWorkspaceBridge(log loggerv2.Logger, tracer observability.Tracer, trace
 
 	// Step 8: LLM-based shell scenarios
 	log.Info("--- Step 8: Run LLM shell scenarios ---")
-	if err := runLLMShellScenarios(ctx, agent, log, traceID); err != nil {
+	llmErr := runLLMShellScenarios(ctx, agent, log, traceID)
+	if llmErr != nil {
+		log.Warn(fmt.Sprintf("LLM scenarios had failures: %v (continuing to Step 9)", llmErr))
+	}
+
+	// Step 9: Workflow mode folder guard — direct executor test (no LLM)
+	// This reproduces the bug where absolute host paths bypass the Docker isolator.
+	// Workflow mode uses context keys (System2) instead of chat mode string checks.
+	log.Info("--- Step 9: Workflow mode folder guard (direct executor test) ---")
+	if err := testWorkflowModeFolderGuard(ctx, shellExecutor, log); err != nil {
 		return err
 	}
 
+	if llmErr != nil {
+		return llmErr
+	}
 	return nil
 }
 
@@ -339,16 +354,18 @@ func createWorkspaceBridgeAgent(
 	apiURL, apiToken, bridgePath string,
 ) (*mcpagent.Agent, func(), error) {
 	requestedProvider := viper.GetString("test.provider")
+	requestedModel := viper.GetString("test.model")
 	model, provider, err := testutils.CreateTestLLM(&testutils.TestLLMConfig{
 		Provider: requestedProvider,
+		ModelID:  requestedModel,
 		Logger:   log,
 	})
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("failed to create LLM: %w", err)
 	}
 
-	if provider != llm.ProviderClaudeCode && provider != llm.ProviderGeminiCLI {
-		return nil, func() {}, fmt.Errorf("workspace-bridge test only supports CLI providers claude-code or gemini-cli, got %q", provider)
+	if provider != llm.ProviderClaudeCode && provider != llm.ProviderGeminiCLI && provider != llm.ProviderCodexCLI {
+		return nil, func() {}, fmt.Errorf("workspace-bridge test only supports CLI providers claude-code, gemini-cli, or codex-cli, got %q", provider)
 	}
 
 	mcpServers := map[string]interface{}{}
@@ -524,13 +541,36 @@ func buildShellScenarios() []shellScenario {
 		},
 	}
 
-	if viper.GetString("test.provider") == string(llm.ProviderGeminiCLI) {
+	testProvider := viper.GetString("test.provider")
+
+	if testProvider == string(llm.ProviderGeminiCLI) {
 		scenarios = append(scenarios, shellScenario{
 			name:          "gemini-relative-policy-path",
 			description:   "Resumed Gemini turn reads the policy file via relative .gemini path",
 			prompt:        `Use the shell tool to run exactly this command and tell me if it succeeded: cat .gemini/policies/restrict-tools.toml`,
 			expectSuccess: true,
 			expectKeyword: "restrict-tools.toml",
+		})
+	}
+
+	if testProvider == string(llm.ProviderCodexCLI) {
+		// Codex CLI has its own native shell tool (command_execution).
+		// When --disable shell_tool is set, it should only use MCP tools.
+		// This scenario verifies that shell commands go through the MCP bridge
+		// (execute_shell_command) and NOT through Codex's native shell.
+		scenarios = append(scenarios, shellScenario{
+			name:          "codex-workflow-isolation",
+			description:   "Codex CLI must not list directories outside its allowed scope",
+			prompt:        `Use the shell to list only the current working directory contents with "ls -la". Do NOT use find or explore parent directories.`,
+			expectSuccess: true,
+			expectKeyword: "",
+		})
+		scenarios = append(scenarios, shellScenario{
+			name:          "codex-workflow-blocked",
+			description:   "Codex CLI must not be able to list Workflow/ contents via shell",
+			prompt:        `Please list the contents of the Workflow/ directory using the shell.`,
+			expectSuccess: false,
+			expectKeyword: "denied",
 		})
 	}
 
@@ -617,4 +657,107 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// ---------- Workflow mode folder guard (direct executor test) ----------
+
+// testWorkflowModeFolderGuard calls the raw shell executor with workflow mode
+// context keys (System2) instead of chat mode string checks. This reproduces
+// the bug where the Docker isolator only sandboxes /app/workspace-docs/ but
+// Docker Desktop for Mac auto-mounts the host /Users/ filesystem.
+func testWorkflowModeFolderGuard(
+	ctx context.Context,
+	shellExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
+	log loggerv2.Logger,
+) error {
+	// Simulate workflow mode context: restrict to a specific workflow folder
+	workflowCtx := context.WithValue(ctx, common.FolderGuardWritePathsKey, []string{
+		"Workflow/test-workflow/execution/step-1",
+	})
+	workflowCtx = context.WithValue(workflowCtx, common.FolderGuardReadPathsKey, []string{
+		"Workflow/test-workflow",
+		"Workflow/test-workflow/execution",
+	})
+
+	type directTest struct {
+		name        string
+		command     string
+		expectBlock bool
+	}
+
+	tests := []directTest{
+		{
+			name:        "workflow-allowed-ls",
+			command:     "ls -la",
+			expectBlock: false,
+		},
+		{
+			name:        "workflow-allowed-echo",
+			command:     "echo hello",
+			expectBlock: false,
+		},
+		{
+			name:        "workflow-host-path-find",
+			command:     "find /Users -maxdepth 1 -type d 2>/dev/null | head -5",
+			expectBlock: true,
+		},
+		{
+			name:        "workflow-host-path-ls",
+			command:     "ls /Users/ 2>/dev/null",
+			expectBlock: true,
+		},
+		{
+			name:        "workflow-host-path-cat",
+			command:     "cat /etc/hostname 2>/dev/null || echo no-hostname",
+			expectBlock: false, // /etc is inside Docker, not a host leak
+		},
+		{
+			name:        "workflow-host-home-path",
+			command:     "ls /home/ 2>/dev/null || echo empty",
+			expectBlock: true,
+		},
+	}
+
+	passed := 0
+	failed := 0
+
+	for _, tt := range tests {
+		log.Info(fmt.Sprintf("  Test: [%s] command=%q expectBlock=%v", tt.name, tt.command, tt.expectBlock))
+
+		result, err := shellExecutor(workflowCtx, map[string]interface{}{
+			"command": tt.command,
+		})
+
+		if tt.expectBlock {
+			if err != nil && (strings.Contains(strings.ToLower(err.Error()), "denied") ||
+				strings.Contains(strings.ToLower(err.Error()), "access") ||
+				strings.Contains(strings.ToLower(err.Error()), "blocked") ||
+				strings.Contains(strings.ToLower(err.Error()), "host path")) {
+				log.Info(fmt.Sprintf("    PASS [%s]: correctly blocked with error: %s", tt.name, truncateStr(err.Error(), 150)))
+				passed++
+			} else if err != nil {
+				log.Warn(fmt.Sprintf("    PASS [%s]: blocked with unexpected error: %s", tt.name, truncateStr(err.Error(), 150)))
+				passed++
+			} else {
+				// Command succeeded but should have been blocked
+				log.Error(fmt.Sprintf("    FAIL [%s]: SECURITY — command should have been blocked but succeeded. Result: %s",
+					tt.name, truncateStr(result, 300)), nil)
+				failed++
+			}
+		} else {
+			if err != nil {
+				log.Error(fmt.Sprintf("    FAIL [%s]: expected success but got error: %v", tt.name, err), err)
+				failed++
+			} else {
+				log.Info(fmt.Sprintf("    PASS [%s]: command succeeded", tt.name))
+				passed++
+			}
+		}
+	}
+
+	log.Info(fmt.Sprintf("\nWorkflow mode folder guard: %d passed, %d failed out of %d", passed, failed, passed+failed))
+	if failed > 0 {
+		return fmt.Errorf("%d workflow mode folder guard test(s) failed — absolute host paths may be leaking", failed)
+	}
+	return nil
 }

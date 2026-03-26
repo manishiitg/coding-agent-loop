@@ -42,6 +42,7 @@ func init() {
 	// Add common flags for all testing commands
 	TestingCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "enable verbose test output")
 	TestingCmd.PersistentFlags().StringVar(&provider, "provider", "bedrock", "LLM provider for tests")
+	TestingCmd.PersistentFlags().String("model", "", "model ID override (e.g., gpt-5.4-mini)")
 	// show-output, timeout, and config flags are defined but accessed via viper
 	TestingCmd.PersistentFlags().Bool("show-output", true, "show detailed test output")
 	TestingCmd.PersistentFlags().String("timeout", "5m", "test timeout duration")
@@ -56,6 +57,7 @@ func init() {
 	viper.BindPFlag("test.show-output", TestingCmd.PersistentFlags().Lookup("show-output"))
 	viper.BindPFlag("test.timeout", TestingCmd.PersistentFlags().Lookup("timeout"))
 	viper.BindPFlag("test.provider", TestingCmd.PersistentFlags().Lookup("provider"))
+	viper.BindPFlag("test.model", TestingCmd.PersistentFlags().Lookup("model"))
 	viper.BindPFlag("config", TestingCmd.PersistentFlags().Lookup("config"))
 	// Remove duplicate viper bindings for logging flags - they're already bound in root command
 

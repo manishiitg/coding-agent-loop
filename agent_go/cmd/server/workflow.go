@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -5983,6 +5984,154 @@ func writeRawFileToWorkspace(ctx context.Context, filePath string, content strin
 	return nil
 }
 
+func listWorkspaceFolder(ctx context.Context, folderPath string, maxDepth int) (virtualtools.WorkspaceFolderListing, bool, error) {
+	apiURL := getWorkspaceAPIURL() + "/api/documents"
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	q := req.URL.Query()
+	q.Add("folder", folderPath)
+	q.Add("max_depth", strconv.Itoa(maxDepth))
+	req.URL.RawQuery = q.Encode()
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var apiResp struct {
+		Success bool                                `json:"success"`
+		Message string                              `json:"message"`
+		Error   string                              `json:"error"`
+		Data    virtualtools.WorkspaceFolderListing `json:"data"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, false, fmt.Errorf("failed to parse API response: %w", err)
+	}
+	if !apiResp.Success {
+		return nil, false, fmt.Errorf("workspace API error: %s", apiResp.Error)
+	}
+
+	return apiResp.Data, true, nil
+}
+
+func collectWorkspaceFilePaths(items []virtualtools.WorkspaceFolderItem, out *[]string) {
+	for _, item := range items {
+		switch item.Type {
+		case "file":
+			*out = append(*out, item.FilePath)
+		case "folder":
+			collectWorkspaceFilePaths(item.Children, out)
+		}
+	}
+}
+
+func snapshotWorkspaceFolder(ctx context.Context, workspacePath, versionFolder, relativeFolder string) ([]string, error) {
+	folderPath := workspacePath + "/" + relativeFolder
+	listing, exists, err := listWorkspaceFolder(ctx, folderPath, 100)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, nil
+	}
+
+	var filePaths []string
+	collectWorkspaceFilePaths(listing, &filePaths)
+
+	var filesSnapshot []string
+	for _, fullPath := range filePaths {
+		relPath := strings.TrimPrefix(fullPath, workspacePath+"/")
+		if relPath == fullPath {
+			continue
+		}
+
+		content, exists, err := readFileFromWorkspace(ctx, fullPath)
+		if err != nil {
+			log.Printf("[WARN] Failed to read %s for versioning: %v", fullPath, err)
+			continue
+		}
+		if !exists {
+			continue
+		}
+
+		dstPath := versionFolder + "/" + relPath
+		if err := writeRawFileToWorkspace(ctx, dstPath, content); err != nil {
+			return nil, fmt.Errorf("failed to write version file %s: %w", relPath, err)
+		}
+		filesSnapshot = append(filesSnapshot, relPath)
+	}
+
+	return filesSnapshot, nil
+}
+
+func deleteWorkspaceFolder(ctx context.Context, folderPath string) error {
+	pathSegments := strings.Split(folderPath, "/")
+	encodedSegments := make([]string, len(pathSegments))
+	for i, segment := range pathSegments {
+		encodedSegments[i] = url.PathEscape(segment)
+	}
+	encodedPath := strings.Join(encodedSegments, "/")
+
+	apiURL := getWorkspaceAPIURL() + "/api/folders/" + encodedPath + "?confirm=true"
+	req, err := http.NewRequestWithContext(ctx, "DELETE", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call workspace API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("workspace API returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func toStringSlice(value interface{}) []string {
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	res := make([]string, 0, len(items))
+	for _, item := range items {
+		if s, ok := item.(string); ok && s != "" {
+			res = append(res, s)
+		}
+	}
+	return res
+}
+
 // Config files that are versioned when publishing a workflow version
 var versionedConfigFiles = []string{
 	"planning/plan.json",
@@ -5992,6 +6141,12 @@ var versionedConfigFiles = []string{
 	"planning/output_plan.json",
 	"variables/variables.json",
 	"evaluation/evaluation_plan.json",
+}
+
+// Folder roots that are versioned recursively when publishing a workflow version
+var versionedFolderRoots = []string{
+	"learnings",
+	"evaluation/learnings",
 }
 
 // handlePublishVersion creates a new numbered version snapshot of workflow config files
@@ -6015,6 +6170,11 @@ func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Req
 	}
 	if req.WorkspacePath == "" {
 		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	req.Label = strings.TrimSpace(req.Label)
+	if req.Label == "" {
+		http.Error(w, "label is required", http.StatusBadRequest)
 		return
 	}
 
@@ -6077,7 +6237,7 @@ func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Req
 	versionFolder := fmt.Sprintf("%s/versions/v%d", req.WorkspacePath, nextVersion)
 	var filesSnapshot []string
 
-	// Copy each config file to the version folder
+	// Copy each managed config file to the version folder.
 	for _, relPath := range versionedConfigFiles {
 		srcPath := req.WorkspacePath + "/" + relPath
 		content, exists, err := readFileFromWorkspace(ctx, srcPath)
@@ -6097,6 +6257,16 @@ func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Req
 		filesSnapshot = append(filesSnapshot, relPath)
 	}
 
+	// Copy managed folders recursively (for example learnings/) into the version folder.
+	for _, folderRoot := range versionedFolderRoots {
+		folderSnapshot, err := snapshotWorkspaceFolder(ctx, req.WorkspacePath, versionFolder, folderRoot)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to snapshot folder %s: %v", folderRoot, err), http.StatusInternalServerError)
+			return
+		}
+		filesSnapshot = append(filesSnapshot, folderSnapshot...)
+	}
+
 	if len(filesSnapshot) == 0 {
 		http.Error(w, "No config files found to version", http.StatusBadRequest)
 		return
@@ -6108,6 +6278,8 @@ func (api *StreamingAPI) handlePublishVersion(w http.ResponseWriter, r *http.Req
 		"label":          req.Label,
 		"created_at":     time.Now().UTC().Format(time.RFC3339),
 		"files_snapshot": filesSnapshot,
+		"managed_files":  versionedConfigFiles,
+		"managed_folders": versionedFolderRoots,
 	}
 	metaJSON, _ := json.MarshalIndent(meta, "", "  ")
 	if err := writeRawFileToWorkspace(ctx, versionFolder+"/version_meta.json", string(metaJSON)); err != nil {
@@ -6308,6 +6480,36 @@ func (api *StreamingAPI) handleRevertVersion(w http.ResponseWriter, r *http.Requ
 	if !ok || len(filesSnapshot) == 0 {
 		http.Error(w, "Version has no files to restore", http.StatusBadRequest)
 		return
+	}
+
+	managedFiles := toStringSlice(meta["managed_files"])
+	managedFolders := toStringSlice(meta["managed_folders"])
+	snapshotSet := make(map[string]struct{}, len(filesSnapshot))
+	for _, f := range filesSnapshot {
+		if relPath, ok := f.(string); ok && relPath != "" {
+			snapshotSet[relPath] = struct{}{}
+		}
+	}
+
+	// Newer versions record which folder roots are managed by versioning. Clear them first so
+	// restore does not leave behind stale learning files from newer iterations.
+	for _, folderRoot := range managedFolders {
+		if err := deleteWorkspaceFolder(ctx, req.WorkspacePath+"/"+folderRoot); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to clear folder %s: %v", folderRoot, err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Likewise, delete managed files that were absent in the snapshot so reverting restores the
+	// exact versioned state instead of only overwriting files that still exist in the snapshot.
+	for _, relPath := range managedFiles {
+		if _, exists := snapshotSet[relPath]; exists {
+			continue
+		}
+		if err := deleteWorkspaceFile(ctx, req.WorkspacePath+"/"+relPath); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to remove file %s: %v", relPath, err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Restore each file

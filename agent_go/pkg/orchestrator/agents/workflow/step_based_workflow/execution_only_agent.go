@@ -22,7 +22,7 @@ var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", `#
 ## Role & Responsibility
 - **Identity**: Step Execution Agent.
 - **Goal**: Complete the task described in the Step Description using the tools available to you.
-{{if .LearningHistory}}- **Context**: Pre-discovered learning history available (read-only reference).{{end}}
+{{if .LearningHistory}}- **Context**: Skill files available from previous runs (read-only reference).{{end}}
 
 {{if .CodeExecutionSection}}
 {{.CodeExecutionSection}}
@@ -56,14 +56,11 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 - Step folder is **volatile** — deleted on re-execution. Only write primary results here.
 {{if eq .UseKnowledgebase "true"}}- Knowledgebase is **persistent** — shared across all runs. Use for templates, reference data, or configs that must survive across attempts.
 {{end}}
-## CRITICAL EXECUTION RULES
-1. **Source of Truth**: The **Step Description** defines WHAT to do.{{if eq .HasLearnings "true"}} It ALWAYS overrides learnings.{{end}}
+## EXECUTION RULES
+1. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.
 {{if .IsCodeExecutionMode}}2. Use absolute paths in code. E.g., `+"`"+`open("{{.StepExecutionPath}}/{{.StepContextOutput}}", "w")`+"`"+`.
 {{else}}2. Use absolute paths in shell commands. E.g., `+"`"+`echo '...' > '{{.StepExecutionPath}}/{{.StepContextOutput}}'`+"`"+`.
-{{end}}3. **Pre-requisites**: Read all **Inputs** (listed in the user message) before execution.{{if .IsCodeExecutionMode}} Use the absolute paths shown there.{{else}} Use `+"`"+`execute_shell_command`+"`"+` to read files.{{end}}
-4. **Mandatory Output**: Create `+"`"+`{{.StepContextOutput}}`+"`"+` in `+"`"+`{{.StepExecutionPath}}/`+"`"+`.
-5. **Parallel Tools**: Call all independent operations in a single response for parallel execution.
-6. **Success Criteria**: If provided in the user message, ensure your output meets them before finishing.
+{{end}}
 
 {{/* Previous Steps Summary disabled — step dependencies provide sufficient context
 {{if .PreviousStepsSummary}}
@@ -73,7 +70,7 @@ All paths are absolute. Always use `+"`"+`mkdir -p`+"`"+` before writing if the 
 */}}
 
 {{if eq .HasLearnings "true"}}
-## Learning History
+## Skill
 
 {{.LearningHistory}}
 {{end}}
@@ -125,12 +122,16 @@ Include:
 {{end}}
 
 ## Completion
+**IMPORTANT**: Do NOT stop with a text message mid-task. Always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.
+
 End your response with exactly one of:
 - STATUS: COMPLETED — if '{{.StepContextOutput}}' was created successfully.
 - STATUS: FAILED — if the step cannot be completed. Explain the reason.`)
 
-var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `**DESCRIPTION**: {{.StepDescription}}
-**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
+var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
+{{.OrchestratorInstructions}}
+{{else}}**DESCRIPTION**: {{.BaseDescription}}
+{{end}}**LOCATION**: {{.StepExecutionPath}}/ (Workspace: {{.WorkspacePath}})
 
 {{if eq .HasLoop "true"}}
 ### Loop: Iteration {{.CurrentIteration}} / {{.MaxIterations}}
@@ -166,7 +167,14 @@ var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `**DES
 ### Requirements
 - **Inputs**: {{.StepContextDependencies}}
 - **Output File**: {{.StepContextOutput}} (Create in '{{.StepExecutionPath}}/')
-{{if .StepSuccessCriteria}}- **Success Criteria**: {{.StepSuccessCriteria}}{{end}}`)
+{{if .StepSuccessCriteria}}- **Success Criteria**: {{.StepSuccessCriteria}}{{end}}
+
+### Execution Checklist
+1. Read all **Inputs** listed above before starting.
+{{if .HasSkill}}2. Read **Skill files** — they contain validated workflows from previous runs.
+{{end}}3. Execute the task using tool calls. Do NOT stop mid-task with a text message.
+4. Verify success criteria are met before finishing.
+5. Create the output file.`)
 
 // WorkflowExecutionOnlyTemplate holds template variables for execution-only agent prompts
 type WorkflowExecutionOnlyTemplate struct {
@@ -194,6 +202,9 @@ type WorkflowExecutionOnlyTemplate struct {
 	DecisionEvaluationQuestion string // Evaluation question for decision inner steps (used to format output for LLM evaluation)
 	PreviousStepsSummary       string // Summary of previous completed steps (titles, descriptions, outputs)
 	StepSuccessCriteria        string // Success criteria for the step
+	BaseDescription            string // Step description without orchestrator instructions
+	OrchestratorInstructions   string // Orchestrator instructions (split from description)
+	HasSkill                   string // "true" if skill files are available
 }
 
 // WorkflowExecutionOnlyAgent executes steps using pre-discovered learning context
@@ -296,7 +307,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"WorkflowRoot":               templateVars["WorkflowRoot"],         // Workflow root path for absolute cwd display
 	})
 	if err != nil {
-		return fmt.Sprintf("Error executing execution-only system prompt template: %v", err)
+		panic(fmt.Sprintf("execution-only system prompt template execution failed (missing variable?): %v", err))
 	}
 
 	return result.String()
@@ -304,10 +315,21 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 
 // executionOnlyUserMessageProcessor generates the user message for execution-only agent
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(templateVars map[string]string) string {
+	// Split description into base description and orchestrator instructions
+	fullDescription := templateVars["StepDescription"]
+	baseDescription := fullDescription
+	orchestratorInstructions := ""
+	if idx := strings.Index(fullDescription, "\n\n## Orchestrator Instructions\n\n"); idx >= 0 {
+		baseDescription = strings.TrimSpace(fullDescription[:idx])
+		orchestratorInstructions = strings.TrimSpace(fullDescription[idx+len("\n\n## Orchestrator Instructions\n\n"):])
+	}
+
 	// Create template data
 	templateData := WorkflowExecutionOnlyTemplate{
 		StepTitle:               templateVars["StepTitle"],
-		StepDescription:         templateVars["StepDescription"],
+		StepDescription:         fullDescription,
+		BaseDescription:         baseDescription,
+		OrchestratorInstructions: orchestratorInstructions,
 		StepContextDependencies: templateVars["StepContextDependencies"],
 		StepContextOutput:       templateVars["StepContextOutput"],
 		WorkspacePath:           templateVars["WorkspacePath"],
@@ -329,12 +351,13 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 		DecisionReasoning:       templateVars["DecisionReasoning"],
 		PreviousStepsSummary:    templateVars["PreviousStepsSummary"],
 		StepSuccessCriteria:     templateVars["StepSuccessCriteria"],
+		HasSkill:                fmt.Sprintf("%t", templateVars["LearningHistory"] != ""),
 	}
 
 	// Execute the pre-parsed template
 	var result strings.Builder
 	if err := executionOnlyUserTemplate.Execute(&result, templateData); err != nil {
-		return fmt.Sprintf("Error executing execution-only user message template: %v", err)
+		panic(fmt.Sprintf("execution-only user message template execution failed (missing variable?): %v", err))
 	}
 
 	return result.String()

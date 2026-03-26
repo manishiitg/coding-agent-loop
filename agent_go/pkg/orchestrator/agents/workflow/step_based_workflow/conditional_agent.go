@@ -157,7 +157,7 @@ func (hctpca *WorkflowConditionalAgent) conditionalSystemPromptProcessor(templat
 
 	var result strings.Builder
 	if err := conditionalSystemTemplate.Execute(&result, templateData); err != nil {
-		return "Error executing conditional system prompt template: " + err.Error()
+		panic(fmt.Sprintf("conditional system prompt template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -165,7 +165,7 @@ func (hctpca *WorkflowConditionalAgent) conditionalSystemPromptProcessor(templat
 func (hctpca *WorkflowConditionalAgent) conditionalUserMessageProcessor(templateVars map[string]string) string {
 	var result strings.Builder
 	if err := conditionalUserTemplate.Execute(&result, templateVars); err != nil {
-		return "Error executing conditional user message template: " + err.Error()
+		panic(fmt.Sprintf("conditional user message template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -173,7 +173,7 @@ func (hctpca *WorkflowConditionalAgent) conditionalUserMessageProcessor(template
 func (hctpca *WorkflowConditionalAgent) decisionSystemPromptProcessor(templateVars map[string]string) string {
 	var result strings.Builder
 	if err := decisionSystemTemplate.Execute(&result, templateVars); err != nil {
-		return "Error executing decision system prompt template: " + err.Error()
+		panic(fmt.Sprintf("decision system prompt template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -181,7 +181,7 @@ func (hctpca *WorkflowConditionalAgent) decisionSystemPromptProcessor(templateVa
 func (hctpca *WorkflowConditionalAgent) decisionUserMessageProcessor(templateVars map[string]string) string {
 	var result strings.Builder
 	if err := decisionUserTemplate.Execute(&result, templateVars); err != nil {
-		return "Error executing decision user message template: " + err.Error()
+		panic(fmt.Sprintf("decision user message template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -337,7 +337,7 @@ func (hctpca *WorkflowConditionalAgent) EvaluateRouting(ctx context.Context, exe
 func (hctpca *WorkflowConditionalAgent) routingSystemPromptProcessor(templateVars map[string]string) string {
 	var result strings.Builder
 	if err := routingSystemTemplate.Execute(&result, templateVars); err != nil {
-		return "Error executing routing system prompt template: " + err.Error()
+		panic(fmt.Sprintf("routing system prompt template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -345,7 +345,7 @@ func (hctpca *WorkflowConditionalAgent) routingSystemPromptProcessor(templateVar
 func (hctpca *WorkflowConditionalAgent) routingUserMessageProcessor(templateVars map[string]string) string {
 	var result strings.Builder
 	if err := routingUserTemplate.Execute(&result, templateVars); err != nil {
-		return "Error executing routing user message template: " + err.Error()
+		panic(fmt.Sprintf("routing user message template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }

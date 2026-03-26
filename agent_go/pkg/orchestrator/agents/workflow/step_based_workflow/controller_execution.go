@@ -2121,14 +2121,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						if hasLoop(step) {
 							skipReason = "Step is a loop step (only learns on success)"
 							hcpo.GetLogger().Info(fmt.Sprintf("🔄 Step %s is a loop step - skipping failure learning (loop steps only run success learning when condition is met)", stepPath))
-						} else if failureLearningAttempts >= 2 {
-							skipReason = fmt.Sprintf("Failure learning attempts limit reached (%d >= 2)", failureLearningAttempts)
-							hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Failure learning attempts limit reached (%d >= 2) - skipping failure learning analysis for %s", failureLearningAttempts, stepPath))
 						} else {
+							// Check persisted failure learning count from metadata
+							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
+							metadata, _ := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
+							if metadata != nil && metadata.FailureLearningRuns >= 1 {
+								skipReason = fmt.Sprintf("Failure learning already ran (%d >= 1, persisted)", metadata.FailureLearningRuns)
+								hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Failure learning already ran (%d >= 1, persisted) - skipping for %s", metadata.FailureLearningRuns, stepPath))
+							} else if failureLearningAttempts >= 1 {
+								skipReason = fmt.Sprintf("Failure learning already ran this session (%d >= 1)", failureLearningAttempts)
+								hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Failure learning already ran this session (%d >= 1) - skipping for %s", failureLearningAttempts, stepPath))
+							}
+						}
+						if skipReason == "" {
 							failureLearningAttempts++
 							var refinedTaskDescription string
 							learningPathIdentifier := getLearningPathIdentifier(step.GetID(), stepPath)
-							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for %s (attempt %d/2)", stepPath, failureLearningAttempts))
+							hcpo.GetLogger().Info(fmt.Sprintf("🧠 Running failure learning analysis for %s", stepPath))
 							// Populate runtime fields for runFailureLearningPhase
 							stepConfigs, err := hcpo.ReadStepConfigs(ctx)
 							if err != nil {
@@ -2148,6 +2157,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failure learning phase failed for %s: %v", stepPath, learningErr))
 							} else {
 								hcpo.GetLogger().Info(fmt.Sprintf("✅ Failure learning analysis completed for %s", stepPath))
+
+								// Persist failure learning run count in metadata
+								if meta, readErr := hcpo.GetLearningMetadata(ctx, learningPathIdentifier); readErr == nil && meta != nil {
+									meta.FailureLearningRuns++
+									metadataJSON, _ := json.Marshal(meta)
+									learningsBase := hcpo.getLearningsBasePath()
+									metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
+									if writeErr := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); writeErr != nil {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to persist failure learning count: %v", writeErr))
+									}
+								}
 
 								// Update step description for retry
 								if refinedTaskDescription != "" {
@@ -3551,7 +3571,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) readLearningHistory(
 		sort.Strings(fileList)
 
 		formattedLearningHistory = fmt.Sprintf(
-			"📚 **Learning files available** at `%s/` (%d files: %s). Read these files with execute_shell_command before starting — they contain validated workflows, error recovery patterns, and system behaviors from previous runs.",
+			"📚 **Skill files available** at `%s/` (%d files: %s). Read these files with execute_shell_command before starting — they contain validated workflows, error recovery patterns, and code from previous runs.",
 			absLearningsPath, len(learningFiles), strings.Join(fileList, ", "))
 		hcpo.GetLogger().Info(fmt.Sprintf("✅ Found %d learning file(s) from step folder for %s (path reference only)", len(learningFiles), stepPath))
 	} else {

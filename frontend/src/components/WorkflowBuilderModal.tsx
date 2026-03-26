@@ -28,11 +28,15 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
   const [created, setCreated] = useState<CreatedWorkflow | null>(null)
   const [copied, setCopied] = useState(false)
 
-  // Fetch plans on mount
+  // Fetch multi-agent plan folders on mount
   useEffect(() => {
     setIsLoadingPlans(true)
-    agentApi.getPlannerFiles('Plans').then(response => {
-      const planFolders = (response.data || []).filter((f: PlannerFile) => f.type === 'folder' && f.filepath !== 'Plans')
+    agentApi.getPlannerFiles('Chats').then(response => {
+      const planFolders = (response.data || []).filter((f: PlannerFile) => {
+        if (f.type !== 'folder' || f.filepath === 'Chats') return false
+        const children = f.children || []
+        return children.some(child => child.filepath.endsWith('/plan.md') || child.filepath.endsWith('/plan_tracking.md') || child.filepath.endsWith('/.last_used'))
+      })
       setPlans(planFolders)
     }).catch(err => {
       console.error('[WorkflowBuilder] Failed to load plans:', err)
@@ -313,7 +317,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
         <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-secondary">
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium text-foreground">Build Workflow from Plans</span>
+            <span className="text-sm font-medium text-foreground">Build Workflow from Plan Folders</span>
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
             ✕
@@ -353,7 +357,7 @@ export default function WorkflowBuilderModal({ onClose }: WorkflowBuilderModalPr
         <div className="flex-1 overflow-y-auto min-h-0">
           <div className="px-4 py-1.5">
             <span className="text-xs font-medium text-muted-foreground">
-              Select Plans ({selectedPlanIds.size} selected)
+              Select Plan Folders ({selectedPlanIds.size} selected)
             </span>
           </div>
           {isLoadingPlans ? (

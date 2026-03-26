@@ -83,7 +83,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Create root-level symlinks for per-user folders so shell commands can access
-	// Chats/, Plans/, Downloads/ via their logical paths (physical files are under _users/{userID}/)
+	// Chats/ and Downloads/ via their logical paths (physical files are under _users/{userID}/)
 	if err := utils.EnsurePerUserSymlinks(docsDir, utils.GetDefaultUserID()); err != nil {
 		fmt.Printf("Warning: Failed to create per-user symlinks: %v\n", err)
 	} else {
@@ -325,14 +325,14 @@ func syncWithGitHubOnStartup(docsDir, githubToken, githubRepo string) error {
 	}
 
 	// Check if it's effectively empty (only standard folders created by Dockerfile)
-	// Dockerfile creates Downloads, Chats, Plans, Workspace, so we consider dir empty if only these exist
+	// Dockerfile creates Downloads, Chats, Workspace, so we consider dir empty if only these exist
 	if !isEmpty {
 		entries, _ := os.ReadDir(docsDir)
 		isEffectivelyEmpty := true
 		for _, entry := range entries {
 			name := entry.Name()
 			// Ignore these folders and .DS_Store
-			if name != "Downloads" && name != "Chats" && name != "Plans" && name != "data" && name != ".DS_Store" {
+			if name != "Downloads" && name != "Chats" && name != "data" && name != ".DS_Store" {
 				isEffectivelyEmpty = false
 				break
 			}

@@ -320,8 +320,8 @@ func (iso *Isolator) generateMountScript(command string, args []string) string {
 	sb.WriteString(fmt.Sprintf("mount --bind \"%s\" \"%s\"\n\n", baseDir, tempDir))
 
 	// Step 2: Create write path directories in temp (= real filesystem via bind mount)
-	// Both logical paths (e.g., Plans/{planID}) and physical paths
-	// (e.g., _users/default/Plans/{planID}) must exist before tmpfs hides them.
+	// Both logical paths (e.g., Chats/{planID}) and physical paths
+	// (e.g., _users/default/Chats/{planID}) must exist before tmpfs hides them.
 	if len(iso.WritePaths) > 0 {
 		sb.WriteString("# Create write path dirs in original workspace (via temp bind mount)\n")
 		for _, path := range iso.WritePaths {

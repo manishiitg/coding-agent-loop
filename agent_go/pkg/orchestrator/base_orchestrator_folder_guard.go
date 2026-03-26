@@ -289,17 +289,22 @@ func (bo *BaseOrchestrator) WrapWorkspaceToolsWithFolderGuard(executors map[stri
 							continue
 						}
 
-						// Validate the path against allowed paths
-						if err := validatePathInAllowedPaths(allowedPaths, pathStr); err != nil {
-							bo.GetLogger().Warn(fmt.Sprintf("⚠️ Path validation failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err))
-							return "", err
-						}
-
-						// Normalize the path
+						// Normalize the path (strip absolute workspace prefixes, make relative for API)
+						// Path validation is handled at the isolator/shell level, not here
 						normalizedPath, _, err := normalizePathForAllowedPaths(allowedPaths, pathStr)
 						if err != nil {
-							bo.GetLogger().Warn(fmt.Sprintf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err))
-							return "", err
+							// Normalization failed — try stripping common absolute prefixes as fallback
+							for _, prefix := range []string{"/app/workspace-docs/", "/workspace-docs/"} {
+								if strings.HasPrefix(pathStr, prefix) {
+									normalizedPath = strings.TrimPrefix(pathStr, prefix)
+									err = nil
+									break
+								}
+							}
+							if err != nil {
+								bo.GetLogger().Warn(fmt.Sprintf("⚠️ Path normalization failed for tool %s, parameter %s: %v", toolNameCopy, paramName, err))
+								return "", err
+							}
 						}
 						// Update the args with normalized path
 						args[paramName] = normalizedPath

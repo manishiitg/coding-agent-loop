@@ -257,7 +257,7 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 }
 
 // enhanceToolDescriptionForPlanMode augments workspace tool descriptions for multi-agent plan mode.
-// Tells the LLM that its primary write folder is Plans/ (not Chats/).
+// Tells the LLM that its primary write folder is Chats/.
 func enhanceToolDescriptionForPlanMode(toolName, originalDescription string) string {
 	specialTools := map[string]bool{
 		"sync_workspace_to_github":    true,
@@ -281,10 +281,10 @@ func enhanceToolDescriptionForPlanMode(toolName, originalDescription string) str
 	accessInfo.WriteString("\n\n📁 **DIRECTORY ACCESS RESTRICTIONS (MULTI-AGENT MODE):**")
 
 	if writeTools[toolName] {
-		accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can write to 'Plans/' (primary) and 'Chats/' folders. All other folders are read-only.")
-		accessInfo.WriteString("\nSave plan outputs inside the plan folder (e.g. 'Plans/{plan_id}/output.txt').")
+		accessInfo.WriteString("\n\n⚠️ **IMPORTANT:** You can write to 'Chats/' (primary). All other folders are read-only unless explicitly allowed.")
+		accessInfo.WriteString("\nSave plan outputs inside the plan folder (e.g. 'Chats/{plan_id}/output.txt').")
 	} else {
-		accessInfo.WriteString("\n\nYou have READ access to all workspace folders. WRITE access is restricted to 'Plans/' and 'Chats/' folders.")
+		accessInfo.WriteString("\n\nYou have READ access to all workspace folders. WRITE access is restricted to 'Chats/' and any explicitly allowed subfolders.")
 	}
 
 	return originalDescription + accessInfo.String()
@@ -421,7 +421,7 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				// Inject allowed write folders for kernel-level sandboxing
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
 				// Set chat-mode read paths: all standard user folders + shared resources
-				chatReadFolders := []string{"Chats/", "Downloads/", "Plans/", "skills/", "subagents/", "Workflow/"}
+				chatReadFolders := []string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/"}
 				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, chatReadFolders)
 				// Default working directory for chat mode — "." → "Chats"
 				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, "Chats")
@@ -456,8 +456,8 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 }
 
 // wrapExecutorsWithPlanFolderGuard wraps workspace tool executors to restrict writes to a specific plan folder.
-// Like wrapExecutorsWithChatModeFolderGuard but uses the plan folder (e.g. "Plans/{planID}")
-// instead of "Chats/" as the allowed write folder. This ensures sub-agents only write to their assigned plan folder.
+// Like wrapExecutorsWithChatModeFolderGuard but uses the plan folder (e.g. "Chats/{planID}")
+// instead of the whole "Chats/" tree as the allowed write folder. This ensures sub-agents only write to their assigned plan folder.
 func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), planFolder string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	protectedFolders := []string{"_users"}
 
@@ -517,16 +517,16 @@ func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Cont
 				// (skills, subagents) for plan mode so sub-agents can read resources.
 				shellReadFolders := make([]string, 0, len(shellAllowedFolders)+2)
 				shellReadFolders = append(shellReadFolders, shellAllowedFolders...)
-				// For plan mode (planFolder starts with "Plans"), add shared resources.
+				// For chat-backed plan mode (planFolder starts with "Chats"), add shared resources.
 				// For prototype mode (planFolder starts with "Projects/"), the project
 				// folder is self-contained — no extra reads needed.
-				if strings.HasPrefix(planFolder, "Plans") {
+				if strings.HasPrefix(planFolder, "Chats") {
 					shellReadFolders = append(shellReadFolders, "skills/", "subagents/", "Downloads/")
 				}
 				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, shellReadFolders)
 				// Inject the session-level default working directory so execute_shell_command
 				// can substitute it when the LLM passes ".".
-				// planFolder is "Projects/{name}" for prototype mode, "Plans" for plan mode.
+				// planFolder is "Projects/{name}" for prototype mode, "Chats/{name}" for plan mode.
 				// execute_shell_command reads this via DefaultWorkingDirKey (execute_shell_command.go).
 				defaultDir := strings.TrimSuffix(planFolder, "/")
 				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, defaultDir)

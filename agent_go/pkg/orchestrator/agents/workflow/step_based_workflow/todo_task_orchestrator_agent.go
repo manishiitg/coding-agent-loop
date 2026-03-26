@@ -165,9 +165,11 @@ Full tool access, handles any task. Best for ad-hoc work that doesn't match pred
 {{end}}
 
 {{if .LearningHistory}}
-## Learning History
+## Skill
 
 {{.LearningHistory}}
+
+**Note**: When updating the skill file, keep entries short and actionable — record tier configs, failure patterns, and routing decisions as concise bullet points, not detailed narratives.
 {{end}}
 
 {{if eq .SkipExecutionCleanup "true"}}
@@ -335,7 +337,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorSystemPrompt
 
 	var result strings.Builder
 	if err := todoTaskOrchestratorSystemTemplate.Execute(&result, templateData); err != nil {
-		return "Error executing todo task orchestrator system prompt template: " + err.Error()
+		panic(fmt.Sprintf("todo task orchestrator system prompt template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }
@@ -373,7 +375,7 @@ func (agent *WorkflowTodoTaskOrchestratorAgent) todoTaskOrchestratorUserMessageP
 
 	var result strings.Builder
 	if err := todoTaskOrchestratorUserTemplate.Execute(&result, templateData); err != nil {
-		return "Error executing todo task orchestrator user message template: " + err.Error()
+		panic(fmt.Sprintf("todo task orchestrator user message template execution failed (missing variable?): %v", err))
 	}
 	return result.String()
 }

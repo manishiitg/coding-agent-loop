@@ -121,7 +121,7 @@ const ModeCard: React.FC<ModeCardProps> = ({
                       <li>Automatic plan creation and task breakdown</li>
                       <li>Multi-LLM tier support (high/medium/low)</li>
                       <li>Auto tool mode selection per task</li>
-                      <li>Sub-agent tracking in Plans/ folder</li>
+                      <li>Sub-agent tracking in Chats/ folders</li>
                     </ul>
                   </div>
                 )}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 
@@ -65,10 +64,14 @@ func (api *StreamingAPI) startSessionInternal(
 	// Parse the response to get the actual queryID
 	var queryResp QueryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&queryResp); err != nil {
-		log.Printf("[BOT_SESSION] Failed to parse handleQuery response: %v", err)
+		if isScheduledSession(sessionID) {
+			scheduleLogf("[BOT_SESSION] Failed to parse handleQuery response: %v", err)
+		}
 	}
 
-	log.Printf("[BOT_SESSION] Internal session started: sessionID=%s queryID=%s", sessionID, queryResp.QueryID)
+	if isScheduledSession(sessionID) {
+		scheduleLogf("[BOT_SESSION] Internal session started: sessionID=%s queryID=%s", sessionID, queryResp.QueryID)
+	}
 
 	// Now wait for the session to complete using the already-active subscription
 	return waitForEvents(ctx, sub)
@@ -113,7 +116,9 @@ func (api *StreamingAPI) sendFollowUpInternal(
 		return fmt.Errorf("follow-up failed: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
-	log.Printf("[BOT_SESSION] Follow-up injected into session %s", sessionID)
+	if isScheduledSession(sessionID) {
+		scheduleLogf("[BOT_SESSION] Follow-up injected into session %s", sessionID)
+	}
 	return nil
 }
 

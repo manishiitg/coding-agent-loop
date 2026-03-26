@@ -43,6 +43,7 @@ import (
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
+	"mcp-agent-builder-go/agent_go/pkg/browser"
 	"mcp-agent-builder-go/agent_go/pkg/common"
 	"mcp-agent-builder-go/agent_go/pkg/logger"
 	"mcp-agent-builder-go/agent_go/pkg/skills"
@@ -709,6 +710,41 @@ func runServer(cmd *cobra.Command, args []string) {
 		geminiProjectDirIDs:   make(map[string]string),
 	}
 
+	// Kill any orphaned browser processes from a previous run.
+	// On restart, the in-memory SessionTracker is empty but chromium processes
+	// may still be running in the workspace-api container from the previous session.
+	go func() {
+		workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
+		if workspaceAPIURL == "" {
+			workspaceAPIURL = "http://localhost:8081"
+		}
+		client := browser.NewClient(workspaceAPIURL)
+		// Send a kill-all command via workspace-api to clean up any leftover browsers
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, err := client.ExecuteCommand(ctx, []string{"--kill-all"}, &browser.ExecuteOptions{Timeout: 15 * time.Second})
+		if err != nil {
+			// --kill-all may not be supported; fall back to pkill
+			log.Printf("[BROWSER_CLEANUP] --kill-all not supported, trying pkill fallback")
+			killCmd := "pkill -f 'agent-browser' 2>/dev/null; pkill -f chromium 2>/dev/null; echo 'cleanup done'"
+			reqBody := browser.ShellExecuteRequest{Command: killCmd, WorkingDirectory: ".", Timeout: 10}
+			jsonBody, _ := json.Marshal(reqBody)
+			req, _ := http.NewRequestWithContext(ctx, "POST", workspaceAPIURL+"/api/execute", bytes.NewBuffer(jsonBody))
+			if req != nil {
+				req.Header.Set("Content-Type", "application/json")
+				resp, execErr := http.DefaultClient.Do(req)
+				if execErr != nil {
+					log.Printf("[BROWSER_CLEANUP] Startup cleanup failed: %v (browsers may still be running)", execErr)
+				} else {
+					resp.Body.Close()
+					log.Printf("[BROWSER_CLEANUP] Startup cleanup: killed orphaned browser processes in workspace-api")
+				}
+			}
+		} else {
+			log.Printf("[BROWSER_CLEANUP] Startup cleanup: killed orphaned browser processes via --kill-all")
+		}
+	}()
+
 	// Generate API token for code execution mode per-tool endpoints
 	api.apiToken = executor.GenerateAPIToken()
 
@@ -914,6 +950,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/oauth/logout", api.handleOAuthLogout).Methods("POST", "OPTIONS")
 
 	// Observer APIs removed - events are now stored by sessionID, no observers needed
+
+	// Browser session tracking API
+	apiRouter.HandleFunc("/browser/sessions", api.handleGetBrowserSessions).Methods("GET")
 
 	// Active Session API routes (from polling.go)
 	apiRouter.HandleFunc("/sessions/active", api.handleGetActiveSessions).Methods("GET")
@@ -2326,6 +2365,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if req.BrowserMode == "" && workflowBrowserMode != "" {
 					req.BrowserMode = workflowBrowserMode
 				}
+				// Only register agent_browser for headless/CDP when no dedicated browser MCP server
+				// (Playwright/Camofox) is configured. If Playwright or Camofox is present, those
+				// MCP servers handle browser access — don't also inject agent_browser which causes
+				// tool confusion (LLM picks agent-browser instead of Playwright).
+				hasPlaywrightServer := false
+				hasCamofoxServer := false
+				for _, s := range selectedServers {
+					if s == "playwright" {
+						hasPlaywrightServer = true
+					}
+					if s == "camofox" {
+						hasCamofoxServer = true
+					}
+				}
+				if hasPlaywrightServer || hasCamofoxServer {
+					// Playwright/Camofox MCP server is present — override browser mode to match
+					if hasPlaywrightServer {
+						workflowBrowserMode = "playwright"
+					} else {
+						workflowBrowserMode = "stealth"
+					}
+					log.Printf("[WORKFLOW] Playwright/Camofox server detected — skipping agent_browser registration, using mode=%s", workflowBrowserMode)
+				}
+				// Store resolved browser mode on session for context-aware shell blocking
+				if workflowBrowserMode != "" {
+					common.SetSessionBrowserMode(sessionID, workflowBrowserMode)
+				}
 				if workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
 					// Resolve CDP port: prefer request, fall back to preset browser_mode
 					wfCdpPort := getCdpPort(req)
@@ -2973,6 +3039,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.updateSessionStatus(sessionID, "error")
 				// Clean up HTTP session → MCP session tracker on error completion
 				mcpagent.CloseHTTPSession(sessionID)
+				// Kill headless browser processes for this session
+				api.cleanupBrowserSessions(sessionID)
 			} else {
 				log.Printf("[WORKFLOW DEBUG] Workflow execution completed for query %s", queryID)
 				// Workflow completion events are now handled by the workflow orchestrator itself
@@ -3004,6 +3072,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.updateSessionStatus(sessionID, "completed")
 				// Clean up HTTP session → MCP session tracker on successful completion
 				mcpagent.CloseHTTPSession(sessionID)
+				// Kill headless browser processes for this session
+				api.cleanupBrowserSessions(sessionID)
 			}
 		}()
 		return
@@ -5738,12 +5808,40 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	// CloseSession is idempotent, so those defers will be no-ops when they eventually run.
 	log.Printf("[SESSION DEBUG] Closing MCP sessions for stopped session %s", sessionID)
 	mcpagent.CloseHTTPSession(sessionID)
+	// Kill headless browser processes for this session
+	api.cleanupBrowserSessions(sessionID)
 
 	// Note: Conversation history and orchestrator state are preserved to allow resuming the conversation
 	// Use /api/session/clear if you want to clear conversation history
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session stopped (conversation history and orchestrator state preserved)"))
+}
+
+// handleGetBrowserSessions returns the tracked browser sessions with their owning chat session IDs.
+func (api *StreamingAPI) handleGetBrowserSessions(w http.ResponseWriter, r *http.Request) {
+	tracker := browser.GetSessionTracker()
+	sessions := tracker.ActiveSessions()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"sessions": sessions,
+		"count":    len(sessions),
+	})
+}
+
+// cleanupBrowserSessions closes all headless browser processes for a session.
+// Must be called whenever a session ends (stop, clear, workflow completion).
+func (api *StreamingAPI) cleanupBrowserSessions(sessionID string) {
+	tracker := browser.GetSessionTracker()
+	if tracker.CountForChat(sessionID) == 0 {
+		return
+	}
+	workspaceAPIURL := os.Getenv("WORKSPACE_API_URL")
+	if workspaceAPIURL == "" {
+		workspaceAPIURL = "http://localhost:8081"
+	}
+	client := browser.NewClient(workspaceAPIURL)
+	tracker.CloseAllForChat(sessionID, client)
 }
 
 // Add endpoint to clear conversation history for a session
@@ -5788,6 +5886,9 @@ func (api *StreamingAPI) handleClearSession(w http.ResponseWriter, r *http.Reque
 	// Clear Gemini CLI session ID and project dir ID
 	delete(api.geminiSessionIDs, sessionID)
 	delete(api.geminiProjectDirIDs, sessionID)
+
+	// Kill headless browser processes for this session
+	api.cleanupBrowserSessions(sessionID)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Session cleared (conversation history and orchestrator state removed)"))
@@ -9642,7 +9743,29 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				effectiveBrowserMode = "headless" // Legacy preset without browser_mode
 			}
 			// agent-browser tool is used for headless and CDP modes (not playwright/camofox which use MCP servers)
-			if effectiveBrowserMode == "headless" || effectiveBrowserMode == "cdp" {
+			// Skip agent_browser registration if a dedicated browser MCP server is configured
+			wsHasPlaywright := false
+			wsHasCamofox := false
+			for _, s := range cfg.SelectedServers {
+				if s == "playwright" {
+					wsHasPlaywright = true
+				}
+				if s == "camofox" {
+					wsHasCamofox = true
+				}
+			}
+			if wsHasPlaywright || wsHasCamofox {
+				if wsHasPlaywright {
+					effectiveBrowserMode = "playwright"
+				} else {
+					effectiveBrowserMode = "stealth"
+				}
+				log.Printf("[WORKSHOP] Playwright/Camofox server detected — skipping agent_browser registration, using mode=%s", effectiveBrowserMode)
+			}
+			if effectiveBrowserMode != "" {
+				common.SetSessionBrowserMode(sessionID, effectiveBrowserMode)
+			}
+			if (effectiveBrowserMode == "headless" || effectiveBrowserMode == "cdp") {
 				// Resolve CDP port: prefer request, fall back to preset browser_mode, default 9222 for CDP
 				cdpPortForBrowser := getCdpPort(req)
 				if cdpPortForBrowser == 0 && effectiveBrowserMode == "cdp" {

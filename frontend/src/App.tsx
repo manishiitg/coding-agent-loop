@@ -259,7 +259,7 @@ function App() {
       // DOM node count + breakdown of heavy subtrees
       const domNodes = document.querySelectorAll('*').length
       const domBreakdown: Array<{ selector: string; nodes: number }> = []
-      const selectors = ['[class*="chat"]', '[class*="event"]', '[class*="message"]', '[class*="editor"]', '[class*="monaco"]', 'svg', 'pre', 'code']
+      const selectors = ['[class*="chat"]', '[class*="event"]', '[class*="message"]', '[class*="editor"]', '[class*="monaco"]', 'svg', 'pre', 'code', '.react-flow', '.react-flow__node', '.react-flow__edge']
       for (const sel of selectors) {
         try {
           const count = document.querySelectorAll(sel).length
@@ -381,6 +381,31 @@ function App() {
       // Window event listeners
       console.log(`\nWindow event listeners: ${eventListenerCount}`)
 
+      // React Flow specific diagnostics
+      const rfNodes = document.querySelectorAll('.react-flow__node').length
+      const rfEdges = document.querySelectorAll('.react-flow__edge').length
+      const rfContainers = document.querySelectorAll('.react-flow').length
+      if (rfContainers > 0) {
+        console.log(`%c \nReact Flow: ${rfContainers} container(s), ${rfNodes} nodes, ${rfEdges} edges`, 'color: #9C27B0; font-weight: bold')
+        if (rfContainers > 1) {
+          console.log(`%c  ⚠️ Multiple React Flow containers detected — possible leak!`, 'color: red')
+        }
+      }
+
+      // Workflow store state
+      try {
+        const wfStore = (window as any).__ZUSTAND_DEVTOOLS__?.['workflow-store'] || null
+        if (!wfStore) {
+          // Try direct import path
+          const presetStates = JSON.parse(localStorage.getItem('workflow-store') || '{}')?.state?._presetStates
+          if (presetStates) {
+            const presetCount = Object.keys(presetStates).length
+            const presetSizeKB = Math.round(JSON.stringify(presetStates).length / 1024)
+            console.log(`\nWorkflow preset states cached: ${presetCount} (${presetSizeKB} KB in localStorage)`)
+          }
+        }
+      } catch { /* ignore */ }
+
       // Summary warnings
       const warnings: string[] = []
       if (memInfo && memInfo.usedHeap > memInfo.limit * 0.8) warnings.push(`Heap at ${Math.round((memInfo.usedHeap / memInfo.limit) * 100)}% of limit!`)
@@ -391,6 +416,8 @@ function App() {
       if (totalStreamingBytes > 5 * 1024 * 1024) warnings.push(`${Math.round(totalStreamingBytes / 1024 / 1024)} MB in streaming text buffers`)
       if (totalLSBytes > 5 * 1024 * 1024) warnings.push(`localStorage is ${Math.round(totalLSBytes / 1024 / 1024)} MB — may cause slow persistence`)
       if (typeof avgFPS === 'number' && avgFPS < 30) warnings.push(`FPS avg=${avgFPS} — UI is janky`)
+      if (rfContainers > 1) warnings.push(`${rfContainers} React Flow containers — possible mount leak`)
+      if (rfNodes > 200) warnings.push(`${rfNodes} React Flow nodes in DOM — heavy canvas`)
 
       if (warnings.length > 0) {
         console.log('%c \n⚠️  WARNINGS:', 'color: red; font-weight: bold; font-size: 13px')

@@ -80,6 +80,19 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const { setViewport, getNode, updateNode } = useReactFlow()
   const hasInitializedView = React.useRef(false)
+
+  // --- Performance diagnostics for workflow switching ---
+  const renderCountRef = useRef(0)
+  const lastPresetRef = useRef(presetQueryId)
+  renderCountRef.current++
+  if (lastPresetRef.current !== presetQueryId) {
+    console.log(`%c[WorkflowCanvas] Preset switched: ${lastPresetRef.current?.slice(0,8)} → ${presetQueryId?.slice(0,8)}`, 'color: orange; font-weight: bold')
+    console.time(`[WorkflowCanvas] preset-switch-${presetQueryId?.slice(0,8)}`)
+    lastPresetRef.current = presetQueryId
+  }
+  if (renderCountRef.current % 50 === 0) {
+    console.log(`%c[WorkflowCanvas] render #${renderCountRef.current} (preset: ${presetQueryId?.slice(0,8)})`, 'color: gray')
+  }
   // Store step ID to focus on after nodes update (from backend plan changes)
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
   // Store current viewport state (x, y, zoom) to preserve it during refresh
@@ -1232,6 +1245,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // CRITICAL: Force header nodes to correct positions after nodes update
   // Ensure header nodes maintain correct positions (safety net in case something tries to override them)
   React.useEffect(() => {
+    if (toolbarOnly) return // Skip when canvas is hidden
     if (nodes.length === 0 || initialNodes.length === 0) return
     
     const execNode = initialNodes.find(n => n.id === 'execution-settings')
@@ -1270,13 +1284,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Rebuild node groups when nodes change
   React.useEffect(() => {
+    if (toolbarOnly) return // Skip when canvas is hidden
     if (nodes.length > 0) {
       buildNodeGroups(nodes)
     }
-  }, [nodes, buildNodeGroups])
+  }, [nodes, buildNodeGroups, toolbarOnly])
 
   // Update nodes when plan changes (only if nodes actually changed)
   React.useEffect(() => {
+    // Skip node/edge updates when canvas is hidden (toolbarOnly) — no React Flow to update
+    if (toolbarOnly) return
+
     // Compare by reference first (fast path)
     if (prevNodesRef.current === initialNodes && prevEdgesRef.current === initialEdges) {
       return // No change
@@ -1346,12 +1364,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     
     if (nodesChanged) {
       // Nodes changed - will apply positions from usePlanToFlow
-      
+      console.log(`%c[WorkflowCanvas] setNodes: ${initialNodes.length} nodes (preset: ${presetQueryId?.slice(0,8)})`, 'color: #4CAF50')
+      console.time(`[WorkflowCanvas] setNodes-${presetQueryId?.slice(0,8)}`)
+
       // Check if we have a selected node - if so, preserve focus on it instead of resetting to start
       const currentSelectedId = selectedNodeIdRef.current
-      const hasSelectedNode = currentSelectedId !== null && 
+      const hasSelectedNode = currentSelectedId !== null &&
         initialNodes.some(n => n.id === currentSelectedId)
-      
+
       setNodes(initialNodes)
 
       // Check if layout direction changed - if so, skip position restoration
@@ -1655,15 +1675,20 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       }
     }
     
+    if (nodesChanged) {
+      console.timeEnd(`[WorkflowCanvas] setNodes-${presetQueryId?.slice(0,8)}`)
+    }
+
     if (edgesChanged) {
-      console.log('[WorkflowPlanUpdate] Edges changed, updating state', {
-        prevCount: prevEdgesRef.current.length,
-        newCount: initialEdges.length
-      })
+      console.log(`%c[WorkflowCanvas] setEdges: ${initialEdges.length} edges (preset: ${presetQueryId?.slice(0,8)})`, 'color: #4CAF50')
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
     }
-  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, setLayoutDirection, updateNode])
+
+    if (nodesChanged || edgesChanged) {
+      console.timeEnd(`[WorkflowCanvas] preset-switch-${presetQueryId?.slice(0,8)}`)
+    }
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, setLayoutDirection, updateNode, presetQueryId])
 
   // Store selected node ID in ref to track which node is selected
   const selectedNodeIdRef = React.useRef<string | null>(null)
@@ -1751,6 +1776,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Set initial view to show start node (left side) on first load, or restore saved viewport
   React.useEffect(() => {
+    if (toolbarOnly) return // Skip when canvas is hidden
     if (!hasInitializedView.current && nodes.length > 0) {
       // If we have a saved viewport, use it instead of positioning on start node
       if (savedViewportRef.current) {
@@ -1812,6 +1838,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Update node status based on maps from events (only when stepStatusMap actually changes)
   React.useEffect(() => {
+    if (toolbarOnly) return // Skip when canvas is hidden
+
     // Check if stepStatusMap actually changed by comparing entries
     const hasChanged = stepStatusMap.size !== prevStepStatusMapRef.current.size ||
       Array.from(stepStatusMap.entries()).some(([stepId, status]) => 
@@ -1888,6 +1916,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Update node status based on completedStepIndices from stepProgress (loaded from API)
   // Note: step_progress_updated events no longer include progress details, but can trigger progress reload
   React.useEffect(() => {
+    if (toolbarOnly) return // Skip when canvas is hidden
+
     const lastCompletedStepId = stepProgress?.last_completed_step_id
 
     if (completedStepIndices.length === 0) return

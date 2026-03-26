@@ -12,8 +12,16 @@ interface BrowserProcess {
   type: string
 }
 
+interface BrowserSessionTracking {
+  browser_session: string
+  chat_session: string
+  age: string
+  idle: string
+}
+
 export default function BrowserProcesses() {
   const [processes, setProcesses] = useState<BrowserProcess[]>([])
+  const [tracking, setTracking] = useState<BrowserSessionTracking[]>([])
   const [loading, setLoading] = useState(false)
   const [cleaning, setCleaning] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
@@ -23,12 +31,17 @@ export default function BrowserProcesses() {
     try {
       setLoading(true)
       setError(null)
-      const response = await agentApi.getBrowserProcesses()
-      if (response.success) {
-        setProcesses(response.processes || [])
+      // Fetch both process info (from workspace-api) and session tracking (from agent_go) in parallel
+      const [procResponse, trackResponse] = await Promise.all([
+        agentApi.getBrowserProcesses().catch(() => ({ success: false, processes: [] as BrowserProcess[], count: 0 })),
+        agentApi.getBrowserSessionTracking().catch(() => ({ sessions: [] as BrowserSessionTracking[], count: 0 })),
+      ])
+      if (procResponse.success) {
+        setProcesses(procResponse.processes || [])
       } else {
         setError('Failed to fetch browser processes')
       }
+      setTracking(trackResponse.sessions || [])
     } catch (err) {
       console.error('Failed to fetch browser processes:', err)
       setError(err instanceof Error ? err.message : 'Failed to fetch')
@@ -89,7 +102,14 @@ export default function BrowserProcesses() {
     return acc
   }, {})
 
+  // Build a lookup from browser session name → tracking info
+  const trackingBySession = new Map<string, BrowserSessionTracking>()
+  for (const t of tracking) {
+    trackingBySession.set(t.browser_session, t)
+  }
+
   const sessionCount = Object.keys(sessions).length
+  const trackedCount = tracking.length
   const totalCpu = processes.reduce((sum, p) => sum + p.cpu, 0)
   const totalMem = processes.reduce((sum, p) => sum + p.mem_mb, 0)
 
@@ -157,7 +177,7 @@ export default function BrowserProcesses() {
                 <div className="mb-3 p-2 bg-gray-50 dark:bg-gray-700/50 rounded text-xs space-y-1">
                   <div className="flex justify-between">
                     <span className="text-gray-600 dark:text-gray-400">Sessions:</span>
-                    <span className="font-medium">{sessionCount}</span>
+                    <span className="font-medium">{sessionCount} process{sessionCount !== 1 ? ' groups' : ' group'}{trackedCount > 0 ? ` (${trackedCount} tracked)` : ''}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600 dark:text-gray-400">Processes:</span>
@@ -183,6 +203,11 @@ export default function BrowserProcesses() {
                     const mainProc = procs.find(p => p.type === 'main')
                     const startedAt = mainProc?.started_at || procs[0]?.started_at || '?'
 
+                    // Try to match this process group to a tracked session by user_data_dir
+                    // The user_data_dir often contains the session name
+                    const sessionName = sessionId.split('/').pop() || sessionId
+                    const trackInfo = trackingBySession.get(sessionName)
+
                     return (
                       <div
                         key={sessionId}
@@ -191,11 +216,21 @@ export default function BrowserProcesses() {
                         <div className="flex justify-between items-start">
                           <div className="flex-1 min-w-0">
                             <div className="font-mono text-gray-700 dark:text-gray-300 truncate" title={sessionId}>
-                              {sessionId.length > 8 ? sessionId.slice(0, 8) + '...' : sessionId}
+                              {sessionName.length > 20 ? sessionName.slice(0, 20) + '...' : sessionName}
                             </div>
                             <div className="text-gray-500 mt-0.5">
                               {procs.length} proc{procs.length > 1 ? 's' : ''} | CPU: {sessionCpu.toFixed(1)}% | {sessionMem.toFixed(0)} MB | started: {startedAt}
                             </div>
+                            {trackInfo && (
+                              <div className="text-blue-500 dark:text-blue-400 mt-0.5">
+                                chat: {trackInfo.chat_session.slice(0, 8)}... | age: {trackInfo.age} | idle: {trackInfo.idle}
+                              </div>
+                            )}
+                            {!trackInfo && (
+                              <div className="text-orange-500 dark:text-orange-400 mt-0.5">
+                                orphan (not tracked by any session)
+                              </div>
+                            )}
                           </div>
                           <button
                             onClick={() => {
@@ -212,6 +247,18 @@ export default function BrowserProcesses() {
                     )
                   })}
                 </div>
+
+                {/* Tracked sessions without running processes (stale tracker entries) */}
+                {tracking.filter(t => !Object.keys(sessions).some(s => s.split('/').pop() === t.browser_session)).length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400 mb-1">Tracked but no process:</div>
+                    {tracking.filter(t => !Object.keys(sessions).some(s => s.split('/').pop() === t.browser_session)).map(t => (
+                      <div key={t.browser_session} className="text-[10px] text-gray-500 pl-2">
+                        {t.browser_session} → chat: {t.chat_session.slice(0, 8)}... (age: {t.age})
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Cleanup all button */}
                 <button

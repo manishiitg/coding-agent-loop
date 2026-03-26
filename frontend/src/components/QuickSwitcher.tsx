@@ -179,6 +179,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   // no tool calls, no canvas updates) and the new workflow's tabs to 'detailed'.
   const handleSelect = useCallback(async (item: QuickSwitcherItem, minimize = false) => {
     if (item.type === 'workflow') {
+      console.log(`%c[QuickSwitcher] Switching to workflow: ${item.label?.slice(0,30)} (${item.id?.slice(0,8)})`, 'color: #FF9800; font-weight: bold')
+      console.time('[QuickSwitcher] workflow-switch-total')
       const chatStore = useChatStore.getState()
       const presetStore = useGlobalPresetStore.getState()
 
@@ -202,6 +204,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       }
 
       presetStore.applyPreset(item.preset, 'workflow')
+      console.timeEnd('[QuickSwitcher] workflow-switch-total')
     } else {
       // Restore chat session
       const tabId = await restoreSession(item.session.session_id, {

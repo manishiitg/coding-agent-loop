@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -206,6 +207,39 @@ func (t *SessionTracker) RemoveAllForChat(chatSessionID string) []string {
 			len(removed), chatSessionID, removed, len(t.sessions))
 	}
 	return removed
+}
+
+// CloseAllForChat closes all browser processes for a given chat/workflow session
+// and removes them from the tracker. This should be called when a session ends
+// (workflow completion, stop, or clear) to prevent chromium process accumulation.
+func (t *SessionTracker) CloseAllForChat(chatSessionID string, client *Client) {
+	sessions := t.SessionsForChat(chatSessionID)
+	if len(sessions) == 0 {
+		return
+	}
+
+	log.Printf("[BROWSER_CLEANUP] Closing %d browser session(s) for chat %q: %v", len(sessions), chatSessionID, sessions)
+	for _, session := range sessions {
+		if client != nil {
+			closeArgs := []string{
+				"--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+				"--args", "--disable-blink-features=AutomationControlled",
+				"--session", session, "close", "--json",
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_, err := client.ExecuteCommand(ctx, closeArgs, &ExecuteOptions{Timeout: 10 * time.Second})
+			cancel()
+			if err != nil {
+				log.Printf("[BROWSER_CLEANUP] Failed to close session %q: %v (will remove from tracker anyway)", session, err)
+			} else {
+				log.Printf("[BROWSER_CLEANUP] Closed browser session %q", session)
+			}
+		}
+	}
+
+	// Remove all from tracker
+	removed := t.RemoveAllForChat(chatSessionID)
+	log.Printf("[BROWSER_CLEANUP] Cleanup complete for chat %q: removed %d session(s) from tracker", chatSessionID, len(removed))
 }
 
 // Clear removes all tracked sessions

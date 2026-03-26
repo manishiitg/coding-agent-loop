@@ -850,7 +850,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     // Check if preset actually changed (not just deps like selectedRunFolder/stepProgress)
     if (previousPresetIdRef.current !== activePresetId && activePresetId) {
       // Update ref immediately so dep-only re-fires don't re-enter this block
+      const oldPreset = previousPresetIdRef.current
       previousPresetIdRef.current = activePresetId
+
+      console.log(`%c[WorkflowLayout] Preset changed: ${oldPreset?.slice(0,8)} → ${activePresetId?.slice(0,8)}`, 'color: #FF9800; font-weight: bold')
+      console.time(`[WorkflowLayout] preset-switch-effect-${activePresetId?.slice(0,8)}`)
 
       const chatStore = useChatStore.getState()
       const chatTabs = chatStore.chatTabs
@@ -870,9 +874,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         .sort((a, b) => b.createdAt - a.createdAt)
 
       if (newPresetTabs.length > 0) {
+        console.log(`[WorkflowLayout] Switching to tab: ${newPresetTabs[0].tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset)`)
         chatStore.switchTab(newPresetTabs[0].tabId)
         setShowChatArea(true)
       } else {
+        console.log(`[WorkflowLayout] No tabs for new preset, clearing activeTabId`)
         // Clear activeTabId so the old preset's tab events don't bleed into the new preset's view
         useChatStore.setState({ activeTabId: null })
         // Respect restored per-preset showChatArea — don't force-close if it was open
@@ -881,6 +887,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           setShowChatArea(false)
         }
       }
+      console.timeEnd(`[WorkflowLayout] preset-switch-effect-${activePresetId?.slice(0,8)}`)
     } else {
       // Update the ref for non-preset-change re-fires (dep changes only)
       previousPresetIdRef.current = activePresetId
@@ -1031,8 +1038,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     <div className={`flex flex-col h-full ${className}`}>
       {/* Main Content */}
       <div className="flex-1 flex min-h-0 relative">
-        {/* Canvas - main area, unmounted when chat is expanded to avoid rendering 1000+ SVG nodes.
-            When chat is expanded, canvas is hidden but toolbar still shows above the chat panel. */}
+        {/* Canvas - main area. When chat is expanded, WorkflowCanvas renders toolbar only
+            and skips expensive hooks (plan loading, node/edge computation, layout, etc.). */}
         <div className={`${showChatArea && chatAreaExpanded ? 'w-full' : 'flex-1 min-w-0'} transition-all duration-300 ${showChatArea && !chatAreaExpanded ? 'w-1/2' : ''}`}>
           <WorkflowCanvas
             ref={canvasRef}

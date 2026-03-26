@@ -2202,6 +2202,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
             return
           }
 
+          console.log(`%c[WorkflowStore] switchToPreset: ${oldPresetId?.slice(0,8)} → ${presetId?.slice(0,8)}`, 'color: #2196F3; font-weight: bold')
+          console.time(`[WorkflowStore] switchToPreset-${presetId?.slice(0,8)}`)
+
           // Save current flat state into the old preset's slot before switching
           // This preserves all execution state (progress, groups, phase, etc.) so it's
           // restored when the user switches back to this workflow.
@@ -2272,6 +2275,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               console.error('[WorkflowStore] Failed to clear group localStorage on preset switch:', error)
             }
           }
+          console.timeEnd(`[WorkflowStore] switchToPreset-${presetId?.slice(0,8)}`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to switch preset:', error)
         }

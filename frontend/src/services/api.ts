@@ -420,6 +420,20 @@ export const agentApi = {
     return response.data;
   },
 
+  // Get tracked browser sessions from agent_go (includes chat session ID, age, idle time)
+  getBrowserSessionTracking: async (): Promise<{
+    sessions: Array<{
+      browser_session: string;
+      chat_session: string;
+      age: string;
+      idle: string;
+    }>;
+    count: number;
+  }> => {
+    const response = await api.get('/api/browser/sessions', { timeout: 5000 });
+    return response.data;
+  },
+
   cleanupBrowserProcesses: async (pids?: number[]): Promise<{
     success: boolean;
     killed: number;

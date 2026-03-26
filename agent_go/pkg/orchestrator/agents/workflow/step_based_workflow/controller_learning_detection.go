@@ -24,7 +24,7 @@ type LearningMetadata struct {
 	StepHash            string                  `json:"step_hash,omitempty"`             // SHA256 of step definition
 	LearningContentHash string                  `json:"learning_content_hash,omitempty"` // SHA256 of SKILL.md contents — if changed, force exploration mode
 	TotalIterations     int                     `json:"total_iterations"`
-	SuccessfulRunsSimple  int                    `json:"successful_runs_simple"`  // Count of successful runs (used for auto-lock threshold)
+	SuccessfulRuns        int                    `json:"successful_runs"`         // Count of successful runs (auto-locks after 3)
 	FailureLearningRuns   int                    `json:"failure_learning_runs"`   // Count of failure learning runs (persisted across iterations)
 	LastTurnCount       int                     `json:"last_turn_count"`        // Last recorded TurnCount
 	LastExecutionLLM    string                  `json:"last_execution_llm,omitempty"`
@@ -148,12 +148,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 
 	// Increment successful run counter on successful validation
 	if validationPassed && turnCount > 0 {
-		metadata.SuccessfulRunsSimple++
+		metadata.SuccessfulRuns++
 		// Reset failure learning counter on success — future failures can learn again
 		metadata.FailureLearningRuns = 0
 		// Sync successful run count to step_config.json so it's visible alongside optimized flag
 		if step != nil {
-			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRunsSimple)
+			hcpo.syncSuccessfulRunsToStepConfig(ctx, step.GetID(), metadata.SuccessfulRuns)
 		}
 	}
 
@@ -177,7 +177,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) updateLearningMetadataWithTurnCount(
 	shouldAutoLock := false
 	var autoLockReason string
 
-	totalSuccessfulRuns := metadata.SuccessfulRunsSimple
+	totalSuccessfulRuns := metadata.SuccessfulRuns
 	threshold := 3
 
 	if totalSuccessfulRuns >= threshold {
@@ -246,6 +246,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) autoLockStepLearningsInConfig(
 	// Ensure AgentConfigs exists
 	if stepConfig.AgentConfigs == nil {
 		stepConfig.AgentConfigs = &AgentConfigs{}
+	}
+
+	// Validate prerequisites before auto-locking and marking optimized
+	// 1. Check learnings exist
+	learningsPath := getLearningFolderPathByStepID("", stepID, "", hcpo.isEvaluationMode)
+	learningFiles, _ := hcpo.readStepLearningFiles(ctx, learningsPath)
+	if len(learningFiles) == 0 {
+		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skipping auto-lock for step %s: no learning files found in %s", stepID, learningsPath))
+		return nil
+	}
+
+	// 2. Check pre-validation schema exists in plan
+	if hcpo.approvedPlan != nil {
+		if foundStep := hcpo.findStepInPlan(hcpo.approvedPlan.Steps, stepID); foundStep != nil {
+			schema := foundStep.GetValidationSchema()
+			if schema == nil || len(schema.Files) == 0 {
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Skipping auto-lock for step %s: no pre-validation schema defined in plan", stepID))
+				return nil
+			}
+		}
+	}
+
+	// 3. Log suggestion if tool search or code execution mode is active but no pre-discovered tools set
+	isToolSearch := stepConfig.AgentConfigs.UseToolSearchMode != nil && *stepConfig.AgentConfigs.UseToolSearchMode
+	isCodeExec := stepConfig.AgentConfigs.UseCodeExecutionMode != nil && *stepConfig.AgentConfigs.UseCodeExecutionMode
+	if (isToolSearch || isCodeExec) && len(stepConfig.AgentConfigs.PreDiscoveredTools) == 0 {
+		hcpo.GetLogger().Info(fmt.Sprintf("ℹ️ Step %s auto-locked without pre_discovered_tools — consider adding them for efficiency", stepID))
 	}
 
 	// Set LockLearnings = true AND Optimized = true together

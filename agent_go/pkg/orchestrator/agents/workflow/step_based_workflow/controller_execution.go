@@ -1176,9 +1176,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			// } else {
 			// 	keepLearningFull = false
 			// 	if metadata != nil {
-			// 		if metadata.SuccessfulRunsSimple >= 2 {
+			// 		if metadata.SuccessfulRuns >= 2 {
 			// 			keepLearningFull = true
-			// 			keepLearningFullSource = fmt.Sprintf("dynamic (threshold met: %d successful runs)", metadata.SuccessfulRunsSimple)
+			// 			keepLearningFullSource = fmt.Sprintf("dynamic (threshold met: %d successful runs)", metadata.SuccessfulRuns)
 			// 		} else {
 			// 			keepLearningFullSource = "dynamic (exploration phase)"
 			// 		}

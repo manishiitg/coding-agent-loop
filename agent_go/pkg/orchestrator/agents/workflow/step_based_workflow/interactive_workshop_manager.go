@@ -472,6 +472,15 @@ func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 	return list
 }
 
+// WorkshopExecutionNotifier is called when workshop step/background executions start and complete.
+// Implemented by the server layer to register executions in bgAgentRegistry so that
+// HasRunningAgents() returns true and the frontend keeps polling for events.
+type WorkshopExecutionNotifier interface {
+	OnExecutionStart(execID, name string)
+	OnExecutionComplete(execID, name, result string, err error)
+	OnExecutionTerminated(execID, name string) // explicit cancellation via stop_step/stop_all
+}
+
 // ============================================================================
 // InteractiveWorkshopManager
 // ============================================================================
@@ -490,6 +499,7 @@ type InteractiveWorkshopManager struct {
 	schedulerFuncs       *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
 	skillFuncs           *SkillCallbacks                             // skill import/delete callbacks from server.go
 	listAvailableSecrets func(ctx context.Context) ([]string, error) // list all available secret names
+	executionNotifier    WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
 }
 
 // refreshVariablesManifest reloads the variables manifest from file into the controller.
@@ -821,37 +831,41 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
 
-**Optimization workflow for each step:**
-1. **Run the step** — execute_step(step_id, skip_learning=false) so the step learns from its execution. Wait for auto-notification.
-2. **Review tool usage** — When the step completes, check the execution result:
+**IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next. This gives the user control over the order and lets them review each step's optimization before moving on.
+
+**Optimization workflow (one step at a time):**
+1. **Ask which step** — If the user hasn't specified a step, show the unoptimized steps list and ask which one to optimize next.
+2. **Run the step** — execute_step(step_id, skip_learning=false) so the step learns from its execution. Wait for auto-notification.
+3. **Review tool usage** — When the step completes, check the execution result:
    - How many tool calls did it make? Are there unnecessary or redundant calls?
    - Did it search for tools that should already be configured? (wasted turns)
    - Did it call the wrong server/tool names? (stale learnings)
    - Could the same result be achieved with fewer tool calls?
-3. **Review and fix learnings** — Read learnings: cat learnings/{step-id}/SKILL.md
+4. **Review and fix learnings** — Read learnings: cat learnings/{step-id}/SKILL.md
    - Do they reference the correct server/tool names matching the step config?
    - Are they guiding the agent to use the minimum number of tool calls?
    - Are they specific enough to prevent exploration/guessing?
    - Fix with diff_patch_workspace_file. Lock after editing: update_step_config(step_id, lock_learnings=true)
-4. **Review and fix description** — Is the step description precise enough?
+5. **Review and fix description** — Is the step description precise enough?
    - Does it tell the agent exactly WHAT to do and HOW?
    - Could the agent misinterpret it and waste turns exploring?
    - Update via plan modification tools if needed.
-5. **Ensure validation schema exists** — Check if the step has a validation_schema. If not, add one with update_validation_schema.
-6. **Re-run and verify** — execute_step(step_id) again. Check that:
+6. **Ensure validation schema exists** — Check if the step has a validation_schema. If not, add one with update_validation_schema.
+7. **Re-run and verify** — execute_step(step_id) again. Check that:
    - No wasted tool calls (minimum necessary calls only)
    - Learnings guided the agent correctly
    - Output passes validation
-7. **Mark optimized** — When the step has **at least 3 successful runs** (check successful_runs in step_config) and runs cleanly: update_step_config(step_id, optimized=true)
+8. **Mark optimized** — When the step has **at least 3 successful runs** (check successful_runs in step_config) and runs cleanly: update_step_config(step_id, optimized=true)
    - Setting optimized=true also locks learnings automatically (they always move together)
    - **Cost impact**: optimized steps automatically use **lower-cost LLM tiers** at runtime for execution agents — execution agents drop to Tier 3 (Low). Todo-task orchestrators still stay on Tier 1 (High) unless explicitly overridden.
    - The system auto-sets optimized=true after 3 successful validations, but you can also set it manually after verifying quality
    - If an optimized step starts failing later: update_step_config(step_id, optimized=false) — reverts to higher tiers and unlocks learnings for rework
+9. **Report and ask** — Tell the user the step is optimized and ask which step to work on next.
 
 **For todo_task steps (sub-agent steps):**
 Todo task steps contain inner sub-agents (routes). Optimize each sub-agent individually BEFORE optimizing the parent:
 1. **Run each sub-agent separately** — execute_step(sub_agent_step_id) to test it in isolation
-2. **Optimize each sub-agent** — follow steps 2-7 above for each sub-agent (review tools, fix learnings, fix description, verify)
+2. **Optimize each sub-agent** — follow the workflow above for each sub-agent one at a time
 3. **Mark each sub-agent optimized** independently
 4. **Then optimize the parent todo_task** — ensure the orchestrator description has clear instructions for routing to sub-agents. The orchestrator should NOT duplicate sub-agent logic — it should just dispatch tasks to the right route. Do NOT modify tasks.md directly — tasks.md is auto-generated by the orchestrator agent at runtime. Only update the step description and learnings.
 5. **Optimize tier selection** — After running the full todo_task, review optimize_step output for tier analysis. Add a TIER RECOMMENDATIONS section to the orchestration SKILL.md with per-route tier assignments (1=High for complex, 2=Medium for routine, 3=Low for simple). The orchestrator reads this at runtime to pick the right LLM tier for each sub-agent.
@@ -1412,20 +1426,24 @@ You are optimizing a workflow — making each step reliable and efficient. The w
 {{if .UnoptimizedSteps}}
 The following steps are NOT yet optimized: **{{.UnoptimizedSteps}}**
 
-For each unoptimized step, follow this workflow:
-1. **Run the step** — execute_step(step_id) to get a fresh execution
-2. **Review execution quality** — check for wasted tool calls, wrong server names, unnecessary exploration
-3. **Review learnings** — read learnings/{step-id}/SKILL.md and check:
+**IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next.
+
+Workflow for the current step:
+1. **Ask which step** — If the user hasn't specified, show unoptimized steps and ask which one to optimize next.
+2. **Run the step** — execute_step(step_id) to get a fresh execution
+3. **Review execution quality** — check for wasted tool calls, wrong server names, unnecessary exploration
+4. **Review learnings** — read learnings/{step-id}/SKILL.md and check:
    - Do they reference correct server/tool names matching the step config?
    - Are they specific and actionable (not vague)?
    - Do they contradict the step description?
-4. **Fix issues** — edit learnings with diff_patch_workspace_file, update step descriptions, add/fix validation schemas
-5. **Re-run if needed** — verify fixes produce clean execution with no wasted turns
-6. **Mark optimized** — only when ALL criteria are met:
+5. **Fix issues** — edit learnings with diff_patch_workspace_file, update step descriptions, add/fix validation schemas
+6. **Re-run if needed** — verify fixes produce clean execution with no wasted turns
+7. **Mark optimized** — only when ALL criteria are met:
    - Learnings exist with correct tool/server references
    - Pre-validation schema is defined
    - Successful execution with no wasted tool calls
    - Then: update_step_config(step_id, optimized=true)
+8. **Report and ask** — Tell the user the step is optimized and ask which step to work on next.
 {{else}}
 All steps are optimized! Consider switching to the **Human In The Loop** phase for execution-only mode.
 {{end}}
@@ -1433,7 +1451,7 @@ All steps are optimized! Consider switching to the **Human In The Loop** phase f
 ## Auto-Notification Behavior
 When a step completes:
 - **Success (not yet optimized)**: Call optimize_step(step_id) to analyze, then review and apply fixes before marking optimized.
-- **Success (already optimized)**: Report result and move to next unoptimized step.
+- **Success (already optimized)**: Report result and ask the user what to do next.
 - **Failed**: Reset optimized flag (update_step_config(step_id, optimized=false)), investigate the failure, fix root cause, and re-run.
 
 ## WORKSPACE CONTEXT
@@ -1935,6 +1953,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 
+				// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+				if iwm.executionNotifier != nil {
+					iwm.executionNotifier.OnExecutionStart(execID, stepDisplayName)
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
@@ -2028,6 +2051,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						CorrelationID: agentSessionID,
 					})
 				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, stepDisplayName, result, err)
+				}
 			}()
 
 			groupInfo := ""
@@ -2118,6 +2147,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, name)
+			}
+
 			go func() {
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
@@ -2186,6 +2220,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
+				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, name, result, err)
 				}
 			}()
 
@@ -2564,6 +2604,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			exec.Status = WorkshopStepCancelled
 			exec.mu.Unlock()
 
+			// Notify server layer so bgAgentRegistry marks this as terminated and frontend updates
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionTerminated(execID, exec.StepID)
+			}
+
 			logger.Info(fmt.Sprintf("🛑 Workshop: step %q (execution_id=%q) cancelled", exec.StepID, execID))
 			return fmt.Sprintf("Step %q (execution_id=%q) has been cancelled.", exec.StepID, execID), nil
 		},
@@ -2584,6 +2629,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			cancelledIDs := iwm.stepRegistry.CancelAll()
 			if len(cancelledIDs) == 0 {
 				return "No running executions found to cancel.", nil
+			}
+			// Notify server layer for each cancelled execution
+			if iwm.executionNotifier != nil {
+				for _, id := range cancelledIDs {
+					exec := iwm.stepRegistry.Get(id)
+					name := id
+					if exec != nil {
+						name = exec.StepID
+					}
+					iwm.executionNotifier.OnExecutionTerminated(id, name)
+				}
 			}
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("Cancelled %d running execution(s):\n", len(cancelledIDs)))
@@ -3985,6 +4041,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, fmt.Sprintf("Learning: %s", resolvedID))
+			}
+
 			go func() {
 				// Resolve step title for display
 				learningDisplayName := resolvedID
@@ -4037,6 +4098,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data:          endEvent,
 							CorrelationID: agentSessionID,
 						})
+					}
+					if iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), "", createErr)
 					}
 					return
 				}
@@ -4113,6 +4177,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
+				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, execErr)
 				}
 			}()
 
@@ -4221,6 +4290,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, fmt.Sprintf("Optimize: %s", stepID))
+			}
+
 			go func() {
 				// Resolve step title for display
 				debugDisplayName := stepID
@@ -4291,6 +4365,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
+				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, err)
 				}
 			}()
 
@@ -5988,6 +6067,7 @@ Produce your report in this exact markdown structure:
 - LLM tier: is the current model appropriate for this step's complexity?
 - Execution mode: any changes needed?
 - Learning config: should learning be disabled, locked, or detail level changed?
+- **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise and slow down execution. If it WAS used, confirm it's needed and check whether the interaction could be automated instead.
 
 ### Plan Recommendations
 - Description improvements: what should be added, clarified, or removed?

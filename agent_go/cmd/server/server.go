@@ -5035,6 +5035,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						// Wire bgAgentRegistry notifier so todo task sub-agents auto-notify the main agent.
 						// Called every request (safe: always rebuilds the chain, no duplicates).
 						workshopSession.SetExtraSubAgentNotifier(&todoSubAgentBgNotifier{api: api, sessionID: sessionID})
+						// Wire workshop execution notifier so execute_step/run_in_background/optimize_step/generate_learnings
+						// register in bgAgentRegistry (keeps frontend polling alive while background executions run).
+						workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{api: api, sessionID: sessionID})
 						todo_creation_human.RegisterWorkshopChatTools(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered workshop execution tools for %s (execute_step, query_step, stop_step, list_steps, etc.)", workflowPhaseID)
 					}
@@ -8286,6 +8289,87 @@ func (n *todoSubAgentBgNotifier) OnSubAgentComplete(agentID, name, result string
 		agent.SetResult(result)
 	}
 	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, agentID)
+}
+
+// workshopExecutionBgNotifier implements WorkshopExecutionNotifier by registering
+// workshop step/background executions in bgAgentRegistry so that HasRunningAgents()
+// returns true and the frontend keeps polling for events.
+type workshopExecutionBgNotifier struct {
+	api       *StreamingAPI
+	sessionID string
+}
+
+func (n *workshopExecutionBgNotifier) OnExecutionStart(execID, name string) {
+	bgAgent := &BackgroundAgent{
+		ID:        execID,
+		Name:      name,
+		SessionID: n.sessionID,
+		Status:    BGAgentRunning,
+		CreatedAt: time.Now(),
+	}
+	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
+
+	// Pre-create the channel so NotifyCompletion never drops a completion
+	n.api.bgAgentRegistry.GetNotificationChannel(n.sessionID)
+
+	// Ensure background completion loop is running
+	n.api.completionLoopStartedMu.Lock()
+	if !n.api.completionLoopStarted[n.sessionID] {
+		n.api.completionLoopStarted[n.sessionID] = true
+		go n.api.backgroundCompletionLoop(n.sessionID)
+	}
+	n.api.completionLoopStartedMu.Unlock()
+
+	// Emit background_agent_started event so BackgroundAgentsStatusBar shows a pill
+	n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_started", map[string]interface{}{
+		"agent_id": execID,
+		"name":     name,
+	})
+}
+
+func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, err error) {
+	agent := n.api.bgAgentRegistry.Get(n.sessionID, execID)
+	if agent == nil {
+		return
+	}
+
+	duration := time.Since(agent.CreatedAt)
+	if err != nil {
+		agent.SetError(err.Error())
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+			"status":   "failed",
+			"error":    err.Error(),
+			"duration": duration.Truncate(time.Second).String(),
+		})
+	} else {
+		agent.SetResult(truncateForToolResponse(result, 500))
+		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
+			"agent_id": execID,
+			"name":     name,
+			"status":   "completed",
+			"result":   truncateForToolResponse(result, 500),
+			"duration": duration.Truncate(time.Second).String(),
+		})
+	}
+
+	// Signal completion to the notification loop (triggers auto-notification synthetic turn)
+	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
+}
+
+func (n *workshopExecutionBgNotifier) OnExecutionTerminated(execID, name string) {
+	agent := n.api.bgAgentRegistry.Get(n.sessionID, execID)
+	if agent == nil {
+		return
+	}
+	agent.SetCanceled()
+	n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_terminated", map[string]interface{}{
+		"agent_id": execID,
+		"name":     name,
+	})
+	// Signal completion so the loop can process any pending completions
+	n.api.bgAgentRegistry.NotifyCompletion(n.sessionID, execID)
 }
 
 // truncateForToolResponse truncates a string for inclusion in tool responses

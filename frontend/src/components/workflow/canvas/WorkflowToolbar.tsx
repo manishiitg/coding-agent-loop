@@ -1506,8 +1506,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     `}>
       {/* Left side - workflow context */}
       <div className="flex items-center gap-2">
-        {hasPlan && (
-          <div className="flex items-center gap-1 bg-muted rounded-md p-1 border border-border">
+        <div className="flex items-center gap-1 bg-muted rounded-md p-1 border border-border">
             <button
               onClick={() => {
                 setWorkflowWorkspaceView('builder')
@@ -1541,45 +1540,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             >
               Execution
             </button>
-            </div>
-        )}
-        {!hasPlan ? (
-          // No plan - show create button + refresh button
-          <>
-            <button
-              onClick={onCreatePlan}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted text-foreground rounded-md hover:bg-accent transition-colors font-medium text-xs"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Build Plan
-            </button>
-            {onRefresh && (
-              <TooltipProvider delayDuration={150}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={async () => {
-                        try {
-                          await onRefresh()
-                        } catch (err) {
-                          console.error('[WorkflowToolbar] Failed to refresh:', err)
-                        }
-                      }}
-                      className="flex items-center justify-center w-7 h-7 rounded-md transition-all text-xs
-                                 bg-muted text-foreground hover:bg-accent"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Refresh plan, step config, and variables</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-          </>
-        ) : (
-          <>
+        </div>
+        <>
             {/* Refresh Button - Reload plan and variables */}
             {onRefresh && (
               <TooltipProvider delayDuration={150}>
@@ -2208,12 +2170,14 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   const hasGroups = !!(variablesManifest?.groups && variablesManifest.groups.length > 0)
                   const noGroupsSelected = selectedGroupIds.length === 0
                   const canAutoSelectGroup = !!defaultExecutionSelection
-                  const isDisabled = isExecutionStarting || (!isExecutionRunning && (!hasGroups || (noGroupsSelected && !canAutoSelectGroup)))
+                  const missingPlan = !hasPlan
+                  const isDisabled = isExecutionStarting || (!isExecutionRunning && (missingPlan || !hasGroups || (noGroupsSelected && !canAutoSelectGroup)))
 
                   return (
                     <button
                       onClick={isExecutionRunning ? onStop : handleExecute}
                       disabled={isDisabled}
+                      title={!isExecutionRunning && missingPlan ? 'Build a plan before executing.' : undefined}
                       className={`
                         flex items-center gap-1.5 px-2.5 py-1.5 rounded-md transition-all text-xs font-semibold
                         ${isExecutionRunning
@@ -2248,8 +2212,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               </>
             )}
 
-          </>
-        )}
+        </>
       </div>
 
       {/* Center - Status indicator */}

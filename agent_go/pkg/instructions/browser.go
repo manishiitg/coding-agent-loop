@@ -134,6 +134,8 @@ You are using the Playwright MCP tools (browser_* functions), not agent_browser.
 **Best practices:**
 - Re-check page state after every navigation or major interaction.
 - If an element is missing, refresh snapshot before retrying.
+
+**Important:** Do NOT use agent_browser tool or the agent-browser CLI via shell. Only use the Playwright browser_* tools listed above.
 `
 }
 

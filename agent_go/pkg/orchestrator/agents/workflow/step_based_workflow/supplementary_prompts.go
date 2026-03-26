@@ -110,5 +110,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveBrowserConfig(serverNames []st
 		cfg.Mode = "headless"
 	}
 
+	// Safety net: if a dedicated browser MCP server is present, force its mode and
+	// suppress agent_browser to prevent LLM tool confusion.
+	if cfg.HasPlaywright {
+		cfg.Mode = "playwright"
+		cfg.HasAgentBrowser = false
+	} else if cfg.HasCamofox {
+		cfg.Mode = "stealth"
+		cfg.HasAgentBrowser = false
+	}
+
 	return cfg
 }

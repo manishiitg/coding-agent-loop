@@ -76,12 +76,34 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 		params.Timeout = &noTimeout
 	}
 
-	// Block direct agent-browser CLI calls via shell — must use the agent_browser tool instead.
-	// The agent_browser tool handles CDP URL resolution (host.docker.internal → IP),
-	// session tracking, and folder guard. Calling agent-browser directly via shell bypasses all of this.
+	// Look up per-session shell config (working dir + folder guard)
+	sessionID := ""
+	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
+		sessionID = sid
+	}
+	sessionCfg := GetSessionShellConfig(sessionID)
+
+	// Block agent-browser CLI calls via shell — catches direct calls, bash -c wrapping, piping, etc.
+	// The agent_browser tool handles CDP URL resolution, session tracking, and folder guard.
+	// Calling agent-browser directly via shell bypasses all of this.
 	cmdTrimmed := strings.TrimSpace(params.Command)
-	if strings.HasPrefix(cmdTrimmed, "agent-browser ") || strings.HasPrefix(cmdTrimmed, "agent-browser\t") || cmdTrimmed == "agent-browser" {
-		log.Printf("[SHELL] Blocked direct agent-browser call — must use agent_browser tool. Command: %s", params.Command)
+	if strings.Contains(cmdTrimmed, "agent-browser") {
+		log.Printf("[SHELL] Blocked agent-browser CLI call. Command: %s", params.Command)
+
+		// Context-aware error: guide LLM to the correct browser tool
+		browserMode := ""
+		if sessionCfg != nil {
+			browserMode = sessionCfg.BrowserMode
+		}
+		if browserMode == "playwright" || browserMode == "stealth" {
+			toolName := "Playwright browser_* tools (browser_snapshot, browser_click, browser_type, etc.)"
+			if browserMode == "stealth" {
+				toolName = "Camofox MCP tools (snapshot, click, type_text, navigate, etc.)"
+			}
+			return "ERROR: Do not call agent-browser via execute_shell_command. Use the " + toolName + " for browser automation.\n\n" +
+				"The agent-browser CLI is not the correct tool for this workflow. " +
+				"Start with browser_snapshot to see the current page state, then use the appropriate browser_* tool for interactions.", nil
+		}
 		return "ERROR: Do not call agent-browser directly via execute_shell_command. Use the agent_browser tool instead.\n\n" +
 			"For direct tool call mode:\n" +
 			"  agent_browser(command=\"open\", args=[\"https://example.com\"], session=\"default\")\n\n" +
@@ -91,13 +113,6 @@ func (c *Client) ExecuteShellCommand(ctx context.Context, params ExecuteShellCom
 			"The agent_browser tool handles CDP connection, session management, and folder sandboxing automatically. " +
 			"Calling agent-browser CLI directly bypasses CDP URL resolution and will fail inside Docker.", nil
 	}
-
-	// Look up per-session shell config (working dir + folder guard)
-	sessionID := ""
-	if sid, ok := ctx.Value(common.ChatSessionIDKey).(string); ok && sid != "" {
-		sessionID = sid
-	}
-	sessionCfg := GetSessionShellConfig(sessionID)
 
 	if sessionCfg != nil && sessionCfg.GeminiProjectDirID != "" {
 		params.Command = rewriteGeminiRelativePaths(params.Command, sessionCfg.GeminiProjectDirID)

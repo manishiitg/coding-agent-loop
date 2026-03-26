@@ -128,6 +128,7 @@ import type { SubAgent } from '../types/subagents'
 // MCP servers managed by dedicated toolbar buttons — excluded from the general server dropdown
 // Managed by dedicated UI controls in ChatInput (browser/GWS icons), not MCP dropdown.
 const DEDICATED_MCP_SERVERS = new Set(['playwright', 'camofox', 'gws'])
+const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 
 export interface ActiveAgentInfo {
   name: string
@@ -144,6 +145,33 @@ interface ChatInputProps {
 
 // Stable empty array reference to avoid infinite loops in selectors
 const EMPTY_EVENTS: never[] = []
+
+function isAutoNotificationMessage(msg: string): boolean {
+  return msg.startsWith(AUTO_NOTIFICATION_PREFIX)
+}
+
+function summarizeAutoNotification(msg: string): {
+  headline: string
+  detail: string
+  status: 'completed' | 'failed' | 'other'
+} {
+  const lines = msg
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  const headline = (lines[0] || 'Auto-notification')
+    .replace(AUTO_NOTIFICATION_PREFIX, '')
+    .trim()
+  const detail = lines.slice(1).join(' ')
+  const status = headline.includes('FAILED')
+    ? 'failed'
+    : (headline.includes('COMPLETED') || headline.includes('COMPLETE'))
+      ? 'completed'
+      : 'other'
+
+  return { headline, detail, status }
+}
 
 // Collapsible queued message item — shows preview for long messages with expand/collapse toggle
 const QueuedMessageItem: React.FC<{
@@ -209,6 +237,126 @@ const QueuedMessageItem: React.FC<{
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
         </svg>
       </button>
+    </div>
+  )
+}
+
+const QueuedAutoNotificationGroup: React.FC<{
+  items: Array<{ index: number; msg: string }>
+  onDelete: (index: number) => void
+  onSteer?: (index: number, msg: string) => void
+  steeringIndex: number | null
+}> = ({ items, onDelete, onSteer, steeringIndex }) => {
+  const [expanded, setExpanded] = useState(false)
+
+  const summaries = useMemo(() => items.map(item => ({
+    ...item,
+    ...summarizeAutoNotification(item.msg),
+  })), [items])
+
+  const completedCount = summaries.filter(item => item.status === 'completed').length
+  const failedCount = summaries.filter(item => item.status === 'failed').length
+  const otherCount = summaries.length - completedCount - failedCount
+  const preview = summaries
+    .slice(0, 2)
+    .map(item => item.headline)
+    .join(' • ')
+
+  return (
+    <div className="px-2 py-1.5 bg-slate-50 dark:bg-slate-900/20 border border-slate-200 dark:border-slate-800 rounded text-xs text-slate-700 dark:text-slate-300">
+      <div className="flex items-start gap-2">
+        <div className="w-1.5 h-1.5 bg-slate-500 rounded-full mt-1.5 flex-shrink-0"></div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-medium">{items.length} auto-update{items.length === 1 ? '' : 's'} queued</span>
+            {completedCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">
+                {completedCount} done
+              </span>
+            )}
+            {failedCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                {failedCount} failed
+              </span>
+            )}
+            {otherCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                {otherCount} other
+              </span>
+            )}
+          </div>
+          {!expanded && (
+            <div className="mt-1 text-[11px] text-slate-600 dark:text-slate-400 break-words">
+              {preview}
+              {items.length > 2 ? ` +${items.length - 2} more` : ''}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded(!expanded)}
+          className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 underline flex-shrink-0"
+        >
+          {expanded ? 'collapse' : 'expand'}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-2 space-y-1.5">
+          {summaries.map(item => {
+            const isSteering = steeringIndex === item.index
+            return (
+              <div key={item.index} className="flex items-start gap-2 rounded border border-slate-200 dark:border-slate-700 bg-white/70 dark:bg-slate-950/30 px-2 py-1.5">
+                <div className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                  item.status === 'failed'
+                    ? 'bg-red-500'
+                    : item.status === 'completed'
+                      ? 'bg-green-500'
+                      : 'bg-slate-400'
+                }`}></div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium break-words">#{item.index + 1}: {item.headline}</div>
+                  {item.detail && (
+                    <div className="mt-0.5 text-[11px] text-slate-600 dark:text-slate-400 break-words">
+                      {item.detail.length > 140 ? `${item.detail.slice(0, 140)}...` : item.detail}
+                    </div>
+                  )}
+                </div>
+                {onSteer && (
+                  <button
+                    type="button"
+                    onClick={() => onSteer(item.index, item.msg)}
+                    disabled={isSteering}
+                    className="flex items-center justify-center w-5 h-5 rounded hover:bg-amber-200 dark:hover:bg-amber-800 text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 transition-colors flex-shrink-0 disabled:opacity-50"
+                    title="Steer — inject this message into the running conversation"
+                  >
+                    {isSteering ? (
+                      <svg className="h-3.5 w-3.5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                      </svg>
+                    )}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onDelete(item.index)}
+                  className="flex items-center justify-center w-5 h-5 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors flex-shrink-0"
+                  title="Delete from queue"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -702,6 +850,54 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // State for steer message loading
   const [steeringIndex, setSteeringIndex] = useState<number | null>(null)
+
+  const removeQueuedMessageAtIndex = useCallback((index: number) => {
+    if (!activeTabId) return
+    const updated = queuedMessages.filter((_: string, i: number) => i !== index)
+    setTabConfig(activeTabId, { queuedMessages: updated })
+  }, [activeTabId, queuedMessages, setTabConfig])
+
+  const handleSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
+    if (!isStreaming || !tabSessionId) return
+
+    setSteeringIndex(index)
+    try {
+      await agentApi.steerMessage(tabSessionId, msg)
+      removeQueuedMessageAtIndex(index)
+    } catch (err) {
+      addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
+    } finally {
+      setSteeringIndex(null)
+    }
+  }, [addToast, isStreaming, removeQueuedMessageAtIndex, tabSessionId])
+
+  const queuedDisplayItems = useMemo(() => {
+    const items: Array<
+      | { type: 'message'; index: number; msg: string }
+      | { type: 'auto-group'; items: Array<{ index: number; msg: string }> }
+    > = []
+    let pendingAutoGroup: Array<{ index: number; msg: string }> = []
+
+    queuedMessages.forEach((msg: string, index: number) => {
+      if (isAutoNotificationMessage(msg)) {
+        pendingAutoGroup.push({ index, msg })
+        return
+      }
+
+      if (pendingAutoGroup.length > 0) {
+        items.push({ type: 'auto-group', items: pendingAutoGroup })
+        pendingAutoGroup = []
+      }
+
+      items.push({ type: 'message', index, msg })
+    })
+
+    if (pendingAutoGroup.length > 0) {
+      items.push({ type: 'auto-group', items: pendingAutoGroup })
+    }
+
+    return items
+  }, [queuedMessages])
 
   // Use tab-specific servers - memoize to prevent re-renders
   const manualSelectedServers = useMemo(() => tabConfig?.selectedServers || [], [tabConfig?.selectedServers])
@@ -2541,38 +2737,31 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             {/* Queued messages indicator */}
             {queuedMessages.length > 0 && (
               <div className="space-y-1">
-                {queuedMessages.map((msg: string, index: number) => {
-                  const isLong = msg.length > 150
-                  const preview = isLong ? msg.substring(0, 150) + '...' : msg
+                {queuedDisplayItems.map((item, index) => {
+                  if (item.type === 'auto-group') {
+                    return (
+                      <QueuedAutoNotificationGroup
+                        key={`auto-group-${item.items[0]?.index ?? index}`}
+                        items={item.items}
+                        onDelete={removeQueuedMessageAtIndex}
+                        onSteer={isStreaming && tabSessionId ? handleSteerQueuedMessage : undefined}
+                        steeringIndex={steeringIndex}
+                      />
+                    )
+                  }
+
+                  const isLong = item.msg.length > 150
+                  const preview = isLong ? item.msg.substring(0, 150) + '...' : item.msg
                   return (
                     <QueuedMessageItem
-                      key={index}
-                      index={index}
-                      msg={msg}
+                      key={item.index}
+                      index={item.index}
+                      msg={item.msg}
                       preview={preview}
                       isLong={isLong}
-                      onDelete={() => {
-                        if (activeTabId) {
-                          const updated = queuedMessages.filter((_: string, i: number) => i !== index)
-                          setTabConfig(activeTabId, { queuedMessages: updated })
-                        }
-                      }}
-                      onSteer={isStreaming && tabSessionId ? async () => {
-                        setSteeringIndex(index)
-                        try {
-                          await agentApi.steerMessage(tabSessionId, msg)
-                          // Remove from queue on success
-                          if (activeTabId) {
-                            const updated = queuedMessages.filter((_: string, i: number) => i !== index)
-                            setTabConfig(activeTabId, { queuedMessages: updated })
-                          }
-                        } catch (err) {
-                          addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
-                        } finally {
-                          setSteeringIndex(null)
-                        }
-                      } : undefined}
-                      isSteering={steeringIndex === index}
+                      onDelete={() => removeQueuedMessageAtIndex(item.index)}
+                      onSteer={isStreaming && tabSessionId ? () => handleSteerQueuedMessage(item.index, item.msg) : undefined}
+                      isSteering={steeringIndex === item.index}
                     />
                   )
                 })}

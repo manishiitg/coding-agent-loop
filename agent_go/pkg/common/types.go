@@ -54,6 +54,7 @@ type SessionShellConfig struct {
 	ReadPaths          []string // Folder guard read paths for Isolator
 	WritePaths         []string // Folder guard write paths for Isolator
 	GeminiProjectDirID string   // Active Gemini CLI project dir for this session
+	BrowserMode        string   // Resolved browser mode: "playwright", "headless", "cdp", "stealth", ""
 }
 
 var (
@@ -101,6 +102,20 @@ func SetSessionGeminiProjectDirID(sessionID, dirID string) {
 	}
 	cfg.GeminiProjectDirID = dirID
 	log.Printf("[SHELL] Set Gemini project dir ID for session %s: %s", sessionID, dirID)
+}
+
+// SetSessionBrowserMode stores the resolved browser mode for a session.
+// Used by execute_shell_command to show context-aware error messages when blocking agent-browser CLI calls.
+func SetSessionBrowserMode(sessionID, mode string) {
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	cfg := sessionShellConfigs[sessionID]
+	if cfg == nil {
+		cfg = &SessionShellConfig{}
+		sessionShellConfigs[sessionID] = cfg
+	}
+	cfg.BrowserMode = mode
+	log.Printf("[SHELL] Set browser mode for session %s: %s", sessionID, mode)
 }
 
 // ClearSessionShellConfig removes all shell config for a session.

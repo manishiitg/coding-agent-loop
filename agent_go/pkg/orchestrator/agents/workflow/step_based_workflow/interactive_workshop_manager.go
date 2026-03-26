@@ -6059,7 +6059,7 @@ Produce your report in this exact markdown structure:
 
 ### Hardcoded Values Check
 Scan the step description (from plan.json) AND learnings (SKILL.md) for hardcoded values that should use variable placeholders instead:
-- **Paths**: Absolute workspace paths (e.g., `+"`/Users/...`"+`, `+"`/home/...`"+`, `+"`C:\\...`"+`) — should use `+"`{{WORKSPACE_PATH}}`"+` or relative paths
+- **Paths**: Absolute workspace paths (e.g., `+"`/Users/...`"+`, `+"`/home/...`"+`, `+"`C:\\...`"+`) — should use `+"`"+`{{"{{WORKSPACE_PATH}}"}}`+"`"+` or relative paths
 - **Secrets/credentials**: API keys, tokens, passwords, auth headers — should use secret variables from variables.json
 - **User-specific values**: Account IDs, usernames, emails, phone numbers, URLs with specific domains — should use variable placeholders (e.g., `+"`{USER_ID}`"+`, `+"`{EMAIL}`"+`)
 - **Environment-specific values**: Hardcoded ports, hostnames, database names — should be parameterized

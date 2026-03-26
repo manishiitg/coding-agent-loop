@@ -27,7 +27,7 @@ var learningSystemPromptTemplate = MustRegisterTemplate("learningSystemPrompt", 
 3. **Scripts**: Save successful scripts (Python, bash) to '{{.ScriptsPath}}' and reference them from SKILL.md.
 
 ## FILE MANAGEMENT ALGORITHM (MANDATORY)
-**Available tools**: execute_shell_command (for listing, reading, and deleting files) and diff_patch_workspace_file (for writing/updating files).
+**Available tools**: execute_shell_command (for listing, reading, deleting, and **creating new files** via shell — e.g. using cat heredoc or tee) and diff_patch_workspace_file (for patching/updating **existing** files only — will fail if the file does not exist yet).
 {{if .ExistingLearningsContent}}
 **Existing skill pre-loaded (skip discovery/retrieval):**
 {{.ExistingLearningsContent}}

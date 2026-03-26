@@ -48,14 +48,24 @@ func DiffPatchDocument(c *gin.Context) {
 		return
 	}
 
-	// Check if file exists
+	// Create parent directories and seed empty file if it doesn't exist yet
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
-		c.JSON(http.StatusNotFound, models.APIResponse[any]{
-			Success: false,
-			Message: "Document not found",
-			Error:   "Document not found: " + filePathParam,
-		})
-		return
+		if mkErr := os.MkdirAll(filepath.Dir(filePath), 0755); mkErr != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to create directory",
+				Error:   mkErr.Error(),
+			})
+			return
+		}
+		if writeErr := os.WriteFile(filePath, []byte(""), 0644); writeErr != nil {
+			c.JSON(http.StatusInternalServerError, models.APIResponse[any]{
+				Success: false,
+				Message: "Failed to create document",
+				Error:   writeErr.Error(),
+			})
+			return
+		}
 	}
 
 	// Read current file content

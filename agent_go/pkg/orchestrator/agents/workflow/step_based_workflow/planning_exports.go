@@ -150,7 +150,8 @@ type WorkshopChatSession struct {
 	listAvailableSecrets func(ctx context.Context) ([]string, error)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
-	workshopNotifier SubAgentNotifier
+	workshopNotifier    SubAgentNotifier
+	executionNotifier   WorkshopExecutionNotifier // optional: notifies server when executions start/complete
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
@@ -167,6 +168,12 @@ func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
 	} else {
 		s.controller.SetSubAgentNotifier(n)
 	}
+}
+
+// SetWorkshopExecutionNotifier sets the notifier that the server layer uses to track
+// workshop step/background executions in bgAgentRegistry (keeps frontend polling alive).
+func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
+	s.executionNotifier = n
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -499,6 +506,7 @@ func RegisterWorkshopChatTools(
 		schedulerFuncs:       session.schedulerFuncs,
 		skillFuncs:           session.skillFuncs,
 		listAvailableSecrets: session.listAvailableSecrets,
+		executionNotifier:    session.executionNotifier,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
 }

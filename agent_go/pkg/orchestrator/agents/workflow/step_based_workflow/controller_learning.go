@@ -106,14 +106,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 
 	// LIMIT SUCCESS LEARNING: Check if we already have sufficient successful learnings (>= 3)
 	// If so, skip success learning but keep unlocked to allow failure learning
-	// We check cumulative successful runs across all complexities
 	metadata, err := hcpo.GetLearningMetadata(ctx, learningPathIdentifier)
 	if err == nil && metadata != nil {
-		if metadata.SuccessfulRunsSimple >= 3 {
-			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", metadata.SuccessfulRunsSimple, learningPathIdentifier))
+		if metadata.SuccessfulRuns >= 3 {
+			hcpo.GetLogger().Info(fmt.Sprintf("🧠 Sufficient success learnings captured (%d >= 3) for %s - skipping success learning agent", metadata.SuccessfulRuns, learningPathIdentifier))
 			// Skip learning but record turnCount (without incrementing counters)
 			// This effectively "locks" success learning but keeps the step unlocked for failure learning
-			_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", metadata.SuccessfulRunsSimple))
+			_ = updateMetadataWhenSkipped(fmt.Sprintf("sufficient success learnings (%d >= 3)", metadata.SuccessfulRuns))
 			return nil
 		}
 	} else if err != nil {

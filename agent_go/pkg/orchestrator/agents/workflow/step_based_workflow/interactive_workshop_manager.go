@@ -472,6 +472,15 @@ func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 	return list
 }
 
+// WorkshopExecutionNotifier is called when workshop step/background executions start and complete.
+// Implemented by the server layer to register executions in bgAgentRegistry so that
+// HasRunningAgents() returns true and the frontend keeps polling for events.
+type WorkshopExecutionNotifier interface {
+	OnExecutionStart(execID, name string)
+	OnExecutionComplete(execID, name, result string, err error)
+	OnExecutionTerminated(execID, name string) // explicit cancellation via stop_step/stop_all
+}
+
 // ============================================================================
 // InteractiveWorkshopManager
 // ============================================================================
@@ -490,6 +499,7 @@ type InteractiveWorkshopManager struct {
 	schedulerFuncs       *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
 	skillFuncs           *SkillCallbacks                             // skill import/delete callbacks from server.go
 	listAvailableSecrets func(ctx context.Context) ([]string, error) // list all available secret names
+	executionNotifier    WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
 }
 
 // refreshVariablesManifest reloads the variables manifest from file into the controller.
@@ -1935,6 +1945,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 
+				// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+				if iwm.executionNotifier != nil {
+					iwm.executionNotifier.OnExecutionStart(execID, stepDisplayName)
+				}
+
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
 				if eventBridge != nil {
@@ -2028,6 +2043,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						CorrelationID: agentSessionID,
 					})
 				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, stepDisplayName, result, err)
+				}
 			}()
 
 			groupInfo := ""
@@ -2118,6 +2139,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, name)
+			}
+
 			go func() {
 				// Emit orchestrator_agent_start so the frontend creates a grouping card
 				eventBridge := iwm.controller.GetContextAwareBridge()
@@ -2186,6 +2212,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
+				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, name, result, err)
 				}
 			}()
 
@@ -2564,6 +2596,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			exec.Status = WorkshopStepCancelled
 			exec.mu.Unlock()
 
+			// Notify server layer so bgAgentRegistry marks this as terminated and frontend updates
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionTerminated(execID, exec.StepID)
+			}
+
 			logger.Info(fmt.Sprintf("🛑 Workshop: step %q (execution_id=%q) cancelled", exec.StepID, execID))
 			return fmt.Sprintf("Step %q (execution_id=%q) has been cancelled.", exec.StepID, execID), nil
 		},
@@ -2584,6 +2621,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			cancelledIDs := iwm.stepRegistry.CancelAll()
 			if len(cancelledIDs) == 0 {
 				return "No running executions found to cancel.", nil
+			}
+			// Notify server layer for each cancelled execution
+			if iwm.executionNotifier != nil {
+				for _, id := range cancelledIDs {
+					exec := iwm.stepRegistry.Get(id)
+					name := id
+					if exec != nil {
+						name = exec.StepID
+					}
+					iwm.executionNotifier.OnExecutionTerminated(id, name)
+				}
 			}
 			var sb strings.Builder
 			sb.WriteString(fmt.Sprintf("Cancelled %d running execution(s):\n", len(cancelledIDs)))
@@ -3985,6 +4033,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, fmt.Sprintf("Learning: %s", resolvedID))
+			}
+
 			go func() {
 				// Resolve step title for display
 				learningDisplayName := resolvedID
@@ -4037,6 +4090,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							Data:          endEvent,
 							CorrelationID: agentSessionID,
 						})
+					}
+					if iwm.executionNotifier != nil {
+						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), "", createErr)
 					}
 					return
 				}
@@ -4113,6 +4169,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
+				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, execErr)
 				}
 			}()
 
@@ -4221,6 +4282,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			iwm.stepRegistry.Register(exec)
 
+			// Notify server layer so bgAgentRegistry tracks this execution (keeps frontend polling alive)
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, fmt.Sprintf("Optimize: %s", stepID))
+			}
+
 			go func() {
 				// Resolve step title for display
 				debugDisplayName := stepID
@@ -4291,6 +4357,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						Data:          endEvent,
 						CorrelationID: agentSessionID,
 					})
+				}
+
+				// Notify server layer so bgAgentRegistry marks this execution as done.
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, err)
 				}
 			}()
 
@@ -5988,6 +6059,7 @@ Produce your report in this exact markdown structure:
 - LLM tier: is the current model appropriate for this step's complexity?
 - Execution mode: any changes needed?
 - Learning config: should learning be disabled, locked, or detail level changed?
+- **Human feedback tool**: Check if `+"`human_feedback`"+` was used in execution logs. If it was NOT used, recommend removing `+"`human_tools:*`"+` from `+"`enabled_custom_tools`"+` — unused human tools add noise and slow down execution. If it WAS used, confirm it's needed and check whether the interaction could be automated instead.
 
 ### Plan Recommendations
 - Description improvements: what should be added, clarified, or removed?

@@ -293,7 +293,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ResetLearningMetadata(
 	metadata.StepID = stepID
 	metadata.StepPath = stepPath
 	metadata.StepHash = newHash
-	metadata.SuccessfulRunsSimple = 0
+	metadata.SuccessfulRuns = 0
 	// Sync reset count to step_config.json
 	hcpo.syncSuccessfulRunsToStepConfig(ctx, stepID, 0)
 

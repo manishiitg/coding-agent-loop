@@ -830,15 +830,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
   }, [finalResponse, autoScroll, scrollToBottom])
 
-  // Scroll to bottom when switching tabs
+  // Scroll to bottom when switching tabs (including workflow switch via Ctrl+K)
   useEffect(() => {
     if (!targetTabId) return
-    // Small delay to let the new tab's content render before scrolling
-    const timer = setTimeout(() => {
-      scrollToBottom('instant')
-    }, 50)
-    return () => clearTimeout(timer)
-  }, [targetTabId, scrollToBottom])
+    // Re-enable auto-scroll so subsequent events keep the view pinned to the bottom
+    setAutoScroll(true)
+    // Small delay to let the new tab's content render before scrolling.
+    // Use two attempts: 50ms for fast renders, 300ms as fallback when events are still loading.
+    const timer1 = setTimeout(() => scrollToBottom('instant'), 50)
+    const timer2 = setTimeout(() => scrollToBottom('instant'), 300)
+    return () => { clearTimeout(timer1); clearTimeout(timer2) }
+  }, [targetTabId, scrollToBottom, setAutoScroll])
 
   // Auto-scroll when streaming text first appears (brings the "Generating..." card into view)
   const hasStreamingText = useChatStore(state =>

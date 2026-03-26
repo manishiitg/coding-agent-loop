@@ -961,9 +961,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 		if err == nil {
 			shouldUseTempLLM := false
 			reason := ""
-			if metadata.SuccessfulRunsSimple >= 2 {
+			if metadata.SuccessfulRuns >= 2 {
 				shouldUseTempLLM = true
-				reason = fmt.Sprintf("stability threshold reached (%d successful runs)", metadata.SuccessfulRunsSimple)
+				reason = fmt.Sprintf("stability threshold reached (%d successful runs)", metadata.SuccessfulRuns)
 			}
 			if shouldUseTempLLM && hcpo.tempOverrideLLM != nil && hcpo.tempOverrideLLM.Provider != "" && hcpo.tempOverrideLLM.ModelID != "" {
 				hcpo.GetLogger().Info(fmt.Sprintf("💰 [COST_OPTIMIZATION] Learning agent using cheaper tempLLM (%s/%s): %s",

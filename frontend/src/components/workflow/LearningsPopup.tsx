@@ -17,12 +17,11 @@ interface LearningsPopupProps {
 
 interface LearningMetadata {
   step_id?: string
-  successful_runs_simple?: number
+  successful_runs?: number
   last_turn_count?: number
   auto_locked_at?: string
   auto_lock_reason?: string
   total_iterations?: number
-  lock_threshold?: number  // Calculated by backend based on last_turn_count
   // Fields from step_config.json (merged by backend API)
   use_code_execution_mode?: boolean
   use_tool_search_mode?: boolean
@@ -30,15 +29,9 @@ interface LearningMetadata {
   lock_learnings?: boolean
 }
 
-// Get lock threshold from metadata (calculated by backend - single source of truth)
-// Backend calculates threshold based on last_turn_count and includes it in metadata.lock_threshold
-function getLockThreshold(metadata: LearningMetadata | null): number {
-  return metadata?.lock_threshold ?? 0
-}
-
 function getSuccessfulRuns(metadata: LearningMetadata | null): number {
   if (!metadata) return 0
-  return metadata.successful_runs_simple || 0
+  return metadata.successful_runs || 0
 }
 
 // Check if learnings folder exists
@@ -55,12 +48,11 @@ function hasLearningsFolder(
   // These fields indicate the folder exists and has been used for learning:
   const hasLearningData = 
     metadata.step_id !== undefined ||
-    metadata.successful_runs_simple !== undefined ||
+    metadata.successful_runs !== undefined ||
     metadata.last_turn_count !== undefined ||
     metadata.auto_locked_at !== undefined ||
     metadata.auto_lock_reason !== undefined ||
-    metadata.total_iterations !== undefined ||
-    metadata.lock_threshold !== undefined
+    metadata.total_iterations !== undefined
   
   // If no learning data fields, folder doesn't exist (only step config fields present)
   if (!hasLearningData) return false
@@ -661,9 +653,8 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                 const isAutoLocked = metadata?.auto_locked_at !== undefined && metadata.auto_locked_at !== ''
                 const isManuallyLocked = metadata?.lock_learnings === true
                 const isLocked = isAutoLocked || isManuallyLocked
-                const threshold = getLockThreshold(metadata) // Backend-calculated threshold
                 const successfulRuns = getSuccessfulRuns(metadata)
-                const progress = threshold > 0 ? (successfulRuns / threshold) * 100 : 0
+                const progress = (successfulRuns / 3) * 100
                 const stepTitle = getStepTitle(plan, stepId)
 
                 const isExpanded = expandedStepIds.has(stepId)
@@ -878,7 +869,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                           <div className="mt-3">
                             <div className="flex items-center justify-between text-sm mb-1">
                               <span className="text-muted-foreground">
-                                Progress to lock: {successfulRuns}/{threshold} successful runs
+                                Progress to lock: {successfulRuns}/3 successful runs
                               </span>
                               <span className="text-muted-foreground">{Math.round(progress)}%</span>
                             </div>

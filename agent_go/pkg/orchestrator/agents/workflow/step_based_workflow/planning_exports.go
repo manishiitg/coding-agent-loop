@@ -117,9 +117,9 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 // SchedulerCallbacks provides schedule CRUD operations via callbacks from server.go.
 // This avoids importing database/scheduler packages in the workshop package.
 type SchedulerCallbacks struct {
-	ListSchedules   func(ctx context.Context, presetID string) (string, error)
-	CreateSchedule  func(ctx context.Context, presetID, name, cronExpr, timezone string, groupIDs []string) (string, error)
-	UpdateSchedule  func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool) (string, error)
+	ListSchedules   func(ctx context.Context, workspacePath string) (string, error)
+	CreateSchedule  func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupIDs []string, mode string, messages []string) (string, error)
+	UpdateSchedule  func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool, mode string, messages []string) (string, error)
 	DeleteSchedule  func(ctx context.Context, jobID string) error
 	TriggerSchedule func(ctx context.Context, jobID string) (string, error)
 	GetScheduleRuns func(ctx context.Context, jobID string, limit int) (string, error)
@@ -144,8 +144,8 @@ type WorkshopChatSession struct {
 	toolCallQueryFunc    ToolCallQueryFunc
 	mainSessionID        string
 	config               *WorkshopConfig // Original config for creating fresh controllers
-	presetQueryID        string
-	schedulerFuncs       *SchedulerCallbacks
+	schedulerWorkspacePath string
+	schedulerFuncs         *SchedulerCallbacks
 	skillFuncs           *SkillCallbacks
 	listAvailableSecrets func(ctx context.Context) ([]string, error)
 	// workshopNotifier is the base notifier wired to StepRegistry (set at creation time).
@@ -215,8 +215,8 @@ type WorkshopConfig struct {
 	ToolCallQueryFunc ToolCallQueryFunc
 	// IsEvaluationMode when true, the controller uses evaluation/ paths for step_config, learnings, etc.
 	IsEvaluationMode bool
-	// PresetQueryID is the preset this workshop belongs to (needed for schedule management)
-	PresetQueryID string
+	// SchedulerWorkspacePath is the workspace folder path (needed for schedule management)
+	SchedulerWorkspacePath string
 	// SchedulerFuncs provides callbacks for schedule CRUD operations.
 	// Set by server.go which has access to the database and scheduler service.
 	SchedulerFuncs *SchedulerCallbacks
@@ -396,7 +396,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		toolCallQueryFunc:    cfg.ToolCallQueryFunc,
 		mainSessionID:        cfg.SessionID,
 		config:               cfg,
-		presetQueryID:        cfg.PresetQueryID,
+		schedulerWorkspacePath: cfg.SchedulerWorkspacePath,
 		schedulerFuncs:       cfg.SchedulerFuncs,
 		skillFuncs:           cfg.SkillFuncs,
 		listAvailableSecrets: cfg.ListAvailableSecrets,
@@ -502,7 +502,7 @@ func RegisterWorkshopChatTools(
 		sessionCtx:           session.sessionCtx,
 		toolCallQueryFunc:    session.toolCallQueryFunc,
 		mainSessionID:        session.mainSessionID,
-		presetQueryID:        session.presetQueryID,
+		schedulerWorkspacePath: session.schedulerWorkspacePath,
 		schedulerFuncs:       session.schedulerFuncs,
 		skillFuncs:           session.skillFuncs,
 		listAvailableSecrets: session.listAvailableSecrets,
@@ -818,6 +818,321 @@ func RegisterRunFullReportTool(
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_report tool: %v", err))
+	}
+}
+
+// workflowProgressBridge wraps an existing event bridge and intercepts step completion
+// events to send progress notifications to the main workshop agent via bgAgentRegistry.
+type workflowProgressBridge struct {
+	inner     mcpagent.AgentEventListener
+	session   *WorkshopChatSession
+	logger    loggerv2.Logger
+	parentID  string // parent execution ID for correlation
+}
+
+func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseevents.AgentEvent) error {
+	// Forward all events to the inner bridge first
+	if b.inner != nil {
+		if err := b.inner.HandleEvent(ctx, event); err != nil {
+			return err
+		}
+	}
+
+	// Intercept step completion events to send progress notifications
+	if event.Type == orchestrator_events.OrchestratorAgentEnd {
+		if endEvent, ok := event.Data.(*orchestrator_events.OrchestratorAgentEndEvent); ok {
+			// Only notify for execution agent completions (not learning, validation, etc.)
+			agentType := endEvent.AgentType
+			if agentType == "todo_planner_execution" || agentType == "conditional" || agentType == "todo_task_orchestrator" {
+				stepName := endEvent.AgentName
+				status := "completed"
+				result := endEvent.Result
+				if !endEvent.Success {
+					status = "failed"
+					if endEvent.Error != "" {
+						result = endEvent.Error
+					}
+				}
+
+				// Register a progress notification in bgAgentRegistry
+				progressID := fmt.Sprintf("%s-step-%d-%d", b.parentID, endEvent.StepIndex, time.Now().UnixNano())
+				progressExec := &WorkshopStepExecution{
+					ID:     progressID,
+					StepID: fmt.Sprintf("workflow-step-%s", stepName),
+					Status: WorkshopStepDone,
+					Result: fmt.Sprintf("[Step %d: %s] %s — %s", endEvent.StepIndex, stepName, status, truncateResult(result, 500)),
+				}
+				if !endEvent.Success {
+					progressExec.Status = WorkshopStepFailed
+					progressExec.Err = fmt.Errorf("%s", result)
+				}
+				b.session.StepRegistry.Register(progressExec)
+
+				// Notify so backgroundCompletionLoop picks it up
+				if b.session.executionNotifier != nil {
+					b.session.executionNotifier.OnExecutionStart(progressID, fmt.Sprintf("step-%s", stepName))
+					if endEvent.Success {
+						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), truncateResult(result, 500), nil)
+					} else {
+						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), "", fmt.Errorf("%s", truncateResult(result, 500)))
+					}
+				}
+
+				if b.logger != nil {
+					b.logger.Info(fmt.Sprintf("📊 [WORKFLOW_PROGRESS] Step %d '%s' %s", endEvent.StepIndex, stepName, status))
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func (b *workflowProgressBridge) Name() string {
+	if b.inner != nil {
+		return "workflow-progress-" + b.inner.Name()
+	}
+	return "workflow-progress"
+}
+
+// truncateResult truncates a string for progress notifications
+func truncateResult(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+// RegisterRunFullWorkflowTool registers a run_full_workflow tool that executes the complete
+// workflow pipeline (all steps, all enabled groups) in the background. The LLM is notified
+// when execution completes. This is the workshop-builder equivalent of the orchestrator-mode
+// full execution, but triggered as a tool call.
+func RegisterRunFullWorkflowTool(
+	mcpAgent *mcpagent.Agent,
+	session *WorkshopChatSession,
+	logger loggerv2.Logger,
+) {
+	if err := mcpAgent.RegisterCustomTool(
+		"run_full_workflow",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Runs in background — you will be notified when complete. Use this to trigger a full end-to-end workflow run.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"iteration": map[string]interface{}{
+					"type":        "string",
+					"description": "Iteration folder name (e.g., 'iteration-1', 'iteration-3'). If provided, reuses this iteration folder. If omitted, creates a new iteration automatically.",
+				},
+				"execution_strategy": map[string]interface{}{
+					"type":        "string",
+					"description": "Execution strategy. Defaults to 'start_from_beginning_no_human' (fresh run, skip human input steps). Use 'resume_from_step_no_human' to resume from last incomplete step.",
+					"enum":        []string{"start_from_beginning_no_human", "resume_from_step_no_human"},
+				},
+				"group_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Variable group ID to execute (e.g., 'group1'). Defaults to the first group currently selected in the toolbar. Only one group runs at a time.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			cfg := session.config
+			if cfg == nil {
+				return "session config not available — cannot create workflow controller", nil
+			}
+
+			// Parse optional parameters
+			iteration := ""
+			if it, ok := args["iteration"].(string); ok && it != "" {
+				iteration = it
+			}
+
+			strategy := "start_from_beginning_no_human"
+			if s, ok := args["execution_strategy"].(string); ok && s != "" {
+				strategy = s
+			}
+
+			// Single group only
+			groupID := ""
+			if g, ok := args["group_id"].(string); ok && g != "" {
+				groupID = g
+			}
+			var enabledGroupIDs []string
+			if groupID != "" {
+				enabledGroupIDs = []string{groupID}
+			} else if len(cfg.EnabledGroupIDs) > 0 {
+				// Use only the first enabled group from toolbar
+				enabledGroupIDs = []string{cfg.EnabledGroupIDs[0]}
+			}
+
+			// Determine run mode: reuse iteration or create new
+			runMode := "create_new_runs_always"
+			if iteration != "" {
+				runMode = "use_same_run"
+			}
+
+			execID := fmt.Sprintf("workflow-full-%d", time.Now().UnixNano())
+			execCtx, cancel := context.WithCancel(session.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-workflow-full-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "full-workflow",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			session.StepRegistry.Register(exec)
+
+			// Notify workshop execution notifier so frontend keeps polling
+			if session.executionNotifier != nil {
+				session.executionNotifier.OnExecutionStart(execID, "full-workflow")
+			}
+
+			go func() {
+				eventBridge := session.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-workflow-execution",
+						AgentName:     "Full Workflow Execution",
+						InputData: map[string]string{
+							"execution_strategy": strategy,
+							"execution_type":     "full-workflow",
+						},
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentStart,
+						Timestamp:     time.Now(),
+						Data:          startEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+
+				// Wrap event bridge with progress listener to send per-step notifications
+				progressBridge := &workflowProgressBridge{
+					inner:    cfg.EventBridge,
+					session:  session,
+					logger:   logger,
+					parentID: execID,
+				}
+
+				workflowController, err := NewStepBasedWorkflowOrchestrator(
+					execCtx,
+					"", "", 0.7, "simple",
+					cfg.SelectedServers,
+					cfg.SelectedTools,
+					cfg.UseCodeExecutionMode,
+					cfg.UseToolSearchMode,
+					cfg.PreDiscoveredTools,
+					cfg.MCPConfigPath,
+					cfg.LLMConfig,
+					100,
+					logger,
+					nil,
+					progressBridge, // wrapped bridge with per-step notifications
+					cfg.CustomTools,
+					cfg.CustomToolExecutors,
+					cfg.ToolCategories,
+					cfg.PresetPhaseLLM,
+					cfg.UseKnowledgebase,
+					cfg.TieredConfig,
+				)
+				if err != nil {
+					exec.mu.Lock()
+					exec.Status = WorkshopStepFailed
+					exec.Err = fmt.Errorf("failed to create workflow controller: %w", err)
+					exec.mu.Unlock()
+					return
+				}
+
+				// Propagate session context
+				if cfg.SessionID != "" {
+					workflowController.SetHTTPSessionID(cfg.SessionID)
+				}
+				if len(cfg.Secrets) > 0 {
+					workflowController.SetSecrets(cfg.Secrets)
+				}
+				if cfg.WorkspaceEnvRef != nil {
+					workflowController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
+				}
+				if skills := session.controller.GetSelectedSkills(); len(skills) > 0 {
+					workflowController.SetSelectedSkills(skills)
+				}
+				if session.controller.GetCdpPort() > 0 {
+					workflowController.SetCdpPort(session.controller.GetCdpPort())
+				}
+
+				// Set execution options
+				execOpts := &ExecutionOptions{
+					RunMode:           runMode,
+					SelectedRunFolder: iteration,
+					ExecutionStrategy: strategy,
+					EnabledGroupIDs:   enabledGroupIDs,
+				}
+				workflowController.SetExecutionOptions(execOpts)
+
+				resultText, execErr := workflowController.CreateTodoList(
+					execCtx,
+					session.controller.GetObjective(),
+					cfg.WorkspacePath,
+				)
+
+				exec.mu.Lock()
+				defer exec.mu.Unlock()
+				if exec.Status == WorkshopStepCancelled {
+					return
+				}
+				if execErr != nil {
+					exec.Status = WorkshopStepFailed
+					exec.Err = execErr
+				} else {
+					exec.Status = WorkshopStepDone
+					exec.Result = firstNonEmpty(strings.TrimSpace(resultText), "Workflow execution completed successfully.")
+				}
+
+				if eventBridge != nil {
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-workflow-execution",
+						AgentName:     "Full Workflow Execution",
+						Success:       execErr == nil,
+						InputData: map[string]string{
+							"execution_strategy": strategy,
+							"execution_type":     "full-workflow",
+						},
+					}
+					if execErr != nil {
+						endEvent.Result = fmt.Sprintf("Failed: %v", execErr)
+					} else if exec.Result != "" {
+						endEvent.Result = exec.Result
+					} else {
+						endEvent.Result = "Workflow execution completed successfully."
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type:          orchestrator_events.OrchestratorAgentEnd,
+						Timestamp:     time.Now(),
+						Data:          endEvent,
+						CorrelationID: agentSessionID,
+					})
+				}
+			}()
+
+			groupInfo := ""
+			if len(enabledGroupIDs) > 0 {
+				groupInfo = fmt.Sprintf("\nGroup: %s", enabledGroupIDs[0])
+			}
+			iterInfo := "\nIteration: new (auto-created)"
+			if iteration != "" {
+				iterInfo = fmt.Sprintf("\nIteration: %s (reusing)", iteration)
+			}
+			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s\nAll steps will be executed end-to-end.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_workflow tool: %v", err))
 	}
 }
 

@@ -4,7 +4,7 @@ import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck,
-  ChevronDown, ChevronRight, RefreshCw, Square
+  ChevronDown, ChevronRight, RefreshCw, Square, Radio
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
@@ -14,20 +14,23 @@ import CostsPopup from '../workflow/CostsPopup'
 import ExecutionLogsPopup from '../workflow/ExecutionLogsPopup'
 import EvaluationPopup from '../workflow/EvaluationPopup'
 import SchedulePresetPopup from '../SchedulePresetPopup'
+import ScheduleLiveEventsPopup from './ScheduleLiveEventsPopup'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '../ui/tooltip'
 
 interface WorkflowScheduleRunsPanelProps {
   onClose: () => void
 }
 
-type ActivePopup = 'costs' | 'logs' | 'eval' | null
+type ActivePopup = 'costs' | 'logs' | 'eval' | 'live' | null
 
 interface JobPopupState {
   jobId: string
+  jobName: string
   workspacePath: string
   runFolders: string[]
   popup: ActivePopup
   selectedRunFolder?: string
+  sessionId?: string
 }
 
 function describeCron(expr: string): string {
@@ -99,6 +102,15 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
+
+  // Auto-expand running jobs
+  useEffect(() => {
+    if (expandedJobId) return // don't override user's choice
+    const runningJob = jobs.find(j => j.last_status === 'running')
+    if (runningJob) {
+      setExpandedJobId(runningJob.id)
+    }
+  }, [jobs, expandedJobId])
   const [triggering, setTriggering] = useState<string | null>(null)
   const [popupState, setPopupState] = useState<JobPopupState | null>(null)
   const [editingJob, setEditingJob] = useState<ScheduledJob | null>(null)
@@ -124,8 +136,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     return map
   }, [customPresets, predefinedPresets])
 
-  const loadJobs = useCallback(async () => {
-    setIsLoading(true)
+  const loadJobs = useCallback(async (showLoading = false) => {
+    if (showLoading) setIsLoading(true)
     setError(null)
     try {
       const resp = await schedulerApi.listJobs({ entity_type: 'workflow' })
@@ -133,28 +145,16 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     } catch {
       setError('Failed to load scheduled workflows')
     } finally {
-      setIsLoading(false)
+      if (showLoading) setIsLoading(false)
     }
   }, [])
 
+  // Initial load — run once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    loadJobs()
+    loadJobs(true)
     refreshPresets()
-  }, [loadJobs, refreshPresets])
-
-  // Auto-refresh while any job is running
-  const hasRunningJob = jobs.some(j => j.last_status === 'running')
-  useEffect(() => {
-    if (!hasRunningJob) return
-    const interval = setInterval(() => {
-      loadJobs()
-      // Also refresh runs for expanded job
-      if (expandedJobId) {
-        loadRunsForJob(expandedJobId)
-      }
-    }, 5000)
-    return () => clearInterval(interval)
-  }, [hasRunningJob, loadJobs, expandedJobId])
+  }, [])
 
   const loadRunsForJob = useCallback(async (jobId: string) => {
     setLoadingRuns(jobId)
@@ -170,8 +170,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
   // Load cost summary for runs that have a run_folder (or detected running folder)
   const loadCostsForRuns = useCallback(async (jobId: string, runs: ScheduledJobRun[]) => {
-    const preset = presetMap.get(jobs.find(j => j.id === jobId)?.preset_query_id ?? '')
-    const workspacePath = preset?.workspacePath
+    const job = jobs.find(j => j.id === jobId)
+    const preset = presetMap.get(job?.preset_query_id ?? '')
+    const workspacePath = (job as any)?.workspace_path || preset?.workspacePath
     if (!workspacePath) return
 
     const foldersToLoad = runs
@@ -223,22 +224,54 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     const runningWithoutFolder = runs.filter(r => r.status === 'running' && !r.run_folder)
     if (runningWithoutFolder.length === 0) return
 
-    const preset = presetMap.get(jobs.find(j => j.id === jobId)?.preset_query_id ?? '')
-    const workspacePath = preset?.workspacePath
+    const djob = jobs.find(j => j.id === jobId)
+    const preset = presetMap.get(djob?.preset_query_id ?? '')
+    const workspacePath = djob?.workspace_path || preset?.workspacePath
     if (!workspacePath) return
 
     try {
       const resp = await agentApi.getRunFolders(workspacePath)
       const folders = resp.folders?.map(f => f.name) ?? []
       if (folders.length > 0) {
-        // Use the latest folder (highest iteration number)
-        const latestFolder = folders[folders.length - 1]
+        // Find the highest iteration number (API sorts alphabetically, not numerically)
+        const latestFolder = [...folders].sort((a, b) => {
+          const numA = parseInt(a.match(/iteration-(\d+)/)?.[1] ?? '0')
+          const numB = parseInt(b.match(/iteration-(\d+)/)?.[1] ?? '0')
+          return numB - numA // descending
+        })[0]
         const newMap: Record<string, string> = {}
         runningWithoutFolder.forEach(r => { newMap[r.id] = latestFolder })
         setRunningRunFolders(prev => ({ ...prev, ...newMap }))
       }
     } catch { /* ignore */ }
   }, [presetMap, jobs])
+
+  // Auto-refresh while any job is running: jobs list + runs + costs (every 5s)
+  const hasRunningJob = jobs.some(j => j.last_status === 'running')
+  useEffect(() => {
+    if (!hasRunningJob) return
+    const interval = setInterval(async () => {
+      loadJobs()
+      if (expandedJobId) {
+        await loadRunsForJob(expandedJobId)
+        const runs = jobRuns[expandedJobId] ?? []
+        // Clear cached costs for running runs so they re-fetch
+        const runningFolders = runs
+          .filter(r => r.status === 'running')
+          .map(r => r.run_folder || runningRunFolders[r.id])
+          .filter((f): f is string => !!f)
+        if (runningFolders.length > 0) {
+          setRunCosts(prev => {
+            const next = { ...prev }
+            runningFolders.forEach(f => delete next[f])
+            return next
+          })
+        }
+        detectRunningFolders(expandedJobId, runs)
+      }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [hasRunningJob, loadJobs, expandedJobId, jobRuns, runningRunFolders, detectRunningFolders, loadRunsForJob])
 
   // Auto-load costs when runs are loaded
   useEffect(() => {
@@ -313,7 +346,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
   const openPopup = async (job: ScheduledJob, popup: ActivePopup, selectedRunFolder?: string) => {
     const preset = presetMap.get(job.preset_query_id)
-    const workspacePath = preset?.workspacePath ?? null
+    const workspacePath = job.workspace_path || preset?.workspacePath || null
     if (!workspacePath) return
 
     // Load run folders and filter to the specific iteration
@@ -333,9 +366,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           selectedRunFolder = groupFolders[0]
         }
       }
-      setPopupState({ jobId: job.id, workspacePath, runFolders, popup, selectedRunFolder })
+      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders, popup, selectedRunFolder })
     } catch {
-      setPopupState({ jobId: job.id, workspacePath, runFolders: [], popup, selectedRunFolder })
+      setPopupState({ jobId: job.id, jobName: job.name, workspacePath, runFolders: [], popup, selectedRunFolder })
     }
   }
 
@@ -382,7 +415,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          {isLoading ? (
+          {isLoading && jobs.length === 0 ? (
             <div className="flex items-center justify-center h-40 text-sm text-gray-400">Loading...</div>
           ) : error ? (
             <div className="flex items-center justify-center h-40 text-sm text-red-500">{error}</div>
@@ -398,7 +431,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                 const preset = presetMap.get(job.preset_query_id)
                 const cronDesc = describeCron(job.cron_expression)
                 const isExpanded = expandedJobId === job.id
-                const hasWorkspace = !!preset?.workspacePath
+                const hasWorkspace = !!job.workspace_path || !!preset?.workspacePath
                 const runs = jobRuns[job.id] ?? []
                 const isLoadingThis = loadingRuns === job.id
 
@@ -653,14 +686,35 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                   )}
 
                                   {/* Action buttons */}
-                                  <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
+                                  <div className="flex items-center gap-2 ml-auto flex-shrink-0">
+                                    {/* Live view button for running jobs with session_id */}
+                                    {run.status === 'running' && run.session_id && (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            onClick={() => setPopupState({
+                                              jobId: job.id,
+                                              jobName: job.name,
+                                              workspacePath: job.workspace_path || '',
+                                              runFolders: [],
+                                              popup: 'live',
+                                              sessionId: run.session_id,
+                                            })}
+                                            className="p-1 text-green-500 hover:text-green-400 animate-pulse transition-colors"
+                                          >
+                                            <Radio className="w-3 h-3" />
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left">Live execution view</TooltipContent>
+                                      </Tooltip>
+                                    )}
                                     {/* Stop button for running jobs */}
                                     {run.status === 'running' && (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <button
                                             onClick={() => handleStopRun(job)}
-                                            className="p-0.5 text-gray-400 hover:text-red-500 transition-colors"
+                                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
                                           >
                                             <Square className="w-3 h-3" />
                                           </button>
@@ -674,7 +728,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipTrigger asChild>
                                           <button
                                             onClick={() => openPopup(job, 'logs', effectiveFolder)}
-                                            className="p-0.5 text-gray-300 dark:text-gray-600 hover:text-blue-500 transition-colors"
+                                            className="p-1 text-gray-300 dark:text-gray-600 hover:text-blue-500 transition-colors"
                                           >
                                             <Terminal className="w-3 h-3" />
                                           </button>
@@ -688,7 +742,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                         <TooltipTrigger asChild>
                                           <button
                                             onClick={() => openPopup(job, 'eval', effectiveFolder)}
-                                            className="p-0.5 text-gray-300 dark:text-gray-600 hover:text-emerald-500 transition-colors"
+                                            className="p-1 text-gray-300 dark:text-gray-600 hover:text-emerald-500 transition-colors"
                                           >
                                             <ClipboardCheck className="w-3 h-3" />
                                           </button>
@@ -735,6 +789,15 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         />
       )}
 
+      {/* Live events popup */}
+      {popupState?.popup === 'live' && popupState.sessionId && (
+        <ScheduleLiveEventsPopup
+          sessionId={popupState.sessionId}
+          jobName={popupState.jobName}
+          onClose={() => setPopupState(null)}
+        />
+      )}
+
       {/* Evaluation popup */}
       {popupState?.popup === 'eval' && (
         <EvaluationPopup
@@ -754,7 +817,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             presetQueryId={editingJob.preset_query_id}
             presetLabel={preset?.label ?? editingJob.name}
             entityType="workflow"
-            workspacePath={preset?.workspacePath ?? undefined}
+            workspacePath={editingJob.workspace_path || preset?.workspacePath || undefined}
             onClose={() => { setEditingJob(null); loadJobs() }}
           />
         )

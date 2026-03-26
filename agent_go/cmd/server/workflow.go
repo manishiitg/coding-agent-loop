@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
@@ -918,13 +919,6 @@ type WorkflowRequest struct {
 	HumanVerificationRequired bool   `json:"human_verification_required"`
 }
 
-// WorkflowExecuteRequest represents a workflow execution request (DEPRECATED - not used anymore)
-type WorkflowExecuteRequest struct {
-	PresetQueryID string `json:"preset_query_id"`
-	Objective     string `json:"objective"`
-	HumanResponse string `json:"human_response,omitempty"`
-}
-
 // WorkflowUpdateRequest represents a workflow update request
 type WorkflowUpdateRequest struct {
 	PresetQueryID   string                            `json:"preset_query_id"`
@@ -933,20 +927,50 @@ type WorkflowUpdateRequest struct {
 	StepID          *string                           `json:"step_id,omitempty"` // Optional step ID for step-specific phase execution
 }
 
-// handleCreateWorkflow handles workflow creation
-func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+// --- In-memory workflow runtime state (replaces DB workflows table) ---
 
+// WorkflowRuntimeState holds ephemeral execution state for a workflow.
+// This replaces the DB-backed workflows table. State doesn't survive server restarts
+// (which is fine — workflow_status is only meaningful during active execution).
+type WorkflowRuntimeState struct {
+	ID              string                           `json:"id"`
+	PresetQueryID   string                           `json:"preset_query_id"`
+	WorkflowStatus  string                           `json:"workflow_status"`
+	SelectedOptions *database.WorkflowSelectedOptions `json:"selected_options,omitempty"`
+	CreatedAt       time.Time                        `json:"created_at"`
+	UpdatedAt       time.Time                        `json:"updated_at"`
+}
+
+// workflowRuntimeStore is the in-memory store for workflow execution state.
+// Key: preset_query_id → WorkflowRuntimeState
+var workflowRuntimeStore = struct {
+	sync.RWMutex
+	m map[string]*WorkflowRuntimeState
+}{m: make(map[string]*WorkflowRuntimeState)}
+
+func getWorkflowRuntime(presetQueryID string) *WorkflowRuntimeState {
+	workflowRuntimeStore.RLock()
+	defer workflowRuntimeStore.RUnlock()
+	return workflowRuntimeStore.m[presetQueryID]
+}
+
+func setWorkflowRuntime(state *WorkflowRuntimeState) {
+	workflowRuntimeStore.Lock()
+	defer workflowRuntimeStore.Unlock()
+	workflowRuntimeStore.m[state.PresetQueryID] = state
+}
+
+func deleteWorkflowRuntime(presetQueryID string) {
+	workflowRuntimeStore.Lock()
+	defer workflowRuntimeStore.Unlock()
+	delete(workflowRuntimeStore.m, presetQueryID)
+}
+
+// handleCreateWorkflow handles workflow creation (in-memory runtime state).
+func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
+	setCORS(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -956,71 +980,50 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Validate required fields
 	if req.PresetQueryID == "" {
 		http.Error(w, "preset_query_id is required", http.StatusBadRequest)
 		return
 	}
 
-	// Check if workflow already exists for this preset
-	existingWorkflow, err := api.chatDB.GetWorkflowByPresetQueryID(r.Context(), req.PresetQueryID)
-	if err != nil && !strings.Contains(err.Error(), "workflow not found for preset query") {
-		http.Error(w, fmt.Sprintf("Failed to check existing workflow: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// If workflow already exists, return error
-	if existingWorkflow != nil {
+	// Check if already exists in memory
+	if existing := getWorkflowRuntime(req.PresetQueryID); existing != nil {
 		http.Error(w, "Workflow already exists for this preset query ID. Use update endpoint instead.", http.StatusConflict)
 		return
 	}
 
-	// Create new workflow
 	status := database.WorkflowStatusPreVerification
 	if !req.HumanVerificationRequired {
 		status = database.WorkflowStatusPostVerification
 	}
-	createReq := &database.CreateWorkflowRequest{
+
+	now := time.Now()
+	state := &WorkflowRuntimeState{
+		ID:             fmt.Sprintf("wfrt_%d", now.UnixNano()),
 		PresetQueryID:  req.PresetQueryID,
 		WorkflowStatus: status,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
-
-	workflow, err := api.chatDB.CreateWorkflow(r.Context(), createReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create workflow: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Return success response
-	response := map[string]interface{}{
-		"success": true,
-		"workflow": map[string]interface{}{
-			"id":              workflow.ID,
-			"preset_query_id": workflow.PresetQueryID,
-			"workflow_status": workflow.WorkflowStatus,
-			"created_at":      workflow.CreatedAt,
-		},
-		"message": "Workflow created successfully",
-	}
+	setWorkflowRuntime(state)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"workflow": map[string]interface{}{
+			"id":              state.ID,
+			"preset_query_id": state.PresetQueryID,
+			"workflow_status": state.WorkflowStatus,
+			"created_at":      state.CreatedAt,
+		},
+		"message": "Workflow created successfully",
+	})
 }
 
-// handleGetWorkflowStatus handles getting workflow status
+// handleGetWorkflowStatus handles getting workflow status (in-memory runtime state).
 func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
+	setCORS(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -1030,61 +1033,42 @@ func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Get workflow from database
-	workflow, err := api.chatDB.GetWorkflowByPresetQueryID(r.Context(), presetQueryID)
-	if err != nil {
-		if strings.Contains(err.Error(), "workflow not found for preset query") {
-			// No workflow exists for this preset
-			response := map[string]interface{}{
-				"success": true,
-				"exists":  false,
-				"message": "No workflow exists for this preset",
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(response)
-			return
-		}
-		http.Error(w, fmt.Sprintf("Failed to get workflow: %v", err), http.StatusInternalServerError)
+	state := getWorkflowRuntime(presetQueryID)
+	if state == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"exists":  false,
+			"message": "No workflow exists for this preset",
+		})
 		return
-	}
-
-	// Return workflow status
-	response := map[string]interface{}{
-		"success": true,
-		"exists":  true,
-		"workflow": map[string]interface{}{
-			"id":               workflow.ID,
-			"preset_query_id":  workflow.PresetQueryID,
-			"workflow_status":  workflow.WorkflowStatus,
-			"selected_options": workflow.SelectedOptions,
-			"created_at":       workflow.CreatedAt,
-			"updated_at":       workflow.UpdatedAt,
-		},
-		"status": map[string]interface{}{
-			"is_ready":              workflow.WorkflowStatus == database.WorkflowStatusPostVerification,
-			"requires_verification": workflow.WorkflowStatus == database.WorkflowStatusPreVerification,
-			"can_execute":           workflow.WorkflowStatus == database.WorkflowStatusPostVerification,
-		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"exists":  true,
+		"workflow": map[string]interface{}{
+			"id":               state.ID,
+			"preset_query_id":  state.PresetQueryID,
+			"workflow_status":  state.WorkflowStatus,
+			"selected_options": state.SelectedOptions,
+			"created_at":       state.CreatedAt,
+			"updated_at":       state.UpdatedAt,
+		},
+		"status": map[string]interface{}{
+			"is_ready":              state.WorkflowStatus == database.WorkflowStatusPostVerification,
+			"requires_verification": state.WorkflowStatus == database.WorkflowStatusPreVerification,
+			"can_execute":           state.WorkflowStatus == database.WorkflowStatusPostVerification,
+		},
+	})
 }
 
-// handleUpdateWorkflow handles workflow updates
+// handleUpdateWorkflow handles workflow updates (in-memory runtime state).
 func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
+	setCORS(w)
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -1094,34 +1078,18 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Validate required fields
 	if req.PresetQueryID == "" {
 		http.Error(w, "preset_query_id is required", http.StatusBadRequest)
 		return
 	}
 
-	// Create update request with all provided fields
-	updateReq := &database.UpdateWorkflowRequest{}
-
-	if req.WorkflowStatus != nil {
-		updateReq.WorkflowStatus = req.WorkflowStatus
-	}
-
-	if req.SelectedOptions != nil {
-		updateReq.SelectedOptions = req.SelectedOptions
-	}
-
-	// Validate that at least one field is provided
-	if updateReq.WorkflowStatus == nil && updateReq.SelectedOptions == nil {
+	if req.WorkflowStatus == nil && req.SelectedOptions == nil {
 		http.Error(w, "at least one field (workflow_status or selected_options) must be provided", http.StatusBadRequest)
 		return
 	}
 
-	// Store step_id in a temporary map for retrieval during execution
-	// We'll pass it through workflowOptions when executing
+	// Store step_id for execution
 	if req.StepID != nil && *req.StepID != "" {
-		// Store step_id in a map keyed by preset_query_id for retrieval during execution
-		// This is a temporary storage - step_id is only used during phase execution
 		api.workflowStepIDMux.Lock()
 		if api.workflowStepIDs == nil {
 			api.workflowStepIDs = make(map[string]string)
@@ -1130,35 +1098,43 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 		api.workflowStepIDMux.Unlock()
 	}
 
-	// Update workflow in database
-	workflow, err := api.chatDB.UpdateWorkflow(r.Context(), req.PresetQueryID, updateReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to update workflow: %v", err), http.StatusInternalServerError)
-		return
+	// Get or create in-memory state (upsert)
+	state := getWorkflowRuntime(req.PresetQueryID)
+	if state == nil {
+		state = &WorkflowRuntimeState{
+			ID:             fmt.Sprintf("wfrt_%d", time.Now().UnixNano()),
+			PresetQueryID:  req.PresetQueryID,
+			WorkflowStatus: database.WorkflowStatusPreVerification,
+			CreatedAt:      time.Now(),
+		}
 	}
 
-	// Return success response
+	if req.WorkflowStatus != nil {
+		state.WorkflowStatus = *req.WorkflowStatus
+	}
+	if req.SelectedOptions != nil {
+		state.SelectedOptions = req.SelectedOptions
+	}
+	state.UpdatedAt = time.Now()
+	setWorkflowRuntime(state)
+
 	workflowResponse := map[string]interface{}{
-		"id":              workflow.ID,
-		"preset_query_id": workflow.PresetQueryID,
-		"workflow_status": workflow.WorkflowStatus,
-		"created_at":      workflow.CreatedAt,
-		"updated_at":      workflow.UpdatedAt,
+		"id":              state.ID,
+		"preset_query_id": state.PresetQueryID,
+		"workflow_status": state.WorkflowStatus,
+		"created_at":      state.CreatedAt,
+		"updated_at":      state.UpdatedAt,
 	}
-
-	// Include selected_options if present
-	if workflow.SelectedOptions != nil {
-		workflowResponse["selected_options"] = workflow.SelectedOptions
-	}
-
-	response := map[string]interface{}{
-		"success":  true,
-		"workflow": workflowResponse,
-		"message":  "Workflow updated successfully",
+	if state.SelectedOptions != nil {
+		workflowResponse["selected_options"] = state.SelectedOptions
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"workflow": workflowResponse,
+		"message":  "Workflow updated successfully",
+	})
 }
 
 // handleGetRunFolders handles listing available run folders for a workspace
@@ -6134,6 +6110,7 @@ func toStringSlice(value interface{}) []string {
 
 // Config files that are versioned when publishing a workflow version
 var versionedConfigFiles = []string{
+	"workflow.json",
 	"planning/plan.json",
 	"planning/step_config.json",
 	"planning/workflow_layout.json",

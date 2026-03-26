@@ -278,7 +278,18 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 	parts = append(parts, fmt.Sprintf("### Workflow: %s\n", workflowName))
 	parts = append(parts, fmt.Sprintf("**Workspace Path:** `%s/`\n", wsPath))
 
-	// 0. Workflow memory (memory/ folder) — user-saved knowledge for this workflow
+	// 0a. Workflow manifest (workflow.json) — workflow-level configuration
+	manifestContent := readFileContent(client, path.Join(wsPath, "workflow.json"))
+	if manifestContent != "" {
+		parts = append(parts, "**Workflow Manifest (workflow.json):**")
+		parts = append(parts, "This file defines the workflow's configuration — selected MCP servers, tools, skills, LLM config, browser mode, schedules, and employee assignment.")
+		parts = append(parts, "```json")
+		parts = append(parts, manifestContent)
+		parts = append(parts, "```")
+		parts = append(parts, "")
+	}
+
+	// 0b. Workflow memory (memory/ folder) — user-saved knowledge for this workflow
 	// Also check legacy instructions.md for backward compatibility
 	memoryDir := path.Join(wsPath, "memory")
 	memoryContent := readDirectoryMarkdownFiles(client, memoryDir)
@@ -338,6 +349,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 
 	// 6. File locations guide (matching plan improvement agent's detail level)
 	parts = append(parts, fmt.Sprintf(`**File Locations:**
+- Workflow manifest: `+"`%s/workflow.json`"+` — workflow-level config (servers, tools, skills, LLM, schedules, assignment)
 - Plan file: `+"`%s/planning/plan.json`"+`
 - Step config: `+"`%s/planning/step_config.json`"+` — per-step LLM, tool, and mode settings
 - Variables: `+"`%s/variables/variables.json`"+`
@@ -345,7 +357,7 @@ func buildSingleWorkflowContext(client *skills.WorkspaceAPIClient, wsPath string
 - Knowledgebase: `+"`%s/knowledgebase/`"+` — persistent files across runs
 - Runs: `+"`%s/runs/`"+`
 - Evaluation reports: `+"`%s/evaluation/runs/{runFolder}/evaluation_report.json`"+`
-`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
+`, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath, wsPath))
 
 	// 7. Step folder naming conventions and log file guide
 	parts = append(parts, `**Step Folder Naming (inside execution/ and logs/):**

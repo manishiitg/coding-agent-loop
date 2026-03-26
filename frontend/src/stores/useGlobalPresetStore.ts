@@ -626,6 +626,31 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
 
             await agentApi.updatePresetQuery(id, request)
 
+            // Dual-write: also update workflow.json manifest if this is a workflow preset with a folder
+            if (agentMode === 'workflow' && selectedFolder?.filepath) {
+              try {
+                await agentApi.updateWorkflowManifest({
+                  workspace_path: selectedFolder.filepath,
+                  label,
+                  capabilities: {
+                    selected_servers: selectedServers || [],
+                    selected_tools: toolsForBackend,
+                    selected_skills: selectedSkills || [],
+                    selected_secrets: secretNamesForBackend,
+                    selected_global_secret_names: selectedGlobalSecretNames ?? null,
+                    browser_mode: browserMode || 'none',
+                    use_code_execution_mode: useCodeExecutionMode ?? false,
+                    use_tool_search_mode: effectiveToolSearchMode,
+                    pre_discovered_tools: preDiscoveredTools,
+                    llm_config: llmConfig || undefined,
+                  },
+                })
+              } catch (manifestErr) {
+                // Non-fatal: manifest may not exist yet (pre-migration)
+                console.log('[PRESET_STORE] Manifest dual-write skipped (may not exist yet):', manifestErr)
+              }
+            }
+
             set(state => ({
               customPresets: state.customPresets.map(preset =>
                 preset.id === id
@@ -721,6 +746,31 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             })
 
             const response = await agentApi.createPresetQuery(request)
+
+            // Dual-write: also create workflow.json manifest for new workflow presets
+            if (agentMode === 'workflow' && selectedFolder?.filepath) {
+              try {
+                await agentApi.createWorkflowManifest({
+                  label,
+                  workspace_path: selectedFolder.filepath,
+                  capabilities: {
+                    selected_servers: selectedServers || [],
+                    selected_tools: toolsForBackend,
+                    selected_skills: selectedSkills || [],
+                    selected_secrets: secretNamesForBackend,
+                    selected_global_secret_names: selectedGlobalSecretNames ?? null,
+                    browser_mode: browserMode || 'none',
+                    use_code_execution_mode: useCodeExecutionMode ?? false,
+                    use_tool_search_mode: effectiveToolSearchMode,
+                    pre_discovered_tools: preDiscoveredTools,
+                    llm_config: llmConfig || undefined,
+                  },
+                })
+              } catch (manifestErr) {
+                // Non-fatal: manifest creation may fail if workspace doesn't exist yet
+                console.log('[PRESET_STORE] Manifest creation skipped:', manifestErr)
+              }
+            }
 
             const newPreset: CustomPreset = {
               id: response.id,

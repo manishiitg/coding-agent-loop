@@ -1187,7 +1187,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
         continue
       }
-      if (event.type === 'user_message') continue
+      // Allow backend user_message events through when there's no frontend-created one
+      // (this renders synthetic turn messages like [AUTO-NOTIFICATION] in the chat)
+      if (event.type === 'user_message' && hasFrontendUserMessage) continue
 
       if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end' || event.type === 'conversation_error' || event.type === 'context_cancelled')) {
         hasCompletionEvent = true
@@ -1225,10 +1227,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       // Dedup keys now include correlation_id (unique per execution), so clearing is not needed
 
-      // Auto-notify chat agent when a workshop step or sub-agent completes.
-      // Workshop wrapper events (workshop-step-*) and sub-agent events within workshop steps
-      // (detected by workshop- correlation_id) both trigger notifications.
-      if (event.type === 'orchestrator_agent_end' && tab) {
+      // Auto-notifications for workshop step completions are now handled entirely by the backend
+      // via processBackgroundAgentCompletion → executeSyntheticTurn. The backend injects a
+      // [AUTO-NOTIFICATION] user_message event which the frontend renders (see user_message
+      // passthrough above). No frontend queuing needed.
+      //
+      // Legacy: orchestrator_agent_end events were previously queued as auto-notifications here.
+      // That code has been removed. The backend bgAgentRegistry handles all workshop execution
+      // completion notifications.
+      if (false && event.type === 'orchestrator_agent_end' && tab) {
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
         const isWorkshopWrapper = agentType === 'workshop-step-execution' || agentType === 'workshop-step-debug' || agentType === 'workshop-step-learning' || agentType === 'workshop-background-task' || agentType === 'workshop-report-execution'
         // Sub-agents within workshop steps have workshop_step_id in metadata (set by ContextAwareEventBridge)
@@ -1432,11 +1439,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // These were calling setStepStatus/handleBatchGroupStart which update workflowStore →
     // trigger usePlanToFlow → full Dagre layout recomputation for ALL canvas nodes on every event.
     // Step status coloring on the canvas is not needed during chat — it only matters in execution mode.
-    // Queue auto-notifications for step completions in workflow mode.
-    // Runs for ALL presets (not just active) and all view modes (including summary) so
-    // background workflows still queue notifications on their own tabs — they'll be sent
-    // when the user switches back or when the LLM turn ends.
-    if (selectedModeCategory === 'workflow') {
+    // Auto-notifications for step completions are now handled by the backend via
+    // processBackgroundAgentCompletion → executeSyntheticTurn. Disabled frontend queuing.
+    if (false && selectedModeCategory === 'workflow') {
       for (const event of response.events as PollingEvent[]) {
         if (event.type === 'todo_task_step_completed' && hasUserSentMessageRef.current) {
           if (isStaleAutoNotificationEvent(event)) {

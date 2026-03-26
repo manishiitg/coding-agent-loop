@@ -1689,6 +1689,9 @@ export interface ScheduledJob {
   description: string
   entity_type: 'workflow' | 'chat'
   preset_query_id: string
+  workspace_path?: string
+  workflow_id?: string
+  workflow_label?: string
   trigger_payload?: Record<string, unknown>
   group_ids?: string[]  // undefined/empty = all groups
   cron_expression: string
@@ -1754,4 +1757,106 @@ export interface ListScheduledJobRunsResponse {
   total: number
   limit: number
   offset: number
+}
+
+// --- Workflow Manifest Types (file-backed workflow definitions) ---
+
+export interface WorkflowManifest {
+  schema_version: number
+  id: string
+  label: string
+  capabilities: WorkflowCapabilities
+  execution_defaults: WorkflowExecutionDefaults
+  ownership: WorkflowOwnership
+  schedules: WorkflowScheduleEntry[]
+  created_at?: string
+  updated_at?: string
+}
+
+export interface WorkflowCapabilities {
+  selected_servers: string[]
+  selected_tools: string[]
+  selected_skills: string[]
+  selected_secrets: string[]
+  selected_global_secret_names: string[] | null // null = all, [] = none
+  browser_mode: string
+  use_code_execution_mode: boolean
+  use_tool_search_mode: boolean
+  pre_discovered_tools: string[]
+  llm_config?: PresetLLMConfig
+}
+
+export interface WorkflowExecutionDefaults {
+  always_use_same_run: boolean
+  skip_execution_cleanup: boolean
+}
+
+export interface WorkflowOwnership {
+  employee_id: string | null
+}
+
+export interface WorkflowScheduleEntry {
+  id: string
+  name: string
+  description?: string
+  cron_expression: string
+  timezone: string
+  enabled: boolean
+  trigger_payload?: Record<string, unknown>
+  group_ids?: string[]
+}
+
+export interface DiscoveredWorkflow {
+  workspace_path: string
+  manifest: WorkflowManifest
+}
+
+export interface ListWorkflowManifestsResponse {
+  success: boolean
+  workflows: DiscoveredWorkflow[]
+  total: number
+}
+
+export interface GetWorkflowManifestResponse {
+  success: boolean
+  manifest: WorkflowManifest
+  workspace_path: string
+}
+
+export interface CreateWorkflowManifestRequest {
+  label: string
+  workspace_path: string
+  capabilities?: Partial<WorkflowCapabilities>
+  execution_defaults?: Partial<WorkflowExecutionDefaults>
+  human_verification_required?: boolean
+}
+
+export interface UpdateWorkflowManifestRequest {
+  workspace_path: string
+  label?: string
+  capabilities?: WorkflowCapabilities
+  execution_defaults?: WorkflowExecutionDefaults
+  ownership?: WorkflowOwnership
+  schedules?: WorkflowScheduleEntry[]
+}
+
+export interface DuplicateWorkflowManifestRequest {
+  source_workspace_path: string
+  target_workspace_path: string
+  new_label?: string
+}
+
+export interface MigrateWorkflowsResponse {
+  success: boolean
+  results: Array<{
+    preset_id: string
+    label: string
+    workspace_path: string
+    status: 'migrated' | 'skipped' | 'error'
+    error?: string
+  }>
+  migrated: number
+  skipped: number
+  errors: number
+  total: number
 }

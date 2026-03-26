@@ -143,6 +143,20 @@ func updatePresetQueryHandler(db database.Database) http.HandlerFunc {
 			return
 		}
 
+		// Dual-write: sync updated preset to workflow.json if it's a workflow preset
+		if preset.AgentMode == database.AgentModeWorkflow && preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
+			manifest, exists, mErr := ReadWorkflowManifest(r.Context(), preset.SelectedFolder.String)
+			if mErr == nil && exists {
+				// Convert the full preset back to manifest capabilities
+				updated, cErr := ManifestFromPreset(preset)
+				if cErr == nil {
+					manifest.Label = updated.Label
+					manifest.Capabilities = updated.Capabilities
+					_ = WriteWorkflowManifest(r.Context(), preset.SelectedFolder.String, manifest)
+				}
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(preset)
 	}

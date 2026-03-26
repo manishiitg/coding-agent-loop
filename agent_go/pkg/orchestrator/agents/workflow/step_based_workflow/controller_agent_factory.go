@@ -1560,13 +1560,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	var llmConfig *orchestrator.LLMConfig
 	orchestratorLLMConfig := hcpo.GetLLMConfig()
 	if todoTaskLLMConfig != nil && todoTaskLLMConfig.Primary.Provider != "" && todoTaskLLMConfig.Primary.ModelID != "" {
+		var apiKeys *orchestrator.APIKeys
+		if orchestratorLLMConfig != nil {
+			apiKeys = orchestratorLLMConfig.APIKeys
+		}
 		llmConfig = &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
 				Provider: todoTaskLLMConfig.Primary.Provider,
 				ModelID:  todoTaskLLMConfig.Primary.ModelID,
 			},
 			Fallbacks: todoTaskLLMConfig.Fallbacks,
-			APIKeys:   orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
+			APIKeys:   apiKeys, // Preserve API keys from orchestrator (may be nil)
 		}
 		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using step-specific todo task orchestrator LLM: %s/%s", todoTaskLLMConfig.Primary.Provider, todoTaskLLMConfig.Primary.ModelID))
 	} else if hcpo.tierResolver != nil {

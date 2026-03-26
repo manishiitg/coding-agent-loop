@@ -182,6 +182,16 @@ func assignWorkflowEmployeeHandler(db database.Database) http.HandlerFunc {
 			return
 		}
 
+		// Also update manifest if it exists (dual-write for migration)
+		preset, pErr := db.GetPresetQuery(r.Context(), req.PresetQueryID)
+		if pErr == nil && preset != nil && preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
+			manifest, exists, mErr := ReadWorkflowManifest(r.Context(), preset.SelectedFolder.String)
+			if mErr == nil && exists {
+				manifest.Ownership.EmployeeID = req.EmployeeID
+				_ = WriteWorkflowManifest(r.Context(), preset.SelectedFolder.String, manifest)
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	}

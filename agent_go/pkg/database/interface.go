@@ -39,12 +39,6 @@ type Database interface {
 	ListPresetQueries(ctx context.Context, limit, offset int) ([]PresetQuery, int, error)
 	ListPresetQueriesWithUser(ctx context.Context, limit, offset int, userID string) ([]PresetQuery, int, error)
 
-	// Workflow management
-	CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (*Workflow, error)
-	GetWorkflowByPresetQueryID(ctx context.Context, presetQueryID string) (*Workflow, error)
-	UpdateWorkflow(ctx context.Context, presetQueryID string, req *UpdateWorkflowRequest) (*Workflow, error)
-	DeleteWorkflow(ctx context.Context, presetQueryID string) error
-
 	// Bot connector config management
 	UpsertBotConnectorConfig(ctx context.Context, req *CreateBotConnectorConfigRequest) (*BotConnectorConfig, error)
 	GetBotConnectorConfig(ctx context.Context, id string) (*BotConnectorConfig, error)

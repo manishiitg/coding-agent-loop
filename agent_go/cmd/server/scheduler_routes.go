@@ -6,28 +6,115 @@ import (
 	"strconv"
 	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/database"
-
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
-// SchedulerRoutes registers the scheduler API routes
-func SchedulerRoutes(router *mux.Router, db database.Database, svc *SchedulerService) {
-	apiRouter := router.PathPrefix("/api/scheduler").Subrouter()
-
-	apiRouter.HandleFunc("/jobs", listScheduledJobsHandler(db)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/jobs", createScheduledJobHandler(db, svc)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", getScheduledJobHandler(db)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", updateScheduledJobHandler(db, svc)).Methods("PUT", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}", deleteScheduledJobHandler(db, svc)).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/enable", enableScheduledJobHandler(db, svc)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/disable", disableScheduledJobHandler(db, svc)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/trigger", triggerScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/stop", stopScheduledJobHandler(db, svc)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/jobs/{id}/runs", getScheduledJobRunsHandler(db)).Methods("GET", "OPTIONS")
+// ScheduledJobResponse is the API response for a scheduled job.
+// Designed to be backward-compatible with the old DB-based ScheduledJob shape.
+type ScheduledJobResponse struct {
+	ID                  string          `json:"id"`
+	Name                string          `json:"name"`
+	Description         string          `json:"description"`
+	EntityType          string          `json:"entity_type"`
+	WorkspacePath       string          `json:"workspace_path"`
+	WorkflowID          string          `json:"workflow_id"`
+	WorkflowLabel       string          `json:"workflow_label"`
+	PresetQueryID       string          `json:"preset_query_id"` // empty — kept for frontend compat
+	TriggerPayload      json.RawMessage `json:"trigger_payload,omitempty"`
+	GroupIDs            []string        `json:"group_ids,omitempty"`
+	Mode                string          `json:"mode,omitempty"`     // "workflow" or "workshop"
+	Messages            []string        `json:"messages,omitempty"` // Predefined messages for workshop mode
+	CronExpression      string          `json:"cron_expression"`
+	Timezone            string          `json:"timezone"`
+	Enabled             bool            `json:"enabled"`
+	LastRunAt           *time.Time      `json:"last_run_at,omitempty"`
+	NextRunAt           *time.Time      `json:"next_run_at,omitempty"`
+	LastSessionID       string          `json:"last_session_id,omitempty"`
+	LastStatus          string          `json:"last_status,omitempty"`
+	LastError           string          `json:"last_error,omitempty"`
+	LastDurationMs      *int64          `json:"last_duration_ms,omitempty"`
+	RunCount            int             `json:"run_count"`
+	ConsecutiveFailures int             `json:"consecutive_failures"`
+	CreatedAt           string          `json:"created_at,omitempty"`
+	UpdatedAt           string          `json:"updated_at,omitempty"`
 }
 
-func listScheduledJobsHandler(db database.Database) http.HandlerFunc {
+// CreateScheduleRequest is the request body for creating a schedule.
+type CreateScheduleRequest struct {
+	WorkspacePath  string          `json:"workspace_path"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	CronExpression string          `json:"cron_expression"`
+	Timezone       string          `json:"timezone"`
+	Enabled        bool            `json:"enabled"`
+	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
+	GroupIDs       []string        `json:"group_ids,omitempty"`
+	Mode           string          `json:"mode,omitempty"`     // "workflow" (default) or "workshop"
+	Messages       []string        `json:"messages,omitempty"` // Predefined messages for workshop mode
+}
+
+// UpdateScheduleRequest is the request body for updating a schedule.
+type UpdateScheduleRequest struct {
+	Name           string          `json:"name,omitempty"`
+	Description    string          `json:"description,omitempty"`
+	CronExpression string          `json:"cron_expression,omitempty"`
+	Timezone       string          `json:"timezone,omitempty"`
+	Enabled        *bool           `json:"enabled,omitempty"`
+	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
+	GroupIDs       []string        `json:"group_ids,omitempty"`
+	Mode           string          `json:"mode,omitempty"`     // "workflow" or "workshop"
+	Messages       []string        `json:"messages,omitempty"` // Predefined messages for workshop mode
+}
+
+// buildJobResponse combines manifest schedule + runtime state into an API response.
+func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState) ScheduledJobResponse {
+	return ScheduledJobResponse{
+		ID:                  sched.ID,
+		Name:                sched.Name,
+		Description:         sched.Description,
+		EntityType:          "workflow",
+		WorkspacePath:       workspacePath,
+		WorkflowID:          manifest.ID,
+		WorkflowLabel:       manifest.Label,
+		PresetQueryID:       "", // no longer used
+		TriggerPayload:      sched.TriggerPayload,
+		GroupIDs:            sched.GroupIDs,
+		Mode:                sched.Mode,
+		Messages:            sched.Messages,
+		CronExpression:      sched.CronExpression,
+		Timezone:            sched.Timezone,
+		Enabled:             sched.Enabled,
+		LastRunAt:           state.LastRunAt,
+		NextRunAt:           state.NextRunAt,
+		LastSessionID:       state.LastSessionID,
+		LastStatus:          state.LastStatus,
+		LastError:           state.LastError,
+		LastDurationMs:      state.LastDurationMs,
+		RunCount:            state.RunCount,
+		ConsecutiveFailures: state.ConsecutiveFailures,
+		CreatedAt:           manifest.CreatedAt,
+		UpdatedAt:           manifest.UpdatedAt,
+	}
+}
+
+// SchedulerRoutes registers the scheduler API routes.
+func SchedulerRoutes(router *mux.Router, svc *SchedulerService) {
+	apiRouter := router.PathPrefix("/api/scheduler").Subrouter()
+
+	apiRouter.HandleFunc("/jobs", listScheduledJobsHandler(svc)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/jobs", createScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", getScheduledJobHandler(svc)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", updateScheduledJobHandler(svc)).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}", deleteScheduledJobHandler(svc)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/enable", enableScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/disable", disableScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/trigger", triggerScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/stop", stopScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/{id}/runs", getScheduledJobRunsHandler(svc)).Methods("GET", "OPTIONS")
+}
+
+func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -47,66 +134,75 @@ func listScheduledJobsHandler(db database.Database) http.HandlerFunc {
 			}
 		}
 
-		var entityType *string
-		if v := r.URL.Query().Get("entity_type"); v != "" {
-			entityType = &v
-		}
+		enabledFilter := r.URL.Query().Get("enabled")
 
-		var enabled *bool
-		if v := r.URL.Query().Get("enabled"); v != "" {
-			b := v == "true" || v == "1"
-			enabled = &b
-		}
-
-		jobs, total, err := db.ListScheduledJobs(r.Context(), limit, offset, entityType, enabled)
+		// Discover all workflows and collect schedules
+		workflows, err := DiscoverWorkflowManifests(r.Context())
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		var allJobs []ScheduledJobResponse
+		for _, dw := range workflows {
+			for _, sched := range dw.Manifest.Schedules {
+				// Apply enabled filter
+				if enabledFilter != "" {
+					wantEnabled := enabledFilter == "true" || enabledFilter == "1"
+					if sched.Enabled != wantEnabled {
+						continue
+					}
+				}
+
+				state := svc.GetRuntimeState(sched.ID)
+				allJobs = append(allJobs, buildJobResponse(dw.WorkspacePath, dw.Manifest, sched, state))
+			}
+		}
+
+		total := len(allJobs)
+
+		// Pagination
+		if offset >= total {
+			allJobs = []ScheduledJobResponse{}
+		} else {
+			end := offset + limit
+			if end > total {
+				end = total
+			}
+			allJobs = allJobs[offset:end]
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(database.ListScheduledJobsResponse{
-			Jobs:   jobs,
-			Total:  total,
-			Limit:  limit,
-			Offset: offset,
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"jobs":   allJobs,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
 		})
 	}
 }
 
-func createScheduledJobHandler(db database.Database, svc *SchedulerService) http.HandlerFunc {
+func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		var req database.CreateScheduledJobRequest
+		var req CreateScheduleRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		// Validate entity type
-		if req.EntityType != database.ScheduleEntityWorkflow && req.EntityType != database.ScheduleEntityChat {
-			http.Error(w, "entity_type must be 'workflow' or 'chat'", http.StatusBadRequest)
+		if req.WorkspacePath == "" {
+			http.Error(w, "workspace_path is required", http.StatusBadRequest)
 			return
 		}
-
-		// Validate preset exists
-		preset, err := db.GetPresetQuery(r.Context(), req.PresetQueryID)
-		if err != nil || preset == nil {
-			http.Error(w, "preset_query_id not found", http.StatusBadRequest)
-			return
-		}
-
-		// Validate cron expression
 		if err := ValidateCronExpression(req.CronExpression); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-
-		// Validate timezone
 		if req.Timezone != "" {
 			if _, err := time.LoadLocation(req.Timezone); err != nil {
 				http.Error(w, "invalid timezone", http.StatusBadRequest)
@@ -114,27 +210,59 @@ func createScheduledJobHandler(db database.Database, svc *SchedulerService) http
 			}
 		}
 
-		job, err := db.CreateScheduledJob(r.Context(), &req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Read manifest
+		manifest, found, err := ReadWorkflowManifest(r.Context(), req.WorkspacePath)
+		if err != nil || !found {
+			http.Error(w, "workflow manifest not found at "+req.WorkspacePath, http.StatusBadRequest)
+			return
+		}
+
+		// Create new schedule
+		newSched := WorkflowSchedule{
+			ID:             uuid.New().String(),
+			Name:           req.Name,
+			Description:    req.Description,
+			CronExpression: req.CronExpression,
+			Timezone:       req.Timezone,
+			Enabled:        req.Enabled,
+			TriggerPayload: req.TriggerPayload,
+			GroupIDs:       req.GroupIDs,
+			Mode:           req.Mode,
+			Messages:       req.Messages,
+		}
+
+		manifest.Schedules = append(manifest.Schedules, newSched)
+
+		if err := WriteWorkflowManifest(r.Context(), req.WorkspacePath, manifest); err != nil {
+			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		// Register in scheduler if enabled
-		if job.Enabled && svc != nil {
-			if err := svc.LoadJob(job); err != nil {
-				// Log but don't fail the request
-				_ = err
+		if newSched.Enabled {
+			sctx := &ScheduleContext{
+				WorkspacePath: req.WorkspacePath,
+				WorkflowID:    manifest.ID,
+				WorkflowLabel: manifest.Label,
+				Schedule:      newSched,
+				Capabilities:  manifest.Capabilities,
+				Query:         manifest.Label,
+			}
+			if err := svc.LoadSchedule(sctx); err != nil {
+				scheduleLogf("[SCHEDULER] Failed to load new schedule %s: %v", newSched.ID, err)
 			}
 		}
 
+		state := svc.GetRuntimeState(newSched.ID)
+		resp := buildJobResponse(req.WorkspacePath, manifest, newSched, state)
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(job)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func getScheduledJobHandler(db database.Database) http.HandlerFunc {
+func getScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -142,22 +270,21 @@ func getScheduledJobHandler(db database.Database) http.HandlerFunc {
 		}
 
 		id := mux.Vars(r)["id"]
-		job, err := db.GetScheduledJob(r.Context(), id)
+		workspacePath, manifest, idx, err := findScheduleByID(r.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if job == nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
+		state := svc.GetRuntimeState(id)
+		resp := buildJobResponse(workspacePath, manifest, manifest.Schedules[idx], state)
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(job)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func updateScheduledJobHandler(db database.Database, svc *SchedulerService) http.HandlerFunc {
+func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -166,21 +293,18 @@ func updateScheduledJobHandler(db database.Database, svc *SchedulerService) http
 
 		id := mux.Vars(r)["id"]
 
-		var req database.UpdateScheduledJobRequest
+		var req UpdateScheduleRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		// Validate cron if provided
 		if req.CronExpression != "" {
 			if err := ValidateCronExpression(req.CronExpression); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
-
-		// Validate timezone if provided
 		if req.Timezone != "" {
 			if _, err := time.LoadLocation(req.Timezone); err != nil {
 				http.Error(w, "invalid timezone", http.StatusBadRequest)
@@ -188,29 +312,60 @@ func updateScheduledJobHandler(db database.Database, svc *SchedulerService) http
 			}
 		}
 
-		job, err := db.UpdateScheduledJob(r.Context(), id, &req)
+		workspacePath, manifest, idx, err := findScheduleByID(r.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if job == nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
-		// Reload in scheduler (handles enable/disable/cron change)
-		if svc != nil {
-			if err := svc.LoadJob(job); err != nil {
-				_ = err
-			}
+		sched := &manifest.Schedules[idx]
+		if req.Name != "" {
+			sched.Name = req.Name
+		}
+		if req.Description != "" {
+			sched.Description = req.Description
+		}
+		if req.CronExpression != "" {
+			sched.CronExpression = req.CronExpression
+		}
+		if req.Timezone != "" {
+			sched.Timezone = req.Timezone
+		}
+		if req.Enabled != nil {
+			sched.Enabled = *req.Enabled
+		}
+		if req.TriggerPayload != nil {
+			sched.TriggerPayload = req.TriggerPayload
+		}
+		if req.GroupIDs != nil {
+			sched.GroupIDs = req.GroupIDs
+		}
+		if req.Mode != "" {
+			sched.Mode = req.Mode
+		}
+		if req.Messages != nil {
+			sched.Messages = req.Messages
 		}
 
+		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
+			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Reload in scheduler
+		if err := svc.ReloadSchedule(r.Context(), workspacePath, id); err != nil {
+			scheduleLogf("[SCHEDULER] Failed to reload schedule %s after update: %v", id, err)
+		}
+
+		state := svc.GetRuntimeState(id)
+		resp := buildJobResponse(workspacePath, manifest, *sched, state)
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(job)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func deleteScheduledJobHandler(db database.Database, svc *SchedulerService) http.HandlerFunc {
+func deleteScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -219,15 +374,20 @@ func deleteScheduledJobHandler(db database.Database, svc *SchedulerService) http
 
 		id := mux.Vars(r)["id"]
 
-		// Remove from scheduler first
-		if svc != nil {
-			if err := svc.RemoveJob(id); err != nil {
-				_ = err
-			}
+		workspacePath, manifest, idx, err := findScheduleByID(r.Context(), id)
+		if err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
 		}
 
-		if err := db.DeleteScheduledJob(r.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Remove from gocron
+		_ = svc.RemoveJob(id)
+
+		// Remove from manifest
+		manifest.Schedules = append(manifest.Schedules[:idx], manifest.Schedules[idx+1:]...)
+
+		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
+			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -235,7 +395,7 @@ func deleteScheduledJobHandler(db database.Database, svc *SchedulerService) http
 	}
 }
 
-func enableScheduledJobHandler(db database.Database, svc *SchedulerService) http.HandlerFunc {
+func enableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -243,29 +403,33 @@ func enableScheduledJobHandler(db database.Database, svc *SchedulerService) http
 		}
 
 		id := mux.Vars(r)["id"]
-		enabled := true
-		job, err := db.UpdateScheduledJob(r.Context(), id, &database.UpdateScheduledJobRequest{Enabled: &enabled})
+
+		workspacePath, manifest, idx, err := findScheduleByID(r.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if job == nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
-		if svc != nil {
-			if err := svc.LoadJob(job); err != nil {
-				_ = err
-			}
+		manifest.Schedules[idx].Enabled = true
+
+		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
+			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 
+		if err := svc.ReloadSchedule(r.Context(), workspacePath, id); err != nil {
+			scheduleLogf("[SCHEDULER] Failed to reload schedule %s after enable: %v", id, err)
+		}
+
+		state := svc.GetRuntimeState(id)
+		resp := buildJobResponse(workspacePath, manifest, manifest.Schedules[idx], state)
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(job)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func disableScheduledJobHandler(db database.Database, svc *SchedulerService) http.HandlerFunc {
+func disableScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -273,25 +437,27 @@ func disableScheduledJobHandler(db database.Database, svc *SchedulerService) htt
 		}
 
 		id := mux.Vars(r)["id"]
-		enabled := false
-		job, err := db.UpdateScheduledJob(r.Context(), id, &database.UpdateScheduledJobRequest{Enabled: &enabled})
+
+		workspacePath, manifest, idx, err := findScheduleByID(r.Context(), id)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if job == nil {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 
-		if svc != nil {
-			if err := svc.RemoveJob(id); err != nil {
-				_ = err
-			}
+		manifest.Schedules[idx].Enabled = false
+
+		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {
+			http.Error(w, "failed to write manifest: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 
+		_ = svc.RemoveJob(id)
+
+		state := svc.GetRuntimeState(id)
+		resp := buildJobResponse(workspacePath, manifest, manifest.Schedules[idx], state)
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(job)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
@@ -302,24 +468,31 @@ func triggerScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			return
 		}
 
-		if svc == nil {
-			http.Error(w, "scheduler not available", http.StatusServiceUnavailable)
-			return
+		id := mux.Vars(r)["id"]
+
+		// Find workspace path — first check in-memory index, then scan manifests
+		workspacePath := svc.GetWorkspaceForSchedule(id)
+		if workspacePath == "" {
+			wp, _, _, err := findScheduleByID(r.Context(), id)
+			if err != nil {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			workspacePath = wp
 		}
 
-		id := mux.Vars(r)["id"]
-		sessionID, err := svc.TriggerNow(id)
+		result, err := svc.TriggerNow(workspacePath, id)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"session_id": sessionID})
+		json.NewEncoder(w).Encode(map[string]string{"session_id": result})
 	}
 }
 
-func stopScheduledJobHandler(db database.Database, svc *SchedulerService) http.HandlerFunc {
+func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -327,68 +500,58 @@ func stopScheduledJobHandler(db database.Database, svc *SchedulerService) http.H
 		}
 
 		id := mux.Vars(r)["id"]
-		job, err := db.GetScheduledJob(r.Context(), id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if job == nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
 
-		if job.LastStatus != "running" {
+		state := svc.GetRuntimeState(id)
+		if state.LastStatus != "running" {
 			http.Error(w, "job is not running", http.StatusBadRequest)
 			return
 		}
 
-		// Stop the running session via the scheduler service
-		if svc != nil {
-			svc.StopRunningJob(job)
+		svc.StopRunningJob(id)
+
+		// Update runtime state
+		svc.mu.Lock()
+		s := svc.getRuntimeStateLocked(id)
+		durationMs := int64(0)
+		if s.LastRunAt != nil {
+			durationMs = time.Since(*s.LastRunAt).Milliseconds()
+		}
+		s.LastStatus = "error"
+		s.LastError = "stopped by user"
+		s.LastDurationMs = &durationMs
+		svc.mu.Unlock()
+
+		// Update latest run entry
+		workspacePath := svc.GetWorkspaceForSchedule(id)
+		if workspacePath != "" {
+			runs, err := ReadScheduleRuns(r.Context(), workspacePath)
+			if err == nil && len(runs) > 0 {
+				for i := range runs {
+					if runs[i].ScheduleID == id && runs[i].Status == "running" {
+						_ = UpdateScheduleRun(r.Context(), workspacePath, runs[i].ID, "error", "stopped by user", &durationMs, "", "")
+						break
+					}
+				}
+			}
 		}
 
-		// Update job status to error/stopped
-		durationMs := int64(0)
-		if job.LastRunAt != nil {
-			durationMs = time.Since(*job.LastRunAt).Milliseconds()
-		}
-		if err := db.UpdateScheduledJobRunStatus(r.Context(), id, func() time.Time {
-			if job.LastRunAt != nil {
-				return *job.LastRunAt
-			}
-			return time.Now()
-		}(), job.NextRunAt, job.LastSessionID, "error", "stopped by user", &durationMs); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Return updated state
+		wp, manifest, idx, err := findScheduleByID(r.Context(), id)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
 			return
 		}
 
-		// Also update the latest run history entry — detect iteration folder if missing
-		runs, _, _ := db.ListScheduledJobRuns(r.Context(), id, 1, 0)
-		if len(runs) > 0 && runs[0].Status == "running" {
-			runFolder := runs[0].RunFolder
-			if runFolder == "" && svc != nil {
-				// Detect the iteration folder by looking at workspace
-				workspacePath := svc.getJobWorkspacePath(r.Context(), job)
-				folders := svc.listIterationFolders(workspacePath)
-				if len(folders) > 0 {
-					runFolder = folders[len(folders)-1] // latest iteration
-				}
-			}
-			_ = db.UpdateScheduledJobRun(r.Context(), runs[0].ID, "error", "stopped by user", &durationMs, runFolder, runs[0].SessionID)
-		}
-
-		// Re-fetch updated job
-		updatedJob, _ := db.GetScheduledJob(r.Context(), id)
-		if updatedJob == nil {
-			updatedJob = job
-		}
+		updatedState := svc.GetRuntimeState(id)
+		resp := buildJobResponse(wp, manifest, manifest.Schedules[idx], updatedState)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(updatedJob)
+		json.NewEncoder(w).Encode(resp)
 	}
 }
 
-func getScheduledJobRunsHandler(db database.Database) http.HandlerFunc {
+func getScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -410,15 +573,56 @@ func getScheduledJobRunsHandler(db database.Database) http.HandlerFunc {
 			}
 		}
 
-		runs, total, err := db.ListScheduledJobRuns(r.Context(), id, limit, offset)
+		// Find workspace path
+		workspacePath := svc.GetWorkspaceForSchedule(id)
+		if workspacePath == "" {
+			wp, _, _, err := findScheduleByID(r.Context(), id)
+			if err != nil {
+				http.Error(w, "not found", http.StatusNotFound)
+				return
+			}
+			workspacePath = wp
+		}
+
+		runs, total, err := ListScheduleRuns(r.Context(), workspacePath, id, limit, offset)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
+		// Map to response format compatible with frontend ScheduledJobRun
+		type RunResponse struct {
+			ID          string     `json:"id"`
+			JobID       string     `json:"job_id"`
+			RunFolder   string     `json:"run_folder,omitempty"`
+			SessionID   string     `json:"session_id,omitempty"`
+			Status      string     `json:"status"`
+			Error       string     `json:"error,omitempty"`
+			DurationMs  *int64     `json:"duration_ms,omitempty"`
+			GroupIDs    []string   `json:"group_ids,omitempty"`
+			StartedAt   time.Time  `json:"started_at"`
+			CompletedAt *time.Time `json:"completed_at,omitempty"`
+		}
+
+		var respRuns []RunResponse
+		for _, run := range runs {
+			respRuns = append(respRuns, RunResponse{
+				ID:          run.ID,
+				JobID:       id,
+				RunFolder:   run.RunFolder,
+				SessionID:   run.SessionID,
+				Status:      run.Status,
+				Error:       run.Error,
+				DurationMs:  run.DurationMs,
+				GroupIDs:    run.GroupIDs,
+				StartedAt:   run.StartedAt,
+				CompletedAt: run.CompletedAt,
+			})
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"runs":   runs,
+			"runs":   respRuns,
 			"total":  total,
 			"limit":  limit,
 			"offset": offset,

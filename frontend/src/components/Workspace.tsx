@@ -612,8 +612,21 @@ export default function Workspace({
         return normalized === normalizedTarget
       })
       if (workflowFolderItem && workflowFolderItem.children && workflowFolderItem.children.length > 0) {
-        // Use the folder as a single root with its proper nested children
-        result = adjustFilePathsRecursive([workflowFolderItem], effectiveWorkflowFolderPath)
+        // Use the folder as a single root with its proper nested children.
+        // Also include root-level files that are siblings of the folder item
+        // (e.g., workflow.json appears as a separate data[] entry, not inside children)
+        const rootPrefix = effectiveWorkflowFolderPath.replace(/\/$/, '') + '/'
+        const rootLevelFiles = result.filter(f =>
+          f.type === 'file' &&
+          f.filepath.startsWith(rootPrefix) &&
+          !f.filepath.slice(rootPrefix.length).includes('/')
+        )
+        // Create a copy with merged children (don't mutate zustand state)
+        const mergedFolder = {
+          ...workflowFolderItem,
+          children: [...workflowFolderItem.children, ...rootLevelFiles]
+        }
+        result = adjustFilePathsRecursive([mergedFolder], effectiveWorkflowFolderPath)
       } else {
         // Fallback: no hierarchical folder found, adjust all items
         result = adjustFilePathsRecursive(result, effectiveWorkflowFolderPath)

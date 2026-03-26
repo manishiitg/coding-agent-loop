@@ -1059,3 +1059,55 @@ export const useLLMStore = create<LLMState>()(
       }
     )
 )
+
+// --- Auto-sync provider API keys to server (for scheduled runs) ---
+// Debounced: saves 2 seconds after the last key change to avoid spamming on every keystroke.
+let _syncTimer: ReturnType<typeof setTimeout> | null = null
+
+function syncProviderKeysToServer() {
+  if (_syncTimer) clearTimeout(_syncTimer)
+  _syncTimer = setTimeout(async () => {
+    try {
+      const s = useLLMStore.getState()
+      const { providerKeysApi } = await import('../api/scheduler')
+      await providerKeysApi.save({
+        openrouter: s.openrouterConfig?.api_key || undefined,
+        openai: s.openaiConfig?.api_key || undefined,
+        anthropic: s.anthropicConfig?.api_key || undefined,
+        vertex: s.vertexConfig?.api_key || undefined,
+        gemini_cli: s.geminiCliApiKey || undefined,
+        minimax: s.minimaxConfig?.api_key || undefined,
+        minimax_coding_plan: s.minimaxCodingPlanConfig?.api_key || undefined,
+        bedrock: s.bedrockConfig?.region ? { region: s.bedrockConfig.region } : undefined,
+        azure: s.azureConfig?.endpoint && s.azureConfig?.api_key
+          ? {
+              endpoint: s.azureConfig.endpoint,
+              api_key: s.azureConfig.api_key,
+              api_version: (s.azureConfig.options?.api_version as string) || undefined,
+              region: s.azureConfig.region || undefined,
+            }
+          : undefined,
+      })
+    } catch {
+      // Silent fail — keys are still in localStorage as fallback
+    }
+  }, 2000)
+}
+
+// Watch for changes to any provider config or API key
+useLLMStore.subscribe(
+  (state) => [
+    state.openrouterConfig?.api_key,
+    state.openaiConfig?.api_key,
+    state.anthropicConfig?.api_key,
+    state.vertexConfig?.api_key,
+    state.azureConfig?.api_key,
+    state.azureConfig?.endpoint,
+    state.minimaxConfig?.api_key,
+    state.minimaxCodingPlanConfig?.api_key,
+    state.bedrockConfig?.region,
+    state.geminiCliApiKey,
+  ],
+  () => { syncProviderKeysToServer() },
+  { equalityFn: (a, b) => JSON.stringify(a) === JSON.stringify(b) }
+)

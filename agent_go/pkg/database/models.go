@@ -103,7 +103,8 @@ const (
 // WorkflowMetadata stores workflow-specific metadata for background/minimized workflows
 // This is stored in the session config to enable querying and restoring background workflows
 type WorkflowMetadata struct {
-	PresetID         string          `json:"preset_id,omitempty"`           // Preset ID for context restoration
+	PresetID         string          `json:"preset_id,omitempty"`           // Preset ID for context restoration (legacy, kept for backward compat)
+	WorkflowID       string          `json:"workflow_id,omitempty"`         // Manifest workflow ID (from workflow.json)
 	PresetName       string          `json:"preset_name,omitempty"`         // Display name
 	WorkspacePath    string          `json:"workspace_path,omitempty"`      // Workflow workspace path
 	RunFolder        string          `json:"run_folder,omitempty"`          // Current run folder (e.g., "iteration-1")
@@ -513,6 +514,12 @@ func validatePresetLLMConfig(config *PresetLLMConfig) error {
 	return nil
 }
 
+// ValidatePresetLLMConfigPublic is an exported wrapper around validatePresetLLMConfig
+// for use by packages outside database (e.g., manifest validation).
+func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
+	return validatePresetLLMConfig(config)
+}
+
 // Validate validates the CreatePresetQueryRequest
 func (r *CreatePresetQueryRequest) Validate() error {
 	// Validate required fields
@@ -630,29 +637,6 @@ type WorkflowSelectedOption struct {
 type WorkflowSelectedOptions struct {
 	PhaseID    string                   `json:"phase_id"`   // Which phase these options belong to
 	Selections []WorkflowSelectedOption `json:"selections"` // All selected options across groups
-}
-
-// Workflow represents a workflow state for todo-list-based execution
-type Workflow struct {
-	ID              string                   `json:"id" db:"id"`
-	PresetQueryID   string                   `json:"preset_query_id" db:"preset_query_id"`
-	WorkflowStatus  string                   `json:"workflow_status" db:"workflow_status"`
-	SelectedOptions *WorkflowSelectedOptions `json:"selected_options" db:"selected_options"` // Store selected options as JSON
-	CreatedAt       time.Time                `json:"created_at" db:"created_at"`
-	UpdatedAt       time.Time                `json:"updated_at" db:"updated_at"`
-}
-
-// CreateWorkflowRequest represents a request to create a new workflow
-type CreateWorkflowRequest struct {
-	PresetQueryID   string                   `json:"preset_query_id"`
-	WorkflowStatus  string                   `json:"workflow_status,omitempty"`  // Optional, defaults to 'execution'
-	SelectedOptions *WorkflowSelectedOptions `json:"selected_options,omitempty"` // Optional, selected options for the phase
-}
-
-// UpdateWorkflowRequest represents a request to update a workflow
-type UpdateWorkflowRequest struct {
-	WorkflowStatus  *string                  `json:"workflow_status,omitempty"`
-	SelectedOptions *WorkflowSelectedOptions `json:"selected_options,omitempty"`
 }
 
 // AppUser represents a workspace user (populated on login for email→userID lookup)

@@ -54,3 +54,25 @@ export const schedulerApi = {
   stopJob: (id: string) =>
     api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/stop`).then(r => r.data),
 }
+
+// --- Provider API Keys (server-side encrypted storage) ---
+
+export interface StoredProviderKeys {
+  openrouter?: string
+  openai?: string
+  anthropic?: string
+  vertex?: string
+  gemini_cli?: string
+  minimax?: string
+  minimax_coding_plan?: string
+  bedrock?: { region: string }
+  azure?: { endpoint: string; api_key: string; api_version?: string; region?: string }
+}
+
+export const providerKeysApi = {
+  save: (keys: StoredProviderKeys) =>
+    api.put('/api/provider-keys', keys).then(r => r.data),
+
+  load: () =>
+    api.get<StoredProviderKeys>('/api/provider-keys').then(r => r.data),
+}

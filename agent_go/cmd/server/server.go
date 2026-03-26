@@ -323,6 +323,9 @@ type QueryRequest struct {
 	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
 	PhaseID string `json:"phase_id,omitempty"`
 
+	// Workspace path passed directly (used by scheduler to bypass preset lookup)
+	SelectedFolder string `json:"selected_folder,omitempty"`
+
 	// Triggered by: "manual", "cron" — for tracking execution source
 	TriggeredBy string `json:"triggered_by,omitempty"`
 	// Auto-notification flag: when true, this is a background agent completion notification
@@ -943,6 +946,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/secrets/store/{name}", api.handleDeleteUserSecret).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/stored", api.handleListStoredSecrets).Methods("GET", "OPTIONS")
 
+	// Provider API keys (encrypted file storage for scheduled runs)
+	apiRouter.HandleFunc("/provider-keys", api.handleSaveProviderKeys).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/provider-keys", api.handleLoadProviderKeys).Methods("GET", "OPTIONS")
+
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/oauth/callback", api.handleOAuthCallback).Methods("GET")
@@ -1064,7 +1071,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Initialize and start the cron scheduler
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
-	schedulerSvc := NewSchedulerService(chatDB, api)
+	schedulerSvc := NewSchedulerService(api)
 	api.scheduler = schedulerSvc
 	go func() {
 		if err := schedulerSvc.Start(schedulerCtx); err != nil {
@@ -1073,7 +1080,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}()
 
 	// Register scheduler routes
-	SchedulerRoutes(router, chatDB, schedulerSvc)
+	SchedulerRoutes(router, schedulerSvc)
 
 	// Workflow API routes
 	apiRouter.HandleFunc("/workflow/create", api.handleCreateWorkflow).Methods("POST", "OPTIONS")
@@ -1120,6 +1127,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/versions/publish", api.handlePublishVersion).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/versions/revert", api.handleRevertVersion).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/versions", api.handleDeleteVersion).Methods("DELETE", "OPTIONS")
+
+	// Manifest-backed workflow API routes (file-backed workflow definitions)
+	apiRouter.HandleFunc("/workflows/manifests", api.handleListWorkflowManifests).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", api.handleGetWorkflowManifest).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", api.handleCreateWorkflowManifest).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", api.handleUpdateWorkflowManifest).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest", api.handleDeleteWorkflowManifest).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/manifest/duplicate", api.handleDuplicateWorkflowManifest).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/workflows/migrate", api.handleMigrateWorkflowsToManifests).Methods("POST", "OPTIONS")
 
 	// Skills API routes (from skill_routes.go)
 	RegisterSkillRoutes(apiRouter, api)
@@ -1877,22 +1893,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Populate workflow metadata for workflow sessions (enables restore after refresh)
 			if (req.AgentMode == "workflow" || req.AgentMode == "workflow_phase") && req.PresetQueryID != "" {
-				// Look up preset label/folder for metadata
-				presetCtx, presetCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				presetForMeta, presetErr := api.chatDB.GetPresetQuery(presetCtx, req.PresetQueryID)
-				presetCancel()
 				wfMeta := &database.WorkflowMetadata{
 					PresetID: req.PresetQueryID,
 				}
-				if presetErr == nil && presetForMeta != nil {
-					wfMeta.PresetName = presetForMeta.Label
-					if presetForMeta.SelectedFolder.Valid {
-						wfMeta.WorkspacePath = presetForMeta.SelectedFolder.String
+				// Resolve workspace path and load manifest for metadata
+				wsPath := req.SelectedFolder
+				if wsPath == "" {
+					if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+						wsPath = p
+					}
+				}
+				if wsPath != "" {
+					wfMeta.WorkspacePath = wsPath
+					if manifest, found, mErr := ReadWorkflowManifest(context.Background(), wsPath); mErr == nil && found {
+						wfMeta.WorkflowID = manifest.ID
+						wfMeta.PresetName = manifest.Label
 					}
 				}
 				if req.PhaseID != "" {
 					wfMeta.PhaseID = req.PhaseID
-					wfMeta.PhaseName = req.PhaseID // Will be updated by frontend later
+					wfMeta.PhaseName = req.PhaseID
 				}
 				config.WorkflowMetadata = wfMeta
 			}
@@ -2159,40 +2179,49 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error":"workflow_phase mode requires a preset_query_id (workflow preset)"}`, http.StatusBadRequest)
 			return
 		}
-		phaseCtx, phaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		phasePreset, phasePresetErr := api.chatDB.GetPresetQuery(phaseCtx, req.PresetQueryID)
-		phaseCancel()
-		if phasePresetErr == nil && phasePreset != nil {
-			// Override LLM with phase-specific LLM from preset
-			if len(phasePreset.LLMConfig) > 0 {
-				var phaseLLMConfig database.PresetLLMConfig
-				if err := json.Unmarshal(phasePreset.LLMConfig, &phaseLLMConfig); err == nil && phaseLLMConfig.PhaseLLM != nil {
-					finalProvider = phaseLLMConfig.PhaseLLM.Provider
-					finalModelID = phaseLLMConfig.PhaseLLM.ModelID
-					log.Printf("[WORKFLOW_PHASE] Using phase LLM from preset: %s/%s", finalProvider, finalModelID)
+
+		// Try manifest-first resolution for workflow_phase
+		// Priority: resolve from preset DB → fallback to req.SelectedFolder (scheduler sets this directly)
+		phaseManifestLoaded := false
+		resolvedWPath := ""
+		if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+			resolvedWPath = wPath
+		} else if req.SelectedFolder != "" {
+			// Scheduler/cron sets selected_folder directly — no DB lookup needed
+			resolvedWPath = req.SelectedFolder
+			log.Printf("[WORKFLOW_PHASE] Using selected_folder as workspace path: %s", resolvedWPath)
+		}
+		if resolvedWPath != "" {
+			manifest, found, mErr := ReadWorkflowManifest(context.Background(), resolvedWPath)
+			if mErr == nil && found {
+				phaseManifestLoaded = true
+				workflowPhaseFolder = resolvedWPath
+				log.Printf("[WORKFLOW_PHASE] Loaded config from manifest at %s", resolvedWPath)
+				if manifest.Capabilities.LLMConfig != nil && manifest.Capabilities.LLMConfig.PhaseLLM != nil {
+					finalProvider = manifest.Capabilities.LLMConfig.PhaseLLM.Provider
+					finalModelID = manifest.Capabilities.LLMConfig.PhaseLLM.ModelID
+					log.Printf("[WORKFLOW_PHASE] Using phase LLM from manifest: %s/%s", finalProvider, finalModelID)
+				}
+				if req.SelectedGlobalSecrets == nil {
+					if manifest.Capabilities.SelectedGlobalSecretNames != nil {
+						req.SelectedGlobalSecrets = manifest.Capabilities.SelectedGlobalSecretNames
+					} else {
+						emptyNames := []string{}
+						req.SelectedGlobalSecrets = &emptyNames
+					}
 				}
 			}
-			// Resolve workflow folder for FolderGuard — ensures workflow-builder
-			// always has write access to its own Workflow/X folder
-			if phasePreset.SelectedFolder.Valid && phasePreset.SelectedFolder.String != "" {
-				workflowPhaseFolder = phasePreset.SelectedFolder.String
-				log.Printf("[WORKFLOW_PHASE] Resolved workflow folder for FolderGuard: %s", workflowPhaseFolder)
-			}
-			// Load global secret selection from preset — frontend may not send selected_global_secrets
-			// for workflow_phase requests. Without this, nil selection means ALL global secrets leak.
-			if req.SelectedGlobalSecrets == nil {
-				if phasePreset.SelectedGlobalSecretNames != "" {
-					var names []string
-					if err := json.Unmarshal([]byte(phasePreset.SelectedGlobalSecretNames), &names); err != nil {
-						log.Printf("[WORKFLOW_PHASE] Failed to parse selected_global_secret_names from preset: %v", err)
-					} else {
-						req.SelectedGlobalSecrets = &names
-						log.Printf("[WORKFLOW_PHASE] Loaded %d selected global secret names from preset", len(names))
-					}
-				} else {
-					emptyNames := []string{}
-					req.SelectedGlobalSecrets = &emptyNames
-					log.Printf("[WORKFLOW_PHASE] No global secrets configured in preset — defaulting to none")
+		}
+
+		if !phaseManifestLoaded {
+			// Manifest-only mode: workflow.json is the source of truth.
+			log.Printf("[WORKFLOW_PHASE] WARNING: No workflow.json found for preset %s - phase will use request defaults only", req.PresetQueryID)
+			// Still need to resolve workspace folder for FolderGuard write access
+			if workflowPhaseFolder == "" {
+				if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+					workflowPhaseFolder = wPath
+				} else if req.SelectedFolder != "" {
+					workflowPhaseFolder = req.SelectedFolder
 				}
 			}
 		}
@@ -2203,26 +2232,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Handle workflow mode - use workflow orchestrator
 	if req.AgentMode == "workflow" {
 
-		// Check if preset_id is provided and workflow is approved
+		// Check if preset_id is provided and workflow is approved (in-memory runtime state)
 		if req.PresetQueryID != "" {
-			log.Printf("[WORKFLOW CHECK] Checking workflow approval status for preset_id: %s", req.PresetQueryID)
-
-			// Get workflow from database to check approval status
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, req.PresetQueryID)
-			if err != nil {
-				log.Printf("[WORKFLOW CHECK ERROR] Workflow not found for preset_id %s: %v", req.PresetQueryID, err)
-				// Continue with planning phase if workflow not found
-			} else {
-				log.Printf("[WORKFLOW CHECK] Found workflow: workflowStatus=%s", workflow.WorkflowStatus)
-
-				// If workflow is approved, proceed with execution using user's query
-				if workflow.WorkflowStatus == database.WorkflowStatusPostVerification {
-					log.Printf("[WORKFLOW CHECK] Workflow is approved - proceeding with execution using user query: %s", req.Query)
+			if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
+				log.Printf("[WORKFLOW CHECK] Found workflow runtime: workflowStatus=%s", wfState.WorkflowStatus)
+				if wfState.WorkflowStatus == database.WorkflowStatusPostVerification {
+					log.Printf("[WORKFLOW CHECK] Workflow is approved - proceeding with execution")
 				} else {
 					log.Printf("[WORKFLOW CHECK] Workflow is not approved yet - proceeding with planning phase")
 				}
+			} else {
+				log.Printf("[WORKFLOW CHECK] No workflow runtime state for preset_id %s - will proceed with defaults", req.PresetQueryID)
 			}
 		}
 
@@ -2256,259 +2276,193 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var preDiscoveredTools []string
 		var selectedSkills []string
 		var presetLLMConfig *database.PresetLLMConfig
-		if req.PresetQueryID != "" {
-			ctx := context.Background()
-			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil {
-				// Load selected tools
-				if preset.SelectedTools != "" {
-					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-						log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
-					} else {
-						if len(selectedTools) > 0 {
-							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
-						} else {
-							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
-						}
-					}
-				}
-				// Load preset LLM config for agent defaults
-				if len(preset.LLMConfig) > 0 {
-					log.Printf("[PRESET LLM DEBUG] Raw preset LLM config JSON: %s", string(preset.LLMConfig))
-					if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
-						log.Printf("[PRESET LLM] Failed to parse preset LLM config: %v", err)
-					} else {
-						log.Printf("[PRESET LLM] Loaded preset LLM config with agent defaults")
-						// Debug: log what was loaded
-						if presetLLMConfig != nil {
-							log.Printf("[PRESET LLM DEBUG] Legacy: provider=%s, model=%s", presetLLMConfig.Provider, presetLLMConfig.ModelID)
-							if presetLLMConfig.LearningLLM != nil {
-								log.Printf("[PRESET LLM DEBUG] LearningLLM: provider=%s, model=%s", presetLLMConfig.LearningLLM.Provider, presetLLMConfig.LearningLLM.ModelID)
-							}
-							if presetLLMConfig.PhaseLLM != nil {
-								log.Printf("[PRESET LLM DEBUG] PhaseLLM: provider=%s, model=%s", presetLLMConfig.PhaseLLM.Provider, presetLLMConfig.PhaseLLM.ModelID)
-							} else {
-								log.Printf("[PRESET LLM DEBUG] PhaseLLM: nil (will use fallback)")
-							}
-						} else {
-							log.Printf("[PRESET LLM DEBUG] presetLLMConfig is nil after unmarshal")
-						}
-					}
-				} else {
-					log.Printf("[PRESET LLM DEBUG] No preset LLM config found (empty or null)")
-				}
-				// Load code execution mode from preset
-				useCodeExecutionMode = preset.UseCodeExecutionMode
-				if useCodeExecutionMode {
-					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
-				}
-				// Load tool search mode from preset
-				useToolSearchMode = preset.UseToolSearchMode
-				if useToolSearchMode {
-					log.Printf("[TOOL_SEARCH] Tool search mode enabled from preset")
-				}
-				// Load pre-discovered tools from preset
-				if preset.PreDiscoveredTools != "" {
-					if err := json.Unmarshal([]byte(preset.PreDiscoveredTools), &preDiscoveredTools); err != nil {
-						log.Printf("[TOOL_SEARCH] Failed to parse pre-discovered tools from preset: %v", err)
-					} else if len(preDiscoveredTools) > 0 {
-						log.Printf("[TOOL_SEARCH] Loaded %d pre-discovered tools from preset", len(preDiscoveredTools))
-					}
-				}
-				// Load selected skills from preset
-				if preset.SelectedSkills != "" {
-					var skills []string
-					if err := json.Unmarshal([]byte(preset.SelectedSkills), &skills); err != nil {
-						log.Printf("[SKILLS] Failed to parse selected skills from preset: %v", err)
-					} else if len(skills) > 0 {
-						selectedSkills = skills
-						log.Printf("[SKILLS] Loaded %d skills from preset: %v", len(skills), skills)
-					}
-				}
-				// Load servers from preset database (authoritative source for workflow config)
-				if preset.SelectedServers != "" {
-					var presetServers []string
-					if err := json.Unmarshal([]byte(preset.SelectedServers), &presetServers); err != nil {
-						log.Printf("[SERVERS] Failed to parse selected servers from preset: %v", err)
-					} else if len(presetServers) > 0 {
-						log.Printf("[SERVERS] Using preset servers from database: %v (was %v from request)", presetServers, selectedServers)
-						selectedServers = presetServers
-						serverList = strings.Join(selectedServers, ",")
-					}
+
+		// Try manifest-first resolution: resolve workspace path, then load from workflow.json
+		// Priority: req.SelectedFolder (direct) > resolveWorkspacePathFromPreset (preset-based)
+		manifestLoaded := false
+		manifestWorkspacePath := ""
+		if req.SelectedFolder != "" {
+			manifestWorkspacePath = req.SelectedFolder
+		} else if req.PresetQueryID != "" {
+			if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+				manifestWorkspacePath = wPath
+			}
+		}
+		if manifestWorkspacePath != "" {
+			caps, found, mErr := LoadManifestForExecution(context.Background(), manifestWorkspacePath)
+			if mErr != nil {
+				log.Printf("[MANIFEST] Error loading manifest from %s: %v (falling back to defaults)", manifestWorkspacePath, mErr)
+			} else if found {
+				manifestLoaded = true
+				log.Printf("[MANIFEST] Loaded workflow config from manifest at %s", manifestWorkspacePath)
+				selectedTools = caps.SelectedTools
+				useCodeExecutionMode = caps.UseCodeExecutionMode
+				useToolSearchMode = caps.UseToolSearchMode
+				preDiscoveredTools = caps.PreDiscoveredTools
+				selectedSkills = caps.SelectedSkills
+				presetLLMConfig = caps.LLMConfig
+
+				if len(caps.SelectedServers) > 0 {
+					selectedServers = caps.SelectedServers
+					serverList = strings.Join(selectedServers, ",")
 				}
 
-				// Load global secret selection from preset — override nil req.SelectedGlobalSecrets
-				// which the frontend doesn't send for workflow mode.
-				// NULL (never configured) defaults to NO secrets — global secrets must be explicitly selected.
-				if preset.SelectedGlobalSecretNames != "" {
-					var names []string
-					if err := json.Unmarshal([]byte(preset.SelectedGlobalSecretNames), &names); err != nil {
-						log.Printf("[SECRETS] Failed to parse selected_global_secret_names from preset: %v", err)
-					} else {
-						req.SelectedGlobalSecrets = &names
-						log.Printf("[SECRETS] Loaded %d selected global secret names from preset", len(names))
-					}
+				// Global secrets from manifest
+				if caps.SelectedGlobalSecretNames != nil {
+					req.SelectedGlobalSecrets = caps.SelectedGlobalSecretNames
 				} else if req.SelectedGlobalSecrets == nil {
-					// Preset never configured global secrets — default to none, not all.
 					emptyNames := []string{}
 					req.SelectedGlobalSecrets = &emptyNames
-					log.Printf("[SECRETS] No global secrets configured in preset — defaulting to none")
 				}
 
-				// Load browser access mode from preset
-				// Resolve effective browser mode: prefer BrowserMode, fall back to EnableBrowserAccess
-				workflowBrowserMode := preset.BrowserMode
-				if workflowBrowserMode == "" && preset.EnableBrowserAccess {
-					workflowBrowserMode = "headless"
+				// Browser mode from manifest
+				if caps.BrowserMode != "" && caps.BrowserMode != "none" && req.BrowserMode == "" {
+					req.BrowserMode = caps.BrowserMode
 				}
-				// Propagate preset browser mode to request so getCdpPort() picks it up
-				if req.BrowserMode == "" && workflowBrowserMode != "" {
-					req.BrowserMode = workflowBrowserMode
-				}
-				// Only register agent_browser for headless/CDP when no dedicated browser MCP server
-				// (Playwright/Camofox) is configured. If Playwright or Camofox is present, those
-				// MCP servers handle browser access — don't also inject agent_browser which causes
-				// tool confusion (LLM picks agent-browser instead of Playwright).
-				hasPlaywrightServer := false
-				hasCamofoxServer := false
-				for _, s := range selectedServers {
-					if s == "playwright" {
-						hasPlaywrightServer = true
-					}
-					if s == "camofox" {
-						hasCamofoxServer = true
-					}
-				}
-				if hasPlaywrightServer || hasCamofoxServer {
-					// Playwright/Camofox MCP server is present — override browser mode to match
-					if hasPlaywrightServer {
-						workflowBrowserMode = "playwright"
-					} else {
-						workflowBrowserMode = "stealth"
-					}
-					log.Printf("[WORKFLOW] Playwright/Camofox server detected — skipping agent_browser registration, using mode=%s", workflowBrowserMode)
-				}
-				// Store resolved browser mode on session for context-aware shell blocking
-				if workflowBrowserMode != "" {
-					common.SetSessionBrowserMode(sessionID, workflowBrowserMode)
-				}
-				if workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
-					// Resolve CDP port: prefer request, fall back to preset browser_mode
-					wfCdpPort := getCdpPort(req)
-					if wfCdpPort == 0 && workflowBrowserMode == "cdp" {
-						wfCdpPort = 9222
-					}
+			}
+		}
 
-					// Add browser tools to the available tools pool
-					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
-					browserTools := virtualtools.CreateWorkspaceBrowserTools()
-					browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, wfCdpPort)
+		if !manifestLoaded && req.PresetQueryID != "" {
+			// Manifest-only mode: workflow.json is the source of truth for workflow config.
+			// If no manifest was found, log a warning. The workflow will run with request defaults only.
+			log.Printf("[MANIFEST] WARNING: No workflow.json found for preset %s - workflow will run with request defaults only. Run migration: POST /api/workflows/migrate", req.PresetQueryID)
+		}
 
-					allTools = append(allTools, browserTools...)
-					for name, executor := range browserExecutors {
-						allExecutors[name] = executor
-					}
+		// --- Post-load processing: browser, image gen, GWS skills ---
+		// Runs after either manifest or preset loading has populated the config variables.
 
-					// Assign category to browser tools
-					for _, tool := range browserTools {
-						if tool.Function != nil {
-							toolCategories[tool.Function.Name] = browserCategory
-						}
-					}
-					log.Printf("[WORKFLOW] Added browser tools (mode=%s, cdp_port=%d, sessionID=%s)", workflowBrowserMode, wfCdpPort, sessionID)
+		// Resolve effective browser mode
+		workflowBrowserMode := req.BrowserMode
+		// Only register agent_browser for headless/CDP when no dedicated browser MCP server
+		// (Playwright/Camofox) is configured.
+		hasPlaywrightServer := false
+		hasCamofoxServer := false
+		for _, s := range selectedServers {
+			if s == "playwright" {
+				hasPlaywrightServer = true
+			}
+			if s == "camofox" {
+				hasCamofoxServer = true
+			}
+		}
+		if hasPlaywrightServer || hasCamofoxServer {
+			if hasPlaywrightServer {
+				workflowBrowserMode = "playwright"
+			} else {
+				workflowBrowserMode = "stealth"
+			}
+			log.Printf("[WORKFLOW] Playwright/Camofox server detected — skipping agent_browser registration, using mode=%s", workflowBrowserMode)
+		}
+		// Store resolved browser mode on session for context-aware shell blocking
+		if workflowBrowserMode != "" {
+			common.SetSessionBrowserMode(sessionID, workflowBrowserMode)
+		}
+		if workflowBrowserMode == "headless" || workflowBrowserMode == "cdp" {
+			wfCdpPort := getCdpPort(req)
+			if wfCdpPort == 0 && workflowBrowserMode == "cdp" {
+				wfCdpPort = 9222
+			}
 
-					// Auto-add agent-browser skill if not already selected
-					hasAgentBrowserSkill := false
-					for _, skill := range selectedSkills {
-						if skill == "agent-browser" {
-							hasAgentBrowserSkill = true
-							break
-						}
-					}
-					if !hasAgentBrowserSkill {
-						selectedSkills = append(selectedSkills, "agent-browser")
-						log.Printf("[WORKFLOW] Auto-adding agent-browser skill for browser access")
-					}
+			browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
+			browserTools := virtualtools.CreateWorkspaceBrowserTools()
+			browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, wfCdpPort)
 
-					// Headless/CDP mode uses agent_browser virtual tool, not playwright/camofox MCP servers.
-					// Strip these MCP servers to prevent the agent from discovering and using their tools
-					// instead of the intended headless browser.
-					var filteredServers []string
-					for _, s := range selectedServers {
-						if s != "playwright" && s != "camofox" {
-							filteredServers = append(filteredServers, s)
-						}
-					}
-					if len(filteredServers) != len(selectedServers) {
-						log.Printf("[WORKFLOW] Headless browser mode: stripped playwright/camofox MCP servers from server list (was %d, now %d)", len(selectedServers), len(filteredServers))
-						selectedServers = filteredServers
-						// Update serverList as well
-						if len(selectedServers) == 0 {
-							serverList = mcpclient.NoServers
-						} else {
-							serverList = strings.Join(selectedServers, ",")
-						}
-					}
+			allTools = append(allTools, browserTools...)
+			for name, executor := range browserExecutors {
+				allExecutors[name] = executor
+			}
+			for _, tool := range browserTools {
+				if tool.Function != nil {
+					toolCategories[tool.Function.Name] = browserCategory
 				}
+			}
+			log.Printf("[WORKFLOW] Added browser tools (mode=%s, cdp_port=%d, sessionID=%s)", workflowBrowserMode, wfCdpPort, sessionID)
 
-				// Load image generation from preset LLM config
-				if presetLLMConfig != nil && presetLLMConfig.EnableImageGeneration != nil && *presetLLMConfig.EnableImageGeneration {
-					imgCfg := virtualtools.ImageGenExecutorConfig{
-						Provider:        "vertex",
-						ModelID:         "gemini-2.5-flash-image",
-						WorkspaceAPIURL: getWorkspaceAPIURL(),
-						UserID:          currentUserID,
-					}
-					if presetLLMConfig.ImageGenProvider != "" {
-						imgCfg.Provider = presetLLMConfig.ImageGenProvider
-					}
-					if presetLLMConfig.ImageGenModelID != "" {
-						imgCfg.ModelID = presetLLMConfig.ImageGenModelID
-					}
-					for _, def := range []struct {
-						tool     func() llmtypes.Tool
-						executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-						category func() string
-					}{
-						{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-						{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-					} {
-						t := def.tool()
-						exec := def.executor(imgCfg)
-						allTools = append(allTools, t)
-						allExecutors[t.Function.Name] = exec
-						toolCategories[t.Function.Name] = def.category()
-						log.Printf("[WORKFLOW] Registered image gen tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-					}
+			hasAgentBrowserSkill := false
+			for _, skill := range selectedSkills {
+				if skill == "agent-browser" {
+					hasAgentBrowserSkill = true
+					break
 				}
+			}
+			if !hasAgentBrowserSkill {
+				selectedSkills = append(selectedSkills, "agent-browser")
+				log.Printf("[WORKFLOW] Auto-adding agent-browser skill for browser access")
+			}
 
-				// Auto-add gws-* skills when GWS access is enabled (workflow mode)
-				gwsWorkflowEnabled := req.EnableGWSAccess != nil && *req.EnableGWSAccess
-				if !gwsWorkflowEnabled {
-					for _, s := range req.EnabledServers {
-						if s == "gws" {
-							gwsWorkflowEnabled = true
-							break
-						}
-					}
+			var filteredServers []string
+			for _, s := range selectedServers {
+				if s != "playwright" && s != "camofox" {
+					filteredServers = append(filteredServers, s)
 				}
-				if gwsWorkflowEnabled {
-					gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
-					existingSkills := make(map[string]bool)
-					for _, sk := range selectedSkills {
-						existingSkills[sk] = true
-					}
-					added := 0
-					for _, gs := range gwsSkills {
-						if !existingSkills[gs] {
-							selectedSkills = append(selectedSkills, gs)
-							added++
-						}
-					}
-					if added > 0 {
-						log.Printf("[GWS] Auto-added %d gws-* skills for workflow mode (enable_gws_access: true)", added)
-					}
+			}
+			if len(filteredServers) != len(selectedServers) {
+				log.Printf("[WORKFLOW] Headless browser mode: stripped playwright/camofox MCP servers from server list (was %d, now %d)", len(selectedServers), len(filteredServers))
+				selectedServers = filteredServers
+				if len(selectedServers) == 0 {
+					serverList = mcpclient.NoServers
+				} else {
+					serverList = strings.Join(selectedServers, ",")
 				}
+			}
+		}
+
+		// Load image generation from LLM config (works for both manifest and preset sources)
+		if presetLLMConfig != nil && presetLLMConfig.EnableImageGeneration != nil && *presetLLMConfig.EnableImageGeneration {
+			imgCfg := virtualtools.ImageGenExecutorConfig{
+				Provider:        "vertex",
+				ModelID:         "gemini-2.5-flash-image",
+				WorkspaceAPIURL: getWorkspaceAPIURL(),
+				UserID:          currentUserID,
+			}
+			if presetLLMConfig.ImageGenProvider != "" {
+				imgCfg.Provider = presetLLMConfig.ImageGenProvider
+			}
+			if presetLLMConfig.ImageGenModelID != "" {
+				imgCfg.ModelID = presetLLMConfig.ImageGenModelID
+			}
+			for _, def := range []struct {
+				tool     func() llmtypes.Tool
+				executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
+				category func() string
+			}{
+				{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
+				{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
+			} {
+				t := def.tool()
+				exec := def.executor(imgCfg)
+				allTools = append(allTools, t)
+				allExecutors[t.Function.Name] = exec
+				toolCategories[t.Function.Name] = def.category()
+				log.Printf("[WORKFLOW] Registered image gen tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
+			}
+		}
+
+		// Auto-add gws-* skills when GWS access is enabled (workflow mode)
+		gwsWorkflowEnabled := req.EnableGWSAccess != nil && *req.EnableGWSAccess
+		if !gwsWorkflowEnabled {
+			for _, s := range req.EnabledServers {
+				if s == "gws" {
+					gwsWorkflowEnabled = true
+					break
+				}
+			}
+		}
+		if gwsWorkflowEnabled {
+			gwsSkills := []string{"gws-shared", "gws-drive", "gws-gmail", "gws-calendar", "gws-docs", "gws-sheets", "gws-slides"}
+			existingSkills := make(map[string]bool)
+			for _, sk := range selectedSkills {
+				existingSkills[sk] = true
+			}
+			added := 0
+			for _, gs := range gwsSkills {
+				if !existingSkills[gs] {
+					selectedSkills = append(selectedSkills, gs)
+					added++
+				}
+			}
+			if added > 0 {
+				log.Printf("[GWS] Auto-added %d gws-* skills for workflow mode (enable_gws_access: true)", added)
 			}
 		}
 
@@ -2689,30 +2643,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.sessionQueryIDMux.Unlock()
 			}()
 
-			// Check database for workflow approval status if preset_id is provided
+			// Check in-memory runtime state for workflow approval status
 			workflowStatus := database.WorkflowStatusPreVerification // Default status
 			var selectedOptions *database.WorkflowSelectedOptions
 			var stepID string
 			if req.PresetQueryID != "" {
-				// Check workflow approval status from database
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				workflow, err := api.chatDB.GetWorkflowByPresetQueryID(ctx, req.PresetQueryID)
-				if err == nil {
-					workflowStatus = workflow.WorkflowStatus
-					selectedOptions = workflow.SelectedOptions
-					log.Printf("[WORKFLOW CHECK] Database check: workflowStatus=%s", workflowStatus)
-					if selectedOptions != nil {
-						log.Printf("[WORKFLOW CHECK] Found selected options: %+v", selectedOptions)
-						log.Printf("[WORKFLOW CHECK] Selected options details - PhaseID: %s, Selections count: %d", selectedOptions.PhaseID, len(selectedOptions.Selections))
-						for i, selection := range selectedOptions.Selections {
-							log.Printf("[WORKFLOW CHECK] Selection[%d] - Group: %s, OptionID: %s, OptionLabel: %s", i, selection.Group, selection.OptionID, selection.OptionLabel)
-						}
-					} else {
-						log.Printf("[WORKFLOW CHECK] No selected options found")
-					}
+				if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
+					workflowStatus = wfState.WorkflowStatus
+					selectedOptions = wfState.SelectedOptions
+					log.Printf("[WORKFLOW CHECK] Runtime state: workflowStatus=%s", workflowStatus)
 				} else {
-					log.Printf("[WORKFLOW CHECK] Could not check database: %v", err)
+					log.Printf("[WORKFLOW CHECK] No runtime state for preset_id %s", req.PresetQueryID)
 				}
 
 				// Retrieve step_id if it was stored for this preset
@@ -2756,29 +2697,33 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[WORKFLOW EXECUTION] Step-specific execution for step: %s", stepID)
 			}
 
-			// Get the actual objective from preset (not from the query string)
-			workflowObjective := req.Query // Default to query if preset not available
+			// Get the actual objective and workspace path — try SelectedFolder first, then preset
+			workflowObjective := req.Query // Default to query if not available
 			workflowWorkspacePath := ""
-			if req.PresetQueryID != "" {
-				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer cancel()
-				preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-				if err == nil && preset != nil {
-					// Use preset's Query field as the objective (the actual workflow objective)
-					// Fall back to req.Query if preset query is empty (e.g. workflow builder sets empty preset query)
-					if preset.Query != "" {
-						workflowObjective = preset.Query
-					}
-					log.Printf("[WORKFLOW EXECUTION] Using objective: %s (preset.Query=%q, req.Query=%q)", workflowObjective, preset.Query, req.Query)
+			execManifestResolved := false
 
-					// Extract workspace path from preset's selected folder
-					if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
-						workflowWorkspacePath = preset.SelectedFolder.String
-						log.Printf("[WORKFLOW EXECUTION] Using preset workspace path: %s", workflowWorkspacePath)
-					}
-				} else {
-					log.Printf("[WORKFLOW WARNING] Could not get preset for objective: %v", err)
+			// Resolve workspace path: direct > preset-based
+			execWorkspacePath := ""
+			if req.SelectedFolder != "" {
+				execWorkspacePath = req.SelectedFolder
+			} else if req.PresetQueryID != "" {
+				if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+					execWorkspacePath = wPath
 				}
+			}
+
+			if execWorkspacePath != "" {
+				_, found, mErr := ReadWorkflowManifest(context.Background(), execWorkspacePath)
+				if mErr == nil && found {
+					execManifestResolved = true
+					workflowWorkspacePath = execWorkspacePath
+					// Objective comes from variables/variables.json, not the manifest
+					log.Printf("[WORKFLOW EXECUTION] Using manifest: workspace=%s", execWorkspacePath)
+				}
+			}
+			if !execManifestResolved && execWorkspacePath != "" {
+				workflowWorkspacePath = execWorkspacePath
+				log.Printf("[MANIFEST] WARNING: No workflow.json found at %s - using request defaults", execWorkspacePath)
 			}
 
 			// Fallback: Extract workspace path from objective if not found in preset
@@ -3080,13 +3025,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load preset LLM config for chat/simple mode (for feature toggle fallbacks)
+	// Source: workflow.json manifest (no DB dependency)
 	var presetLLMConfig *database.PresetLLMConfig
-	if req.PresetQueryID != "" {
-		ctx := context.Background()
-		preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-		if err == nil && len(preset.LLMConfig) > 0 {
-			if err := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); err != nil {
-				log.Printf("[PRESET LLM] Failed to parse preset LLM config for chat mode: %v", err)
+	{
+		wsPath := req.SelectedFolder
+		if wsPath == "" && req.PresetQueryID != "" {
+			if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+				wsPath = p
+			}
+		}
+		if wsPath != "" {
+			if manifest, found, mErr := ReadWorkflowManifest(context.Background(), wsPath); mErr == nil && found && manifest.Capabilities.LLMConfig != nil {
+				presetLLMConfig = manifest.Capabilities.LLMConfig
 			}
 		}
 	}
@@ -3225,33 +3175,29 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var useToolSearchMode bool
 		var presetSetCodeExecutionMode bool // Track if preset explicitly set the value
 
-		if req.PresetQueryID != "" {
-			ctx := context.Background()
-			preset, err := api.chatDB.GetPresetQuery(ctx, req.PresetQueryID)
-			if err == nil {
-				if preset.SelectedTools != "" {
-					if err := json.Unmarshal([]byte(preset.SelectedTools), &selectedTools); err != nil {
-						log.Printf("[TOOLS] Failed to parse selected tools from preset: %v", err)
-					} else {
-						if len(selectedTools) > 0 {
-							log.Printf("[TOOLS] Loaded %d specific tools from preset", len(selectedTools))
-						} else {
-							log.Printf("[TOOLS] Preset has empty tool selection - will use ALL tools from selected servers")
-						}
+		// Load tools and execution mode from manifest (no DB dependency)
+		{
+			wsPath := req.SelectedFolder
+			if wsPath == "" && req.PresetQueryID != "" {
+				if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+					wsPath = p
+				}
+			}
+			if wsPath != "" {
+				if manifest, found, mErr := ReadWorkflowManifest(context.Background(), wsPath); mErr == nil && found {
+					selectedTools = manifest.Capabilities.SelectedTools
+					if len(selectedTools) > 0 {
+						log.Printf("[TOOLS] Loaded %d specific tools from manifest", len(selectedTools))
 					}
-				}
-				// Load code execution mode from preset
-				useCodeExecutionMode = preset.UseCodeExecutionMode
-				presetSetCodeExecutionMode = true
-				if useCodeExecutionMode {
-					log.Printf("[CODE_EXECUTION] Code execution mode enabled from preset")
-				} else {
-					log.Printf("[CODE_EXECUTION] Code execution mode disabled from preset")
-				}
-				// Load tool search mode from preset
-				useToolSearchMode = preset.UseToolSearchMode
-				if useToolSearchMode {
-					log.Printf("[TOOL_SEARCH] Tool search mode enabled from preset")
+					useCodeExecutionMode = manifest.Capabilities.UseCodeExecutionMode
+					presetSetCodeExecutionMode = true
+					useToolSearchMode = manifest.Capabilities.UseToolSearchMode
+					if useCodeExecutionMode {
+						log.Printf("[CODE_EXECUTION] Code execution mode enabled from manifest")
+					}
+					if useToolSearchMode {
+						log.Printf("[TOOL_SEARCH] Tool search mode enabled from manifest")
+					}
 				}
 			}
 		}
@@ -4594,23 +4540,24 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if isWorkflowPhase && workflowPhaseID != "" {
 				log.Printf("[WORKFLOW_PHASE] Setting up phase chat mode: phase=%s preset=%s", workflowPhaseID, req.PresetQueryID)
 
-				// Get workspace path and objective from preset
+				// Get workspace path and objective from preset or request
 				phaseWorkspacePath := ""
 				phaseObjective := ""
-				if req.PresetQueryID != "" {
-					phaseCtx, phaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer phaseCancel()
-					preset, err := api.chatDB.GetPresetQuery(phaseCtx, req.PresetQueryID)
-					if err != nil {
-						panic(fmt.Sprintf("[WORKFLOW_PHASE] GetPresetQuery failed for preset=%s path=%s: %v", req.PresetQueryID, req.Query, err))
+				// For scheduler/cron triggers, the workspace path comes from selected_folder
+				// and preset may not exist in the DB. Use selected_folder as primary source.
+				if req.SelectedFolder != "" {
+					phaseWorkspacePath = req.SelectedFolder
+				}
+				// Resolve workspace path from manifest if not already set
+				if phaseWorkspacePath == "" && req.PresetQueryID != "" {
+					if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+						phaseWorkspacePath = p
 					}
-					if preset != nil {
-						if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
-							phaseWorkspacePath = preset.SelectedFolder.String
-						}
-						if preset.Query != "" {
-							phaseObjective = preset.Query
-						}
+				}
+				// Load objective from manifest label
+				if phaseWorkspacePath != "" && phaseObjective == "" {
+					if manifest, found, mErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath); mErr == nil && found {
+						phaseObjective = manifest.Label
 					}
 				}
 				if phaseWorkspacePath == "" {
@@ -4833,18 +4780,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 
-					// Browser + GWS instructions from preset config
-					// The preset determines browser mode, not req.EnableBrowserAccess (which is false for workflow_phase)
-					if req.PresetQueryID != "" {
-						presetCtx2, presetCancel2 := context.WithTimeout(context.Background(), 5*time.Second)
-						presetForBrowser, presetErr2 := api.chatDB.GetPresetQuery(presetCtx2, req.PresetQueryID)
-						presetCancel2()
-						if presetErr2 == nil && presetForBrowser != nil {
-							// Resolve browser mode: prefer BrowserMode field, fall back to legacy EnableBrowserAccess
-							effectiveBrowserMode := presetForBrowser.BrowserMode
-							if effectiveBrowserMode == "" && presetForBrowser.EnableBrowserAccess {
-								effectiveBrowserMode = "headless" // Legacy preset without browser_mode
-							}
+					// Browser + GWS instructions from manifest config
+					// The manifest determines browser mode, not req.EnableBrowserAccess (which is false for workflow_phase)
+					if phaseWorkspacePath != "" {
+						phaseManifest, phaseFound, phaseMErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath)
+						if phaseMErr == nil && phaseFound {
+							effectiveBrowserMode := phaseManifest.Capabilities.BrowserMode
 
 							// Build browser config from preset's browser mode
 							phaseBrowserCfg := browserinstructions.BrowserConfig{}
@@ -4955,68 +4896,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							log.Printf("[WORKFLOW_PHASE] Refreshed enabled group IDs: %v", req.ExecutionOptions.EnabledGroupIDs)
 						}
 
-						// Refresh all preset settings from database in case user edited the workflow
-						if req.PresetQueryID != "" {
-							refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 5*time.Second)
-							refreshPreset, refreshErr := api.chatDB.GetPresetQuery(refreshCtx, req.PresetQueryID)
-							refreshCancel()
+						// Refresh all settings from manifest in case user edited the workflow
+						if phaseWorkspacePath != "" {
+							refreshManifest, refreshFound, refreshErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath)
 							if refreshErr != nil {
-								log.Printf("[WORKFLOW_PHASE] Warning: Failed to reload preset config: %v", refreshErr)
-							} else if refreshPreset != nil {
-								// Refresh servers from preset (workflow editor may have added/removed MCP servers)
-								if refreshPreset.SelectedServers != "" {
-									var refreshedServers []string
-									if err := json.Unmarshal([]byte(refreshPreset.SelectedServers), &refreshedServers); err != nil {
-										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed servers: %v — keeping existing", err)
-									} else {
-										selectedServers = refreshedServers
-										log.Printf("[WORKFLOW_PHASE] Refreshed servers from preset: %v", selectedServers)
-									}
-								}
+								log.Printf("[WORKFLOW_PHASE] Warning: Failed to reload manifest: %v", refreshErr)
+							} else if refreshFound {
+								caps := refreshManifest.Capabilities
+								selectedServers = caps.SelectedServers
 
-								// Refresh non-LLM settings from preset (only apply if parse succeeds)
-								var refreshedTools []string
-								toolsParsed := refreshPreset.SelectedTools == "" // empty = no tools, valid
-								if refreshPreset.SelectedTools != "" {
-									if err := json.Unmarshal([]byte(refreshPreset.SelectedTools), &refreshedTools); err != nil {
-										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed tools: %v — keeping existing", err)
-									} else {
-										toolsParsed = true
-									}
-								}
-								var refreshedPreDiscovered []string
-								preDiscoveredParsed := refreshPreset.PreDiscoveredTools == ""
-								if refreshPreset.PreDiscoveredTools != "" {
-									if err := json.Unmarshal([]byte(refreshPreset.PreDiscoveredTools), &refreshedPreDiscovered); err != nil {
-										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed pre-discovered tools: %v — keeping existing", err)
-									} else {
-										preDiscoveredParsed = true
-									}
-								}
-								var refreshedSkills []string
-								skillsParsed := refreshPreset.SelectedSkills == ""
-								if refreshPreset.SelectedSkills != "" {
-									if err := json.Unmarshal([]byte(refreshPreset.SelectedSkills), &refreshedSkills); err != nil {
-										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed skills: %v — keeping existing", err)
-									} else {
-										skillsParsed = true
-									}
-								}
+								refreshedTools := caps.SelectedTools
+								toolsParsed := true
+								refreshedPreDiscovered := caps.PreDiscoveredTools
+								preDiscoveredParsed := true
+								refreshedSkills := caps.SelectedSkills
+								skillsParsed := true
 
 								// Refresh secrets
-								var refreshedSecretNames *[]string
-								if refreshPreset.SelectedGlobalSecretNames != "" {
-									var names []string
-									if err := json.Unmarshal([]byte(refreshPreset.SelectedGlobalSecretNames), &names); err == nil {
-										refreshedSecretNames = &names
-									}
-								} else {
-									emptyNames := []string{}
-									refreshedSecretNames = &emptyNames
-								}
 								effectiveSecretSelection := req.SelectedGlobalSecrets
-								if refreshedSecretNames != nil {
-									effectiveSecretSelection = refreshedSecretNames
+								if caps.SelectedGlobalSecretNames != nil {
+									effectiveSecretSelection = caps.SelectedGlobalSecretNames
 								}
 								allRefreshedSecrets := mergeGlobalSecrets(req.DecryptedSecrets, effectiveSecretSelection)
 								var secretEntries []orchestrator.SecretEntry
@@ -5024,67 +4923,54 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 									secretEntries = append(secretEntries, orchestrator.SecretEntry{Name: s.Name, Value: s.Value})
 								}
 
-								// Determine knowledgebase setting from LLM config block
-								refreshedKnowledgebase := true // default
-								if len(refreshPreset.LLMConfig) > 0 {
-									var presetLLMConfig database.PresetLLMConfig
-									if jsonErr := json.Unmarshal(refreshPreset.LLMConfig, &presetLLMConfig); jsonErr == nil {
-										// Refresh LLM configs
-										phaseLLM := workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-										workshopSession.UpdatePresetLLMConfigs(phaseLLM)
-										log.Printf("[WORKFLOW_PHASE] Refreshed phase LLM config: %v", phaseLLM != nil)
+								// LLM config
+								refreshedKnowledgebase := true
+								if caps.LLMConfig != nil {
+									phaseLLM := workshopExtractLLM(caps.LLMConfig.PhaseLLM, caps.LLMConfig.Provider, caps.LLMConfig.ModelID)
+									workshopSession.UpdatePresetLLMConfigs(phaseLLM)
 
-										// Refresh tiered LLM allocation config
-										if presetLLMConfig.TieredConfig != nil {
-											refreshedTiered := &todo_creation_human.TieredLLMConfig{
-												Tier1: &todo_creation_human.AgentLLMConfig{
-													Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
-													ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
-													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
-												},
-												Tier2: &todo_creation_human.AgentLLMConfig{
-													Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
-													ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
-													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
-												},
-												Tier3: &todo_creation_human.AgentLLMConfig{
-													Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
-													ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
-													Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
-												},
-											}
-											workshopSession.UpdateTieredConfig(refreshedTiered)
-											log.Printf("[WORKFLOW_PHASE] Refreshed tiered config: T1=%s/%s T2=%s/%s T3=%s/%s",
-												refreshedTiered.Tier1.Provider, refreshedTiered.Tier1.ModelID,
-												refreshedTiered.Tier2.Provider, refreshedTiered.Tier2.ModelID,
-												refreshedTiered.Tier3.Provider, refreshedTiered.Tier3.ModelID)
-										} else {
-											workshopSession.UpdateTieredConfig(nil)
-											log.Printf("[WORKFLOW_PHASE] Tiered config not present")
+									if caps.LLMConfig.TieredConfig != nil {
+										refreshedTiered := &todo_creation_human.TieredLLMConfig{
+											Tier1: &todo_creation_human.AgentLLMConfig{
+												Provider:  caps.LLMConfig.TieredConfig.Tier1.Provider,
+												ModelID:   caps.LLMConfig.TieredConfig.Tier1.ModelID,
+												Fallbacks: workshopConvertFallbacks(caps.LLMConfig.TieredConfig.Tier1.Fallbacks),
+											},
+											Tier2: &todo_creation_human.AgentLLMConfig{
+												Provider:  caps.LLMConfig.TieredConfig.Tier2.Provider,
+												ModelID:   caps.LLMConfig.TieredConfig.Tier2.ModelID,
+												Fallbacks: workshopConvertFallbacks(caps.LLMConfig.TieredConfig.Tier2.Fallbacks),
+											},
+											Tier3: &todo_creation_human.AgentLLMConfig{
+												Provider:  caps.LLMConfig.TieredConfig.Tier3.Provider,
+												ModelID:   caps.LLMConfig.TieredConfig.Tier3.ModelID,
+												Fallbacks: workshopConvertFallbacks(caps.LLMConfig.TieredConfig.Tier3.Fallbacks),
+											},
 										}
-
-										if presetLLMConfig.UseKnowledgebase != nil {
-											refreshedKnowledgebase = *presetLLMConfig.UseKnowledgebase
-										}
+										workshopSession.UpdateTieredConfig(refreshedTiered)
+										log.Printf("[WORKFLOW_PHASE] Refreshed tiered config from manifest")
 									} else {
-										log.Printf("[WORKFLOW_PHASE] Warning: Failed to parse refreshed LLM config: %v — keeping existing", jsonErr)
+										workshopSession.UpdateTieredConfig(nil)
+									}
+
+									if caps.LLMConfig.UseKnowledgebase != nil {
+										refreshedKnowledgebase = *caps.LLMConfig.UseKnowledgebase
 									}
 								}
 
-								// Apply settings (only update fields that parsed successfully)
 								workshopSession.UpdatePresetSettings(
 									selectedServers,
 									refreshedTools, toolsParsed,
-									refreshPreset.UseCodeExecutionMode,
-									refreshPreset.UseToolSearchMode,
+									caps.UseCodeExecutionMode,
+									caps.UseToolSearchMode,
 									refreshedPreDiscovered, preDiscoveredParsed,
 									refreshedKnowledgebase,
 									refreshedSkills, skillsParsed,
 									secretEntries,
 								)
-								log.Printf("[WORKFLOW_PHASE] Refreshed preset settings: servers=%d tools=%d codeExec=%v toolSearch=%v kb=%v skills=%d secrets=%d",
-									len(selectedServers), len(refreshedTools), refreshPreset.UseCodeExecutionMode,
-									refreshPreset.UseToolSearchMode, refreshedKnowledgebase, len(refreshedSkills), len(secretEntries))
+								log.Printf("[WORKFLOW_PHASE] Refreshed settings from manifest: servers=%d tools=%d codeExec=%v toolSearch=%v kb=%v skills=%d secrets=%d",
+									len(selectedServers), len(refreshedTools), caps.UseCodeExecutionMode,
+									caps.UseToolSearchMode, refreshedKnowledgebase, len(refreshedSkills), len(secretEntries))
 							}
 						}
 					} else {
@@ -5164,6 +5050,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if workshopSession != nil {
 						todo_creation_human.RegisterRunFullReportTool(underlyingAgent, workshopSession, api.logger)
 						log.Printf("[WORKFLOW_PHASE] Registered run_full_report in %s", workflowPhaseID)
+						todo_creation_human.RegisterRunFullWorkflowTool(underlyingAgent, workshopSession, api.logger)
+						log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)
 					}
 				default:
 					// planning: plan modification tools
@@ -5180,6 +5068,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					} else {
 						log.Printf("[WORKFLOW_PHASE] Registered plan modification tools for phase=%s", workflowPhaseID)
 					}
+				}
+
+				// Apply per-turn tool allow list based on current workshop mode.
+				// This restricts which tools the LLM can see/call, enforcing mode boundaries
+				// (e.g. DEBUG mode cannot execute steps, BUILD mode cannot optimize).
+				// The allow list is applied in conversation.go (filteredTools) and buildToolIndex() (code exec).
+				if workflowPhaseID == "workflow-builder" {
+					workshopMode := phaseTemplateVars["WorkshopMode"]
+					allowedTools := todo_creation_human.GetToolsForWorkshopMode(workshopMode)
+					underlyingAgent.SetToolAllowList(allowedTools)
+					log.Printf("[WORKSHOP_TOOLS] Applied tool allow list for mode=%s (%d tools): %v", workshopMode, len(allowedTools), allowedTools)
+				} else {
+					// Non-workshop phases get all tools
+					underlyingAgent.ClearToolAllowList()
 				}
 
 				// Rebuild code execution registry after prompt + tool changes
@@ -5642,9 +5544,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Store agent for reuse by synthetic turns (plan mode only)
+		// Store agent for reuse by synthetic turns (plan mode and workflow phase chat)
 		// The stored agent retains all tools, prompts, observers, and conversation history
-		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+		// NOTE: isWorkflowPhase is used instead of req.AgentMode because req.AgentMode is
+		// overwritten to "simple" early in handleQuery (line ~2219) for workflow_phase sessions.
+		if req.DelegationMode == "plan" || isWorkflowPhase {
 			api.sessionAgentsMux.Lock()
 			api.sessionAgents[sessionID] = llmAgent
 			api.sessionAgentsMux.Unlock()
@@ -9679,71 +9583,28 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	// Track preset's global secret selection (overrides req.SelectedGlobalSecrets which is nil for phase chat)
 	var presetGlobalSecretNames *[]string
 
-	// Load full preset config (same logic as normal workflow handler)
-	if req.PresetQueryID != "" {
-		wsCtx, wsCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		preset, wsErr := api.chatDB.GetPresetQuery(wsCtx, req.PresetQueryID)
-		wsCancel()
-		if wsErr != nil {
-			log.Printf("[WORKSHOP] Warning: Failed to load preset %s: %v", req.PresetQueryID, wsErr)
-		} else if preset != nil {
-			log.Printf("[WORKSHOP] Loaded preset %s for full config", req.PresetQueryID)
+	// Load config from workflow.json manifest (single source of truth — no DB dependency)
+	if workspacePath != "" {
+		manifest, found, mErr := ReadWorkflowManifest(ctx, workspacePath)
+		if mErr != nil {
+			log.Printf("[WORKSHOP] Warning: Failed to read manifest from %s: %v", workspacePath, mErr)
+		} else if found {
+			caps := manifest.Capabilities
+			log.Printf("[WORKSHOP] Loaded config from manifest at %s", workspacePath)
 
-			// Selected tools
-			if preset.SelectedTools != "" {
-				if err := json.Unmarshal([]byte(preset.SelectedTools), &cfg.SelectedTools); err != nil {
-					log.Printf("[WORKSHOP] Failed to parse selected tools: %v", err)
-				}
+			cfg.SelectedTools = caps.SelectedTools
+			cfg.UseCodeExecutionMode = caps.UseCodeExecutionMode
+			cfg.UseToolSearchMode = caps.UseToolSearchMode
+			cfg.PreDiscoveredTools = caps.PreDiscoveredTools
+			cfg.SelectedSkills = caps.SelectedSkills
+
+			// Global secrets
+			if caps.SelectedGlobalSecretNames != nil {
+				presetGlobalSecretNames = caps.SelectedGlobalSecretNames
 			}
 
-			// Code execution mode
-			cfg.UseCodeExecutionMode = preset.UseCodeExecutionMode
-			cfg.UseToolSearchMode = preset.UseToolSearchMode
-
-			// Selected skills
-			if preset.SelectedSkills != "" {
-				var skills []string
-				if err := json.Unmarshal([]byte(preset.SelectedSkills), &skills); err != nil {
-					log.Printf("[WORKSHOP] Failed to parse selected skills: %v", err)
-				} else if len(skills) > 0 {
-					cfg.SelectedSkills = skills
-					log.Printf("[WORKSHOP] Loaded %d skills from preset: %v", len(skills), skills)
-				}
-			}
-
-			// Global secret selection from preset (overrides nil req.SelectedGlobalSecrets for phase chat)
-			// DB stores NULL (Go empty string), "[]" = none, "[...]" = specific
-			// NULL (never configured) defaults to NO secrets — global secrets must be explicitly selected.
-			if preset.SelectedGlobalSecretNames != "" {
-				var names []string
-				if err := json.Unmarshal([]byte(preset.SelectedGlobalSecretNames), &names); err != nil {
-					log.Printf("[WORKSHOP] Failed to parse selected_global_secret_names: %v", err)
-				} else {
-					presetGlobalSecretNames = &names
-					log.Printf("[WORKSHOP] Loaded %d selected global secret names from preset", len(names))
-				}
-			} else {
-				// Preset never configured global secrets — default to none, not all.
-				// Global secrets should only be injected when explicitly selected.
-				emptyNames := []string{}
-				presetGlobalSecretNames = &emptyNames
-				log.Printf("[WORKSHOP] No global secrets configured in preset — defaulting to none")
-			}
-
-			// Pre-discovered tools
-			if preset.PreDiscoveredTools != "" {
-				if err := json.Unmarshal([]byte(preset.PreDiscoveredTools), &cfg.PreDiscoveredTools); err != nil {
-					log.Printf("[WORKSHOP] Failed to parse pre-discovered tools: %v", err)
-				}
-			}
-
-			// Browser tools: resolve effective browser mode from preset
-			effectiveBrowserMode := preset.BrowserMode
-			if effectiveBrowserMode == "" && preset.EnableBrowserAccess {
-				effectiveBrowserMode = "headless" // Legacy preset without browser_mode
-			}
-			// agent-browser tool is used for headless and CDP modes (not playwright/camofox which use MCP servers)
-			// Skip agent_browser registration if a dedicated browser MCP server is configured
+			// Browser mode from manifest capabilities
+			effectiveBrowserMode := caps.BrowserMode
 			wsHasPlaywright := false
 			wsHasCamofox := false
 			for _, s := range cfg.SelectedServers {
@@ -9760,22 +9621,19 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				} else {
 					effectiveBrowserMode = "stealth"
 				}
-				log.Printf("[WORKSHOP] Playwright/Camofox server detected — skipping agent_browser registration, using mode=%s", effectiveBrowserMode)
+				log.Printf("[WORKSHOP] Playwright/Camofox server detected — using mode=%s", effectiveBrowserMode)
 			}
 			if effectiveBrowserMode != "" {
 				common.SetSessionBrowserMode(sessionID, effectiveBrowserMode)
 			}
-			if (effectiveBrowserMode == "headless" || effectiveBrowserMode == "cdp") {
-				// Resolve CDP port: prefer request, fall back to preset browser_mode, default 9222 for CDP
+			if effectiveBrowserMode == "headless" || effectiveBrowserMode == "cdp" {
 				cdpPortForBrowser := getCdpPort(req)
 				if cdpPortForBrowser == 0 && effectiveBrowserMode == "cdp" {
-					cdpPortForBrowser = 9222 // Default CDP port when preset says CDP but request doesn't include port
+					cdpPortForBrowser = 9222
 				}
-
 				browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 				browserTools := virtualtools.CreateWorkspaceBrowserTools()
 				browserExecutors := virtualtools.CreateWorkspaceBrowserToolExecutorsWithSession(sessionID, cdpPortForBrowser)
-
 				allTools = append(allTools, browserTools...)
 				for name, executor := range browserExecutors {
 					allExecutors[name] = executor
@@ -9787,7 +9645,6 @@ func (api *StreamingAPI) buildWorkshopConfig(
 				}
 				log.Printf("[WORKSHOP] Added browser tools (mode=%s, cdp_port=%d)", effectiveBrowserMode, cdpPortForBrowser)
 
-				// Strip playwright/camofox MCP servers (headless/CDP mode uses agent_browser)
 				var filteredServers []string
 				for _, s := range cfg.SelectedServers {
 					if s != "playwright" && s != "camofox" {
@@ -9795,83 +9652,78 @@ func (api *StreamingAPI) buildWorkshopConfig(
 					}
 				}
 				if len(filteredServers) != len(cfg.SelectedServers) {
-					log.Printf("[WORKSHOP] Stripped playwright/camofox from server list (was %d, now %d)", len(cfg.SelectedServers), len(filteredServers))
 					cfg.SelectedServers = filteredServers
 				}
 			}
 
-			// LLM config from preset
-			if len(preset.LLMConfig) > 0 {
-				var presetLLMConfig database.PresetLLMConfig
-				if jsonErr := json.Unmarshal(preset.LLMConfig, &presetLLMConfig); jsonErr != nil {
-					log.Printf("[WORKSHOP] Failed to parse preset LLM config: %v", jsonErr)
-				} else {
-					// Extract preset phase LLM
-					cfg.PresetPhaseLLM = workshopExtractLLM(presetLLMConfig.PhaseLLM, presetLLMConfig.Provider, presetLLMConfig.ModelID)
-					log.Printf("[WORKSHOP] LLM config: phase=%v", cfg.PresetPhaseLLM != nil)
+			// LLM config from manifest
+			if caps.LLMConfig != nil {
+				llmCfg := caps.LLMConfig
+				cfg.PresetPhaseLLM = workshopExtractLLM(llmCfg.PhaseLLM, llmCfg.Provider, llmCfg.ModelID)
 
-					// Knowledgebase toggle
-					if presetLLMConfig.UseKnowledgebase != nil {
-						cfg.UseKnowledgebase = *presetLLMConfig.UseKnowledgebase
+				if llmCfg.UseKnowledgebase != nil {
+					cfg.UseKnowledgebase = *llmCfg.UseKnowledgebase
+				}
+
+				// Tiered LLM allocation
+				if llmCfg.LLMAllocationMode == "tiered" && llmCfg.TieredConfig != nil {
+					cfg.LLMAllocationMode = "tiered"
+					cfg.TieredConfig = &todo_creation_human.TieredLLMConfig{
+						Tier1: &todo_creation_human.AgentLLMConfig{
+							Provider:  llmCfg.TieredConfig.Tier1.Provider,
+							ModelID:   llmCfg.TieredConfig.Tier1.ModelID,
+							Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier1.Fallbacks),
+						},
+						Tier2: &todo_creation_human.AgentLLMConfig{
+							Provider:  llmCfg.TieredConfig.Tier2.Provider,
+							ModelID:   llmCfg.TieredConfig.Tier2.ModelID,
+							Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier2.Fallbacks),
+						},
+						Tier3: &todo_creation_human.AgentLLMConfig{
+							Provider:  llmCfg.TieredConfig.Tier3.Provider,
+							ModelID:   llmCfg.TieredConfig.Tier3.ModelID,
+							Fallbacks: workshopConvertFallbacks(llmCfg.TieredConfig.Tier3.Fallbacks),
+						},
 					}
+					log.Printf("[WORKSHOP] Tiered mode: T1=%s/%s T2=%s/%s T3=%s/%s",
+						cfg.TieredConfig.Tier1.Provider, cfg.TieredConfig.Tier1.ModelID,
+						cfg.TieredConfig.Tier2.Provider, cfg.TieredConfig.Tier2.ModelID,
+						cfg.TieredConfig.Tier3.Provider, cfg.TieredConfig.Tier3.ModelID)
+				}
 
-					// Tiered LLM allocation
-					if presetLLMConfig.LLMAllocationMode == "tiered" && presetLLMConfig.TieredConfig != nil {
-						cfg.LLMAllocationMode = "tiered"
-						cfg.TieredConfig = &todo_creation_human.TieredLLMConfig{
-							Tier1: &todo_creation_human.AgentLLMConfig{
-								Provider:  presetLLMConfig.TieredConfig.Tier1.Provider,
-								ModelID:   presetLLMConfig.TieredConfig.Tier1.ModelID,
-								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier1.Fallbacks),
-							},
-							Tier2: &todo_creation_human.AgentLLMConfig{
-								Provider:  presetLLMConfig.TieredConfig.Tier2.Provider,
-								ModelID:   presetLLMConfig.TieredConfig.Tier2.ModelID,
-								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier2.Fallbacks),
-							},
-							Tier3: &todo_creation_human.AgentLLMConfig{
-								Provider:  presetLLMConfig.TieredConfig.Tier3.Provider,
-								ModelID:   presetLLMConfig.TieredConfig.Tier3.ModelID,
-								Fallbacks: workshopConvertFallbacks(presetLLMConfig.TieredConfig.Tier3.Fallbacks),
-							},
-						}
-						log.Printf("[WORKSHOP] Tiered mode: T1=%s/%s T2=%s/%s T3=%s/%s",
-							cfg.TieredConfig.Tier1.Provider, cfg.TieredConfig.Tier1.ModelID,
-							cfg.TieredConfig.Tier2.Provider, cfg.TieredConfig.Tier2.ModelID,
-							cfg.TieredConfig.Tier3.Provider, cfg.TieredConfig.Tier3.ModelID)
+				// Image generation tools
+				if llmCfg.EnableImageGeneration != nil && *llmCfg.EnableImageGeneration {
+					imgCfg := virtualtools.ImageGenExecutorConfig{
+						Provider:        "vertex",
+						ModelID:         "gemini-2.5-flash-image",
+						WorkspaceAPIURL: getWorkspaceAPIURL(),
+						UserID:          currentUserID,
 					}
-
-					// Image generation tools
-					if presetLLMConfig.EnableImageGeneration != nil && *presetLLMConfig.EnableImageGeneration {
-						imgCfg := virtualtools.ImageGenExecutorConfig{
-							Provider:        "vertex",
-							ModelID:         "gemini-2.5-flash-image",
-							WorkspaceAPIURL: getWorkspaceAPIURL(),
-							UserID:          currentUserID,
-						}
-						if presetLLMConfig.ImageGenProvider != "" {
-							imgCfg.Provider = presetLLMConfig.ImageGenProvider
-						}
-						if presetLLMConfig.ImageGenModelID != "" {
-							imgCfg.ModelID = presetLLMConfig.ImageGenModelID
-						}
-						for _, def := range []struct {
-							tool     func() llmtypes.Tool
-							executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
-							category func() string
-						}{
-							{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
-							{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
-						} {
-							t := def.tool()
-							exec := def.executor(imgCfg)
-							allTools = append(allTools, t)
-							allExecutors[t.Function.Name] = exec
-							toolCategories[t.Function.Name] = def.category()
-							log.Printf("[WORKSHOP] Registered image tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
-						}
+					if llmCfg.ImageGenProvider != "" {
+						imgCfg.Provider = llmCfg.ImageGenProvider
+					}
+					if llmCfg.ImageGenModelID != "" {
+						imgCfg.ModelID = llmCfg.ImageGenModelID
+					}
+					for _, def := range []struct {
+						tool     func() llmtypes.Tool
+						executor func(virtualtools.ImageGenExecutorConfig) func(context.Context, map[string]any) (string, error)
+						category func() string
+					}{
+						{virtualtools.GetImageGenToolDefinition, virtualtools.CreateImageGenExecutor, virtualtools.GetImageGenToolCategory},
+						{virtualtools.GetImageEditToolDefinition, virtualtools.CreateImageEditExecutor, virtualtools.GetImageEditToolCategory},
+					} {
+						t := def.tool()
+						exec := def.executor(imgCfg)
+						allTools = append(allTools, t)
+						allExecutors[t.Function.Name] = exec
+						toolCategories[t.Function.Name] = def.category()
+						log.Printf("[WORKSHOP] Registered image tool: %s (provider=%s model=%s)", t.Function.Name, imgCfg.Provider, imgCfg.ModelID)
 					}
 				}
+
+				log.Printf("[WORKSHOP] LLM config loaded: phase=%v tiered=%v kb=%v",
+					cfg.PresetPhaseLLM != nil, cfg.TieredConfig != nil, cfg.UseKnowledgebase)
 			}
 		}
 	}
@@ -9925,7 +9777,14 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	cfg.ToolCallQueryFunc = formatToolCallSummaries(api)
 
 	// Wire up schedule management callbacks
-	cfg.PresetQueryID = req.PresetQueryID
+	// Set workspace path for schedule management — prefer SelectedFolder, fall back to resolving from preset
+	if req.SelectedFolder != "" {
+		cfg.SchedulerWorkspacePath = req.SelectedFolder
+	} else if req.PresetQueryID != "" {
+		if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+			cfg.SchedulerWorkspacePath = wPath
+		}
+	}
 	cfg.SchedulerFuncs = api.buildSchedulerCallbacks()
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.ListAvailableSecrets = func(ctx context.Context) ([]string, error) {
@@ -9953,138 +9812,186 @@ func (api *StreamingAPI) buildWorkshopConfig(
 }
 
 // buildSchedulerCallbacks creates SchedulerCallbacks that bridge the workshop tools
-// to the database and scheduler service. Returns nil-safe callbacks.
+// to the workflow.json manifest and scheduler service. No database dependency.
 func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.SchedulerCallbacks {
 	return &todo_creation_human.SchedulerCallbacks{
-		ListSchedules: func(ctx context.Context, presetID string) (string, error) {
-			jobs, total, err := api.chatDB.ListScheduledJobs(ctx, 50, 0, nil, nil)
-			if err != nil {
-				return "", err
+		ListSchedules: func(ctx context.Context, workspacePath string) (string, error) {
+			manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+			if err != nil || !found {
+				return "No workflow manifest found.", nil
 			}
-			// Filter by presetID
-			var filtered []database.ScheduledJob
-			for _, j := range jobs {
-				if j.PresetQueryID == presetID {
-					filtered = append(filtered, j)
-				}
-			}
-			if len(filtered) == 0 {
-				return fmt.Sprintf("No schedules found for this workflow (total schedules across all workflows: %d).", total), nil
+			if len(manifest.Schedules) == 0 {
+				return "No schedules found for this workflow.", nil
 			}
 			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("## Schedules (%d found)\n\n", len(filtered)))
-			for _, j := range filtered {
+			sb.WriteString(fmt.Sprintf("## Schedules (%d found)\n\n", len(manifest.Schedules)))
+			for _, sched := range manifest.Schedules {
 				status := "disabled"
-				if j.Enabled {
+				if sched.Enabled {
 					status = "enabled"
 				}
-				sb.WriteString(fmt.Sprintf("### %s\n", j.Name))
-				sb.WriteString(fmt.Sprintf("- **ID**: `%s`\n", j.ID))
-				sb.WriteString(fmt.Sprintf("- **Cron**: `%s`\n", j.CronExpression))
-				sb.WriteString(fmt.Sprintf("- **Timezone**: %s\n", j.Timezone))
+				sb.WriteString(fmt.Sprintf("### %s\n", sched.Name))
+				sb.WriteString(fmt.Sprintf("- **ID**: `%s`\n", sched.ID))
+				sb.WriteString(fmt.Sprintf("- **Cron**: `%s`\n", sched.CronExpression))
+				sb.WriteString(fmt.Sprintf("- **Timezone**: %s\n", sched.Timezone))
 				sb.WriteString(fmt.Sprintf("- **Status**: %s\n", status))
-				if j.LastStatus != "" {
-					sb.WriteString(fmt.Sprintf("- **Last Run**: %v (status: %s)\n", j.LastRunAt, j.LastStatus))
+				if api.scheduler != nil {
+					state := api.scheduler.GetRuntimeState(sched.ID)
+					if state.LastStatus != "" {
+						sb.WriteString(fmt.Sprintf("- **Last Run**: %v (status: %s)\n", state.LastRunAt, state.LastStatus))
+					}
+					if state.NextRunAt != nil {
+						sb.WriteString(fmt.Sprintf("- **Next Run**: %v\n", state.NextRunAt))
+					}
+					sb.WriteString(fmt.Sprintf("- **Run Count**: %d\n", state.RunCount))
 				}
-				if j.NextRunAt != nil {
-					sb.WriteString(fmt.Sprintf("- **Next Run**: %v\n", j.NextRunAt))
-				}
-				if len(j.GroupIDs) > 0 {
-					sb.WriteString(fmt.Sprintf("- **Groups**: %v\n", j.GroupIDs))
+				if len(sched.GroupIDs) > 0 {
+					sb.WriteString(fmt.Sprintf("- **Groups**: %v\n", sched.GroupIDs))
 				} else {
 					sb.WriteString("- **Groups**: all\n")
 				}
-				sb.WriteString(fmt.Sprintf("- **Run Count**: %d\n\n", j.RunCount))
+				sb.WriteString("\n")
 			}
 			return sb.String(), nil
 		},
-		CreateSchedule: func(ctx context.Context, presetID, name, cronExpr, timezone string, groupIDs []string) (string, error) {
+		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupIDs []string, mode string, messages []string) (string, error) {
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
 			if timezone == "" {
 				timezone = "UTC"
 			}
-			enabled := true
-			job, err := api.chatDB.CreateScheduledJob(ctx, &database.CreateScheduledJobRequest{
+			manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+			if err != nil || !found {
+				return "", fmt.Errorf("workflow manifest not found at %s", workspacePath)
+			}
+			newSched := WorkflowSchedule{
+				ID:             generateScheduleID(),
 				Name:           name,
-				EntityType:     "workflow",
-				PresetQueryID:  presetID,
 				CronExpression: cronExpr,
 				Timezone:       timezone,
 				GroupIDs:       groupIDs,
-				Enabled:        &enabled,
-			})
-			if err != nil {
-				return "", err
+				Enabled:        true,
+				Mode:           mode,
+				Messages:       messages,
+			}
+			manifest.Schedules = append(manifest.Schedules, newSched)
+			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
+				return "", fmt.Errorf("failed to write manifest: %w", err)
 			}
 			// Load into gocron scheduler
 			if api.scheduler != nil {
-				if err := api.scheduler.LoadJob(job); err != nil {
-					return fmt.Sprintf("Schedule created (ID: %s) but failed to activate: %v", job.ID, err), nil
+				sctx := &ScheduleContext{
+					WorkspacePath: workspacePath,
+					WorkflowID:    manifest.ID,
+					WorkflowLabel: manifest.Label,
+					Schedule:      newSched,
+					Capabilities:  manifest.Capabilities,
+					Query:         manifest.Label, // objective comes from variables.json at execution time
+				}
+				if err := api.scheduler.LoadSchedule(sctx); err != nil {
+					return fmt.Sprintf("Schedule created (ID: %s) but failed to activate: %v", newSched.ID, err), nil
 				}
 			}
-			nextRun := ""
-			if job.NextRunAt != nil {
-				nextRun = fmt.Sprintf("%v", job.NextRunAt)
+			nextRun := getNextRunTime(cronExpr, timezone)
+			nextRunStr := "unknown"
+			if nextRun != nil {
+				nextRunStr = nextRun.Format(time.RFC3339)
 			}
-			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", job.ID, job.Name, job.CronExpression, job.Timezone, nextRun), nil
+			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, cronExpr, timezone, nextRunStr), nil
 		},
-		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool) (string, error) {
+		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool, mode string, messages []string) (string, error) {
 			if cronExpr != "" {
 				if err := ValidateCronExpression(cronExpr); err != nil {
 					return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 				}
 			}
-			req := &database.UpdateScheduledJobRequest{
-				Name:           name,
-				CronExpression: cronExpr,
-				Timezone:       timezone,
-				GroupIDs:       groupIDs,
-				SetGroupIDs:    setGroupIDs,
-				Enabled:        enabled,
-			}
-			job, err := api.chatDB.UpdateScheduledJob(ctx, jobID, req)
+			workspacePath, manifest, idx, err := findScheduleByID(ctx, jobID)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("schedule not found: %w", err)
 			}
-			// Reload in gocron
+			sched := &manifest.Schedules[idx]
+			if name != "" {
+				sched.Name = name
+			}
+			if cronExpr != "" {
+				sched.CronExpression = cronExpr
+			}
+			if timezone != "" {
+				sched.Timezone = timezone
+			}
+			if setGroupIDs {
+				sched.GroupIDs = groupIDs
+			}
+			if enabled != nil {
+				sched.Enabled = *enabled
+			}
+			if mode != "" {
+				sched.Mode = mode
+			}
+			if messages != nil {
+				sched.Messages = messages
+			}
+			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
+				return "", fmt.Errorf("failed to write manifest: %w", err)
+			}
 			if api.scheduler != nil {
-				if job.Enabled {
-					if err := api.scheduler.LoadJob(job); err != nil {
-						return fmt.Sprintf("Schedule updated but failed to reload: %v", err), nil
-					}
-				} else {
-					api.scheduler.RemoveJob(jobID)
+				if err := api.scheduler.ReloadSchedule(ctx, workspacePath, jobID); err != nil {
+					return fmt.Sprintf("Schedule updated but failed to reload: %v", err), nil
 				}
 			}
-			nextRun := ""
-			if job.NextRunAt != nil {
-				nextRun = fmt.Sprintf("%v", job.NextRunAt)
+			nextRun := getNextRunTime(sched.CronExpression, sched.Timezone)
+			nextRunStr := "unknown"
+			if nextRun != nil {
+				nextRunStr = nextRun.Format(time.RFC3339)
 			}
-			return fmt.Sprintf("Schedule updated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Enabled**: %v\n- **Next Run**: %s", job.ID, job.Name, job.CronExpression, job.Enabled, nextRun), nil
+			return fmt.Sprintf("Schedule updated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Enabled**: %v\n- **Next Run**: %s", sched.ID, sched.Name, sched.CronExpression, sched.Enabled, nextRunStr), nil
 		},
 		DeleteSchedule: func(ctx context.Context, jobID string) error {
 			if api.scheduler != nil {
 				api.scheduler.RemoveJob(jobID)
 			}
-			return api.chatDB.DeleteScheduledJob(ctx, jobID)
+			workspacePath, manifest, idx, err := findScheduleByID(ctx, jobID)
+			if err != nil {
+				return err
+			}
+			manifest.Schedules = append(manifest.Schedules[:idx], manifest.Schedules[idx+1:]...)
+			return WriteWorkflowManifest(ctx, workspacePath, manifest)
 		},
 		TriggerSchedule: func(ctx context.Context, jobID string) (string, error) {
 			if api.scheduler == nil {
 				return "", fmt.Errorf("scheduler not available")
 			}
-			sessionID, err := api.scheduler.TriggerNow(jobID)
+			workspacePath := api.scheduler.GetWorkspaceForSchedule(jobID)
+			if workspacePath == "" {
+				wp, _, _, err := findScheduleByID(ctx, jobID)
+				if err != nil {
+					return "", err
+				}
+				workspacePath = wp
+			}
+			_, err := api.scheduler.TriggerNow(workspacePath, jobID)
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Schedule triggered. Execution session: `%s`", sessionID), nil
+			return fmt.Sprintf("Schedule triggered. Job ID: `%s`", jobID), nil
 		},
 		GetScheduleRuns: func(ctx context.Context, jobID string, limit int) (string, error) {
 			if limit <= 0 {
 				limit = 10
 			}
-			runs, total, err := api.chatDB.ListScheduledJobRuns(ctx, jobID, limit, 0)
+			workspacePath := ""
+			if api.scheduler != nil {
+				workspacePath = api.scheduler.GetWorkspaceForSchedule(jobID)
+			}
+			if workspacePath == "" {
+				wp, _, _, err := findScheduleByID(ctx, jobID)
+				if err != nil {
+					return "", err
+				}
+				workspacePath = wp
+			}
+			runs, total, err := ListScheduleRuns(ctx, workspacePath, jobID, limit, 0)
 			if err != nil {
 				return "", err
 			}
@@ -10098,7 +10005,11 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if r.DurationMs != nil {
 					duration = fmt.Sprintf(" (%dms)", *r.DurationMs)
 				}
-				sb.WriteString(fmt.Sprintf("- **%s** [%s]%s — %s", r.ID[:8], r.Status, duration, r.StartedAt.Format("2006-01-02 15:04:05")))
+				idPrefix := r.ID
+				if len(idPrefix) > 8 {
+					idPrefix = idPrefix[:8]
+				}
+				sb.WriteString(fmt.Sprintf("- **%s** [%s]%s — %s", idPrefix, r.Status, duration, r.StartedAt.Format("2006-01-02 15:04:05")))
 				if r.RunFolder != "" {
 					sb.WriteString(fmt.Sprintf(" → `%s`", r.RunFolder))
 				}

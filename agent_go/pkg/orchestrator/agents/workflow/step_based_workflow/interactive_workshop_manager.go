@@ -495,11 +495,73 @@ type InteractiveWorkshopManager struct {
 	sessionCtx           context.Context                             // long-lived ctx for background goroutines
 	toolCallQueryFunc    ToolCallQueryFunc                           // optional: query live tool calls for running steps
 	mainSessionID        string                                      // event store session ID for tool call queries
-	presetQueryID        string                                      // preset ID for schedule management
+	schedulerWorkspacePath string                                    // workspace path for schedule management
 	schedulerFuncs       *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
 	skillFuncs           *SkillCallbacks                             // skill import/delete callbacks from server.go
 	listAvailableSecrets func(ctx context.Context) ([]string, error) // list all available secret names
 	executionNotifier    WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
+}
+
+// persistWorkflowConfigToManifest writes the current in-memory workflow config
+// (servers, skills, secrets) back to workflow.json so changes survive session end.
+func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx context.Context, logger loggerv2.Logger) {
+	wsPath := iwm.controller.GetWorkspacePath()
+	if wsPath == "" {
+		return
+	}
+	manifestPath := "workflow.json"
+
+	// Read existing manifest
+	content, err := iwm.controller.ReadWorkspaceFile(ctx, manifestPath)
+	if err != nil {
+		logger.Info("No workflow.json found — skipping manifest persist")
+		return
+	}
+
+	var manifest map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &manifest); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to parse workflow.json: %v", err))
+		return
+	}
+
+	// Get or create capabilities object
+	caps, ok := manifest["capabilities"].(map[string]interface{})
+	if !ok {
+		caps = make(map[string]interface{})
+	}
+
+	// Update from current controller state
+	caps["selected_servers"] = iwm.controller.GetSelectedServers()
+	caps["selected_skills"] = iwm.controller.GetSelectedSkills()
+
+	// Update secrets (names only, never values)
+	secretNames := make([]string, 0)
+	for _, s := range iwm.controller.GetSecrets() {
+		if s.Name != "" {
+			secretNames = append(secretNames, s.Name)
+		}
+	}
+	caps["selected_global_secret_names"] = secretNames
+
+	caps["use_code_execution_mode"] = iwm.controller.GetUseCodeExecutionMode()
+	caps["use_tool_search_mode"] = iwm.controller.GetUseToolSearchMode()
+
+	manifest["capabilities"] = caps
+	manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+
+	// Write back
+	updated, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		logger.Warn(fmt.Sprintf("Failed to marshal workflow.json: %v", err))
+		return
+	}
+
+	if err := iwm.controller.WriteWorkspaceFile(ctx, manifestPath, string(updated)); err != nil {
+		logger.Warn(fmt.Sprintf("Failed to write workflow.json: %v", err))
+		return
+	}
+
+	logger.Info("✅ Persisted workflow config changes to workflow.json")
 }
 
 // refreshVariablesManifest reloads the variables manifest from file into the controller.
@@ -569,6 +631,153 @@ func NewInteractiveWorkshopManager(
 func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, queryFunc ToolCallQueryFunc) {
 	iwm.mainSessionID = mainSessionID
 	iwm.toolCallQueryFunc = queryFunc
+}
+
+// GetToolsForWorkshopMode returns the list of tool names that should be available
+// for the given workshop mode. This is used with Agent.SetToolAllowList() to dynamically
+// restrict tools per-turn as the user switches modes from the frontend.
+//
+// Tools are grouped into categories:
+//   - System tools: always included (shell, workspace, human feedback, virtual tools)
+//   - Workshop execution tools: execute_step, query_step, stop, list, run_in_background
+//   - Step config tools: update_step_config, analyze_step, generate_learnings, optimize_step
+//   - Plan modification tools: add/update/delete steps, branches, routes
+//   - Variable/config tools: update_variable, groups, workflow config
+//   - Schedule tools: list/create/update/delete schedules
+//   - Skill tools: list/search/install/uninstall skills
+//   - Eval tools: validate_evaluation_plan, run_full_evaluation
+//   - Report tools: validate_report_plan, run_full_report
+func GetToolsForWorkshopMode(mode string) []string {
+	// System tools — always available regardless of mode.
+	// Includes workspace, shell, virtual tools, and human feedback.
+	system := []string{
+		// Workspace basic tools
+		"list_workspace_files", "read_workspace_file", "update_workspace_file",
+		"delete_workspace_file", "move_workspace_file",
+		// Workspace advanced tools
+		"execute_shell_command", "diff_patch_workspace_file",
+		// Human tools
+		"human_feedback",
+		// Browser (if registered)
+		"agent_browser",
+		// mcpagent virtual tools (get_api_spec, get_prompt, get_resource)
+		"get_api_spec", "get_prompt", "get_resource",
+		// Code execution virtual tools
+		"write_code", "discover_code_files",
+	}
+
+	// Read-only info tools — safe in all modes
+	readOnly := []string{
+		"get_step_prompts", "get_workflow_config", "get_llm_config", "get_cost_summary",
+	}
+
+	// Workshop execution tools
+	execution := []string{
+		"execute_step", "query_step", "stop_step", "stop_all_executions",
+		"list_executions", "run_in_background",
+	}
+
+	// Step config & analysis tools
+	stepConfig := []string{
+		"update_step_config", "analyze_step", "generate_learnings", "optimize_step",
+	}
+
+	// Plan modification tools
+	planMod := []string{
+		"add_regular_step", "add_decision_step", "add_routing_step",
+		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
+		"update_regular_step", "update_decision_step", "update_routing_step",
+		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
+		"delete_todo_task_route", "delete_plan_steps",
+		"update_success_criteria", "update_validation_schema",
+		"publish_workflow_version", "restore_workflow_version",
+	}
+
+	// Variable & config tools
+	variableConfig := []string{
+		"update_variable", "add_group", "update_group", "delete_group",
+		"update_workflow_config",
+	}
+
+	// Schedule tools
+	schedule := []string{
+		"list_schedules", "create_schedule", "update_schedule",
+		"delete_schedule", "trigger_schedule", "get_schedule_runs",
+	}
+
+	// Skill tools
+	skills := []string{
+		"list_skills", "search_skills", "install_skill", "uninstall_skill", "import_skill",
+	}
+
+	// Eval tools
+	eval := []string{
+		"validate_evaluation_plan", "run_full_evaluation",
+	}
+
+	// Report tools
+	report := []string{
+		"validate_report_plan", "run_full_report",
+	}
+
+	var tools []string
+	tools = append(tools, system...)
+	tools = append(tools, readOnly...)
+
+	switch mode {
+	case "builder":
+		// BUILD: design workflow, create/modify steps, test execution, configure
+		tools = append(tools, execution...)
+		tools = append(tools, planMod...)
+		tools = append(tools, variableConfig...)
+		tools = append(tools, schedule...)
+		tools = append(tools, skills...)
+		// analyze_step & update_step_config for testing, but no optimize_step/generate_learnings
+		tools = append(tools, "update_step_config", "analyze_step")
+
+	case "optimizer":
+		// OPTIMIZE: run steps, analyze, optimize, update config — no structural plan changes
+		tools = append(tools, execution...)
+		tools = append(tools, stepConfig...)
+		// Allow validation schema updates during optimization
+		tools = append(tools, "update_success_criteria", "update_validation_schema")
+		tools = append(tools, "debug_step")
+		tools = append(tools, "run_full_workflow")
+
+	case "debugger":
+		// DEBUG: read-only analysis of past runs — no execution, no plan changes
+		// get_step_prompts already included via readOnly (all modes)
+		tools = append(tools, "analyze_step", "debug_step")
+		tools = append(tools, "query_step", "list_executions")
+
+	case "runner":
+		// RUN: execute optimized steps and report — no plan changes, no optimization, no config changes
+		tools = append(tools, execution...)
+		tools = append(tools, "run_full_workflow")
+
+	case "eval":
+		// EVAL: build and run evaluations — no plan or step changes
+		tools = append(tools, eval...)
+		tools = append(tools, "query_step", "list_executions")
+
+	case "output":
+		// OUTPUT/REPORT: design and run the final report artifact
+		tools = append(tools, report...)
+
+	default:
+		// Unknown mode — allow everything (no restriction)
+		tools = append(tools, execution...)
+		tools = append(tools, stepConfig...)
+		tools = append(tools, planMod...)
+		tools = append(tools, variableConfig...)
+		tools = append(tools, schedule...)
+		tools = append(tools, skills...)
+		tools = append(tools, eval...)
+		tools = append(tools, report...)
+		tools = append(tools, "debug_step")
+	}
+
+	return tools
 }
 
 // detectWorkshopMode determines the current workshop mode based on step optimization state.
@@ -1310,26 +1519,51 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 {{if eq .IsCodeExecutionMode "true"}}**Code execution mode:** You do NOT have direct tool-call access. Bridge-native tools: `+"`execute_shell_command`"+`, `+"`diff_patch_workspace_file`"+`, `+"`agent_browser`"+`, `+"`get_api_spec`"+`. All other workflow tools (execute_step, query_step, plan modification, etc.) are available via the workflow API path — use `+"`get_api_spec(server_name=\"workflow\", tool_name=\"...\")`"+` to get their schemas. Do **not** hardcode raw HTTP requests.
 {{end}}
 
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}
 ### Step Execution
 - **execute_step(step_id, iteration, group_id?, instructions?, human_input?)** — Start a step in background; returns execution_id. iteration defaults to iteration-0. skip_learning=true by default. Pass skip_learning=false to generate learnings. Pass human_input for human input steps.
 - **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
-- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths
+{{if ne .WorkshopMode "runner"}}- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths{{end}}
 - **list_executions(status_filter?)** — List all background executions
 - **stop_step(execution_id)** / **stop_all_executions()** — Cancel running steps
 - **run_in_background(name, instruction)** — Spawn independent background agent with same tools
+{{if or (eq .WorkshopMode "optimizer") (eq .WorkshopMode "runner")}}- **run_full_workflow(iteration?, execution_strategy?, group_id?)** — Execute the complete workflow (all steps) for a single variable group in background. Specify iteration to reuse an existing run folder, or omit to create a new one. Defaults to fresh run skipping human input. Returns execution_id.{{end}}
+{{end}}
 
+{{if eq .WorkshopMode "debugger"}}
+### Step Query (Read-Only)
+- **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
+- **list_executions(status_filter?)** — List all background executions
+{{end}}
+
+{{if or (eq .WorkshopMode "eval") (eq .WorkshopMode "output")}}
+### Step Query (Read-Only)
+- **query_step(execution_id, tool_call_id?)** — Status check + live tool calls
+- **list_executions(status_filter?)** — List all background executions
+{{end}}
+
+{{if or (eq .WorkshopMode "builder") (eq .WorkshopMode "optimizer")}}
 ### Step Config & Analysis
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag
 - **analyze_step(step_id)** — Config and execution history analysis
-- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
-- **optimize_step(step_id, focus?, forced?)** — Start optimization agent in background
+{{if eq .WorkshopMode "optimizer"}}- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
+- **optimize_step(step_id, focus?, forced?)** — Start optimization agent in background{{end}}
 - **get_cost_summary** — Token usage and cost breakdown
+{{end}}
+
+{{if eq .WorkshopMode "debugger"}}
+### Step Analysis (Read-Only)
+- **analyze_step(step_id)** — Config and execution history analysis
+- **debug_step(step_id, iteration, group_id)** — Rich insights: learning status, validation result, log paths
+- **get_cost_summary** — Token usage and cost breakdown
+{{end}}
 
 ### Read-Only Info
 - **get_step_prompts(step_id, attempt?, iteration?)** — System prompt and user message for a step
 - **get_workflow_config** — Full workflow config: MCP servers, skills, secrets, LLM config
 - **get_llm_config** — Per-step LLM overrides
 
+{{if eq .WorkshopMode "builder"}}
 ### Plan Modification
 - **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
 - **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
@@ -1347,10 +1581,27 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 ### Schedule Management
 - **list_schedules / create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
 
-### Skills & Evaluation & Output
+### Skills
 - **list_skills / search_skills(query) / install_skill(source) / uninstall_skill / import_skill** — Manage skills
-- **validate_evaluation_plan / run_full_evaluation(target_run_folder)** — Evaluation tools
-- **validate_report_plan / run_full_report(target_run_folder)** — Report generation tools
+{{end}}
+
+{{if eq .WorkshopMode "optimizer"}}
+### Validation (for optimization)
+- **update_validation_schema** — Add or update a step's validation schema
+- **update_success_criteria** — Update step success criteria
+{{end}}
+
+{{if eq .WorkshopMode "eval"}}
+### Evaluation
+- **validate_evaluation_plan** — Validate the evaluation plan JSON
+- **run_full_evaluation(target_run_folder)** — Score the eval plan against an execution run
+{{end}}
+
+{{if eq .WorkshopMode "output"}}
+### Report
+- **validate_report_plan** — Validate the report plan JSON
+- **run_full_report(target_run_folder)** — Regenerate the report for a completed group run
+{{end}}
 
 ### Shell & Discovery
 - **execute_shell_command** — Run shell commands. Quick lookups: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`, `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, title, type, description, success_criteria, context_output}' planning/plan.json`"+`, `+"`cat planning/step_config.json`"+`, `+"`ls runs/`"+`, `+"`cat variables/variables.json`"+`
@@ -5342,6 +5593,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "No changes applied. Provide at least one of: add_servers, remove_servers, add_skills, remove_skills, add_secrets, remove_secrets, update_tier_fallbacks.", nil
 			}
 
+			// Persist config changes to workflow.json manifest (file-backed)
+			iwm.persistWorkflowConfigToManifest(ctx, logger)
+
 			return sb.String(), nil
 		},
 		"workflow",
@@ -5581,10 +5835,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iwm.schedulerFuncs == nil {
 				return "Schedule management not available in this session.", nil
 			}
-			if iwm.presetQueryID == "" {
-				return "No preset associated with this workflow session.", nil
+			if iwm.schedulerWorkspacePath == "" {
+				return "No workspace path associated with this workflow session.", nil
 			}
-			return iwm.schedulerFuncs.ListSchedules(ctx, iwm.presetQueryID)
+			return iwm.schedulerFuncs.ListSchedules(ctx, iwm.schedulerWorkspacePath)
 		},
 		"workflow",
 	); err != nil {
@@ -5594,7 +5848,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times.",
+		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times. Use mode='workshop' with messages to drive execution via the LLM (with per-step notifications).",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -5615,6 +5869,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Variable group IDs to run (e.g., 'group-1', 'group-2'). Read variables.json to see available groups. Empty = run all groups.",
 				},
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Execution mode: 'workflow' (default, direct orchestrator) or 'workshop' (LLM-driven via workshop builder with per-step notifications).",
+					"enum":        []string{"workflow", "workshop"},
+				},
+				"messages": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Predefined message queue for workshop mode. Sent one-by-one to the LLM. Example: ['Run the full workflow using run_full_workflow']. Ignored in workflow mode.",
+				},
 			},
 			"required": []string{"name", "cron_expression"},
 		},
@@ -5622,8 +5886,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if iwm.schedulerFuncs == nil {
 				return "Schedule management not available in this session.", nil
 			}
-			if iwm.presetQueryID == "" {
-				return "No preset associated with this workflow session.", nil
+			if iwm.schedulerWorkspacePath == "" {
+				return "No workspace path associated with this workflow session.", nil
 			}
 			name, _ := args["name"].(string)
 			cronExpr, _ := args["cron_expression"].(string)
@@ -5638,13 +5902,24 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 			}
+			mode, _ := args["mode"].(string)
+			var messages []string
+			if raw, ok := args["messages"]; ok && raw != nil {
+				if arr, ok := raw.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							messages = append(messages, s)
+						}
+					}
+				}
+			}
 			if name == "" {
 				return "name is required.", nil
 			}
 			if cronExpr == "" {
 				return "cron_expression is required.", nil
 			}
-			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.presetQueryID, name, cronExpr, timezone, groupIDs)
+			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupIDs, mode, messages)
 		},
 		"workflow",
 	); err != nil {
@@ -5683,6 +5958,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "boolean",
 					"description": "Enable or disable the schedule.",
 				},
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Execution mode: 'workflow' (default, direct orchestrator) or 'workshop' (LLM-driven via workshop builder).",
+					"enum":        []string{"workflow", "workshop"},
+				},
+				"messages": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Predefined message queue for workshop mode. Replaces existing messages.",
+				},
 			},
 			"required": []string{"job_id"},
 		},
@@ -5715,7 +6000,18 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					enabled = &b
 				}
 			}
-			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupIDs, setGroupIDs, enabled)
+			mode, _ := args["mode"].(string)
+			var messages []string
+			if raw, ok := args["messages"]; ok && raw != nil {
+				if arr, ok := raw.([]interface{}); ok {
+					for _, v := range arr {
+						if s, ok := v.(string); ok {
+							messages = append(messages, s)
+						}
+					}
+				}
+			}
+			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupIDs, setGroupIDs, enabled, mode, messages)
 		},
 		"workflow",
 	); err != nil {

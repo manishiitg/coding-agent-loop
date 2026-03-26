@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { X, Settings, Layers, Lock } from 'lucide-react'
+import { X, Settings, Layers, Lock, Upload } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore, useChatStore } from '../stores'
@@ -38,6 +38,58 @@ type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
 type APIKeyStatus = Record<APIKeyProviderType, APIKeyStatusValue>
 
 type APIKeyError = Record<APIKeyProviderType, string | null>
+
+/** Small button that saves all configured API keys to the server for scheduled runs. */
+function SaveKeysToServerButton() {
+  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  const handleSave = async () => {
+    setStatus('saving')
+    try {
+      const store = useLLMStore.getState()
+      const { providerKeysApi } = await import('../api/scheduler')
+      await providerKeysApi.save({
+        openrouter: store.openrouterConfig?.api_key || undefined,
+        openai: store.openaiConfig?.api_key || undefined,
+        anthropic: store.anthropicConfig?.api_key || undefined,
+        vertex: store.vertexConfig?.api_key || undefined,
+        gemini_cli: store.geminiCliApiKey || undefined,
+        minimax: store.minimaxConfig?.api_key || undefined,
+        minimax_coding_plan: store.minimaxCodingPlanConfig?.api_key || undefined,
+        bedrock: store.bedrockConfig?.region ? { region: store.bedrockConfig.region } : undefined,
+        azure: store.azureConfig?.endpoint && store.azureConfig?.api_key
+          ? {
+              endpoint: store.azureConfig.endpoint,
+              api_key: store.azureConfig.api_key,
+              api_version: (store.azureConfig.options?.api_version as string) || undefined,
+              region: store.azureConfig.region || undefined,
+            }
+          : undefined,
+      })
+      setStatus('saved')
+      setTimeout(() => setStatus('idle'), 2000)
+    } catch {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 3000)
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleSave}
+      disabled={status === 'saving'}
+      className="text-xs gap-1"
+    >
+      <Upload className="w-3 h-3" />
+      {status === 'idle' && 'Save keys to server'}
+      {status === 'saving' && 'Saving...'}
+      {status === 'saved' && 'Saved!'}
+      {status === 'error' && 'Failed'}
+    </Button>
+  )
+}
 
 export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurationModalProps) {
   const activeTabId = useChatStore(state => state.activeTabId)
@@ -638,10 +690,15 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
 
           {/* Footer */}
           <div className="flex items-center justify-between p-3 sm:p-6 border-t border-border bg-muted/30 flex-shrink-0">
-            <div className="text-sm text-muted-foreground">
-              Changes are saved automatically.
+            <div className="flex items-center gap-3">
+              <div className="text-sm text-muted-foreground">
+                Changes are saved automatically.
+              </div>
             </div>
-            <Button variant="outline" onClick={onClose}>Close</Button>
+            <div className="flex items-center gap-2">
+              <SaveKeysToServerButton />
+              <Button variant="outline" onClick={onClose}>Close</Button>
+            </div>
           </div>
         </div>
       </div>

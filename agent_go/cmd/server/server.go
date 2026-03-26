@@ -4531,7 +4531,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseCtx, phaseCancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer phaseCancel()
 					preset, err := api.chatDB.GetPresetQuery(phaseCtx, req.PresetQueryID)
-					if err == nil && preset != nil {
+					if err != nil {
+						panic(fmt.Sprintf("[WORKFLOW_PHASE] GetPresetQuery failed for preset=%s path=%s: %v", req.PresetQueryID, req.Query, err))
+					}
+					if preset != nil {
 						if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
 							phaseWorkspacePath = preset.SelectedFolder.String
 						}

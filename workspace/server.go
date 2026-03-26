@@ -353,9 +353,23 @@ func syncWithGitHubOnStartup(docsDir, githubToken, githubRepo string) error {
 		// Directory has content - check if it's a git repository
 		gitDir := filepath.Join(docsDir, ".git")
 		if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-			// Not a git repository - skip sync but don't error
-			fmt.Printf("ℹ️  Local directory has content but is not a git repository\n")
-			fmt.Printf("   Skipping GitHub sync on startup\n")
+			// Not a git repository - initialize git and set up remote
+			fmt.Printf("ℹ️  Local directory has content but is not a git repository — initializing git...\n")
+			if err := exec.Command("git", "-C", docsDir, "init", "--initial-branch=main").Run(); err != nil {
+				return fmt.Errorf("failed to initialize git repository: %v", err)
+			}
+			exec.Command("git", "-C", docsDir, "config", "user.name", "Planner API").Run()
+			exec.Command("git", "-C", docsDir, "config", "user.email", "planner@api.local").Run()
+			exec.Command("git", "-C", docsDir, "config", "credential.helper", "").Run()
+			exec.Command("git", "-C", docsDir, "config", "pull.rebase", "false").Run()
+			remoteURL := fmt.Sprintf("https://%s@github.com/%s.git", githubToken, githubRepo)
+			exec.Command("git", "-C", docsDir, "remote", "add", "origin", remoteURL).Run()
+			fmt.Printf("✅ Git initialized and remote configured\n")
+			// Pull from remote to sync existing content
+			fmt.Printf("📥 Pulling from GitHub...\n")
+			if err := utils.PullFromGitHub(docsDir, githubBranch); err != nil {
+				fmt.Printf("⚠️  Failed to pull on fresh git init: %v\n", err)
+			}
 			return nil
 		}
 
@@ -379,8 +393,12 @@ func syncWithGitHubOnStartup(docsDir, githubToken, githubRepo string) error {
 			}
 		}
 
-		// Disable credential helper to prevent prompts
+		// Configure git for non-interactive use
 		exec.Command("git", "-C", docsDir, "config", "credential.helper", "").Run()
+		exec.Command("git", "-C", docsDir, "config", "user.name", "Planner API").Run()
+		exec.Command("git", "-C", docsDir, "config", "user.email", "planner@api.local").Run()
+		exec.Command("git", "-C", docsDir, "config", "pull.rebase", "false").Run()
+		fmt.Printf("✅ Git config initialized (user, credential.helper, pull.rebase)\n")
 
 		// It's a git repository - pull latest changes
 		fmt.Printf("📥 Pulling latest changes from GitHub...\n")

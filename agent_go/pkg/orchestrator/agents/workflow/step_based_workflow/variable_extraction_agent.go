@@ -84,16 +84,19 @@ func (m *VariablesManifest) GetVariableNames() []string {
 	return names
 }
 
-// AddGroup adds a new variable group with empty values
+// AddGroup adds a new variable group pre-populated with current global variable values.
+// Values are copied from Variables[].Value so the group is immediately usable.
+// The caller can override specific values after creation.
 func (m *VariablesManifest) AddGroup() *VariableGroup {
 	// Generate next group ID
 	nextID := len(m.Groups) + 1
 	groupID := fmt.Sprintf("group-%d", nextID)
 
-	// Create empty values for all variables
+	// Pre-populate values from global variable definitions so the group is ready to use.
+	// Empty string is only used when the global variable has no value set.
 	values := make(map[string]string)
 	for _, v := range m.Variables {
-		values[v.Name] = ""
+		values[v.Name] = v.Value
 	}
 
 	newGroup := VariableGroup{

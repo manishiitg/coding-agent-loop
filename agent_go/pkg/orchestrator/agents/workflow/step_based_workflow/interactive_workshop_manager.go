@@ -1559,8 +1559,8 @@ Skills are reusable instruction sets that guide step agents. The workflow for ma
 1. **Find**: `+"`search_skills(query)`"+` — search public registry, or `+"`list_skills`"+` to see already-installed skills
 2. **Install**: `+"`install_skill(source)`"+` (registry, e.g. `+"`owner/repo@skill-name`"+`) or `+"`import_skill(github_url)`"+` (direct GitHub URL) — downloads skill files into the workspace `+"`skills/`"+` folder
 3. **Add to workflow**: `+"`update_workflow_config(add_skills=[\"skill-folder-name\"])`"+` — makes the skill available to all steps in this workflow. **Do NOT manually edit workflow.json.**
-4. **Assign/restrict per step**: By default all workflow steps inherit all workflow-level skills. To restrict a specific step to only certain skills: `+"`update_step_config(step_id, enabled_skills=[\"skill-folder-name\"])`"+`. To restore workflow defaults: `+"`update_step_config(step_id, enabled_skills=[])`"+`
-5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"skill-folder-name\"])`"+` — removes from workflow (steps using it explicitly must also be updated)
+4. **Assign/restrict per step**: By default all workflow steps inherit all workflow-level skills. To give a specific step only certain skills: `+"`update_step_config(step_id, enabled_skills=[\"skill-a\", \"skill-b\"])`"+`. To unassign all skills from a step: `+"`update_step_config(step_id, enabled_skills=[])`"+` (empty = no skills). To revert to workflow defaults: set `+"`enabled_skills`"+` to `+"`null`"+` via `+"`update_step_config`"+`.
+5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"skill-folder-name\"])`"+` — removes from workflow (update any steps that had it in enabled_skills too)
 6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes skill files from workspace entirely
 
 Use `+"`get_workflow_config`"+` to see currently selected skills and all available installed skills.
@@ -1570,6 +1570,9 @@ Use `+"`get_workflow_config`"+` to see currently selected skills and all availab
 ### Validation (for optimization)
 - **update_validation_schema** — Add or update a step's validation schema
 - **update_success_criteria** — Update step success criteria
+
+### Skills (per step)
+By default all steps inherit workflow-level skills. To restrict a step: `+"`update_step_config(step_id, enabled_skills=[\"skill-a\"])`"+`. Empty array = no skills. Use `+"`list_skills`"+` or `+"`get_workflow_config`"+` to see available skills.
 {{end}}
 
 {{if eq .WorkshopMode "eval"}}

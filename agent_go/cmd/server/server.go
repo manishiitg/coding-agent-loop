@@ -4930,7 +4930,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 								// LLM config
 								refreshedKnowledgebase := true
+								log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig: isNil=%v", caps.LLMConfig == nil)
 								if caps.LLMConfig != nil {
+									log.Printf("[WORKFLOW_PHASE] Refresh LLMConfig details: allocationMode=%q tieredConfig=%v",
+										caps.LLMConfig.LLMAllocationMode, caps.LLMConfig.TieredConfig != nil)
 									phaseLLM := workshopExtractLLM(caps.LLMConfig.PhaseLLM, caps.LLMConfig.Provider, caps.LLMConfig.ModelID)
 									workshopSession.UpdatePresetLLMConfigs(phaseLLM)
 
@@ -9673,8 +9676,11 @@ func (api *StreamingAPI) buildWorkshopConfig(
 			}
 
 			// LLM config from manifest
+			log.Printf("[WORKSHOP] LLMConfig from manifest: isNil=%v", caps.LLMConfig == nil)
 			if caps.LLMConfig != nil {
 				llmCfg := caps.LLMConfig
+				log.Printf("[WORKSHOP] LLMConfig details: allocationMode=%q tieredConfig=%v provider=%q modelID=%q",
+					llmCfg.LLMAllocationMode, llmCfg.TieredConfig != nil, llmCfg.Provider, llmCfg.ModelID)
 				cfg.PresetPhaseLLM = workshopExtractLLM(llmCfg.PhaseLLM, llmCfg.Provider, llmCfg.ModelID)
 
 				if llmCfg.UseKnowledgebase != nil {

@@ -436,7 +436,7 @@ func (r *WorkshopStepRegistry) List() []*WorkshopStepExecution {
 // HasRunningAgents() returns true and the frontend keeps polling for events.
 type WorkshopExecutionNotifier interface {
 	OnExecutionStart(execID, name string)
-	OnExecutionComplete(execID, name, result string, err error)
+	OnExecutionComplete(execID, name, result string, meta map[string]string, err error)
 	OnExecutionTerminated(execID, name string) // explicit cancellation via stop_step/stop_all
 }
 
@@ -459,6 +459,7 @@ type InteractiveWorkshopManager struct {
 	skillFuncs           *SkillCallbacks                             // skill import/delete callbacks from server.go
 	listAvailableSecrets func(ctx context.Context) ([]string, error) // list all available secret names
 	executionNotifier    WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
+	workshopModeOverride string                                       // frontend-selected workshop mode (takes priority over auto-detection)
 }
 
 // persistWorkflowConfigToManifest writes the current in-memory workflow config
@@ -700,11 +701,12 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "update_step_config", "analyze_step")
 
 	case "optimizer":
-		// OPTIMIZE: run steps, analyze, optimize, update config — no structural plan changes
+		// OPTIMIZE: same as builder plus optimization tools (optimize_step, generate_learnings, debug_step, run_full_workflow)
 		tools = append(tools, execution...)
 		tools = append(tools, stepConfig...)
-		// Allow validation schema updates during optimization
-		tools = append(tools, "update_success_criteria", "update_validation_schema")
+		tools = append(tools, planMod...)
+		tools = append(tools, variableConfig...)
+		tools = append(tools, skills...)
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
 
@@ -1524,7 +1526,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 ### Read-Only Info
 - **get_step_prompts(step_id, attempt?, iteration?)** — System prompt and user message for a step
-- **get_workflow_config** — Full workflow config: MCP servers, skills, secrets, LLM config
+- **get_workflow_config** — Use this (not `cat workflow.json`) when you need to discover **all available** MCP servers (with descriptions), all installed skills, or all available secrets — not just the ones currently selected. `workflow.json` only shows what's already selected; `get_workflow_config` shows the full picture of what can be added.
 - **get_llm_config** — Per-step LLM overrides
 
 {{if eq .WorkshopMode "builder"}}
@@ -1540,6 +1542,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 ### Variables & Config
 - **update_variable(action, name?, value?, description?)** — Add, update, or delete a variable
 - **add_group / update_group / delete_group** — Manage variable groups
+- **MCP Servers workflow**: (1) `get_workflow_config` to see all available servers + which are selected, (2) `update_workflow_config(add_servers=["server-name"])` to add to workflow — **do NOT edit workflow.json manually**, (3) `update_step_config(step_id, servers=["server-name"])` to scope specific servers to a step
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow MCP servers, skills, or secrets
 
 ### Schedule Management
@@ -1552,7 +1555,14 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) skip already-optimized steps, (2) limit retries per step to 2 attempts max, (3) move on to the next step after repeated failures instead of looping, (4) stop after all steps have been attempted once.
 
 ### Skills
-- **list_skills / search_skills(query) / install_skill(source) / uninstall_skill / import_skill** — Manage skills
+Skills are reusable instruction sets that guide step agents. The workflow for managing skills:
+1. **Find**: `search_skills(query)` — search public registry, or `list_skills` to see already-installed skills
+2. **Install**: `install_skill(source)` (registry, e.g. `owner/repo@skill-name`) or `import_skill(github_url)` (direct GitHub URL) — downloads skill files into the workspace `skills/` folder
+3. **Add to workflow**: `update_workflow_config(add_skills=["skill-folder-name"])` — makes the skill available to all steps in this workflow. **Do NOT manually edit workflow.json.**
+4. **Enable for a step**: `update_step_config(step_id, enabled_skills=["skill-folder-name"])` — overrides workflow-level skills for a specific step
+5. **Remove**: `uninstall_skill(folder_name)` — removes skill files; use `update_workflow_config(remove_skills=[...])` to remove from workflow
+
+Use `get_workflow_config` to see currently selected skills for the workflow.
 {{end}}
 
 {{if eq .WorkshopMode "optimizer"}}
@@ -2129,8 +2139,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				result, err := iwm.controller.ExecuteStepForWorkshop(execCtx, stepID, execOpts)
 
-				// Check if step is marked as optimized in step config
+				// Check if step is marked as optimized in step config; also capture workshop mode.
 				isOptimized := false
+				workshopModeForMeta := ""
 				if configs, configErr := iwm.controller.ReadStepConfigs(execCtx); configErr == nil {
 					for _, sc := range configs {
 						if sc.ID == stepID && sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil && *sc.AgentConfigs.Optimized {
@@ -2138,6 +2149,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 							break
 						}
 					}
+					workshopModeForMeta, _ = detectWorkshopMode(iwm.controller.approvedPlan, configs)
 				}
 
 				// Update status BEFORE emitting event so query_step sees the final state
@@ -2208,7 +2220,17 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				// Notify server layer so bgAgentRegistry marks this execution as done.
 				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
 				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, stepDisplayName, result, err)
+					execMeta := map[string]string{}
+					if isOptimized {
+						execMeta["step_optimized"] = "true"
+					}
+					// Use frontend-selected mode if available, else fall back to auto-detection
+					if iwm.workshopModeOverride != "" {
+						execMeta["workshop_mode"] = iwm.workshopModeOverride
+					} else if workshopModeForMeta != "" {
+						execMeta["workshop_mode"] = workshopModeForMeta
+					}
+					iwm.executionNotifier.OnExecutionComplete(execID, stepDisplayName, result, execMeta, err)
 				}
 			}()
 
@@ -2378,7 +2400,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				// Notify server layer so bgAgentRegistry marks this execution as done.
 				// Skip if already cancelled (stop_step already sent OnExecutionTerminated).
 				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, name, result, err)
+					iwm.executionNotifier.OnExecutionComplete(execID, name, result, nil, err)
 				}
 			}()
 
@@ -4253,7 +4275,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						})
 					}
 					if iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), "", createErr)
+						iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), "", nil, createErr)
 					}
 					return
 				}
@@ -4334,7 +4356,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Notify server layer so bgAgentRegistry marks this execution as done.
 				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, execErr)
+					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Learning: %s", learningDisplayName), result, nil, execErr)
 				}
 			}()
 
@@ -4522,7 +4544,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 				// Notify server layer so bgAgentRegistry marks this execution as done.
 				if iwm.executionNotifier != nil && !alreadyCancelled {
-					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, err)
+					iwm.executionNotifier.OnExecutionComplete(execID, fmt.Sprintf("Optimize: %s", debugDisplayName), result, nil, err)
 				}
 			}()
 

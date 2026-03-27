@@ -295,8 +295,13 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	}
 
 	// Initialize OAuth config if not present
+	// Also support mcp-remote pattern: command=npx, args=["mcp-remote", "<url>"]
+	effectiveURL := serverConfig.URL
+	if effectiveURL == "" {
+		effectiveURL = extractMCPRemoteURL(serverConfig.Command, serverConfig.Args)
+	}
 	if serverConfig.OAuth == nil {
-		if serverConfig.URL == "" {
+		if effectiveURL == "" {
 			http.Error(w, fmt.Sprintf("Server '%s' does not have OAuth configured and no URL for auto-discovery", req.ServerName), http.StatusBadRequest)
 			return
 		}
@@ -321,10 +326,15 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 
 	// Auto-discover endpoints if needed (auto_discover is true OR endpoints are missing)
 	needsDiscovery := serverConfig.OAuth.AutoDiscover || serverConfig.OAuth.AuthURL == "" || serverConfig.OAuth.TokenURL == ""
-	if needsDiscovery && serverConfig.URL != "" {
+	if needsDiscovery && effectiveURL != "" {
 		api.logger.Info(fmt.Sprintf("Auto-discovering OAuth endpoints for %s", req.ServerName))
 
-		metadata, err := oauth.FetchAuthServerMetadata(serverConfig.URL)
+		// For mcp-remote servers, temporarily set URL so discovery client can reach the remote
+		if serverConfig.URL == "" && effectiveURL != "" {
+			serverConfig.URL = effectiveURL
+		}
+
+		metadata, err := oauth.FetchAuthServerMetadata(effectiveURL)
 		if err != nil {
 			api.logger.Warn(fmt.Sprintf("RFC 8414 discovery failed: %v", err))
 			// Fallback to 401 response discovery

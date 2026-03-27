@@ -170,8 +170,13 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		}
 
 		// Try OAuth auto-discovery if server has URL (HTTP/SSE protocol)
-		if srvCfg.URL != "" {
-			if endpoints := api.tryOAuthDiscovery(ctx, srvCfg.URL); endpoints != nil {
+		// Also support mcp-remote pattern: command=npx, args=["mcp-remote", "<url>"]
+		discoveryURL := srvCfg.URL
+		if discoveryURL == "" {
+			discoveryURL = extractMCPRemoteURL(srvCfg.Command, srvCfg.Args)
+		}
+		if discoveryURL != "" {
+			if endpoints := api.tryOAuthDiscovery(ctx, discoveryURL); endpoints != nil {
 				toolStatus.RequiresOAuth = true
 				toolStatus.OAuthEndpoints = endpoints
 				toolStatus.Error = "OAuth authentication required"
@@ -248,7 +253,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 
 	api.appendServerLog(serverName, "info", fmt.Sprintf("Found %d tools", len(serverTools)))
 
-	return &ToolStatus{
+	toolStatus := &ToolStatus{
 		Name:          serverName,
 		Server:        serverName,
 		Status:        "ok",
@@ -256,7 +261,24 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 		ToolsEnabled:  len(serverTools),
 		FunctionNames: functionNames,
 		Tools:         toolDetails,
-	}, nil
+	}
+
+	// For mcp-remote servers: probe the remote URL for OAuth even on successful connection.
+	// Kite and similar servers allow unauthenticated tool listing but require auth for tool calls.
+	// Only do this if OAuth is not already configured for the server.
+	if srvCfg.OAuth == nil && srvCfg.URL == "" {
+		if remoteURL := extractMCPRemoteURL(srvCfg.Command, srvCfg.Args); remoteURL != "" {
+			if endpoints := api.tryOAuthDiscovery(ctx, remoteURL); endpoints != nil {
+				toolStatus.RequiresOAuth = true
+				toolStatus.OAuthEndpoints = endpoints
+				api.appendServerLog(serverName, "warn", "OAuth authentication required (detected via mcp-remote URL)")
+				api.logger.Info(fmt.Sprintf("✅ Auto-detected OAuth for mcp-remote server %s: auth=%s, token=%s",
+					serverName, endpoints.AuthURL, endpoints.TokenURL))
+			}
+		}
+	}
+
+	return toolStatus, nil
 }
 
 // --- TOOL MANAGEMENT API HANDLERS ---
@@ -1034,6 +1056,33 @@ func (api *StreamingAPI) getToolStatusForUser(status ToolStatus, userID string) 
 		}
 	}
 	return status
+}
+
+// extractMCPRemoteURL extracts the remote server URL from mcp-remote args.
+// mcp-remote is commonly used to proxy remote HTTP MCP servers via stdio:
+//   command: "npx", args: ["mcp-remote", "https://example.com/mcp"]
+func extractMCPRemoteURL(command string, args []string) string {
+	if len(args) < 2 {
+		return ""
+	}
+	// Check for npx/npx.cmd mcp-remote pattern or direct mcp-remote command
+	isMCPRemote := false
+	urlArgIdx := -1
+	if (command == "npx" || command == "npx.cmd") && args[0] == "mcp-remote" {
+		isMCPRemote = true
+		urlArgIdx = 1
+	} else if command == "mcp-remote" {
+		isMCPRemote = true
+		urlArgIdx = 0
+	}
+	if !isMCPRemote || urlArgIdx >= len(args) {
+		return ""
+	}
+	url := args[urlArgIdx]
+	if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
+		return url
+	}
+	return ""
 }
 
 // tryOAuthDiscovery attempts to discover OAuth endpoints from a 401 response

@@ -1526,7 +1526,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 ### Read-Only Info
 - **get_step_prompts(step_id, attempt?, iteration?)** — System prompt and user message for a step
-- **get_workflow_config** — Use this (not `cat workflow.json`) when you need to discover **all available** MCP servers (with descriptions), all installed skills, or all available secrets — not just the ones currently selected. `workflow.json` only shows what's already selected; `get_workflow_config` shows the full picture of what can be added.
+- **get_workflow_config** — Use this (not `+"`cat workflow.json`"+`) when you need to discover **all available** MCP servers (with descriptions), all installed skills, or all available secrets — not just the ones currently selected. `+"`workflow.json`"+` only shows what's already selected; `+"`get_workflow_config`"+` shows the full picture of what can be added.
 - **get_llm_config** — Per-step LLM overrides
 
 {{if eq .WorkshopMode "builder"}}
@@ -1542,7 +1542,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 ### Variables & Config
 - **update_variable(action, name?, value?, description?)** — Add, update, or delete a variable
 - **add_group / update_group / delete_group** — Manage variable groups
-- **MCP Servers workflow**: (1) `get_workflow_config` to see all available servers + which are selected, (2) `update_workflow_config(add_servers=["server-name"])` to add to workflow — **do NOT edit workflow.json manually**, (3) `update_step_config(step_id, servers=["server-name"])` to scope specific servers to a step
+- **MCP Servers workflow**: (1) `+"`get_workflow_config`"+` to see all available servers + which are selected, (2) `+"`update_workflow_config(add_servers=[\"server-name\"])`"+` to add to workflow — **do NOT edit workflow.json manually**, (3) `+"`update_step_config(step_id, servers=[\"server-name\"])`"+` to scope specific servers to a step
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow MCP servers, skills, or secrets
 
 ### Schedule Management
@@ -1556,13 +1556,14 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 ### Skills
 Skills are reusable instruction sets that guide step agents. The workflow for managing skills:
-1. **Find**: `search_skills(query)` — search public registry, or `list_skills` to see already-installed skills
-2. **Install**: `install_skill(source)` (registry, e.g. `owner/repo@skill-name`) or `import_skill(github_url)` (direct GitHub URL) — downloads skill files into the workspace `skills/` folder
-3. **Add to workflow**: `update_workflow_config(add_skills=["skill-folder-name"])` — makes the skill available to all steps in this workflow. **Do NOT manually edit workflow.json.**
-4. **Enable for a step**: `update_step_config(step_id, enabled_skills=["skill-folder-name"])` — overrides workflow-level skills for a specific step
-5. **Remove**: `uninstall_skill(folder_name)` — removes skill files; use `update_workflow_config(remove_skills=[...])` to remove from workflow
+1. **Find**: `+"`search_skills(query)`"+` — search public registry, or `+"`list_skills`"+` to see already-installed skills
+2. **Install**: `+"`install_skill(source)`"+` (registry, e.g. `+"`owner/repo@skill-name`"+`) or `+"`import_skill(github_url)`"+` (direct GitHub URL) — downloads skill files into the workspace `+"`skills/`"+` folder
+3. **Add to workflow**: `+"`update_workflow_config(add_skills=[\"skill-folder-name\"])`"+` — makes the skill available to all steps in this workflow. **Do NOT manually edit workflow.json.**
+4. **Assign/restrict per step**: By default all workflow steps inherit all workflow-level skills. To restrict a specific step to only certain skills: `+"`update_step_config(step_id, enabled_skills=[\"skill-folder-name\"])`"+`. To restore workflow defaults: `+"`update_step_config(step_id, enabled_skills=[])`"+`
+5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"skill-folder-name\"])`"+` — removes from workflow (steps using it explicitly must also be updated)
+6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes skill files from workspace entirely
 
-Use `get_workflow_config` to see currently selected skills for the workflow.
+Use `+"`get_workflow_config`"+` to see currently selected skills and all available installed skills.
 {{end}}
 
 {{if eq .WorkshopMode "optimizer"}}

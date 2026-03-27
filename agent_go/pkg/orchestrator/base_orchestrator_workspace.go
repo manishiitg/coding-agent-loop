@@ -280,30 +280,11 @@ func (bo *BaseOrchestrator) CleanupDirectory(ctx context.Context, dirPath string
 
 	// Removed verbose logging
 
-	// Parse the JSON response using proper WorkspaceFile type from virtualtools
-	var filesList []virtualtools.WorkspaceFile
-	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err))
-		// Try alternative format - might be a single object with a "files" array
-		var altFormat struct {
-			Files []virtualtools.WorkspaceFile `json:"files"`
-		}
-		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil && len(altFormat.Files) > 0 {
-			filesList = altFormat.Files
-		}
-		// Try API response wrapper format {success, data: [...]}
-		if len(filesList) == 0 {
-			var apiResp struct {
-				Data []virtualtools.WorkspaceFile `json:"data"`
-			}
-			if err3 := json.Unmarshal([]byte(fileListJSON), &apiResp); err3 == nil && len(apiResp.Data) > 0 {
-				filesList = apiResp.Data
-			}
-		}
-		if len(filesList) == 0 {
-			// Removed verbose logging
-			return nil
-		}
+	// Parse the JSON response using shared helper that handles all known formats
+	filesList, parseErr := virtualtools.ParseWorkspaceFilesList(fileListJSON)
+	if parseErr != nil {
+		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, parseErr))
+		return nil
 	}
 
 	// Flatten nested workspace API response: the API returns a tree structure
@@ -496,31 +477,12 @@ func (bo *BaseOrchestrator) ListWorkspaceDirectories(ctx context.Context, dirPat
 		return []string{}, nil // Don't fail - directory may be empty or not exist
 	}
 
-	// Parse the JSON response using proper WorkspaceFile type from virtualtools
-	var filesList []virtualtools.WorkspaceFile
-	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err))
-		// Try alternative format - might be a single object with a "files" array
-		var altFormat struct {
-			Files []virtualtools.WorkspaceFile `json:"files"`
-		}
-		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil && len(altFormat.Files) > 0 {
-			filesList = altFormat.Files
-		}
-		// Try API response wrapper format {success, data: [...]}
-		if len(filesList) == 0 {
-			var apiResp struct {
-				Data []virtualtools.WorkspaceFile `json:"data"`
-			}
-			if err3 := json.Unmarshal([]byte(fileListJSON), &apiResp); err3 == nil && len(apiResp.Data) > 0 {
-				filesList = apiResp.Data
-			}
-		}
-		if len(filesList) == 0 {
-			duration := time.Since(startTime)
-			bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) completed: no directories found (took %v)", dirPath, duration))
-			return []string{}, nil
-		}
+	// Parse the JSON response using shared helper that handles all known formats
+	filesList, parseErr := virtualtools.ParseWorkspaceFilesList(fileListJSON)
+	if parseErr != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceDirectories(%s) completed: no directories found (took %v)", dirPath, duration))
+		return []string{}, nil
 	}
 
 	// Extract only directories (folders) from the list
@@ -643,31 +605,12 @@ func (bo *BaseOrchestrator) ListWorkspaceFiles(ctx context.Context, dirPath stri
 		return []string{}, nil
 	}
 
-	// Parse the JSON response using proper WorkspaceFile type from virtualtools
-	var filesList []virtualtools.WorkspaceFile
-	if err := json.Unmarshal([]byte(fileListJSON), &filesList); err != nil {
-		bo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse file list JSON from %s directory: %v", dirPath, err))
-		// Try alternative format - might be a single object with a "files" array
-		var altFormat struct {
-			Files []virtualtools.WorkspaceFile `json:"files"`
-		}
-		if err2 := json.Unmarshal([]byte(fileListJSON), &altFormat); err2 == nil && len(altFormat.Files) > 0 {
-			filesList = altFormat.Files
-		}
-		// Try API response wrapper format {success, data: [...]}
-		if len(filesList) == 0 {
-			var apiResp struct {
-				Data []virtualtools.WorkspaceFile `json:"data"`
-			}
-			if err3 := json.Unmarshal([]byte(fileListJSON), &apiResp); err3 == nil && len(apiResp.Data) > 0 {
-				filesList = apiResp.Data
-			}
-		}
-		if len(filesList) == 0 {
-			duration := time.Since(startTime)
-			bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) completed: no files found (took %v)", dirPath, duration))
-			return []string{}, nil
-		}
+	// Parse the JSON response using shared helper that handles all known formats
+	filesList, parseErr := virtualtools.ParseWorkspaceFilesList(fileListJSON)
+	if parseErr != nil {
+		duration := time.Since(startTime)
+		bo.GetLogger().Info(fmt.Sprintf("⏱️ [WORKSPACE] ListWorkspaceFiles(%s) completed: no files found (took %v)", dirPath, duration))
+		return []string{}, nil
 	}
 
 	// Unwrap nested workspace API response: if the response is a single root entry

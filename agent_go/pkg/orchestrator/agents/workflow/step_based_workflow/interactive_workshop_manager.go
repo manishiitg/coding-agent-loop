@@ -1912,15 +1912,9 @@ func listWorkshopWorkspaceTree(ctx context.Context, controller *StepBasedWorkflo
 		return []virtualtools.WorkspaceFile{}, nil
 	}
 
-	var filesList []virtualtools.WorkspaceFile
-	if err := json.Unmarshal([]byte(listJSON), &filesList); err != nil {
-		var apiResp struct {
-			Data []virtualtools.WorkspaceFile `json:"data"`
-		}
-		if err2 := json.Unmarshal([]byte(listJSON), &apiResp); err2 != nil {
-			return nil, err
-		}
-		filesList = apiResp.Data
+	filesList, parseErr := virtualtools.ParseWorkspaceFilesList(listJSON)
+	if parseErr != nil {
+		return nil, parseErr
 	}
 
 	resolvedPath := resolveWorkshopWorkspacePath(controller, dirPath)

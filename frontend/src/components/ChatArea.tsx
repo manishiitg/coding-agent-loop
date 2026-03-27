@@ -395,7 +395,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     removeToast,
     resetChatState,
     isAtBottom,
-    switchTab
+    switchTab,
+    setTabSyntheticTurn,
+    setTabCanSteer,
   } = useChatStore(useShallow(state => ({
     isStreaming: state.isStreaming,
     setIsStreaming: state.setIsStreaming,
@@ -427,7 +429,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     removeToast: state.removeToast,
     resetChatState: state.resetChatState,
     isAtBottom: state.isAtBottom,
-    switchTab: state.switchTab
+    switchTab: state.switchTab,
+    setTabSyntheticTurn: state.setTabSyntheticTurn,
+    setTabCanSteer: state.setTabCanSteer,
   })))
 
   // Session-specific selector: only re-renders when the ACTIVE session's events change
@@ -1039,7 +1043,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Takes an events response (same shape from SSE or REST) and a tab, then processes
   // session status, streaming chunks, event filtering, and stores events.
   const processEventsResponse = useCallback((
-    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; session_id?: string },
+    response: { events: PollingEvent[]; session_status?: string; last_processed_index?: number; has_more?: boolean; has_running_background_agents?: boolean; is_synthetic_turn?: boolean; can_steer?: boolean; session_id?: string },
     sessionId: string,
     tab: ChatTab | null
   ) => {
@@ -1057,6 +1061,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (tab && sessionStatus) {
       const hasBgAgents = response.has_running_background_agents ?? false
       const isSyntheticTurn = response.is_synthetic_turn ?? false
+      const canSteer = response.can_steer ?? false
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
@@ -1075,6 +1080,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         chatStore.clearStreamingText(actualSessionId)
       }
       chatStore.setTabHasRunningBgAgents(tab.tabId, hasBgAgents)
+      setTabSyntheticTurn(tab.tabId, isSyntheticTurn)
+      setTabCanSteer(tab.tabId, canSteer)
     } else if (!tab && sessionStatus) {
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         setIsStreaming(false)
@@ -1298,12 +1305,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               // Check if the result content indicates failure even when success=true (no execution error)
               // A step can complete without throwing an error but still report STATUS: FAILED in the result
               const resultIndicatesFailure = success && result && /STATUS:\s*FAILED|FAILED:|FAILURE:/i.test(result)
-              // Use frontend workshop mode (from UI toggle) — more reliable than backend auto-detection
-              const wfState = useWorkflowStore.getState()
-              const workshopMode = (() => {
-                const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
-                return (presetId && wfState.workshopModeByPreset[presetId]) || wfState.workshopMode
-              })() || (inputData?.workshop_mode ?? '') as string
+	              // Use frontend workshop mode (from UI toggle) — more reliable than backend auto-detection
+	              const wfState = useWorkflowStore.getState()
+	              const workshopMode = (() => {
+	                const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? ''
+	                const presetWorkshopMode = presetId ? wfState.workshopModeByPreset[presetId] : undefined
+	                return presetWorkshopMode || wfState.workshopMode
+	              })() || (inputData?.workshop_mode ?? '') as string
               const isStepOptimized = inputData?.step_optimized === 'true'
 
               // Determine if this is a sub-agent within a todo task (vs a top-level step)
@@ -1346,16 +1354,21 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
               }
             }
 
-            const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
-            const dedupeKey = `${agentName}::${agentType}::${corrId}`
-            if (notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
-              console.log('[WORKSHOP] Skipping duplicate notification for', dedupeKey)
-            } else {
-              notifiedWorkshopAgentsRef.current.add(dedupeKey)
-              const currentQueue = chatStore.getTabConfig(tab.tabId)?.queuedMessages || []
-              chatStore.setTabConfig(tab.tabId, { queuedMessages: [...currentQueue, notification] })
-              console.log('[WORKSHOP] Queued step completion notification', { agentName, agentType, success })
-            }
+	            const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+	            const dedupeKey = `${agentName}::${agentType}::${corrId}`
+	            if (notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
+	              console.log('[WORKSHOP] Skipping duplicate notification for', dedupeKey)
+		            } else {
+		              const tabId = tab?.tabId
+		              if (typeof tabId !== 'string') {
+		                continue
+		              }
+		              const safeTabId = tabId as string
+		              notifiedWorkshopAgentsRef.current.add(dedupeKey)
+		              const currentQueue = chatStore.getTabConfig(safeTabId)?.queuedMessages || []
+		              chatStore.setTabConfig(safeTabId, { queuedMessages: [...currentQueue, notification] })
+		              console.log('[WORKSHOP] Queued step completion notification', { agentName, agentType, success })
+		            }
           }
         }
       }
@@ -1461,15 +1474,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const eventData = event.data as Record<string, unknown> | undefined
           const todoStepData = (eventData?.data as Record<string, unknown>) || eventData
           const stepTitle = todoStepData?.step_title as string | undefined
-          if (tab && stepTitle && isChatCompatiblePhase(tab.metadata?.phaseId)) {
-            const dedupeKey = `${stepTitle}::todo-step`
-            if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
-              notifiedWorkshopAgentsRef.current.add(dedupeKey)
-              const notification = `${AUTO_NOTIFICATION_PREFIX} [STEP COMPLETED] [${formatAutoNotificationTime(event)}] ${stepTitle} finished successfully.`
-              const currentQueue = chatStore.getTabConfig(tab.tabId)?.queuedMessages || []
-              chatStore.setTabConfig(tab.tabId, { queuedMessages: [...currentQueue, notification] })
-            }
-          }
+	          const tabId = tab?.tabId
+	          const phaseId = tab?.metadata?.phaseId
+		          if (typeof tabId === 'string' && stepTitle && isChatCompatiblePhase(phaseId)) {
+		            const safeTabId = tabId as string
+		            const dedupeKey = `${stepTitle}::todo-step`
+		            if (!notifiedWorkshopAgentsRef.current.has(dedupeKey)) {
+		              notifiedWorkshopAgentsRef.current.add(dedupeKey)
+		              const notification = `${AUTO_NOTIFICATION_PREFIX} [STEP COMPLETED] [${formatAutoNotificationTime(event)}] ${stepTitle} finished successfully.`
+		              const currentQueue = chatStore.getTabConfig(safeTabId)?.queuedMessages || []
+		              chatStore.setTabConfig(safeTabId, { queuedMessages: [...currentQueue, notification] })
+		            }
+		          }
         }
       }
     }
@@ -1582,6 +1598,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           has_more: msgAny.has_more as boolean | undefined,
           has_running_background_agents: msg.has_running_background_agents,
           is_synthetic_turn: (msg as unknown as Record<string, unknown>).is_synthetic_turn as boolean | undefined,
+          can_steer: (msg as unknown as Record<string, unknown>).can_steer as boolean | undefined,
           session_id: actualSessionId !== sid ? actualSessionId : undefined,
         },
         sid,

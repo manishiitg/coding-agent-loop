@@ -361,6 +361,7 @@ export interface GetEventsResponse {
   last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
   has_running_background_agents?: boolean // Whether background agents are still running for this session
   is_synthetic_turn?: boolean // True when running auto-notification turn (input remains locked as normal)
+  can_steer?: boolean // True when a live foreground agent can accept steer injection
 }
 
 // Observer APIs removed - no longer needed
@@ -398,6 +399,7 @@ export interface SessionStatusResponse {
   last_activity?: string
   completed_at?: string
   query?: string
+  can_steer?: boolean
 }
 
 // Define MCPServerConfig type to match backend
@@ -734,12 +736,14 @@ export interface SSEEventMessage {
   last_processed_index: number
   has_running_background_agents?: boolean
   is_synthetic_turn?: boolean
+  can_steer?: boolean
 }
 
 export interface SSEStatusMessage {
   session_status?: string
   has_running_background_agents?: boolean
   is_synthetic_turn?: boolean
+  can_steer?: boolean
 }
 
 export interface CreateChatSessionRequest {

@@ -193,6 +193,7 @@ export interface ChatTab {
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
   isSyntheticTurn: boolean  // Whether current streaming turn is an auto-notification (input remains locked as normal)
+  canSteer: boolean  // Whether the backend currently has a live agent that can accept steer injection
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   // View mode controls how much detail is rendered in the event list.
   // 'detailed' — full event stream (tool calls, LLM events, delegation internals, etc.)
@@ -451,6 +452,7 @@ interface ChatState extends StoreActions {
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
   setTabSyntheticTurn: (tabId: string, isSyntheticTurn: boolean) => void
+  setTabCanSteer: (tabId: string, canSteer: boolean) => void
   updateTabSessionId: (tabId: string, sessionId: string) => void
   setTabHideToolCalls: (tabId: string, hideToolCalls: boolean) => void
   setTabViewMode: (tabId: string, viewMode: 'detailed' | 'summary') => void
@@ -1323,6 +1325,7 @@ export const useChatStore = create<ChatState>()(
           isCompleted: false,
           hasRunningBgAgents: false,
           isSyntheticTurn: false,
+          canSteer: false,
           hideToolCalls: true,
           viewMode: 'detailed', // Default to full detail — user or system can switch to 'summary' for background workflows
           config: defaultConfig, // Initialize with default config from global state
@@ -1602,6 +1605,18 @@ export const useChatStore = create<ChatState>()(
           chatTabs: {
             ...state.chatTabs,
             [tabId]: { ...state.chatTabs[tabId], isSyntheticTurn }
+          }
+        }))
+      },
+
+      setTabCanSteer: (tabId: string, canSteer: boolean) => {
+        const tab = get().chatTabs[tabId]
+        if (!tab || tab.canSteer === canSteer) return
+
+        set((state) => ({
+          chatTabs: {
+            ...state.chatTabs,
+            [tabId]: { ...state.chatTabs[tabId], canSteer }
           }
         }))
       },
@@ -2165,6 +2180,7 @@ export const useChatStore = create<ChatState>()(
                 isCompleted: false,
                 hasRunningBgAgents: false,
                 isSyntheticTurn: false,
+                canSteer: false,
                 
                 hideToolCalls: tab.hideToolCalls ?? true, // Default true — collapse tool calls by default
                 viewMode: tab.viewMode ?? 'detailed', // Persist view mode across reload

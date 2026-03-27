@@ -52,6 +52,14 @@ func (api *StreamingAPI) getSessionStatusString(r *http.Request, sessionID strin
 	return "", false
 }
 
+func (api *StreamingAPI) canSteerSession(sessionID string) bool {
+	api.runningAgentsMux.RLock()
+	defer api.runningAgentsMux.RUnlock()
+
+	runningAgent, exists := api.runningAgents[sessionID]
+	return exists && runningAgent != nil
+}
+
 // --- POLLING API TYPES ---
 // Observer APIs removed - events are now stored by sessionID
 
@@ -64,6 +72,7 @@ type GetEventsResponse struct {
 	LastProcessedIndex         int            `json:"last_processed_index"`                    // Last index processed in unfiltered array (for correct sinceIndex tracking)
 	HasRunningBackgroundAgents bool           `json:"has_running_background_agents,omitempty"` // Whether background agents are still running for this session
 	IsSyntheticTurn            bool           `json:"is_synthetic_turn,omitempty"`             // True when running auto-notification turn (frontend should not block input)
+	CanSteer                   bool           `json:"can_steer,omitempty"`                     // True when a live foreground agent can accept steer injection
 }
 
 // --- POLLING API HANDLERS ---
@@ -341,6 +350,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 					SessionStatus:              sessionStatus,
 					LastProcessedIndex:         maxEventIndex, // Use actual max EventIndex, not array length
 					HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+					CanSteer:                   api.canSteerSession(sessionID),
 				}
 
 				if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -360,6 +370,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			SessionStatus:              sessionStatus,
 			LastProcessedIndex:         -1, // No events processed
 			HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+			CanSteer:                   api.canSteerSession(sessionID),
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -398,6 +409,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		SessionStatus:              sessionStatus,
 		LastProcessedIndex:         lastProcessedIndex,
 		HasRunningBackgroundAgents: api.bgAgentRegistry.HasRunningAgents(sessionID),
+		CanSteer:                   api.canSteerSession(sessionID),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -594,6 +606,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 			"agent_mode":   chatSession.AgentMode,
 			"created_at":   chatSession.CreatedAt,
 			"completed_at": chatSession.CompletedAt,
+			"can_steer":    api.canSteerSession(sessionID),
 		}
 
 		if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -611,6 +624,7 @@ func (api *StreamingAPI) handleGetSessionStatus(w http.ResponseWriter, r *http.R
 		"created_at":    activeSession.CreatedAt,
 		"last_activity": activeSession.LastActivity,
 		"query":         activeSession.Query,
+		"can_steer":     api.canSteerSession(sessionID),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

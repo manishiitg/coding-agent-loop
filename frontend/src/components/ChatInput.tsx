@@ -419,6 +419,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // CRITICAL: Always use tab's status - never fall back to global to prevent mixing
   // If no active tab, this is an error condition (tabs should always exist)
   const isStreaming = activeTab?.isStreaming ?? false
+  const canSteer = activeTab?.canSteer ?? false
   const tabSessionId = activeTab?.sessionId ?? null
   const isViewOnly = activeTab?.metadata?.isViewOnly ?? false
   
@@ -858,18 +859,26 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, queuedMessages, setTabConfig])
 
   const handleSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
-    if (!isStreaming || !tabSessionId) return
+    if (!canSteer || !tabSessionId) return
 
     setSteeringIndex(index)
     try {
       await agentApi.steerMessage(tabSessionId, msg)
       removeQueuedMessageAtIndex(index)
     } catch (err) {
-      addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 404) {
+        if (activeTabId) {
+          useChatStore.getState().setTabCanSteer(activeTabId, false)
+        }
+        addToast('No live agent is available to steer right now. Wait for the next active turn, or let the queued message send normally.', 'warning')
+      } else {
+        addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
+      }
     } finally {
       setSteeringIndex(null)
     }
-  }, [addToast, isStreaming, removeQueuedMessageAtIndex, tabSessionId])
+  }, [activeTabId, addToast, canSteer, removeQueuedMessageAtIndex, tabSessionId])
 
   const queuedDisplayItems = useMemo(() => {
     const items: Array<
@@ -2744,7 +2753,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         key={`auto-group-${item.items[0]?.index ?? index}`}
                         items={item.items}
                         onDelete={removeQueuedMessageAtIndex}
-                        onSteer={isStreaming && tabSessionId ? handleSteerQueuedMessage : undefined}
+                        onSteer={canSteer && tabSessionId ? handleSteerQueuedMessage : undefined}
                         steeringIndex={steeringIndex}
                       />
                     )
@@ -2760,7 +2769,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       preview={preview}
                       isLong={isLong}
                       onDelete={() => removeQueuedMessageAtIndex(item.index)}
-                      onSteer={isStreaming && tabSessionId ? () => handleSteerQueuedMessage(item.index, item.msg) : undefined}
+                      onSteer={canSteer && tabSessionId ? () => handleSteerQueuedMessage(item.index, item.msg) : undefined}
                       isSteering={steeringIndex === item.index}
                     />
                   )

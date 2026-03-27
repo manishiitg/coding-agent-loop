@@ -2,6 +2,8 @@ package virtualtools
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/manishiitg/mcpagent/events"
@@ -47,6 +49,53 @@ type WorkspaceFolderItem struct {
 
 // WorkspaceFolderListing is the folder listing response (array of folder items)
 type WorkspaceFolderListing []WorkspaceFolderItem
+
+// ParseWorkspaceFilesList parses the raw JSON string returned by ListWorkspaceFiles
+// into a []WorkspaceFile slice, handling all known response formats:
+//   - Direct array: [{filepath, type, children?}, ...]
+//   - Files wrapper: {files: [{...}, ...]}
+//   - API response wrapper: {success, data: [{...}, ...]}
+//   - Singular object with children: {filepath, type, children: [{...}, ...]}
+func ParseWorkspaceFilesList(jsonStr string) ([]WorkspaceFile, error) {
+	// Format 1: direct array
+	var filesList []WorkspaceFile
+	if err := json.Unmarshal([]byte(jsonStr), &filesList); err == nil {
+		return filesList, nil
+	}
+
+	// Format 2: {files: [...]}
+	var altFormat struct {
+		Files []WorkspaceFile `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &altFormat); err == nil && len(altFormat.Files) > 0 {
+		return altFormat.Files, nil
+	}
+
+	// Format 3: {success, data: [...]}
+	var apiResp struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &apiResp); err == nil && len(apiResp.Data) > 0 {
+		// data could be an array or a singular object
+		var dataList []WorkspaceFile
+		if err2 := json.Unmarshal(apiResp.Data, &dataList); err2 == nil {
+			return dataList, nil
+		}
+		// data is a singular object with children
+		var singleObj WorkspaceFile
+		if err2 := json.Unmarshal(apiResp.Data, &singleObj); err2 == nil && len(singleObj.Children) > 0 {
+			return singleObj.Children, nil
+		}
+	}
+
+	// Format 4: singular object with children (no wrapper)
+	var singleObj WorkspaceFile
+	if err := json.Unmarshal([]byte(jsonStr), &singleObj); err == nil && len(singleObj.Children) > 0 {
+		return singleObj.Children, nil
+	}
+
+	return nil, fmt.Errorf("unable to parse workspace files list response")
+}
 
 // WorkspaceEventEmitter interface for emitting workspace file operation events
 type WorkspaceEventEmitter interface {

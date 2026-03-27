@@ -9524,26 +9524,18 @@ func resolveLatestRunFolder(ctx context.Context, workspacePath string, wsClient 
 		return ""
 	}
 
-	// Parse response — try the three known formats
+	// Parse response using shared helper that handles all known formats
+	parsed, parseErr := virtualtools.ParseWorkspaceFilesList(resp)
+	if parseErr != nil {
+		return ""
+	}
 	type wsFile struct {
-		FilePath string `json:"filepath"`
-		Type     string `json:"type"`
+		FilePath string
+		Type     string
 	}
 	var files []wsFile
-	if err := json.Unmarshal([]byte(resp), &files); err != nil {
-		var wrapped struct {
-			Files []wsFile `json:"files"`
-		}
-		if err2 := json.Unmarshal([]byte(resp), &wrapped); err2 == nil {
-			files = wrapped.Files
-		} else {
-			var api struct {
-				Data []wsFile `json:"data"`
-			}
-			if err3 := json.Unmarshal([]byte(resp), &api); err3 == nil {
-				files = api.Data
-			}
-		}
+	for _, f := range parsed {
+		files = append(files, wsFile{FilePath: f.FilePath, Type: f.Type})
 	}
 
 	maxIter := 0

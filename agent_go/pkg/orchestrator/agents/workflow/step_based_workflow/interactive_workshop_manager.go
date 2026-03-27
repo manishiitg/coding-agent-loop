@@ -1634,6 +1634,12 @@ All paths below are relative to this root.
 | builder/session-{id}-conversation.json | Previous builder chat sessions |
 | knowledgebase/ | Persistent data shared across all runs |
 
+**Skills are stored globally** (not inside the workflow folder):
+| skills/{skill-folder}/SKILL.md | Skill instruction file — read by step agents at runtime |
+| skills/{skill-folder}/ | All skill files for that skill |
+
+Skills live at the workspace root `+"`skills/`"+` directory, shared across all workflows. Step agents read `+"`skills/{skill-folder}/SKILL.md`"+` directly. Do NOT create or reference skills inside the workflow folder (e.g. `+"`Workflow/trading/skills/`"+` is wrong — the correct path is just `+"`skills/{skill-folder}/`"+`).
+
 **Cleanup**: Delete old builder conversation files when >3 exist (`+"`ls -t builder/session-*.json`"+`, keep latest).
 
 ## CONSTRAINTS

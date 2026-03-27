@@ -105,7 +105,13 @@ export default function ScheduleLiveEventsPopup({ sessionId, jobName, onClose }:
         <div className="flex-1 overflow-y-auto p-4">
           {displayEvents.length === 0 ? (
             <div className="flex items-center justify-center h-full text-sm text-gray-400">
-              {connected ? 'Waiting for events...' : 'Connecting...'}
+              {!connected
+                ? 'Connecting...'
+                : sessionStatus === 'error' || sessionStatus === 'stopped'
+                ? 'Run ended — no events recorded'
+                : sessionStatus === 'completed'
+                ? 'Run completed — no events recorded'
+                : 'Waiting for events...'}
             </div>
           ) : (
             <>

@@ -360,7 +360,7 @@ export interface GetEventsResponse {
   session_status: string // Session status: "running", "completed", "error", "stopped", "inactive" (required - source of truth)
   last_processed_index?: number // Last index processed in unfiltered array (for correct sinceIndex tracking when filtering)
   has_running_background_agents?: boolean // Whether background agents are still running for this session
-  is_synthetic_turn?: boolean // True when running auto-notification turn (frontend should not block input)
+  is_synthetic_turn?: boolean // True when running auto-notification turn (input remains locked as normal)
 }
 
 // Observer APIs removed - no longer needed

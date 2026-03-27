@@ -76,6 +76,26 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	workflows := s.discoverWorkflows(ctx)
 	scheduleLogf("[SCHEDULER] Discovered %d workflows with manifests", len(workflows))
 
+	// Mark any stale "running" runs as "error" — they were interrupted by a server restart
+	for _, wf := range workflows {
+		runs, err := ReadScheduleRuns(ctx, wf.WorkspacePath)
+		if err != nil {
+			continue
+		}
+		fixed := 0
+		for i := range runs {
+			if runs[i].Status == "running" {
+				runs[i].Status = "error"
+				runs[i].Error = "interrupted: server restarted"
+				fixed++
+			}
+		}
+		if fixed > 0 {
+			_ = WriteScheduleRuns(ctx, wf.WorkspacePath, runs)
+			scheduleLogf("[SCHEDULER] Marked %d stale running run(s) as error in %s", fixed, wf.WorkspacePath)
+		}
+	}
+
 	loaded := 0
 	for _, wf := range workflows {
 		for _, sched := range wf.Manifest.Schedules {
@@ -297,16 +317,17 @@ func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (
 		return "", fmt.Errorf("schedule %s not found in manifest at %s", scheduleID, workspacePath)
 	}
 
-	// Prevent concurrent runs
-	state := s.getOrCreateRuntimeState(scheduleID)
+	// Prevent concurrent runs — check and mark atomically under the write lock
+	startTime := time.Now().UTC()
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(scheduleID)
 	if state.LastStatus == "running" {
+		s.runtimeStatesMu.Unlock()
 		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
-
-	// Mark as running
-	startTime := time.Now().UTC()
 	state.LastStatus = "running"
 	state.LastRunAt = &startTime
+	s.runtimeStatesMu.Unlock()
 
 	sctx := buildScheduleContext(workspacePath, manifest, *sched)
 
@@ -396,12 +417,18 @@ func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
 		return
 	}
 
-	// Prevent concurrent runs
-	state := s.GetRuntimeState(schedID)
+	// Prevent concurrent runs — check and mark atomically under the write lock
+	startTime := time.Now().UTC()
+	s.runtimeStatesMu.Lock()
+	state := s.getRuntimeStateLocked(schedID)
 	if state.LastStatus == "running" {
+		s.runtimeStatesMu.Unlock()
 		scheduleLogf("[SCHEDULER] ⏭️ Schedule %s is already running (session: %s), skipping", schedID, state.LastSessionID)
 		return
 	}
+	state.LastStatus = "running"
+	state.LastRunAt = &startTime
+	s.runtimeStatesMu.Unlock()
 
 	// Update context with fresh manifest data
 	freshCtx := buildScheduleContext(sctx.WorkspacePath, manifest, *currentSched)
@@ -421,10 +448,8 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (s
 	scheduleLogf("[SCHEDULER] runJob starting for %s (%s) at %s, groups=%v",
 		schedID, sctx.Schedule.Name, startTime.Format(time.RFC3339), sctx.Schedule.GroupIDs)
 
-	// Update runtime state to running
+	// Clear session/error fields — status is already "running" (set atomically by caller)
 	state := s.getOrCreateRuntimeState(schedID)
-	state.LastStatus = "running"
-	state.LastRunAt = &startTime
 	state.LastSessionID = ""
 	state.LastError = ""
 

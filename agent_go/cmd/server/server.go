@@ -1824,11 +1824,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[USER_ID_DEBUGGING] HTTP handler: currentUserID=%q (from auth context)", currentUserID)
 
 	// Create or get chat session for this query
-	// The agent will modify the session ID to agent-init-{sessionID}-{timestamp}
-	// So we need to create the chat session with the original sessionID
-	// and the events will use the modified sessionID
-	chatSession, err := api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
-	if err != nil {
+	// Workflow sessions (workflow/workflow_phase) don't store chats in DB — they use
+	// in-memory tracking only (activeSessions map). Skip DB chat session for these modes.
+	var chatSession *database.ChatSession
+	if req.AgentMode != "workflow" && req.AgentMode != "workflow_phase" {
+		chatSession, _ = api.chatDB.GetChatSessionWithUser(r.Context(), sessionID, currentUserID)
+	} else {
+		log.Printf("[SESSION CREATE] Skipping DB chat session for workflow session %s (mode=%s)", sessionID, req.AgentMode)
+	}
+	if chatSession == nil && req.AgentMode != "workflow" && req.AgentMode != "workflow_phase" {
 		// Chat session doesn't exist, create a new one
 		// Extract title from req.Query (user message)
 		// Remove file context suffix if present (format: "...\n\n📁 Files in context: ...")
@@ -1943,19 +1947,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[SESSION CREATE] WARNING: No preset_query_id for workflow session %s (mode=%s, query=%s)", sessionID, req.AgentMode, title)
 		}
 
-		chatSession, err = api.chatDB.CreateChatSessionWithUser(r.Context(), &database.CreateChatSessionRequest{
+		var createErr error
+		chatSession, createErr = api.chatDB.CreateChatSessionWithUser(r.Context(), &database.CreateChatSessionRequest{
 			SessionID:     sessionID,
 			Title:         title,
 			AgentMode:     req.AgentMode,
 			PresetQueryID: presetQueryID,
 			Config:        configJSON,
 		}, currentUserID)
-		if err != nil {
-			log.Printf("[DATABASE DEBUG] Failed to create chat session: %v", err)
+		if createErr != nil {
+			log.Printf("[DATABASE DEBUG] Failed to create chat session: %v", createErr)
 			// Continue without chat session - events won't be stored but query can proceed
 		}
-	} else {
-		// Prepare update request
+	} else if chatSession != nil {
+		// Existing non-workflow session — update if needed
 		updateReq := &database.UpdateChatSessionRequest{}
 		shouldUpdate := false
 
@@ -7067,21 +7072,40 @@ func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 	}
 }
 
+// isWorkflowSession checks if the session is a workflow session (no DB chat record).
+func (api *StreamingAPI) isWorkflowSession(sessionID string) bool {
+	api.activeSessionsMux.RLock()
+	defer api.activeSessionsMux.RUnlock()
+	if session, exists := api.activeSessions[sessionID]; exists {
+		return session.AgentMode == "workflow" || session.AgentMode == "workflow_phase"
+	}
+	return false
+}
+
 // updateSessionStatus updates the status of an active session
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	api.activeSessionsMux.Lock()
 	defer api.activeSessionsMux.Unlock()
 
+	skipDBUpdate := isScheduledSession(sessionID)
 	if session, exists := api.activeSessions[sessionID]; exists {
 		session.Status = status
 		session.LastActivity = time.Now()
+		if session.AgentMode == "workflow" || session.AgentMode == "workflow_phase" {
+			skipDBUpdate = true
+		}
 		log.Printf("[ACTIVE_SESSION] Updated session %s status to: %s", sessionID, status)
 	} else {
 		log.Printf("[ACTIVE_SESSION] Session %s not found in activeSessions, updating database only", sessionID)
 	}
 
-	// Always update the database, regardless of whether session is in activeSessions
+	// Update the database for non-workflow sessions
+	// Workflow sessions (sched_*, workflow/workflow_phase) don't have DB chat session records
 	go func() {
+		if skipDBUpdate {
+			return
+		}
+
 		ctx := context.Background()
 		var completedAt *time.Time
 		if status == "completed" {

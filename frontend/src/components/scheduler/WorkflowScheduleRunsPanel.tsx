@@ -633,7 +633,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                                 return (
                                 <div
                                   key={run.id}
-                                  className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50"
+                                  className="flex items-center gap-2 text-xs py-1 px-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700/50 cursor-pointer"
+                                  onClick={(e) => {
+                                    // Only open logs if the click wasn't on one of the action buttons
+                                    if ((e.target as HTMLElement).closest('button')) return
+                                    if (effectiveFolder) openPopup(job, 'logs', effectiveFolder)
+                                  }}
                                 >
                                   {/* Status icon */}
                                   {run.status === 'running' ? (

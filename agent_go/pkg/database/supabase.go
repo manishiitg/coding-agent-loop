@@ -497,6 +497,13 @@ func (s *SupabaseDB) flushSessionEvents(sessionID string) {
 	chatSessionID, err := s.getChatSessionID(ctx, sessionID)
 	if err != nil {
 		tx.Rollback()
+		// Silently discard events for sessions without DB records (e.g., workflow/scheduled sessions)
+		if strings.Contains(err.Error(), "chat session not found") {
+			s.batchMux.Lock()
+			delete(s.eventBuffer, sessionID)
+			s.batchMux.Unlock()
+			return
+		}
 		log.Printf("[BATCH ERROR] Failed to get chat session ID for session %s: %v", sessionID, err)
 		return
 	}

@@ -660,7 +660,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	// Schedule tools
 	schedule := []string{
-		"list_schedules", "create_schedule", "update_schedule",
+		"create_schedule", "update_schedule",
 		"delete_schedule", "trigger_schedule", "get_schedule_runs",
 	}
 
@@ -1538,7 +1538,9 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **update_workflow_config(add_servers?, remove_servers?, add_skills?, remove_skills?, add_secrets?, remove_secrets?)** — Update workflow MCP servers, skills, or secrets
 
 ### Schedule Management
-- **list_schedules / create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
+- **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
+- To view existing schedules, read `workflow.json` via `execute_shell_command` — schedules are under the `schedules` key.
+- Schedule management is only available in **builder mode**. If the user asks about schedules in another mode, tell them to switch to builder mode.
 - Schedules support two execution modes: `+"`mode=\"workflow\"`"+` (direct orchestrator, default) and `+"`mode=\"workshop\"`"+` (LLM-driven via workshop builder with per-step notifications).
 - Workshop mode takes `+"`messages`"+` (predefined message queue sent one-by-one) and `+"`workshop_mode`"+` (`+"`runner`"+` or `+"`optimizer`"+`).
 
@@ -5721,28 +5723,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	}
 
 	// === Schedule management tools ===
-
-	// Tool: list_schedules — List all cron schedules for this workflow
-	if err := mcpAgent.RegisterCustomTool(
-		"list_schedules",
-		"List all cron schedules for this workflow.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			if iwm.schedulerFuncs == nil {
-				return "Schedule management not available in this session.", nil
-			}
-			if iwm.schedulerWorkspacePath == "" {
-				return "No workspace path associated with this workflow session.", nil
-			}
-			return iwm.schedulerFuncs.ListSchedules(ctx, iwm.schedulerWorkspacePath)
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register list_schedules tool: %v", err))
-	}
 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(

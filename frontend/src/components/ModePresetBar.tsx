@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Building2, Settings, Trash2, Copy, DollarSign, Keyboard, Clock, CalendarDays, GitBranch, SlidersHorizontal } from 'lucide-react'
+import { Workflow, Users, Building2, Settings, Trash2, Copy, DollarSign, Keyboard, CalendarDays, GitBranch, SlidersHorizontal } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -7,7 +7,6 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 import PresetModal from './PresetModal'
 import ChatCostsPopup from './ChatCostsPopup'
 import DelegationLogsPopup from './DelegationLogsPopup'
-import SchedulePresetPopup from './SchedulePresetPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import PlansManagerModal from './PlansManagerModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
@@ -130,7 +129,6 @@ export const ModePresetBar: React.FC = () => {
   const [showCostsPopup, setShowCostsPopup] = useState(false)
   const [showDelegationLogs, setShowDelegationLogs] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
-  const [showSchedulePopup, setShowSchedulePopup] = useState(false)
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
@@ -165,7 +163,7 @@ export const ModePresetBar: React.FC = () => {
         setWorkflowScheduleCount(filtered.length)
       })
       .catch(() => {})
-  }, [selectedModeCategory, showSchedulePopup, showRunsPanel, activePreset?.id]) // refresh after schedule/runs panel closes or workflow changes
+  }, [selectedModeCategory, showRunsPanel, activePreset?.id]) // refresh after runs panel closes or workflow changes
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -697,17 +695,6 @@ export const ModePresetBar: React.FC = () => {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => setShowSchedulePopup(true)}
-                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                      >
-                        <Clock className="w-4 h-4" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom">Schedule this workflow</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
                         onClick={() => setShowRunsPanel(true)}
                         className="relative p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                       >
@@ -863,17 +850,6 @@ export const ModePresetBar: React.FC = () => {
       {/* Scheduled Workflow Runs Panel */}
       {showRunsPanel && (
         <WorkflowScheduleRunsPanel onClose={() => setShowRunsPanel(false)} />
-      )}
-
-      {/* Schedule Preset Popup (workflow / multi-agent mode) */}
-      {showSchedulePopup && (
-        <SchedulePresetPopup
-          presetQueryId={activePresetForSchedule?.id ?? null}
-          presetLabel={activePresetForSchedule?.label ?? ''}
-          entityType={selectedModeCategory === 'workflow' ? 'workflow' : 'multi-agent'}
-          workspacePath={activePresetForSchedule?.selectedFolder?.filepath}
-          onClose={() => setShowSchedulePopup(false)}
-        />
       )}
 
       {/* Workflows Overview Popup */}

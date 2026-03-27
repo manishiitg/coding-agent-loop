@@ -10,7 +10,6 @@ import { useModeStore } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
 import type { Employee, EvaluationReportEntry, TokenUsageFile, WorkflowFinalOutputResponse } from '../services/api-types'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
-import SchedulePresetPopup from './SchedulePresetPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import { MarkdownRenderer } from './ui/MarkdownRenderer'
@@ -244,7 +243,6 @@ export const EmployeeDashboard: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [assigningWorkflow, setAssigningWorkflow] = useState<string | null>(null) // preset ID being assigned
-  const [schedulePreset, setSchedulePreset] = useState<WorkflowSummary | null>(null)
   const [showAllSchedules, setShowAllSchedules] = useState(false)
   const [logsState, setLogsState] = useState<{ workspacePath: string; runFolder: string } | null>(null)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
@@ -742,13 +740,6 @@ export const EmployeeDashboard: React.FC = () => {
                             >
                               Open
                             </button>
-                            <button
-                              onClick={() => setSchedulePreset(wf)}
-                              className="text-[11px] text-amber-600 dark:text-amber-400 hover:underline px-1.5 py-0.5"
-                              title={wf.nextScheduleAt ? `Next run: ${formatScheduleTime(wf.nextScheduleAt)}` : 'Set schedule'}
-                            >
-                              Schedule
-                            </button>
                             {employees.length > 0 && (
                               <div className="relative">
                                 <button
@@ -1054,16 +1045,6 @@ export const EmployeeDashboard: React.FC = () => {
         onSave={editingEmployee ? handleUpdateEmployee : handleCreateEmployee}
         initial={editingEmployee ? { name: editingEmployee.name, avatar_color: editingEmployee.avatar_color, description: editingEmployee.description } : undefined}
       />
-
-      {schedulePreset && (
-        <SchedulePresetPopup
-          presetQueryId={schedulePreset.preset.id}
-          presetLabel={schedulePreset.preset.label}
-          entityType="workflow"
-          workspacePath={schedulePreset.workspacePath || undefined}
-          onClose={() => setSchedulePreset(null)}
-        />
-      )}
 
       {showAllSchedules && (
         <WorkflowScheduleRunsPanel onClose={() => setShowAllSchedules(false)} />

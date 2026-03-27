@@ -192,7 +192,7 @@ export interface ChatTab {
   isStreaming: boolean  // Whether this tab's execution is currently running
   isCompleted: boolean  // Whether this tab's execution has completed
   hasRunningBgAgents: boolean  // Whether background agents are still running for this session
-  isSyntheticTurn: boolean  // Whether current streaming turn is an auto-notification (user can still send messages)
+  isSyntheticTurn: boolean  // Whether current streaming turn is an auto-notification (input remains locked as normal)
   hideToolCalls: boolean  // Whether to hide tool_call_start/end events in this tab
   // View mode controls how much detail is rendered in the event list.
   // 'detailed' — full event stream (tool calls, LLM events, delegation internals, etc.)

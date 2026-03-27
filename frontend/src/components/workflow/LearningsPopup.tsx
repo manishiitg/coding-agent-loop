@@ -865,7 +865,7 @@ export default function LearningsPopup({ isOpen, onClose, workspacePath, plan }:
                         )}
                       </div>
 
-                      {metadata && threshold > 0 && (
+                      {metadata && successfulRuns >= 0 && (
                           <div className="mt-3">
                             <div className="flex items-center justify-between text-sm mb-1">
                               <span className="text-muted-foreground">

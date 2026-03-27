@@ -1554,25 +1554,12 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message to optimize steps **one by one** after each step completes. Example message: "Run the full workflow using run_full_workflow. After each step completes, if it succeeded and is not yet optimized, call optimize_step and apply fixes. If a step fails, retry it once after fixing — if it fails again, skip it and move to the next step. Do NOT retry the same step more than 2 times to avoid infinite loops."
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) skip already-optimized steps, (2) limit retries per step to 2 attempts max, (3) move on to the next step after repeated failures instead of looping, (4) stop after all steps have been attempted once.
 
-### Skills
-Skills are reusable instruction sets that guide step agents. The workflow for managing skills:
-1. **Find**: `+"`search_skills(query)`"+` — search public registry, or `+"`list_skills`"+` to see already-installed skills
-2. **Install**: `+"`install_skill(source)`"+` (registry, e.g. `+"`owner/repo@skill-name`"+`) or `+"`import_skill(github_url)`"+` (direct GitHub URL) — downloads skill files into the workspace `+"`skills/`"+` folder
-3. **Add to workflow**: `+"`update_workflow_config(add_skills=[\"skill-folder-name\"])`"+` — makes the skill available to all steps in this workflow. **Do NOT manually edit workflow.json.**
-4. **Assign/restrict per step**: By default all workflow steps inherit all workflow-level skills. To give a specific step only certain skills: `+"`update_step_config(step_id, enabled_skills=[\"skill-a\", \"skill-b\"])`"+`. To unassign all skills from a step: `+"`update_step_config(step_id, enabled_skills=[])`"+` (empty = no skills). To revert to workflow defaults: set `+"`enabled_skills`"+` to `+"`null`"+` via `+"`update_step_config`"+`.
-5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"skill-folder-name\"])`"+` — removes from workflow (update any steps that had it in enabled_skills too)
-6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes skill files from workspace entirely
-
-Use `+"`get_workflow_config`"+` to see currently selected skills and all available installed skills.
 {{end}}
 
 {{if eq .WorkshopMode "optimizer"}}
 ### Validation (for optimization)
 - **update_validation_schema** — Add or update a step's validation schema
 - **update_success_criteria** — Update step success criteria
-
-### Skills (per step)
-By default all steps inherit workflow-level skills. To restrict a step: `+"`update_step_config(step_id, enabled_skills=[\"skill-a\"])`"+`. Empty array = no skills. Use `+"`list_skills`"+` or `+"`get_workflow_config`"+` to see available skills.
 {{end}}
 
 {{if eq .WorkshopMode "eval"}}
@@ -1590,6 +1577,19 @@ By default all steps inherit workflow-level skills. To restrict a step: `+"`upda
 ### Shell & Discovery
 - **execute_shell_command** — Run shell commands. Quick lookups: `+"`jq '[.steps[] | {id, title, type}]' planning/plan.json`"+`, `+"`jq --arg sid \"step-id\" '.. | objects | select(.id? == $sid) | {id, title, type, description, success_criteria, context_output}' planning/plan.json`"+`, `+"`cat planning/step_config.json`"+`, `+"`ls runs/`"+`, `+"`cat variables/variables.json`"+`
 - **human_feedback** — Ask the user a question during a run
+
+### Skills
+Skills are reusable instruction sets injected into step agents at runtime. They live at the **workspace root** `+"`/app/workspace-docs/skills/{folder}/SKILL.md`"+` — shared across all workflows. Do NOT create or reference skills inside the workflow folder (e.g. `+"`Workflow/trading/skills/`"+` does not exist).
+
+**Workflow for managing skills:**
+1. **Find**: `+"`list_skills`"+` to see installed skills, or `+"`search_skills(query)`"+` to search the public registry
+2. **Install**: `+"`install_skill(source)`"+` (e.g. `+"`owner/repo@skill-name`"+`) or `+"`import_skill(github_url)`"+` — downloads into `+"`/app/workspace-docs/skills/{folder}/`"+`
+3. **Add to workflow**: `+"`update_workflow_config(add_skills=[\"folder-name\"])`"+` — all steps inherit it. **Do NOT edit workflow.json manually.**
+4. **Restrict to specific steps**: By default all steps inherit all workflow-level skills. To limit a step: `+"`update_step_config(step_id, enabled_skills=[\"skill-a\"])`"+`. Empty array = no skills for that step.
+5. **Remove from workflow**: `+"`update_workflow_config(remove_skills=[\"folder-name\"])`"+`
+6. **Uninstall**: `+"`uninstall_skill(folder_name)`"+` — removes files from workspace entirely
+
+Use `+"`get_workflow_config`"+` to see selected skills and all available installed skills.
 
 {{if or (eq .WorkshopMode "optimizer") (eq .WorkshopMode "debugger")}}
 ### Human-Assisted Learning
@@ -1633,12 +1633,6 @@ All paths below are relative to this root.
 | evaluation/runs/{run}/evaluation_report.json | Eval results |
 | builder/session-{id}-conversation.json | Previous builder chat sessions |
 | knowledgebase/ | Persistent data shared across all runs |
-
-**Skills are stored globally** (not inside the workflow folder):
-| skills/{skill-folder}/SKILL.md | Skill instruction file — read by step agents at runtime |
-| skills/{skill-folder}/ | All skill files for that skill |
-
-Skills live at the workspace root `+"`skills/`"+` directory, shared across all workflows. Step agents read `+"`skills/{skill-folder}/SKILL.md`"+` directly. Do NOT create or reference skills inside the workflow folder (e.g. `+"`Workflow/trading/skills/`"+` is wrong — the correct path is just `+"`skills/{skill-folder}/`"+`).
 
 **Cleanup**: Delete old builder conversation files when >3 exist (`+"`ls -t builder/session-*.json`"+`, keep latest).
 

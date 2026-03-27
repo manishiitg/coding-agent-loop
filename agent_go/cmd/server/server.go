@@ -4983,15 +4983,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 					} else {
 						// Build full workshop config matching normal workflow setup
-						workshopCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
-
-						newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), workshopCfg)
-						if sessionErr != nil {
-							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create workshop session for %s: %v — workshop execution tools unavailable", workflowPhaseID, sessionErr)
+						workshopCfg, cfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						if cfgErr != nil {
+							log.Printf("[WORKFLOW_PHASE] Error: Failed to build workshop config for %s: %v — workshop execution tools unavailable", workflowPhaseID, cfgErr)
 						} else {
-							workshopSession = newSession
-							api.workshopChatSessions.Store(workshopSessionKey, workshopSession)
-							log.Printf("[WORKFLOW_PHASE] Created new %s session for %s", workflowPhaseID, sessionID)
+							newSession, sessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), workshopCfg)
+							if sessionErr != nil {
+								log.Printf("[WORKFLOW_PHASE] Warning: Failed to create workshop session for %s: %v — workshop execution tools unavailable", workflowPhaseID, sessionErr)
+							} else {
+								workshopSession = newSession
+								api.workshopChatSessions.Store(workshopSessionKey, workshopSession)
+								log.Printf("[WORKFLOW_PHASE] Created new %s session for %s", workflowPhaseID, sessionID)
+							}
 						}
 					}
 
@@ -5040,15 +5043,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						evalSession = cached.(*todo_creation_human.WorkshopChatSession)
 						log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in %s %s", workflowPhaseID, sessionID)
 					} else {
-						evalCfg := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
-						evalCfg.IsEvaluationMode = true
-						newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
-						if evalSessionErr != nil {
-							log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in %s: %v", workflowPhaseID, evalSessionErr)
+						evalCfg, evalCfgErr := api.buildWorkshopConfig(r.Context(), req, currentUserID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID)
+						if evalCfgErr != nil {
+							log.Printf("[WORKFLOW_PHASE] Error: Failed to build eval config in %s: %v", workflowPhaseID, evalCfgErr)
 						} else {
-							evalSession = newEvalSession
-							api.workshopChatSessions.Store(evalSessionKey, evalSession)
-							log.Printf("[WORKFLOW_PHASE] Created eval session in %s for %s", workflowPhaseID, sessionID)
+							evalCfg.IsEvaluationMode = true
+							newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(r.Context(), evalCfg)
+							if evalSessionErr != nil {
+								log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in %s: %v", workflowPhaseID, evalSessionErr)
+							} else {
+								evalSession = newEvalSession
+								api.workshopChatSessions.Store(evalSessionKey, evalSession)
+								log.Printf("[WORKFLOW_PHASE] Created eval session in %s for %s", workflowPhaseID, sessionID)
+							}
 						}
 					}
 					if evalSession != nil {
@@ -9573,7 +9580,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	runFolder string,
 	selectedServers []string,
 	sessionID string,
-) *todo_creation_human.WorkshopConfig {
+) (*todo_creation_human.WorkshopConfig, error) {
 	// Extract enabled group IDs from execution options (toolbar selection)
 	var enabledGroupIDs []string
 	if req.ExecutionOptions != nil && len(req.ExecutionOptions.EnabledGroupIDs) > 0 {
@@ -9602,11 +9609,14 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	// Track preset's global secret selection (overrides req.SelectedGlobalSecrets which is nil for phase chat)
 	var presetGlobalSecretNames *[]string
 
-	// Load config from workflow.json manifest (single source of truth — no DB dependency)
+	// Load config from workflow.json manifest (single source of truth — no DB dependency).
+	// Use context.Background() so a canceled request context doesn't silently skip manifest
+	// loading. If the manifest cannot be read, fail immediately — a partially-configured
+	// session with missing TieredConfig/servers/tools would cause cryptic failures later.
 	if workspacePath != "" {
-		manifest, found, mErr := ReadWorkflowManifest(ctx, workspacePath)
+		manifest, found, mErr := ReadWorkflowManifest(context.Background(), workspacePath)
 		if mErr != nil {
-			log.Printf("[WORKSHOP] Warning: Failed to read manifest from %s: %v", workspacePath, mErr)
+			return nil, fmt.Errorf("failed to read workflow manifest from %s: %w", workspacePath, mErr)
 		} else if found {
 			caps := manifest.Capabilities
 			log.Printf("[WORKSHOP] Loaded config from manifest at %s", workspacePath)
@@ -9830,7 +9840,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		return names, nil
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 // buildSchedulerCallbacks creates SchedulerCallbacks that bridge the workshop tools

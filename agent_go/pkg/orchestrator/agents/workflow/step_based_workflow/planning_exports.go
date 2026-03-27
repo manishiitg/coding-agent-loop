@@ -409,11 +409,17 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 // the user made in the workflow editor since the session was first created.
 func (s *WorkshopChatSession) UpdatePresetLLMConfigs(phaseLLM *AgentLLMConfig) {
 	s.controller.presetPhaseLLM = phaseLLM
+	if s.config != nil {
+		s.config.PresetPhaseLLM = phaseLLM
+	}
 }
 
 // UpdateTieredConfig refreshes the controller's tiered LLM allocation config.
 // Called when reusing a cached workshop session to pick up any tiered config changes
 // the user made in the workflow editor since the session was first created.
+// Also updates session.config.TieredConfig so run_full_workflow picks up the new config
+// when it creates a fresh controller (e.g. after initial manifest read failed due to
+// context cancellation).
 func (s *WorkshopChatSession) UpdateTieredConfig(tieredConfig *TieredLLMConfig) {
 	if tieredConfig != nil {
 		orchestratorLLMConfig := s.controller.GetLLMConfig()
@@ -422,8 +428,17 @@ func (s *WorkshopChatSession) UpdateTieredConfig(tieredConfig *TieredLLMConfig) 
 			apiKeys = orchestratorLLMConfig.APIKeys
 		}
 		s.controller.tierResolver = NewTierResolver(tieredConfig, apiKeys)
+		// Also persist into session config so run_full_workflow (which reads cfg.TieredConfig)
+		// uses the refreshed value rather than the stale one from session creation.
+		if s.config != nil {
+			s.config.TieredConfig = tieredConfig
+			s.config.LLMAllocationMode = "tiered"
+		}
 	} else {
 		s.controller.tierResolver = nil
+		if s.config != nil {
+			s.config.TieredConfig = nil
+		}
 	}
 }
 
@@ -456,6 +471,24 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 		s.controller.SetSelectedSkills(selectedSkills)
 	}
 	s.controller.SetSecrets(secrets)
+
+	// Sync back to session.config so run_full_workflow / run_full_evaluation /
+	// run_full_report (which create fresh controllers from cfg) pick up the latest values.
+	if s.config != nil {
+		s.config.SelectedServers = selectedServers
+		if toolsParsed {
+			s.config.SelectedTools = selectedTools
+		}
+		s.config.UseCodeExecutionMode = useCodeExecutionMode
+		s.config.UseToolSearchMode = useToolSearchMode
+		if preDiscoveredParsed {
+			s.config.PreDiscoveredTools = preDiscoveredTools
+		}
+		s.config.UseKnowledgebase = useKnowledgebase
+		if len(secrets) > 0 {
+			s.config.Secrets = secrets
+		}
+	}
 }
 
 // UpdateEnabledGroupIDs refreshes the toolbar-selected group IDs and reloads variable values.

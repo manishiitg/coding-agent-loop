@@ -1539,7 +1539,7 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 ### Schedule Management
 - **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
-- To view existing schedules, read `workflow.json` via `execute_shell_command` — schedules are under the `schedules` key.
+- To view existing schedules, read `+"`workflow.json`"+` via `+"`execute_shell_command`"+` — schedules are under the `+"`schedules`"+` key.
 - Schedule management is only available in **builder mode**. If the user asks about schedules in another mode, tell them to switch to builder mode.
 - Schedules support two execution modes: `+"`mode=\"workflow\"`"+` (direct orchestrator, default) and `+"`mode=\"workshop\"`"+` (LLM-driven via workshop builder with per-step notifications).
 - Workshop mode takes `+"`messages`"+` (predefined message queue sent one-by-one) and `+"`workshop_mode`"+` (`+"`runner`"+` or `+"`optimizer`"+`).

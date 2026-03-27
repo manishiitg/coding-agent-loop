@@ -336,7 +336,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getConditionalAgentForStep(ctx contex
 	}
 
 	// Tiered mode is required — if we reach here, tier resolver is nil.
-	panic(fmt.Sprintf("getOrCreateConditionalAgent: tier resolver is nil for step '%s' — tiered mode is required", step.GetTitle()))
+	hcpo.GetLogger().Warn(fmt.Sprintf("getOrCreateConditionalAgent: tier resolver is nil for step '%s' — returning nil", step.GetTitle()))
+	return nil
 }
 
 // CreateTodoList orchestrates the human-controlled todo planning process

@@ -1011,7 +1011,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectLearningLLM(ctx context.Context
 	}
 
 	// Tiered mode is required. If we reach here, something is misconfigured.
-	panic(fmt.Sprintf("selectLearningLLM: no valid LLM configuration found for step %s — tier resolver is required", stepPath))
+	hcpo.GetLogger().Warn(fmt.Sprintf("selectLearningLLM: no valid LLM configuration found for step %s — tier resolver is required, returning nil", stepPath))
+	return nil
 }
 
 // applyPostSetupToAgent applies post-setup configuration to an agent after base factory setup
@@ -2169,11 +2170,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecuteGenericAgentFunc(
 // Uses Tier 2 (Medium) — scoring is analysis, not generation.
 func (hcpo *StepBasedWorkflowOrchestrator) selectEvaluationScoringLLM() (*orchestrator.LLMConfig, error) {
 	if hcpo.tierResolver == nil {
-		panic("selectEvaluationScoringLLM: tier resolver is nil — tiered mode is required")
+		return nil, fmt.Errorf("selectEvaluationScoringLLM: tier resolver is nil — tiered mode is required")
 	}
 	llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
 	if llmConfig == nil {
-		panic("selectEvaluationScoringLLM: tier resolver returned nil for Tier 2 (Medium)")
+		return nil, fmt.Errorf("selectEvaluationScoringLLM: tier resolver returned nil for Tier 2 (Medium)")
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("🏷️ Using Tier 2 (Medium) for evaluation scoring: %s/%s", llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
 	return llmConfig, nil

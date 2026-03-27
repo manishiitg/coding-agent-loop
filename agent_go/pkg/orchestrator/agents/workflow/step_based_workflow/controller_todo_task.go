@@ -530,7 +530,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildTodoTaskOrchestratorTemplateVars
 //
 // Priority:
 //  1. step config OrchestratorLLM — explicit override always wins
-//  2. Tier 1 (High) — default for orchestrator (panics if tier resolver is unavailable)
+//  2. Tier 1 (High) — default for orchestrator (returns nil if tier resolver is unavailable)
 func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	ctx context.Context,
 	stepConfig *AgentConfigs,
@@ -555,12 +555,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 	// Keep the orchestrator on the highest tier even for optimized steps so routing
 	// and recovery decisions always use the most capable model unless explicitly overridden.
 	if hcpo.tierResolver == nil {
-		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver is nil for step %s — tiered mode is required for todo task orchestrator", stepPath))
+		hcpo.GetLogger().Warn(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver is nil for step %s — returning nil so caller surfaces a user-visible error", stepPath))
+		return nil
 	}
 	tier := TierHigh
 	llmConfig := hcpo.tierResolver.ResolveTier(tier)
 	if llmConfig == nil {
-		panic(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver returned nil for Tier %d (%s) on step %s", int(tier), TierLevelLabel(tier), stepPath))
+		hcpo.GetLogger().Warn(fmt.Sprintf("selectTodoTaskOrchestratorLLM: tier resolver returned nil for Tier %d (%s) on step %s", int(tier), TierLevelLabel(tier), stepPath))
+		return nil
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Todo task orchestrator using Tier %d (%s): %s/%s",
 		int(tier), TierLevelLabel(tier), llmConfig.Primary.Provider, llmConfig.Primary.ModelID))

@@ -1539,6 +1539,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 
 ### Schedule Management
 - **list_schedules / create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
+- Schedules support two execution modes: `+"`mode=\"workflow\"`"+` (direct orchestrator, default) and `+"`mode=\"workshop\"`"+` (LLM-driven via workshop builder with per-step notifications).
+- Workshop mode takes `+"`messages`"+` (predefined message queue sent one-by-one) and `+"`workshop_mode`"+` (`+"`runner`"+` or `+"`optimizer`"+`).
 
 ### Skills
 - **list_skills / search_skills(query) / install_skill(source) / uninstall_skill / import_skill** — Manage skills
@@ -5776,6 +5778,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"items":       map[string]interface{}{"type": "string"},
 					"description": "Predefined message queue for workshop mode. Sent one-by-one to the LLM. Example: ['Run the full workflow using run_full_workflow']. Ignored in workflow mode.",
 				},
+				"workshop_mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Workshop builder mode to use when mode='workshop'. Defaults to 'runner'. Use 'optimizer' to run with optimization (generate learnings, analyze steps).",
+					"enum":        []string{"runner", "optimizer"},
+				},
 			},
 			"required": []string{"name", "cron_expression"},
 		},
@@ -5810,13 +5817,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 			}
+			workshopMode, _ := args["workshop_mode"].(string)
 			if name == "" {
 				return "name is required.", nil
 			}
 			if cronExpr == "" {
 				return "cron_expression is required.", nil
 			}
-			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupIDs, mode, messages)
+			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupIDs, mode, messages, workshopMode)
 		},
 		"workflow",
 	); err != nil {
@@ -5908,7 +5916,8 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					}
 				}
 			}
-			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupIDs, setGroupIDs, enabled, mode, messages)
+			workshopMode, _ := args["workshop_mode"].(string)
+			return iwm.schedulerFuncs.UpdateSchedule(ctx, jobID, name, cronExpr, timezone, groupIDs, setGroupIDs, enabled, mode, messages, workshopMode)
 		},
 		"workflow",
 	); err != nil {

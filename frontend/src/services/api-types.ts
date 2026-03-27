@@ -1694,6 +1694,9 @@ export interface ScheduledJob {
   workflow_label?: string
   trigger_payload?: Record<string, unknown>
   group_ids?: string[]  // undefined/empty = all groups
+  mode?: 'workflow' | 'workshop'  // 'workflow' (default) or 'workshop' (LLM-driven)
+  messages?: string[]  // predefined messages for workshop mode
+  workshop_mode?: 'runner' | 'optimizer'  // workshop builder mode (default: runner)
   cron_expression: string
   timezone: string
   enabled: boolean

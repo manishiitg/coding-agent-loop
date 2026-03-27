@@ -23,8 +23,9 @@ type ScheduledJobResponse struct {
 	PresetQueryID       string          `json:"preset_query_id"` // empty — kept for frontend compat
 	TriggerPayload      json.RawMessage `json:"trigger_payload,omitempty"`
 	GroupIDs            []string        `json:"group_ids,omitempty"`
-	Mode                string          `json:"mode,omitempty"`     // "workflow" or "workshop"
-	Messages            []string        `json:"messages,omitempty"` // Predefined messages for workshop mode
+	Mode                string          `json:"mode,omitempty"`          // "workflow" or "workshop"
+	Messages            []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
+	WorkshopMode        string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
 	CronExpression      string          `json:"cron_expression"`
 	Timezone            string          `json:"timezone"`
 	Enabled             bool            `json:"enabled"`
@@ -50,8 +51,9 @@ type CreateScheduleRequest struct {
 	Enabled        bool            `json:"enabled"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
 	GroupIDs       []string        `json:"group_ids,omitempty"`
-	Mode           string          `json:"mode,omitempty"`     // "workflow" (default) or "workshop"
-	Messages       []string        `json:"messages,omitempty"` // Predefined messages for workshop mode
+	Mode           string          `json:"mode,omitempty"`          // "workflow" (default) or "workshop"
+	Messages       []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
+	WorkshopMode   string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner (default), debugger
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
@@ -63,8 +65,9 @@ type UpdateScheduleRequest struct {
 	Enabled        *bool           `json:"enabled,omitempty"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
 	GroupIDs       []string        `json:"group_ids,omitempty"`
-	Mode           string          `json:"mode,omitempty"`     // "workflow" or "workshop"
-	Messages       []string        `json:"messages,omitempty"` // Predefined messages for workshop mode
+	Mode           string          `json:"mode,omitempty"`          // "workflow" or "workshop"
+	Messages       []string        `json:"messages,omitempty"`      // Predefined messages for workshop mode
+	WorkshopMode   string          `json:"workshop_mode,omitempty"` // builder, optimizer, runner, debugger
 }
 
 // buildJobResponse combines manifest schedule + runtime state into an API response.
@@ -82,6 +85,7 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		GroupIDs:            sched.GroupIDs,
 		Mode:                sched.Mode,
 		Messages:            sched.Messages,
+		WorkshopMode:        sched.WorkshopMode,
 		CronExpression:      sched.CronExpression,
 		Timezone:            sched.Timezone,
 		Enabled:             sched.Enabled,
@@ -229,6 +233,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 			GroupIDs:       req.GroupIDs,
 			Mode:           req.Mode,
 			Messages:       req.Messages,
+			WorkshopMode:   req.WorkshopMode,
 		}
 
 		manifest.Schedules = append(manifest.Schedules, newSched)
@@ -338,6 +343,9 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 		if req.Messages != nil {
 			sched.Messages = req.Messages
+		}
+		if req.WorkshopMode != "" {
+			sched.WorkshopMode = req.WorkshopMode
 		}
 
 		if err := WriteWorkflowManifest(r.Context(), workspacePath, manifest); err != nil {

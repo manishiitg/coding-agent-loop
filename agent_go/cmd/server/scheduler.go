@@ -669,7 +669,7 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	execOpts := map[string]interface{}{
 		"run_mode":           "create_new_runs_always",
 		"execution_strategy": "start_from_beginning_no_human",
-		"workshop_mode":      "runner",
+		"workshop_mode":      func() string { if sctx.Schedule.WorkshopMode != "" { return sctx.Schedule.WorkshopMode }; return "runner" }(),
 	}
 	if len(sctx.Schedule.GroupIDs) > 0 {
 		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs

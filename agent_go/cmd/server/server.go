@@ -9854,7 +9854,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return sb.String(), nil
 		},
-		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupIDs []string, mode string, messages []string) (string, error) {
+		CreateSchedule: func(ctx context.Context, workspacePath, name, cronExpr, timezone string, groupIDs []string, mode string, messages []string, workshopMode string) (string, error) {
 			if err := ValidateCronExpression(cronExpr); err != nil {
 				return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
 			}
@@ -9874,6 +9874,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				Enabled:        true,
 				Mode:           mode,
 				Messages:       messages,
+				WorkshopMode:   workshopMode,
 			}
 			manifest.Schedules = append(manifest.Schedules, newSched)
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
@@ -9893,7 +9894,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			return fmt.Sprintf("Schedule created and activated.\n- **ID**: `%s`\n- **Name**: %s\n- **Cron**: `%s`\n- **Timezone**: %s\n- **Next Run**: %s", newSched.ID, name, cronExpr, timezone, nextRunStr), nil
 		},
-		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool, mode string, messages []string) (string, error) {
+		UpdateSchedule: func(ctx context.Context, jobID, name, cronExpr, timezone string, groupIDs []string, setGroupIDs bool, enabled *bool, mode string, messages []string, workshopMode string) (string, error) {
 			if cronExpr != "" {
 				if err := ValidateCronExpression(cronExpr); err != nil {
 					return "", fmt.Errorf("invalid cron expression %q: %w", cronExpr, err)
@@ -9924,6 +9925,9 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			if messages != nil {
 				sched.Messages = messages
+			}
+			if workshopMode != "" {
+				sched.WorkshopMode = workshopMode
 			}
 			if err := WriteWorkflowManifest(ctx, workspacePath, manifest); err != nil {
 				return "", fmt.Errorf("failed to write manifest: %w", err)

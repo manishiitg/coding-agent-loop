@@ -472,7 +472,22 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                           {job.group_ids && job.group_ids.length > 0 && (
                             <span>Groups: {job.group_ids.join(', ')}</span>
                           )}
+                          {job.mode === 'workshop' && (
+                            <span className="px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-medium">
+                              Workshop{job.workshop_mode ? ` · ${job.workshop_mode}` : ''}
+                            </span>
+                          )}
                         </div>
+                        {job.mode === 'workshop' && job.messages && job.messages.length > 0 && (
+                          <div className="mt-1 space-y-0.5">
+                            {job.messages.map((m, i) => (
+                              <div key={i} className="text-xs text-gray-500 dark:text-gray-400 flex items-start gap-1">
+                                <span className="text-gray-400 dark:text-gray-500 shrink-0">{i + 1}.</span>
+                                <span>{m}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {/* Run stats */}
                         <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">

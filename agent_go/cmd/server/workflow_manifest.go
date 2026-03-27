@@ -65,8 +65,9 @@ type WorkflowSchedule struct {
 	Enabled        bool            `json:"enabled"`
 	TriggerPayload json.RawMessage `json:"trigger_payload,omitempty"`
 	GroupIDs       []string        `json:"group_ids,omitempty"`
-	Mode           string          `json:"mode,omitempty"`     // "workflow" (default/orchestrator) or "workshop" (LLM-driven via workshop builder)
-	Messages       []string        `json:"messages,omitempty"` // Predefined message queue for workshop mode (sent one-by-one)
+	Mode           string          `json:"mode,omitempty"`          // "workflow" (default/orchestrator) or "workshop" (LLM-driven via workshop builder)
+	Messages       []string        `json:"messages,omitempty"`      // Predefined message queue for workshop mode (sent one-by-one)
+	WorkshopMode   string          `json:"workshop_mode,omitempty"` // Workshop builder mode: "builder", "optimizer", "runner" (default), "debugger"
 }
 
 // --- Validation ---

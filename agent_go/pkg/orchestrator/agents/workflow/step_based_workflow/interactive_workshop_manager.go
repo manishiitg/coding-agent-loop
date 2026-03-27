@@ -1543,6 +1543,8 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - Schedule management is only available in **builder mode**. If the user asks about schedules in another mode, tell them to switch to builder mode.
 - Schedules support two execution modes: `+"`mode=\"workflow\"`"+` (direct orchestrator, default) and `+"`mode=\"workshop\"`"+` (LLM-driven via workshop builder with per-step notifications).
 - Workshop mode takes `+"`messages`"+` (predefined message queue sent one-by-one) and `+"`workshop_mode`"+` (`+"`runner`"+` or `+"`optimizer`"+`).
+- **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message to optimize steps **one by one** after each step completes. Example message: "Run the full workflow using run_full_workflow. After each step completes, if it succeeded and is not yet optimized, call optimize_step and apply fixes. If a step fails, retry it once after fixing — if it fails again, skip it and move to the next step. Do NOT retry the same step more than 2 times to avoid infinite loops."
+- **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) skip already-optimized steps, (2) limit retries per step to 2 attempts max, (3) move on to the next step after repeated failures instead of looping, (4) stop after all steps have been attempted once.
 
 ### Skills
 - **list_skills / search_skills(query) / install_skill(source) / uninstall_skill / import_skill** — Manage skills
@@ -5727,7 +5729,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool: create_schedule — Create a new cron schedule
 	if err := mcpAgent.RegisterCustomTool(
 		"create_schedule",
-		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times. Use mode='workshop' with messages to drive execution via the LLM (with per-step notifications).",
+		"Create a new cron schedule for this workflow. The schedule will automatically run the workflow at the specified times. Use mode='workshop' with messages to drive execution via the LLM (with per-step notifications). For optimizer schedules (workshop_mode='optimizer'), the message MUST instruct the agent to optimize steps one-by-one after each completion, skip already-optimized steps, limit retries to 2 per step, and move on after repeated failures to prevent infinite loops.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

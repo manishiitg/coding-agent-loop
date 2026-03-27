@@ -5776,7 +5776,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"messages": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Predefined message queue for workshop mode. Sent one-by-one to the LLM. Example: ['Run the full workflow using run_full_workflow']. Ignored in workflow mode.",
+					"description": "Required when mode='workshop'. Predefined message queue sent one-by-one to the LLM. Messages should reference tools with full parameters. Example: ['Run the full workflow using run_full_workflow(group_id=\"group-1\", iteration=\"iteration-0\")']. Read variables.json for available group IDs.",
 				},
 				"workshop_mode": map[string]interface{}{
 					"type":        "string",
@@ -5823,6 +5823,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			if cronExpr == "" {
 				return "cron_expression is required.", nil
+			}
+			// Validate: workshop mode requires messages
+			if mode == "workshop" && len(messages) == 0 {
+				return "messages is required when mode='workshop'. Provide at least one message, e.g. ['Run the full workflow using run_full_workflow(group_id=\"group-1\")'].", nil
 			}
 			return iwm.schedulerFuncs.CreateSchedule(ctx, iwm.schedulerWorkspacePath, name, cronExpr, timezone, groupIDs, mode, messages, workshopMode)
 		},
@@ -5871,7 +5875,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"messages": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Predefined message queue for workshop mode. Replaces existing messages.",
+					"description": "Replaces existing messages. Messages should reference tools with full parameters, e.g. ['Run the full workflow using run_full_workflow(group_id=\"group-1\")'].",
+				},
+				"workshop_mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Workshop builder mode: 'runner' (default) or 'optimizer'.",
+					"enum":        []string{"runner", "optimizer"},
 				},
 			},
 			"required": []string{"job_id"},

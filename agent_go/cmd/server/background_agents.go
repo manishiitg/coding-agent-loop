@@ -50,6 +50,7 @@ type BackgroundAgent struct {
 	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
 	ReasoningLevel string                `json:"reasoning_level,omitempty"`
 	ModelID        string                `json:"model_id,omitempty"`
+	Metadata       map[string]string     `json:"metadata,omitempty"` // arbitrary key-value pairs (e.g. workshop_mode, step_optimized)
 	cancel         context.CancelFunc
 	mu             sync.RWMutex
 	notified       bool
@@ -191,6 +192,7 @@ type BackgroundAgentSnapshot struct {
 	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
 	ReasoningLevel string                `json:"reasoning_level,omitempty"`
 	ModelID        string                `json:"model_id,omitempty"`
+	Metadata       map[string]string     `json:"metadata,omitempty"`
 }
 
 // GetSnapshot returns a snapshot of the agent state (thread-safe)
@@ -208,12 +210,20 @@ func (a *BackgroundAgent) GetSnapshot() BackgroundAgentSnapshot {
 		CreatedAt:      a.CreatedAt,
 		ReasoningLevel: a.ReasoningLevel,
 		ModelID:        a.ModelID,
+		Metadata:       a.Metadata,
 	}
 	if a.CompletedAt != nil {
 		t := *a.CompletedAt
 		snap.CompletedAt = &t
 	}
 	return snap
+}
+
+// SetMetadata stores arbitrary key-value metadata on the agent (thread-safe).
+func (a *BackgroundAgent) SetMetadata(meta map[string]string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Metadata = meta
 }
 
 // BackgroundAgentRegistry manages background agents across sessions

@@ -152,6 +152,7 @@ type WorkshopChatSession struct {
 	// SetExtraSubAgentNotifier chains a server-side notifier on top of this.
 	workshopNotifier    SubAgentNotifier
 	executionNotifier   WorkshopExecutionNotifier // optional: notifies server when executions start/complete
+	workshopModeOverride string                   // frontend-selected workshop mode
 }
 
 // GetConfig returns the workshop config (for accessing session-aware executors, etc.)
@@ -174,6 +175,12 @@ func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
 // workshop step/background executions in bgAgentRegistry (keeps frontend polling alive).
 func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	s.executionNotifier = n
+}
+
+// SetWorkshopModeOverride sets the frontend-selected workshop mode.
+// This takes priority over auto-detection when building AUTO-NOTIFICATION action hints.
+func (s *WorkshopChatSession) SetWorkshopModeOverride(mode string) {
+	s.workshopModeOverride = mode
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the
@@ -540,6 +547,7 @@ func RegisterWorkshopChatTools(
 		skillFuncs:           session.skillFuncs,
 		listAvailableSecrets: session.listAvailableSecrets,
 		executionNotifier:    session.executionNotifier,
+		workshopModeOverride: session.workshopModeOverride,
 	}
 	registerInteractiveWorkshopTools(iwm, mcpAgent, logger)
 }
@@ -905,9 +913,9 @@ func (b *workflowProgressBridge) HandleEvent(ctx context.Context, event *baseeve
 				if b.session.executionNotifier != nil {
 					b.session.executionNotifier.OnExecutionStart(progressID, fmt.Sprintf("step-%s", stepName))
 					if endEvent.Success {
-						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), truncateResult(result, 500), nil)
+						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), truncateResult(result, 500), nil, nil)
 					} else {
-						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), "", fmt.Errorf("%s", truncateResult(result, 500)))
+						b.session.executionNotifier.OnExecutionComplete(progressID, fmt.Sprintf("step-%s", stepName), "", nil, fmt.Errorf("%s", truncateResult(result, 500)))
 					}
 				}
 

@@ -60,7 +60,7 @@ You break this objective into tasks, delegate them to specialized sub-agents, an
   - **Edge cases / unexpected errors**: Add new tasks to tasks.md as needed to handle them, then continue
   - tasks.md must always reflect true current state
 
-**4. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs, call mark_step_complete(reason). Required to exit.
+**4. COMPLETE** — When SUCCESS CRITERIA is met: verify outputs exist and mark all tasks as [x] in tasks.md. The step auto-completes when all tasks are [x].
 
 ---
 
@@ -115,9 +115,6 @@ Get the full description and instructions for a predefined route. Call this befo
 
 ### get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
 Inspect a sub-agent's internal tool calls and reasoning. MANDATORY when a sub-agent failed or struggled.
-
-### mark_step_complete(reason)
-Signal objective achieved. Required to exit — without this, iterations continue until max.
 
 ---
 
@@ -183,7 +180,6 @@ Previous outputs preserved. Do NOT assume existing completed todos are valid —
 {{if .EnableGenericAgent}}- call_generic_agent(todo_id, instructions, success_criteria{{if .EnableDynamicTierSelection}}, preferred_tier{{end}}{{if .HasBrowserAccess}}, share_browser{{end}})
 {{end}}- get_route_description(route_id)
 - get_sub_agent_conversation(todo_id, from_last_x, offset_last_x)
-- mark_step_complete(reason)
 - execute_shell_command(command)
 {{end}}
 
@@ -213,7 +209,7 @@ The following files from previous steps are available for reading:
 {{else if eq .TasksState "has_pending"}}- Progress: {{.ProgressSummary}}. Dispatch next pending task(s) to sub-agents.
 {{else}}- Progress: {{.ProgressSummary}}. Check if all success criteria are met.
 {{end}}- **Done when**: {{.StepSuccessCriteria}}
-- When done: call mark_step_complete(reason)`)
+- When done: mark all tasks as [x] in tasks.md`)
 
 // WorkflowTodoTaskOrchestratorAgent executes the main todo task orchestration step
 // This agent manages a todo list and delegates work to predefined or generic sub-agents

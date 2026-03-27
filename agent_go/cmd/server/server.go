@@ -4901,6 +4901,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							log.Printf("[WORKFLOW_PHASE] Refreshed enabled group IDs: %v", req.ExecutionOptions.EnabledGroupIDs)
 						}
 
+						// Pass frontend-selected workshop mode so AUTO-NOTIFICATION action hints use the correct mode
+						if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
+							workshopSession.SetWorkshopModeOverride(req.ExecutionOptions.WorkshopMode)
+						}
+
 						// Refresh all settings from manifest in case user edited the workflow
 						if phaseWorkspacePath != "" {
 							refreshManifest, refreshFound, refreshErr := ReadWorkflowManifest(context.Background(), phaseWorkspacePath)
@@ -8366,13 +8371,16 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(execID, name string) {
 	})
 }
 
-func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, err error) {
+func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result string, meta map[string]string, err error) {
 	agent := n.api.bgAgentRegistry.Get(n.sessionID, execID)
 	if agent == nil {
 		return
 	}
 
 	duration := time.Since(agent.CreatedAt)
+	if len(meta) > 0 {
+		agent.SetMetadata(meta)
+	}
 	if err != nil {
 		agent.SetError(err.Error())
 		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
@@ -8722,7 +8730,14 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		} else {
 			resultText = fmt.Sprintf("Status: %s", snap.Status)
 		}
-		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s): %s\n  Result: %s", snap.Name, snap.ID, snap.Status, resultText))
+		workshopMode := ""
+		isStepOptimized := false
+		if snap.Metadata != nil {
+			workshopMode = snap.Metadata["workshop_mode"]
+			isStepOptimized = snap.Metadata["step_optimized"] == "true"
+		}
+		actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, snap.Status == BGAgentFailed)
+		parts = append(parts, fmt.Sprintf("- **%s** (ID: %s): %s\n  Result: %s%s", snap.Name, snap.ID, snap.Status, resultText, actionHint))
 		emittedIDs = append(emittedIDs, agentID)
 	}
 
@@ -8742,6 +8757,34 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 	}
 
 	api.executeSyntheticTurn(sessionID, syntheticMsg)
+}
+
+// buildWorkshopActionHint returns a mode-specific instruction appended to AUTO-NOTIFICATION messages
+// so the agent knows what to do next (e.g. call optimize_step, proceed to next step, etc.).
+func buildWorkshopActionHint(workshopMode string, isOptimized bool, failed bool) string {
+	if failed {
+		switch workshopMode {
+		case "builder":
+			return "\nAction: Investigate the failure. Fix the step description or config, then re-run."
+		case "optimizer":
+			return "\nAction: Reset optimized flag and call optimize_step to analyze the failure."
+		case "runner":
+			return "\nAction: Reset optimized flag (update_step_config(step_id, optimized=false)) and investigate."
+		}
+		return ""
+	}
+	switch workshopMode {
+	case "builder":
+		return "\nAction: Step works. Move on to building/testing the next step."
+	case "optimizer":
+		if isOptimized {
+			return "\nAction: Already optimized. Proceed to next unoptimized step."
+		}
+		return "\nAction: Call optimize_step(step_id) to review learnings and execution quality before marking optimized."
+	case "runner":
+		return "\nAction: Proceed to next step."
+	}
+	return ""
 }
 
 // processBackgroundAgentCompletion injects a synthetic message and triggers a new main agent turn
@@ -8772,9 +8815,19 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 		resultText = fmt.Sprintf("Status: %s", snap.Status)
 	}
 
+	// Append mode-specific action hint so the agent knows what to do next.
+	workshopMode := ""
+	isStepOptimized := false
+	if snap.Metadata != nil {
+		workshopMode = snap.Metadata["workshop_mode"]
+		isStepOptimized = snap.Metadata["step_optimized"] == "true"
+	}
+	isFailed := snap.Status == BGAgentFailed
+	actionHint := buildWorkshopActionHint(workshopMode, isStepOptimized, isFailed)
+
 	syntheticMsg := fmt.Sprintf(
-		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s",
-		snap.Name, snap.ID, snap.Status, resultText)
+		"[AUTO-NOTIFICATION]\nAgent '%s' (ID: %s) completed.\nStatus: %s\nResult:\n%s%s",
+		snap.Name, snap.ID, snap.Status, resultText, actionHint)
 
 	// NOTE: Don't inject syntheticMsg into conversation history here.
 	// handleQuery will add it via StreamWithEvents when the synthetic turn runs.

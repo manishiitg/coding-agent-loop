@@ -1735,30 +1735,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 		hcpo.GetLogger().Info("🔧 Sub-agent execution context not provided - sub-agent tools will not be available")
 	}
 
-	// IMPORTANT: Inject completion tools for step completion signaling
-	// The mark_step_complete tool writes completed.txt so the controller loop can detect completion
-	{
-		completionTools := virtualtools.CreateCompletionTools()
-		completionExecutors := virtualtools.CreateCompletionToolExecutors()
-		completionCategory := virtualtools.GetCompletionToolCategory()
-
-		// Add completion tools to the tools list and register their category
-		for _, tool := range completionTools {
-			toolsToRegister = append(toolsToRegister, tool)
-			if hcpo.ToolCategories != nil {
-				hcpo.ToolCategories[tool.Function.Name] = completionCategory
-			}
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Added completion tool '%s' to todo task orchestrator (category: %s)", tool.Function.Name, completionCategory))
-		}
-
-		// Wrap completion executors with context injection
-		markStepCompleteFunc := hcpo.createMarkStepCompleteFunc(stepPath)
-		for toolName, executor := range completionExecutors {
-			wrappedExecutor := hcpo.wrapCompletionToolExecutor(executor, markStepCompleteFunc)
-			executorsToUse[toolName] = wrappedExecutor
-			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Wrapped completion tool '%s' with mark complete function injection", toolName))
-		}
-	}
+	// NOTE: mark_step_complete tool removed — completion is now detected by checking tasks.md
+	// (all tasks [x] = step done). This eliminates the completed.txt file roundtrip and
+	// avoids path mismatch bugs.
 
 	// Use standard factory pattern - this handles initialization, event bridge connection, and tool registration
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(

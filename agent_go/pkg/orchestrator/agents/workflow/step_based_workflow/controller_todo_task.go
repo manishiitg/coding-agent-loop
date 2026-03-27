@@ -23,12 +23,12 @@ import (
 //  3. Processing tool calls:
 //     - call_sub_agent: Delegate to predefined sub-agents (with learning/prevalidation)
 //     - call_generic_agent: Delegate to generic agent (no learning/prevalidation)
-//  4. Completion detection: LLM writes completed.txt via shell when done
+//  4. Completion detection: all tasks marked [x] in tasks.md
 //  5. Return success status and next step ID
 //
 // Task Management:
 //   - LLM creates/updates tasks.md directly using execute_shell_command
-//   - LLM writes completed.txt when step objective is met
+//   - Step completes when all tasks in tasks.md are [x]
 //   - Sub-agents receive instructions via tool parameters (NOT by reading files)
 //   - Validation reads tasks.md to ensure tasks exist before delegation
 //
@@ -235,13 +235,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 		// Emit route selected event
 		hcpo.emitTodoTaskRouteSelectedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration, response, nil, executionLLM)
 
-		// Process the response based on next_action
-		switch response.NextAction {
-		case "complete":
-			// Orchestrator signaled completion — run pre-validation if schema exists
+		// Check completion after agent execution
+		if response.NextAction == "complete" && response.AllTasksComplete {
+			// All tasks [x] in tasks.md — run pre-validation if schema exists, else done
 			validationSchema := step.GetValidationSchema()
 			if validationSchema != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after orchestrator signaled complete (iteration %d)", taskIteration+1))
+				hcpo.GetLogger().Info(fmt.Sprintf("🔍 Running pre-validation after all tasks completed (iteration %d)", taskIteration+1))
 				preValidationPassed, preValidationReason := hcpo.runTodoTaskPreValidation(ctx, step, stepIndex, todoTaskStepPath, stepExecutionPath)
 
 				if preValidationPassed {
@@ -252,79 +251,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskStep(
 					return true, todoTaskStep.NextStepID, nil
 				}
 
-				// Pre-validation failed — feed back to orchestrator so it can fix remaining issues
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed after orchestrator signaled complete (iteration %d): continuing with feedback", taskIteration+1))
-				validationFeedback := fmt.Sprintf("\n\n---\nSTEP PRE-VALIDATION FAILED (you called mark_step_complete but validation checks did not pass):\n%s\n\nFix the failing checks and call mark_step_complete again when ready.", preValidationReason)
-				lastSubAgentResult = validationFeedback
-				// Continue to next iteration with feedback
+				// Pre-validation failed — feed back to orchestrator so it can fix
+				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Pre-validation failed (iteration %d): continuing with feedback", taskIteration+1))
+				lastSubAgentResult = fmt.Sprintf("\n\n---\nPRE-VALIDATION FAILED (all tasks are [x] but output validation did not pass):\n%s\n\nFix the failing checks — the step will re-run.", preValidationReason)
 			} else {
-				// No validation schema — trust the orchestrator's completion signal
-				if response.AllTasksComplete {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (no validation schema): %s", response.CompletionReason))
-					hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, response.CompletionReason, todoTaskStep.NextStepID)
-					hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
-					return true, todoTaskStep.NextStepID, nil
-				}
-				hcpo.GetLogger().Warn("⚠️ Agent said complete but all_tasks_complete is false, continuing...")
+				// No validation schema — tasks.md all [x] is the completion signal
+				hcpo.GetLogger().Info(fmt.Sprintf("✅ Todo task step complete (all tasks done): %s", response.CompletionReason))
+				hcpo.emitTodoTaskStepCompletedEvent(ctx, step, stepIndex, todoTaskStepPath, taskIteration+1, nil, response.CompletionReason, todoTaskStep.NextStepID)
+				hcpo.emitStepFinishedEvent(ctx, step, stepIndex, todoTaskStepPath, false)
+				return true, todoTaskStep.NextStepID, nil
 			}
-
-		case "delegate":
-			// Delegate to sub-agent via structured output (legacy path)
-			// In the new approach, agent calls call_sub_agent/call_generic_agent tools directly
-			var subAgentResult string
-			var subAgentName string
-
-			if response.UseGenericAgent {
-				// Execute via generic agent
-				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating task %s to generic agent", response.TodoIDToExecute))
-				subAgentResult, _, err = hcpo.executeGenericAgent(
-					ctx,
-					todoTaskStep,
-					stepIndex,
-					todoTaskStepPath,
-					response,
-					allSteps,
-					progress,
-				)
-				subAgentName = "generic"
-			} else if response.SelectedRouteID != "" {
-				// Execute via predefined sub-agent
-				hcpo.GetLogger().Info(fmt.Sprintf("🤖 Delegating task %s to predefined agent: %s", response.TodoIDToExecute, response.SelectedRouteID))
-				subAgentResult, _, err = hcpo.executePredefinedSubAgent(
-					ctx,
-					todoTaskStep,
-					stepIndex,
-					todoTaskStepPath,
-					response,
-					allSteps,
-					progress,
-				)
-				subAgentName = response.SelectedRouteID
-			} else {
-				return false, "", fmt.Errorf("delegate action requires either selected_route_id or use_generic_agent=true")
-			}
-
-			if err != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Sub-agent execution failed: %v", err))
-				subAgentResult = fmt.Sprintf("ERROR: %v", err)
-			}
-
-			// Store results for next iteration
-			lastSubAgentResult = subAgentResult
-			lastSubAgentName = subAgentName
-			lastTodoID = response.TodoIDToExecute
-
-		case "continue":
-			// Continue - agent is managing tasks via shell commands
-			hcpo.GetLogger().Info("📝 Continuing task management...")
-
-			// On the second-to-last iteration, remind the orchestrator to call mark_step_complete
-			if taskIteration == maxIterations-2 {
-				lastSubAgentResult = lastSubAgentResult + "\n\n---\n⚠️ IMPORTANT: This is your LAST iteration. If the objective is met, you MUST call mark_step_complete(reason) now or the step will fail. If the objective is NOT met, focus on the most critical remaining work."
-			}
-
-		default:
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Unknown next_action: %s, continuing...", response.NextAction))
+		} else {
+			// Tasks still pending/in-progress — agent needs more iterations
+			hcpo.GetLogger().Info(fmt.Sprintf("📝 Tasks not all complete (%s), continuing...", response.ProgressSummary))
 		}
 	}
 
@@ -572,7 +511,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectTodoTaskOrchestratorLLM(
 // executeTodoTaskOrchestratorAgent executes the orchestrator agent using the standard factory pattern
 // This ensures proper event bridge connection for sub-event tracking
 // Returns: response, updatedHistory, executionLLM, subAgentExecCtx, error
-// The subAgentExecCtx contains execution state including whether mark_step_complete was called
+// The subAgentExecCtx contains execution state for sub-agent tool calls
 func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 	ctx context.Context,
 	step *TodoTaskPlanStep,
@@ -669,33 +608,42 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeTodoTaskOrchestratorAgent(
 
 	// Execute with tool-based approach (no structured output)
 	// The agent manages tasks via shell (tasks.md) and delegates via call_sub_agent/call_generic_agent
-	// Completion is detected by checking for completed.txt file (written by mark_step_complete tool)
+	// Completion is detected by checking tasks.md — when all tasks are [x] done, the step is complete.
 	_, updatedHistory, err := agent.Execute(ctx, templateVars, conversationHistory)
 	if err != nil {
 		return nil, nil, "", subAgentExecCtx, fmt.Errorf("todo task orchestrator execution failed: %w", err)
 	}
 
-	// Check for completed.txt (written by mark_step_complete tool)
-	// This is the completion signal for steps WITHOUT a ValidationSchema
-	var stepExecutionPath string
+	// Detect completion by checking tasks.md — when all tasks are [x], the step is done.
+	// No need for mark_step_complete tool or completed.txt file.
+	var tasksFilePath string
 	if hcpo.selectedRunFolder != "" {
-		stepExecutionPath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath)
+		tasksFilePath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath, "tasks.md")
 	} else {
-		stepExecutionPath = filepath.Join("execution", stepPath)
+		tasksFilePath = filepath.Join("execution", stepPath, "tasks.md")
 	}
-	completedFilePath := filepath.Join(stepExecutionPath, "completed.txt")
-	completedContent, readErr := hcpo.ReadWorkspaceFile(ctx, completedFilePath)
 
 	response := &TodoTaskResponse{}
-	if readErr == nil && completedContent != "" {
-		response.NextAction = "complete"
-		response.AllTasksComplete = true
-		response.CompletionReason = completedContent
-		response.ProgressSummary = "Step marked as complete by orchestrator"
+	tasksContent, tasksErr := hcpo.ReadWorkspaceFile(ctx, tasksFilePath)
+	if tasksErr == nil && tasksContent != "" {
+		pending := strings.Count(tasksContent, "- [ ]")
+		inProgress := strings.Count(tasksContent, "- [~]")
+		completed := strings.Count(tasksContent, "- [x]")
+		total := pending + inProgress + completed
+		if total > 0 && pending == 0 && inProgress == 0 {
+			response.NextAction = "complete"
+			response.AllTasksComplete = true
+			response.CompletionReason = fmt.Sprintf("All %d/%d tasks completed in tasks.md", completed, total)
+			response.ProgressSummary = fmt.Sprintf("%d/%d completed", completed, total)
+		} else {
+			response.NextAction = "continue"
+			response.AllTasksComplete = false
+			response.ProgressSummary = fmt.Sprintf("%d/%d completed, %d pending, %d in-progress", completed, total, pending, inProgress)
+		}
 	} else {
 		response.NextAction = "continue"
 		response.AllTasksComplete = false
-		response.ProgressSummary = "Execution completed via tools"
+		response.ProgressSummary = "tasks.md not found"
 	}
 
 	return response, updatedHistory, executionLLM, subAgentExecCtx, nil

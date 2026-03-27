@@ -1131,8 +1131,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       // Skip backend user_message events when we already have a frontend-created one
       // (avoids duplicate user message bubbles in the chat)
+      // Exception: [AUTO-NOTIFICATION] synthetic turn messages must always pass through.
       if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
-        continue
+        const msgContent = (innerData?.content ?? agentEvent?.content ?? '') as string
+        if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) {
+          continue
+        }
       }
 
       if (event.type === 'streaming_start') {
@@ -1189,7 +1193,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
       // Allow backend user_message events through when there's no frontend-created one
       // (this renders synthetic turn messages like [AUTO-NOTIFICATION] in the chat)
-      if (event.type === 'user_message' && hasFrontendUserMessage) continue
+      if (event.type === 'user_message' && hasFrontendUserMessage) {
+        const msgContent = (innerData?.content ?? agentEvent?.content ?? '') as string
+        if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) continue
+      }
 
       if (!isSubAgentEvent && (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'agent_end' || event.type === 'conversation_end' || event.type === 'conversation_error' || event.type === 'context_cancelled')) {
         hasCompletionEvent = true

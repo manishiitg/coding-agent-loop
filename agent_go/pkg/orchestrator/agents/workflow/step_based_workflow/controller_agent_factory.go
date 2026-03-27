@@ -645,8 +645,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 	}
 
 	// ── 5. NO VALID CONFIG ──────────────────────────────────────────────────
-	// Tiered mode is required. If we reach here, something is misconfigured.
-	panic(fmt.Sprintf("selectExecutionLLM: no valid LLM configuration found for step %s — tier resolver is required", stepPath))
+	// Return nil so the caller can surface a user-visible error instead of crashing.
+	hcpo.GetLogger().Warn(fmt.Sprintf("❌ selectExecutionLLM: no valid LLM configuration found for step %s — tier resolver is required", stepPath))
+	return nil
 }
 
 // applyStepConfigToAgentConfig applies step-specific configuration overrides to agent config

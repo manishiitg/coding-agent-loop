@@ -240,14 +240,7 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 
 		// Register in scheduler if enabled
 		if newSched.Enabled {
-			sctx := &ScheduleContext{
-				WorkspacePath: req.WorkspacePath,
-				WorkflowID:    manifest.ID,
-				WorkflowLabel: manifest.Label,
-				Schedule:      newSched,
-				Capabilities:  manifest.Capabilities,
-				Query:         manifest.Label,
-			}
+			sctx := buildScheduleContext(req.WorkspacePath, manifest, newSched)
 			if err := svc.LoadSchedule(sctx); err != nil {
 				scheduleLogf("[SCHEDULER] Failed to load new schedule %s: %v", newSched.ID, err)
 			}
@@ -510,7 +503,7 @@ func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		svc.StopRunningJob(id)
 
 		// Update runtime state
-		svc.mu.Lock()
+		svc.runtimeStatesMu.Lock()
 		s := svc.getRuntimeStateLocked(id)
 		durationMs := int64(0)
 		if s.LastRunAt != nil {
@@ -519,7 +512,7 @@ func stopScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		s.LastStatus = "error"
 		s.LastError = "stopped by user"
 		s.LastDurationMs = &durationMs
-		svc.mu.Unlock()
+		svc.runtimeStatesMu.Unlock()
 
 		// Update latest run entry
 		workspacePath := svc.GetWorkspaceForSchedule(id)

@@ -9881,14 +9881,7 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 			}
 			// Load into gocron scheduler
 			if api.scheduler != nil {
-				sctx := &ScheduleContext{
-					WorkspacePath: workspacePath,
-					WorkflowID:    manifest.ID,
-					WorkflowLabel: manifest.Label,
-					Schedule:      newSched,
-					Capabilities:  manifest.Capabilities,
-					Query:         manifest.Label, // objective comes from variables.json at execution time
-				}
+				sctx := buildScheduleContext(workspacePath, manifest, newSched)
 				if err := api.scheduler.LoadSchedule(sctx); err != nil {
 					return fmt.Sprintf("Schedule created (ID: %s) but failed to activate: %v", newSched.ID, err), nil
 				}

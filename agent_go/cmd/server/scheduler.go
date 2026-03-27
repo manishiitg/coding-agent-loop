@@ -4,101 +4,96 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"regexp"
-	"sort"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/go-co-op/gocron/v2"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
-
-	"mcp-agent-builder-go/agent_go/pkg/database"
 )
 
-// SchedulerService manages cron job execution using gocron
+// ScheduleContext bundles everything needed to identify and execute a schedule.
+type ScheduleContext struct {
+	WorkspacePath string
+	WorkflowID    string
+	WorkflowLabel string
+	Schedule      WorkflowSchedule
+	Capabilities  WorkflowCapabilities
+}
+
+// ScheduleRuntimeState holds in-memory runtime state for a schedule (not persisted in manifest).
+type ScheduleRuntimeState struct {
+	LastStatus          string     `json:"last_status,omitempty"`
+	LastRunAt           *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt           *time.Time `json:"next_run_at,omitempty"`
+	LastSessionID       string     `json:"last_session_id,omitempty"`
+	LastError           string     `json:"last_error,omitempty"`
+	LastDurationMs      *int64     `json:"last_duration_ms,omitempty"`
+	RunCount            int        `json:"run_count"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+}
+
+// SchedulerService manages cron job execution using gocron.
+// All schedule configuration comes from workflow.json manifests — no database dependency.
 type SchedulerService struct {
-	db        database.Database
 	api       *StreamingAPI
 	scheduler gocron.Scheduler
 	mu        sync.Mutex
-	jobIDs    map[string]uuid.UUID // schedJobID → gocron job UUID
+	jobIDs    map[string]uuid.UUID // scheduleID → gocron job UUID
+
+	// In-memory runtime state per schedule (survives within server lifetime, reset on restart)
+	runtimeStates   map[string]*ScheduleRuntimeState
+	runtimeStatesMu sync.RWMutex
+
+	// Schedule-to-workspace index for quick lookups
+	workspaceIndex   map[string]string // scheduleID → workspacePath
+	workspaceIndexMu sync.RWMutex
 }
 
-// NewSchedulerService creates a new SchedulerService
-func NewSchedulerService(db database.Database, api *StreamingAPI) *SchedulerService {
+// NewSchedulerService creates a new manifest-based SchedulerService.
+func NewSchedulerService(api *StreamingAPI) *SchedulerService {
 	return &SchedulerService{
-		db:     db,
-		api:    api,
-		jobIDs: make(map[string]uuid.UUID),
+		api:            api,
+		jobIDs:         make(map[string]uuid.UUID),
+		runtimeStates:  make(map[string]*ScheduleRuntimeState),
+		workspaceIndex: make(map[string]string),
 	}
 }
 
-// Start loads all enabled jobs and starts the scheduler
+// Start scans all workspace folders for workflow.json manifests, loads enabled schedules,
+// and starts the gocron scheduler.
 func (s *SchedulerService) Start(ctx context.Context) error {
-	scheduleLogf("[SCHEDULER] Starting scheduler service...")
+	scheduleLogf("[SCHEDULER] Starting manifest-based scheduler service...")
 	scheduler, err := gocron.NewScheduler()
 	if err != nil {
 		return fmt.Errorf("failed to create scheduler: %w", err)
 	}
 	s.scheduler = scheduler
 
-	// Clean up stale "running" statuses from previous server crash/restart
-	allJobs, _, err := s.db.ListScheduledJobs(ctx, 1000, 0, nil, nil)
-	if err != nil {
-		scheduleLogf("[SCHEDULER] Failed to list jobs for stale cleanup: %v", err)
-	} else {
-		for i := range allJobs {
-			if allJobs[i].LastStatus == "running" {
-				scheduleLogf("[SCHEDULER] Resetting stale running status for job %s (%s)", allJobs[i].ID, allJobs[i].Name)
-				lastRun := time.Now()
-				if allJobs[i].LastRunAt != nil {
-					lastRun = *allJobs[i].LastRunAt
-				}
-				if err := s.db.UpdateScheduledJobRunStatus(ctx, allJobs[i].ID, lastRun, allJobs[i].NextRunAt, allJobs[i].LastSessionID, "error", "interrupted by server restart", allJobs[i].LastDurationMs); err != nil {
-					scheduleLogf("[SCHEDULER] Failed to reset stale status for job %s: %v", allJobs[i].ID, err)
-				}
-			}
-			// Also clean up stale run history entries for this job
-			runs, _, runErr := s.db.ListScheduledJobRuns(ctx, allJobs[i].ID, 100, 0)
-			if runErr == nil {
-				for _, run := range runs {
-					if run.Status == "running" {
-						scheduleLogf("[SCHEDULER] Resetting stale run entry %s for job %s", run.ID, allJobs[i].ID)
-						dur := int64(0)
-						if !run.StartedAt.IsZero() {
-							dur = time.Since(run.StartedAt).Milliseconds()
-						}
-						_ = s.db.UpdateScheduledJobRun(ctx, run.ID, "error", "interrupted by server restart", &dur, run.RunFolder, run.SessionID)
-					}
-				}
-			}
-		}
-	}
+	// Discover all workflows by scanning workspace-docs/Workflow/*/workflow.json
+	workflows := s.discoverWorkflows(ctx)
+	scheduleLogf("[SCHEDULER] Discovered %d workflows with manifests", len(workflows))
 
-	// Load all enabled jobs from DB
-	jobs, _, err := s.db.ListScheduledJobs(ctx, 1000, 0, nil, boolPtr(true))
-	if err != nil {
-		scheduleLogf("[SCHEDULER] Failed to load scheduled jobs: %v", err)
-	} else {
-		for i := range jobs {
-			if err := s.LoadJob(&jobs[i]); err != nil {
-				scheduleLogf("[SCHEDULER] Failed to load job %s (%s): %v", jobs[i].ID, jobs[i].Name, err)
+	loaded := 0
+	for _, wf := range workflows {
+		for _, sched := range wf.Manifest.Schedules {
+			if !sched.Enabled {
+				continue
+			}
+			sctx := buildScheduleContext(wf.WorkspacePath, wf.Manifest, sched)
+			if err := s.LoadSchedule(sctx); err != nil {
+				scheduleLogf("[SCHEDULER] Failed to load schedule %s (%s): %v", sched.ID, sched.Name, err)
+			} else {
+				loaded++
 			}
 		}
-		scheduleLogf("[SCHEDULER] Loaded %d scheduled jobs", len(jobs))
 	}
 
 	s.scheduler.Start()
-	scheduleLogf("[SCHEDULER] ✅ Started with %d jobs. Server time: %s, timezone: %s",
-		len(s.jobIDs), time.Now().Format(time.RFC3339), time.Now().Location().String())
-
-	// Log all registered jobs with next run times for debugging
-	for jobID, gocronID := range s.jobIDs {
-		scheduleLogf("[SCHEDULER] Active job: db_id=%s gocron_id=%s", jobID, gocronID)
-	}
+	scheduleLogf("[SCHEDULER] ✅ Started with %d schedules. Server time: %s, timezone: %s",
+		loaded, time.Now().Format(time.RFC3339), time.Now().Location().String())
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -106,7 +101,62 @@ func (s *SchedulerService) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop shuts down the scheduler
+// discoveredWorkflow holds a manifest + its workspace path.
+type discoveredWorkflow struct {
+	WorkspacePath string
+	Manifest      *WorkflowManifest
+}
+
+// discoverWorkflows scans workspace-docs/Workflow/ for workflow.json files.
+func (s *SchedulerService) discoverWorkflows(ctx context.Context) []discoveredWorkflow {
+	var results []discoveredWorkflow
+
+	// The workspace root is workspace-docs/ relative to the working directory
+	workflowRoot := filepath.Join("../workspace-docs", "Workflow")
+	entries, err := os.ReadDir(workflowRoot)
+	if err != nil {
+		// Try without ../ prefix (server may already be in root)
+		workflowRoot = filepath.Join("workspace-docs", "Workflow")
+		entries, err = os.ReadDir(workflowRoot)
+		if err != nil {
+			scheduleLogf("[SCHEDULER] Cannot scan workflow directory: %v", err)
+			return nil
+		}
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Workspace path is relative: "Workflow/<name>"
+		wsPath := "Workflow/" + entry.Name()
+		manifest, found, mErr := ReadWorkflowManifest(ctx, wsPath)
+		if mErr != nil || !found {
+			continue
+		}
+		if len(manifest.Schedules) > 0 {
+			results = append(results, discoveredWorkflow{
+				WorkspacePath: wsPath,
+				Manifest:      manifest,
+			})
+		}
+	}
+
+	return results
+}
+
+// buildScheduleContext creates a ScheduleContext from a manifest and schedule.
+func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule) *ScheduleContext {
+	return &ScheduleContext{
+		WorkspacePath: workspacePath,
+		WorkflowID:    manifest.ID,
+		WorkflowLabel: manifest.Label,
+		Schedule:      sched,
+		Capabilities:  manifest.Capabilities,
+	}
+}
+
+// Stop shuts down the scheduler.
 func (s *SchedulerService) Stop() {
 	if s.scheduler != nil {
 		if err := s.scheduler.Shutdown(); err != nil {
@@ -115,34 +165,36 @@ func (s *SchedulerService) Stop() {
 	}
 }
 
-// LoadJob adds or updates a job in gocron
-func (s *SchedulerService) LoadJob(job *database.ScheduledJob) error {
+// LoadSchedule registers a schedule in gocron from a ScheduleContext.
+func (s *SchedulerService) LoadSchedule(sctx *ScheduleContext) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	sched := sctx.Schedule
+
 	// Remove existing gocron job if any
-	if existingID, ok := s.jobIDs[job.ID]; ok {
+	if existingID, ok := s.jobIDs[sched.ID]; ok {
 		if err := s.scheduler.RemoveJob(existingID); err != nil {
-			scheduleLogf("[SCHEDULER] Warning: failed to remove old gocron job for %s: %v", job.ID, err)
+			scheduleLogf("[SCHEDULER] Warning: failed to remove old gocron job for %s: %v", sched.ID, err)
 		}
-		delete(s.jobIDs, job.ID)
+		delete(s.jobIDs, sched.ID)
 	}
 
-	if !job.Enabled {
+	if !sched.Enabled {
 		return nil
 	}
 
-	// Build cron expression with timezone prefix if non-UTC
-	cronExpr := job.CronExpression
-	if job.Timezone != "" && job.Timezone != "UTC" {
-		cronExpr = fmt.Sprintf("CRON_TZ=%s %s", job.Timezone, job.CronExpression)
+	// Build cron expression with timezone prefix
+	cronExpr := sched.CronExpression
+	if sched.Timezone != "" && sched.Timezone != "UTC" {
+		cronExpr = fmt.Sprintf("CRON_TZ=%s %s", sched.Timezone, sched.CronExpression)
 	}
 
-	jobCopy := *job
+	sctxCopy := *sctx
 	gocronJob, err := s.scheduler.NewJob(
 		gocron.CronJob(cronExpr, false),
 		gocron.NewTask(func() {
-			s.triggerJob(&jobCopy)
+			s.triggerSchedule(&sctxCopy)
 		}),
 		gocron.WithSingletonMode(gocron.LimitModeReschedule),
 	)
@@ -150,17 +202,46 @@ func (s *SchedulerService) LoadJob(job *database.ScheduledJob) error {
 		return fmt.Errorf("failed to create gocron job: %w", err)
 	}
 
-	s.jobIDs[job.ID] = gocronJob.ID()
-	nextRun := s.getNextRunTime(job)
+	s.jobIDs[sched.ID] = gocronJob.ID()
+
+	// Update workspace index
+	s.workspaceIndexMu.Lock()
+	s.workspaceIndex[sched.ID] = sctx.WorkspacePath
+	s.workspaceIndexMu.Unlock()
+
+	// Initialize runtime state with next run
+	nextRun := getNextRunTime(sched.CronExpression, sched.Timezone)
+	state := s.getOrCreateRuntimeState(sched.ID)
+	state.NextRunAt = nextRun
+
 	nextRunStr := "unknown"
 	if nextRun != nil {
 		nextRunStr = nextRun.Format(time.RFC3339)
 	}
-	scheduleLogf("[SCHEDULER] Registered job %s (%s) cron=%q timezone=%s next_run=%s enabled=%v", job.ID, job.Name, job.CronExpression, job.Timezone, nextRunStr, job.Enabled)
+	scheduleLogf("[SCHEDULER] Registered schedule %s (%s) cron=%q timezone=%s next_run=%s",
+		sched.ID, sched.Name, sched.CronExpression, sched.Timezone, nextRunStr)
 	return nil
 }
 
-// RemoveJob removes a job from gocron
+// ReloadSchedule reloads a schedule from its manifest after it's been updated.
+func (s *SchedulerService) ReloadSchedule(ctx context.Context, workspacePath string, scheduleID string) error {
+	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found {
+		return fmt.Errorf("failed to read manifest from %s: %w", workspacePath, err)
+	}
+
+	// Find the schedule
+	for _, sched := range manifest.Schedules {
+		if sched.ID == scheduleID {
+			return s.LoadSchedule(buildScheduleContext(workspacePath, manifest, sched))
+		}
+	}
+
+	// Schedule not found — remove it from gocron
+	return s.RemoveJob(scheduleID)
+}
+
+// RemoveJob removes a schedule from gocron.
 func (s *SchedulerService) RemoveJob(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,51 +252,82 @@ func (s *SchedulerService) RemoveJob(id string) error {
 		}
 		delete(s.jobIDs, id)
 	}
+
+	s.workspaceIndexMu.Lock()
+	delete(s.workspaceIndex, id)
+	s.workspaceIndexMu.Unlock()
+
 	return nil
 }
 
-// TriggerNow triggers a job immediately (for manual trigger API).
-// It marks the job as running and launches execution in a goroutine so the API responds immediately.
-func (s *SchedulerService) TriggerNow(id string) (string, error) {
-	ctx := context.Background()
-	job, err := s.db.GetScheduledJob(ctx, id)
-	if err != nil {
-		return "", fmt.Errorf("failed to get scheduled job: %w", err)
+// GetRuntimeState returns the in-memory runtime state for a schedule.
+func (s *SchedulerService) GetRuntimeState(scheduleID string) ScheduleRuntimeState {
+	s.runtimeStatesMu.RLock()
+	defer s.runtimeStatesMu.RUnlock()
+	if state, ok := s.runtimeStates[scheduleID]; ok {
+		return *state
 	}
-	if job == nil {
-		return "", fmt.Errorf("scheduled job not found: %s", id)
+	return ScheduleRuntimeState{}
+}
+
+// GetWorkspaceForSchedule returns the workspace path for a schedule ID.
+func (s *SchedulerService) GetWorkspaceForSchedule(scheduleID string) string {
+	s.workspaceIndexMu.RLock()
+	defer s.workspaceIndexMu.RUnlock()
+	return s.workspaceIndex[scheduleID]
+}
+
+// TriggerNow triggers a schedule immediately (for manual trigger API).
+func (s *SchedulerService) TriggerNow(workspacePath string, scheduleID string) (string, error) {
+	ctx := context.Background()
+
+	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found {
+		return "", fmt.Errorf("failed to read manifest from %s: %w", workspacePath, err)
+	}
+
+	var sched *WorkflowSchedule
+	for i := range manifest.Schedules {
+		if manifest.Schedules[i].ID == scheduleID {
+			sched = &manifest.Schedules[i]
+			break
+		}
+	}
+	if sched == nil {
+		return "", fmt.Errorf("schedule %s not found in manifest at %s", scheduleID, workspacePath)
 	}
 
 	// Prevent concurrent runs
-	if job.LastStatus == "running" {
-		return "", fmt.Errorf("job is already running (session: %s)", job.LastSessionID)
+	state := s.getOrCreateRuntimeState(scheduleID)
+	if state.LastStatus == "running" {
+		return "", fmt.Errorf("job is already running (session: %s)", state.LastSessionID)
 	}
 
-	// Mark as running immediately so the UI reflects it
+	// Mark as running
 	startTime := time.Now().UTC()
-	if err := s.db.UpdateScheduledJobRunStatus(ctx, job.ID, startTime, job.NextRunAt, "", "running", "", nil); err != nil {
-		scheduleLogf("[SCHEDULER] Failed to set running status for job %s: %v", job.ID, err)
-	}
+	state.LastStatus = "running"
+	state.LastRunAt = &startTime
 
-	// Run in background so the API responds immediately
+	sctx := buildScheduleContext(workspacePath, manifest, *sched)
+
 	go func() {
-		if _, err := s.runJob(context.Background(), job); err != nil {
-			scheduleLogf("[SCHEDULER] Triggered job %s failed: %v", job.ID, err)
+		if _, err := s.runJob(context.Background(), sctx); err != nil {
+			scheduleLogf("[SCHEDULER] Triggered job %s failed: %v", scheduleID, err)
 		}
 	}()
 
 	return "triggered", nil
 }
 
-// StopRunningJob stops a running scheduled job by canceling its session
-func (s *SchedulerService) StopRunningJob(job *database.ScheduledJob) {
-	if job.LastSessionID == "" {
+// StopRunningJob stops a running scheduled job by canceling its session.
+func (s *SchedulerService) StopRunningJob(scheduleID string) {
+	state := s.GetRuntimeState(scheduleID)
+	sessionID := state.LastSessionID
+	if sessionID == "" {
 		return
 	}
 
-	// Cancel the agent execution via the StreamingAPI
-	sessionID := job.LastSessionID
-	scheduleLogf("[SCHEDULER] Stopping running job %s (session: %s)", job.ID, sessionID)
+	scheduleLogf("[SCHEDULER] Stopping running job %s (session: %s)", scheduleID, sessionID)
 
 	// Cancel agent execution context
 	s.api.agentCancelMux.Lock()
@@ -225,7 +337,7 @@ func (s *SchedulerService) StopRunningJob(job *database.ScheduledJob) {
 	}
 	s.api.agentCancelMux.Unlock()
 
-	// Cancel workflow orchestrator contexts for this session
+	// Cancel workflow orchestrator contexts
 	s.api.sessionQueryIDMux.Lock()
 	queryIDs := s.api.sessionQueryIDs[sessionID]
 	delete(s.api.sessionQueryIDs, sessionID)
@@ -245,221 +357,462 @@ func (s *SchedulerService) StopRunningJob(job *database.ScheduledJob) {
 	// Cancel background agents
 	s.api.bgAgentRegistry.CancelAll(sessionID)
 
-	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", job.ID, sessionID)
+	// Update runtime state
+	s.runtimeStatesMu.Lock()
+	if st, ok := s.runtimeStates[scheduleID]; ok {
+		st.LastStatus = "stopped"
+	}
+	s.runtimeStatesMu.Unlock()
+
+	scheduleLogf("[SCHEDULER] Stopped job %s (session: %s)", scheduleID, sessionID)
 }
 
-// triggerJob is called by gocron when a cron fires
-func (s *SchedulerService) triggerJob(job *database.ScheduledJob) {
-	ctx := context.Background()
-	scheduleLogf("[SCHEDULER] ⏰ Cron fired for job %s (%s) at %s", job.ID, job.Name, time.Now().Format(time.RFC3339))
+// triggerSchedule is called by gocron when a cron fires.
+func (s *SchedulerService) triggerSchedule(sctx *ScheduleContext) {
+	schedID := sctx.Schedule.ID
+	scheduleLogf("[SCHEDULER] ⏰ Cron fired for %s (%s) at %s", schedID, sctx.Schedule.Name, time.Now().Format(time.RFC3339))
 
-	// Reload job from DB to get current config
-	currentJob, err := s.db.GetScheduledJob(ctx, job.ID)
-	if err != nil {
-		scheduleLogf("[SCHEDULER] ❌ Failed to reload job %s from DB: %v", job.ID, err)
-		return
-	}
-	if currentJob == nil {
-		scheduleLogf("[SCHEDULER] ❌ Job %s not found in DB, skipping", job.ID)
-		return
-	}
-	if !currentJob.Enabled {
-		scheduleLogf("[SCHEDULER] ⏭️ Job %s (%s) is disabled, skipping", job.ID, currentJob.Name)
+	// Reload manifest for latest config
+	manifest, found, err := ReadWorkflowManifest(context.Background(), sctx.WorkspacePath)
+	if err != nil || !found {
+		scheduleLogf("[SCHEDULER] ❌ Failed to reload manifest for %s: %v", schedID, err)
 		return
 	}
 
-	// Prevent concurrent runs — skip if already running
-	if currentJob.LastStatus == "running" {
-		scheduleLogf("[SCHEDULER] ⏭️ Job %s (%s) is already running (session: %s, started: %v), skipping this trigger",
-			job.ID, currentJob.Name, currentJob.LastSessionID, currentJob.LastRunAt)
+	// Find current schedule in manifest (may have been updated)
+	var currentSched *WorkflowSchedule
+	for i := range manifest.Schedules {
+		if manifest.Schedules[i].ID == schedID {
+			currentSched = &manifest.Schedules[i]
+			break
+		}
+	}
+	if currentSched == nil {
+		scheduleLogf("[SCHEDULER] ❌ Schedule %s not found in manifest, skipping", schedID)
+		return
+	}
+	if !currentSched.Enabled {
+		scheduleLogf("[SCHEDULER] ⏭️ Schedule %s is disabled, skipping", schedID)
 		return
 	}
 
-	scheduleLogf("[SCHEDULER] 🚀 Starting job %s (%s) preset=%s", job.ID, currentJob.Name, currentJob.PresetQueryID)
-	sessionID, err := s.runJob(ctx, currentJob)
-	if err != nil {
-		scheduleLogf("[SCHEDULER] ❌ Job %s (%s) failed: %v", job.ID, currentJob.Name, err)
+	// Prevent concurrent runs
+	state := s.GetRuntimeState(schedID)
+	if state.LastStatus == "running" {
+		scheduleLogf("[SCHEDULER] ⏭️ Schedule %s is already running (session: %s), skipping", schedID, state.LastSessionID)
+		return
+	}
+
+	// Update context with fresh manifest data
+	freshCtx := buildScheduleContext(sctx.WorkspacePath, manifest, *currentSched)
+
+	scheduleLogf("[SCHEDULER] 🚀 Starting %s (%s)", schedID, currentSched.Name)
+	if _, err := s.runJob(context.Background(), freshCtx); err != nil {
+		scheduleLogf("[SCHEDULER] ❌ %s failed: %v", schedID, err)
 	} else {
-		scheduleLogf("[SCHEDULER] ✅ Job %s (%s) completed successfully, session=%s", job.ID, currentJob.Name, sessionID)
+		scheduleLogf("[SCHEDULER] ✅ %s completed", schedID)
 	}
 }
 
-// runJob marks the job as running, executes it, and updates the final status with duration.
-func (s *SchedulerService) runJob(ctx context.Context, job *database.ScheduledJob) (string, error) {
+// runJob executes a scheduled job: updates runtime state, creates run history, executes, updates results.
+func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext) (string, error) {
+	schedID := sctx.Schedule.ID
 	startTime := time.Now().UTC()
-	scheduleLogf("[SCHEDULER] runJob starting for %s (%s) at %s, groups=%v", job.ID, job.Name, startTime.Format(time.RFC3339), job.GroupIDs)
+	scheduleLogf("[SCHEDULER] runJob starting for %s (%s) at %s, groups=%v",
+		schedID, sctx.Schedule.Name, startTime.Format(time.RFC3339), sctx.Schedule.GroupIDs)
 
-	// Mark as running before execution
-	if err := s.db.UpdateScheduledJobRunStatus(ctx, job.ID, startTime, job.NextRunAt, "", "running", "", nil); err != nil {
-		scheduleLogf("[SCHEDULER] ❌ Failed to set running status for job %s: %v", job.ID, err)
-	}
+	// Update runtime state to running
+	state := s.getOrCreateRuntimeState(schedID)
+	state.LastStatus = "running"
+	state.LastRunAt = &startTime
+	state.LastSessionID = ""
+	state.LastError = ""
 
-	// Create a run history entry
+	// Create run history entry (file-based)
 	runID := uuid.New().String()
-	run := &database.ScheduledJobRun{
-		ID:        runID,
-		JobID:     job.ID,
-		SessionID: "",
-		Status:    "running",
-		GroupIDs:  job.GroupIDs,
-		StartedAt: startTime,
+	run := &ScheduleRunEntry{
+		ID:         runID,
+		ScheduleID: schedID,
+		Status:     "running",
+		GroupIDs:   sctx.Schedule.GroupIDs,
+		StartedAt:  startTime,
 	}
-	if err := s.db.CreateScheduledJobRun(ctx, run); err != nil {
-		scheduleLogf("[SCHEDULER] Failed to create run entry for job %s: %v", job.ID, err)
+	if err := AppendScheduleRun(ctx, sctx.WorkspacePath, run); err != nil {
+		scheduleLogf("[SCHEDULER] Failed to create run entry for %s: %v", schedID, err)
 	}
 
-	// Snapshot iteration folders before execution to detect the new one
-	workspacePath := s.getJobWorkspacePath(ctx, job)
-	foldersBefore := s.listIterationFolders(workspacePath)
+	// Execute
+	sessionID, runFolder, execErr := s.executeJob(ctx, sctx, runID)
 
-	sessionID, execErr := s.executeJob(ctx, job)
-
-	// Calculate duration and next run
+	// Calculate results
 	durationMs := time.Since(startTime).Milliseconds()
-	nextRun := s.getNextRunTime(job)
+	nextRun := getNextRunTime(sctx.Schedule.CronExpression, sctx.Schedule.Timezone)
 
 	status := "success"
 	errMsg := ""
 	if execErr != nil {
 		status = "error"
 		errMsg = execErr.Error()
-		scheduleLogf("[SCHEDULER] Job %s failed in %dms: %v", job.ID, durationMs, execErr)
+		scheduleLogf("[SCHEDULER] %s failed in %dms: %v", schedID, durationMs, execErr)
 	} else {
-		scheduleLogf("[SCHEDULER] Job %s completed in %dms, session: %s", job.ID, durationMs, sessionID)
+		scheduleLogf("[SCHEDULER] %s completed in %dms, session: %s, folder: %s", schedID, durationMs, sessionID, runFolder)
 	}
 
-	if err := s.db.UpdateScheduledJobRunStatus(ctx, job.ID, startTime, nextRun, sessionID, status, errMsg, &durationMs); err != nil {
-		scheduleLogf("[SCHEDULER] Failed to update run status for job %s: %v", job.ID, err)
+	// Update runtime state
+	state.LastStatus = status
+	state.LastSessionID = sessionID
+	state.LastError = errMsg
+	state.LastDurationMs = &durationMs
+	state.NextRunAt = nextRun
+	state.RunCount++
+	if status == "error" {
+		state.ConsecutiveFailures++
+	} else {
+		state.ConsecutiveFailures = 0
 	}
 
-	// Detect new iteration folder by comparing before/after
-	runFolder := ""
-	foldersAfter := s.listIterationFolders(workspacePath)
-	for _, f := range foldersAfter {
-		found := false
-		for _, fb := range foldersBefore {
-			if f == fb {
-				found = true
-				break
-			}
-		}
-		if !found {
-			runFolder = f
-			break
-		}
-	}
-
-	// Update the run history entry with results
-	if err := s.db.UpdateScheduledJobRun(ctx, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
-		scheduleLogf("[SCHEDULER] Failed to update run entry for job %s: %v", job.ID, err)
+	// Update run history entry
+	if err := UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
+		scheduleLogf("[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 	}
 
 	return sessionID, execErr
 }
 
-// executeJob creates a session and runs the job's preset
-func (s *SchedulerService) executeJob(ctx context.Context, job *database.ScheduledJob) (string, error) {
-	// Load preset from DB
-	preset, err := s.db.GetPresetQuery(ctx, job.PresetQueryID)
-	if err != nil {
-		return "", fmt.Errorf("failed to get preset query %s: %w", job.PresetQueryID, err)
-	}
-	if preset == nil {
-		return "", fmt.Errorf("preset query not found: %s", job.PresetQueryID)
+// executeJob builds a session request from the manifest and runs it.
+// Returns (sessionID, runFolder, error).
+func (s *SchedulerService) executeJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
+	// Dispatch to workshop mode if configured
+	if sctx.Schedule.Mode == "workshop" {
+		return s.executeWorkshopJob(ctx, sctx, runID)
 	}
 
-	// Build base request from preset.
-	// handleQuery loads most config (servers, tools, skills, browser, code exec mode, preset LLM)
-	// from the preset via preset_query_id, so we only need to pass what it can't load itself.
-	query := preset.Query
-	if query == "" {
-		query = preset.Label
-	}
+	query := sctx.WorkflowLabel
 	if query == "" {
 		query = "Execute workflow"
 	}
+
 	reqMap := map[string]interface{}{
-		"query":           query,
-		"agent_mode":      preset.AgentMode,
-		"preset_query_id": preset.ID,
-		"triggered_by":    "cron",
+		"query":                   query,
+		"agent_mode":              "workflow",
+		"selected_folder":         sctx.WorkspacePath,
+		"triggered_by":            "cron",
+		"servers":                 sctx.Capabilities.SelectedServers,
+		"selected_tools":          sctx.Capabilities.SelectedTools,
+		"selected_skills":         sctx.Capabilities.SelectedSkills,
+		"browser_mode":            sctx.Capabilities.BrowserMode,
+		"use_code_execution_mode": sctx.Capabilities.UseCodeExecutionMode,
+		"use_tool_search_mode":    sctx.Capabilities.UseToolSearchMode,
 	}
 
-	// Pass workspace folder (required for workflow mode)
-	if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
-		reqMap["selected_folder"] = preset.SelectedFolder.String
+	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
+
+	// Execution options
+	execOpts := map[string]interface{}{
+		"run_mode":           "create_new_runs_always",
+		"execution_strategy": "start_from_beginning",
+	}
+	if len(sctx.Schedule.GroupIDs) > 0 {
+		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
+	}
+	reqMap["execution_options"] = execOpts
+
+	// Generate session ID
+	idPrefix := sctx.Schedule.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	sessionID := fmt.Sprintf("sched_%s_%d", idPrefix, time.Now().UnixNano())
+
+	// Update runtime state with session
+	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
+	state.LastSessionID = sessionID
+
+	// Update run entry with session_id immediately
+	if runID != "" {
+		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, "", sessionID)
 	}
 
-	// Pass LLM config with API keys from server environment.
-	// handleQuery uses req.LLMConfig as the orchestrator's base/fallback LLM (with API keys);
-	// the preset's agent-specific LLMs (execution/validation/learning) are loaded separately
-	// by handleQuery from preset_query_id, but they still need the base LLM's API keys.
-	if len(preset.LLMConfig) > 0 {
-		var presetLLM database.PresetLLMConfig
-		if err := json.Unmarshal(preset.LLMConfig, &presetLLM); err == nil && presetLLM.Provider != "" && presetLLM.ModelID != "" {
+	scheduleLogf("[SCHEDULER] executeJob for %s (%s): session=%s workspace=%s",
+		sctx.Schedule.ID, sctx.Schedule.Name, sessionID, sctx.WorkspacePath)
+
+	runErr := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil)
+	if runErr != nil {
+		return sessionID, "", fmt.Errorf("session execution failed: %w", runErr)
+	}
+
+	// Wait for workflow orchestrator to finish (background goroutines)
+	detectedFolder, waitErr := s.waitForWorkflowComplete(ctx, sessionID, runID, sctx.WorkspacePath)
+	if waitErr != nil {
+		scheduleLogf("[SCHEDULER] ⚠️ Workflow wait interrupted for %s: %v", sctx.Schedule.ID, waitErr)
+	}
+
+	return sessionID, detectedFolder, nil
+}
+
+// executeWorkshopJob runs a workflow via the workshop builder path (workflow_phase mode).
+func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *ScheduleContext, runID string) (string, string, error) {
+	messages := sctx.Schedule.Messages
+	if len(messages) == 0 {
+		messages = []string{"Run the full workflow using run_full_workflow tool."}
+	}
+
+	idPrefix := sctx.Schedule.ID
+	if len(idPrefix) > 8 {
+		idPrefix = idPrefix[:8]
+	}
+	sessionID := fmt.Sprintf("sched_%s_%d", idPrefix, time.Now().UnixNano())
+
+	state := s.getOrCreateRuntimeState(sctx.Schedule.ID)
+	state.LastSessionID = sessionID
+
+	if runID != "" {
+		_ = UpdateScheduleRun(ctx, sctx.WorkspacePath, runID, "running", "", nil, "", sessionID)
+	}
+
+	scheduleLogf("[SCHEDULER] Workshop mode: executing %d messages for %s (session=%s workspace=%s)",
+		len(messages), sctx.Schedule.ID, sessionID, sctx.WorkspacePath)
+
+	baseReqMap := s.buildWorkshopRequest(ctx, sctx)
+
+	for i, msg := range messages {
+		scheduleLogf("[SCHEDULER] Workshop message %d/%d: %q", i+1, len(messages), msg)
+
+		reqMap := make(map[string]interface{})
+		for k, v := range baseReqMap {
+			reqMap[k] = v
+		}
+		reqMap["query"] = msg
+
+		if err := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil); err != nil {
+			return sessionID, "", fmt.Errorf("workshop message %d/%d failed: %w", i+1, len(messages), err)
+		}
+
+		if err := s.waitForWorkshopIdle(ctx, sessionID); err != nil {
+			return sessionID, "", fmt.Errorf("workshop idle wait failed after message %d: %w", i+1, err)
+		}
+
+		scheduleLogf("[SCHEDULER] Workshop message %d/%d completed", i+1, len(messages))
+	}
+
+	scheduleLogf("[SCHEDULER] ✅ Workshop execution completed for %s, session=%s", sctx.Schedule.ID, sessionID)
+	return sessionID, "", nil
+}
+
+// applyLLMAndSecretsToReqMap adds LLM config, API keys, secrets, and trigger payload to a request map.
+func (s *SchedulerService) applyLLMAndSecretsToReqMap(ctx context.Context, reqMap map[string]interface{}, sctx *ScheduleContext) {
+	if sctx.Capabilities.SelectedGlobalSecretNames != nil {
+		reqMap["selected_global_secrets"] = sctx.Capabilities.SelectedGlobalSecretNames
+	}
+
+	if sctx.Capabilities.LLMConfig != nil {
+		llmCfg := sctx.Capabilities.LLMConfig
+		if llmCfg.Provider != "" && llmCfg.ModelID != "" {
 			llmConfig := map[string]interface{}{
 				"primary": map[string]interface{}{
-					"provider": presetLLM.Provider,
-					"model_id": presetLLM.ModelID,
+					"provider": llmCfg.Provider,
+					"model_id": llmCfg.ModelID,
 				},
 			}
-			// Include API keys from server environment (reuses buildProviderAPIKeysFromEnv
-			// used by locked-mode UI requests) so LLM providers can authenticate
 			apiKeys := buildSchedulerAPIKeys()
 			if len(apiKeys) > 0 {
 				llmConfig["api_keys"] = apiKeys
 			}
 			reqMap["llm_config"] = llmConfig
-			scheduleLogf("[SCHEDULER] Using preset LLM config: %s/%s", presetLLM.Provider, presetLLM.ModelID)
 		}
 	}
 
-	// Apply trigger_payload overrides
-	if len(job.TriggerPayload) > 0 {
+	storedKeys, keyErr := LoadProviderKeys(ctx)
+	if keyErr != nil {
+		scheduleLogf("[SCHEDULER] Warning: failed to load provider keys: %v", keyErr)
+	} else if storedKeys != nil {
+		apiKeysMap := ProviderKeysToAPIKeysMap(storedKeys)
+		if len(apiKeysMap) > 0 {
+			if llmCfg, ok := reqMap["llm_config"].(map[string]interface{}); ok {
+				llmCfg["api_keys"] = apiKeysMap
+			} else {
+				reqMap["llm_config"] = map[string]interface{}{
+					"api_keys": apiKeysMap,
+				}
+			}
+		}
+	}
+
+	if len(sctx.Schedule.TriggerPayload) > 0 {
 		var overrides map[string]interface{}
-		if err := json.Unmarshal(job.TriggerPayload, &overrides); err == nil {
+		if err := json.Unmarshal(sctx.Schedule.TriggerPayload, &overrides); err == nil {
 			for k, v := range overrides {
 				reqMap[k] = v
 			}
 		}
 	}
+}
 
-	// Build execution_options: always create a new run iteration for scheduled executions,
-	// and skip interactive prompts (no UI to respond to them).
+// buildWorkshopRequest creates the base request map for workshop mode execution.
+func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *ScheduleContext) map[string]interface{} {
+	reqMap := map[string]interface{}{
+		"agent_mode":              "workflow_phase",
+		"phase_id":                "workflow-builder",
+		"preset_query_id":         sctx.WorkflowID,
+		"selected_folder":         sctx.WorkspacePath,
+		"triggered_by":            "cron",
+		"servers":                 sctx.Capabilities.SelectedServers,
+		"selected_tools":          sctx.Capabilities.SelectedTools,
+		"selected_skills":         sctx.Capabilities.SelectedSkills,
+		"browser_mode":            sctx.Capabilities.BrowserMode,
+		"use_code_execution_mode": sctx.Capabilities.UseCodeExecutionMode,
+		"use_tool_search_mode":    sctx.Capabilities.UseToolSearchMode,
+	}
+
+	s.applyLLMAndSecretsToReqMap(ctx, reqMap, sctx)
+
 	execOpts := map[string]interface{}{
 		"run_mode":           "create_new_runs_always",
-		"execution_strategy": "start_from_beginning",
+		"execution_strategy": "start_from_beginning_no_human",
+		"workshop_mode":      "runner",
 	}
-	if len(job.GroupIDs) > 0 {
-		execOpts["enabled_group_ids"] = job.GroupIDs
+	if len(sctx.Schedule.GroupIDs) > 0 {
+		execOpts["enabled_group_ids"] = sctx.Schedule.GroupIDs
 	}
 	reqMap["execution_options"] = execOpts
 
-	// Generate session ID
-	sessionID := fmt.Sprintf("sched_%s_%d", job.ID[:8], time.Now().UnixNano())
-	scheduleLogf("[SCHEDULER] executeJob for %s (%s): session=%s agent_mode=%s workspace=%v",
-		job.ID, job.Name, sessionID, preset.AgentMode, preset.SelectedFolder.String)
-
-	// Use startSessionInternal to run the query (same as bot connector pattern)
-	runErr := s.api.startSessionInternal(ctx, reqMap, sessionID, "", nil)
-	if runErr != nil {
-		scheduleLogf("[SCHEDULER] ❌ executeJob session failed for %s: %v", job.ID, runErr)
-		return sessionID, fmt.Errorf("session execution failed: %w", runErr)
-	}
-
-	scheduleLogf("[SCHEDULER] ✅ executeJob completed for %s, session=%s", job.ID, sessionID)
-	return sessionID, nil
+	return reqMap
 }
 
-// getNextRunTime calculates the next scheduled run time for a job
-func (s *SchedulerService) getNextRunTime(job *database.ScheduledJob) *time.Time {
-	loc, err := time.LoadLocation(job.Timezone)
+// waitForWorkshopIdle polls until all background agents and synthetic turns have completed.
+func (s *SchedulerService) waitForWorkshopIdle(ctx context.Context, sessionID string) error {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			hasRunning := s.api.bgAgentRegistry.HasRunningAgents(sessionID)
+			isBusy := s.api.isSessionBusy(sessionID)
+			if !hasRunning && !isBusy {
+				return nil
+			}
+		}
+	}
+}
+
+// waitForWorkflowComplete polls until all workflow orchestrator queries have finished.
+func (s *SchedulerService) waitForWorkflowComplete(ctx context.Context, sessionID string, runID string, workspacePath string) (string, error) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	runFolderWritten := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-ticker.C:
+			// Try to capture run folder from active execution registry
+			if !runFolderWritten {
+				s.api.activeWorkflowExecutionsMux.RLock()
+				for _, exec := range s.api.activeWorkflowExecutions {
+					if exec.SessionID == sessionID && exec.RunFolder != "" {
+						runFolderWritten = true
+						if runID != "" {
+							_ = UpdateScheduleRun(ctx, workspacePath, runID, "running", "", nil, exec.RunFolder, "")
+							scheduleLogf("[SCHEDULER] 📁 Detected run folder: %s (session %s)", exec.RunFolder, sessionID)
+						}
+						break
+					}
+				}
+				s.api.activeWorkflowExecutionsMux.RUnlock()
+			}
+
+			// Check if all queries are done
+			s.api.sessionQueryIDMux.RLock()
+			queryIDs := s.api.sessionQueryIDs[sessionID]
+			s.api.sessionQueryIDMux.RUnlock()
+
+			if len(queryIDs) == 0 {
+				// All orchestrator queries finished
+				detectedFolder := ""
+				if runFolderWritten {
+					s.api.activeWorkflowExecutionsMux.RLock()
+					for _, exec := range s.api.activeWorkflowExecutions {
+						if exec.SessionID == sessionID && exec.RunFolder != "" {
+							detectedFolder = exec.RunFolder
+							break
+						}
+					}
+					s.api.activeWorkflowExecutionsMux.RUnlock()
+				}
+				return detectedFolder, nil
+			}
+		}
+	}
+}
+
+// getOrCreateRuntimeState returns (or creates) the in-memory runtime state for a schedule.
+func (s *SchedulerService) getOrCreateRuntimeState(scheduleID string) *ScheduleRuntimeState {
+	s.runtimeStatesMu.Lock()
+	defer s.runtimeStatesMu.Unlock()
+	if state, ok := s.runtimeStates[scheduleID]; ok {
+		return state
+	}
+	state := &ScheduleRuntimeState{}
+	s.runtimeStates[scheduleID] = state
+	return state
+}
+
+// getRuntimeStateLocked returns or creates runtime state. Caller MUST hold runtimeStatesMu write lock.
+func (s *SchedulerService) getRuntimeStateLocked(scheduleID string) *ScheduleRuntimeState {
+	if state, ok := s.runtimeStates[scheduleID]; ok {
+		return state
+	}
+	state := &ScheduleRuntimeState{}
+	s.runtimeStates[scheduleID] = state
+	return state
+}
+
+// findScheduleByID scans all workspace manifests to find a schedule by ID.
+// Returns (workspacePath, manifest, scheduleIndex, error).
+func findScheduleByID(ctx context.Context, scheduleID string) (string, *WorkflowManifest, int, error) {
+	workflowRoot := filepath.Join("../workspace-docs", "Workflow")
+	entries, err := os.ReadDir(workflowRoot)
+	if err != nil {
+		workflowRoot = filepath.Join("workspace-docs", "Workflow")
+		entries, err = os.ReadDir(workflowRoot)
+		if err != nil {
+			return "", nil, 0, fmt.Errorf("cannot scan workflow directory: %w", err)
+		}
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		wsPath := "Workflow/" + entry.Name()
+		manifest, found, mErr := ReadWorkflowManifest(ctx, wsPath)
+		if mErr != nil || !found {
+			continue
+		}
+		for i, sched := range manifest.Schedules {
+			if sched.ID == scheduleID {
+				return wsPath, manifest, i, nil
+			}
+		}
+	}
+
+	return "", nil, 0, fmt.Errorf("schedule %s not found in any manifest", scheduleID)
+}
+
+// getNextRunTime calculates the next scheduled run time.
+func getNextRunTime(cronExpr string, timezone string) *time.Time {
+	loc, err := time.LoadLocation(timezone)
 	if err != nil {
 		loc = time.UTC
 	}
 
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	schedule, err := parser.Parse(job.CronExpression)
+	schedule, err := parser.Parse(cronExpr)
 	if err != nil {
 		return nil
 	}
@@ -468,7 +821,7 @@ func (s *SchedulerService) getNextRunTime(job *database.ScheduledJob) *time.Time
 	return &next
 }
 
-// ValidateCronExpression validates a 5-field cron expression
+// ValidateCronExpression validates a 5-field cron expression.
 func ValidateCronExpression(expr string) error {
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	_, err := parser.Parse(expr)
@@ -478,102 +831,9 @@ func ValidateCronExpression(expr string) error {
 	return nil
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
 
-// getJobWorkspacePath returns the workspace path for a scheduled job's preset
-func (s *SchedulerService) getJobWorkspacePath(ctx context.Context, job *database.ScheduledJob) string {
-	preset, err := s.db.GetPresetQuery(ctx, job.PresetQueryID)
-	if err != nil || preset == nil {
-		return ""
-	}
-	if preset.SelectedFolder.Valid {
-		return preset.SelectedFolder.String
-	}
-	return ""
-}
 
-// listIterationFolders returns sorted iteration folder names from a workspace's runs directory.
-// Uses the workspace API (same as handleGetRunFolders) to list folders.
-func (s *SchedulerService) listIterationFolders(workspacePath string) []string {
-	if workspacePath == "" {
-		return nil
-	}
-
-	apiURL := getWorkspaceAPIURL() + "/api/documents"
-	req, err := http.NewRequest("GET", apiURL, nil)
-	if err != nil {
-		return nil
-	}
-	q := req.URL.Query()
-	q.Add("folder", workspacePath+"/runs")
-	q.Add("max_depth", "1")
-	req.URL.RawQuery = q.Encode()
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-
-	// Parse workspace API response (same format as handleGetRunFolders)
-	var apiResp struct {
-		Success bool            `json:"success"`
-		Data    json.RawMessage `json:"data"`
-	}
-	if err := json.Unmarshal(body, &apiResp); err != nil || !apiResp.Success {
-		return nil
-	}
-
-	// Data is an array of folder items with children
-	var items []struct {
-		FilePath string `json:"filepath"`
-		Type     string `json:"type"`
-		Children []struct {
-			FilePath string `json:"filepath"`
-			Type     string `json:"type"`
-		} `json:"children"`
-	}
-	if err := json.Unmarshal(apiResp.Data, &items); err != nil {
-		return nil
-	}
-
-	iterRe := regexp.MustCompile(`iteration-(\d+)$`)
-	var folders []string
-	// Check top-level items first (the runs folder itself), then its children
-	for _, item := range items {
-		if item.Type == "folder" && iterRe.MatchString(item.FilePath) {
-			matches := iterRe.FindStringSubmatch(item.FilePath)
-			if len(matches) > 0 {
-				folders = append(folders, "iteration-"+matches[1])
-			}
-		}
-		for _, child := range item.Children {
-			if child.Type == "folder" && iterRe.MatchString(child.FilePath) {
-				matches := iterRe.FindStringSubmatch(child.FilePath)
-				if len(matches) > 0 {
-					folders = append(folders, "iteration-"+matches[1])
-				}
-			}
-		}
-	}
-	sort.Strings(folders)
-	return folders
-}
-
-// buildSchedulerAPIKeys builds API keys map from environment variables for scheduled job execution.
-// Reuses buildProviderAPIKeysFromEnv() (used by locked-mode UI requests) and converts to JSON-compatible map.
+// buildSchedulerAPIKeys builds API keys map from environment variables.
 func buildSchedulerAPIKeys() map[string]interface{} {
 	envKeys := buildProviderAPIKeysFromEnv()
 	keys := map[string]interface{}{}

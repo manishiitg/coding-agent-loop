@@ -378,18 +378,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 	return nil
 }
 
-// getGroupIDs returns the group IDs from the variables manifest (for logging).
-func (hcpo *StepBasedWorkflowOrchestrator) getGroupIDs() []string {
-	if hcpo.variablesManifest == nil {
-		return nil
-	}
-	ids := make([]string, len(hcpo.variablesManifest.Groups))
-	for i, g := range hcpo.variablesManifest.Groups {
-		ids[i] = g.GroupID
-	}
-	return ids
-}
-
 // resolveGroupRunFolder finds the run folder for a given group ID.
 // It looks for existing iteration folders that contain a subfolder matching the group.
 // Falls back to creating a path using the latest iteration + group display name or ID.

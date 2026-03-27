@@ -309,14 +309,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) readOutputPlan(ctx context.Context) (
 	return ParseWorkflowOutputPlan(content)
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) readFinalOutputConfig(ctx context.Context) (*WorkflowFinalOutputConfig, error) {
-	plan, err := hcpo.readOutputPlan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return ConvertOutputPlanToFinalOutputConfig(plan), nil
-}
-
 func (hcpo *StepBasedWorkflowOrchestrator) GenerateFinalOutput(ctx context.Context, workflowTitle string, runFolder string) (*finalOutputResponse, error) {
 	if runFolder == "" || !strings.Contains(runFolder, "/") {
 		return nil, fmt.Errorf("final output generation requires a group-scoped run folder like iteration-X/group-name")

@@ -2536,12 +2536,6 @@ func isDecisionStep(step PlanStepInterface) bool {
 	return ok
 }
 
-// isOrchestrationStep returns true if the step is an orchestration step (orchestrator with multiple sub-agents)
-func isOrchestrationStep(step PlanStepInterface) bool {
-	_, ok := step.(*OrchestrationPlanStep)
-	return ok
-}
-
 // isHumanInputStep returns true if the step is a human input step (asks question and blocks for input)
 func isHumanInputStep(step PlanStepInterface) bool {
 	_, ok := step.(*HumanInputPlanStep)

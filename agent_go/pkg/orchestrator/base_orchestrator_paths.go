@@ -80,40 +80,6 @@ func validatePathInWorkspace(workspacePath, inputPath string) error {
 	return nil
 }
 
-// validatePathInAllowedPaths validates that the input path is within any of the allowed paths
-// If allowedPaths is empty/nil, returns nil (allows all paths)
-func validatePathInAllowedPaths(allowedPaths []string, inputPath string) error {
-	// Empty array means disable folder guard - allow all paths
-	if len(allowedPaths) == 0 {
-		return nil
-	}
-
-	// Strip common absolute workspace prefixes so absolute paths work with relative allowed paths
-	// Agents may use absolute paths like /app/workspace-docs/Workflow/... while allowed paths are relative
-	normalizedInput := inputPath
-	for _, prefix := range []string{"/app/workspace-docs/", "/workspace-docs/"} {
-		if strings.HasPrefix(normalizedInput, prefix) {
-			normalizedInput = strings.TrimPrefix(normalizedInput, prefix)
-			break
-		}
-	}
-
-	// Check against each allowed path (try both original and normalized)
-	for _, allowedPath := range allowedPaths {
-		if err := validatePathInWorkspace(allowedPath, normalizedInput); err == nil {
-			return nil
-		}
-		if normalizedInput != inputPath {
-			if err := validatePathInWorkspace(allowedPath, inputPath); err == nil {
-				return nil
-			}
-		}
-	}
-
-	// Path is not valid within any allowed path
-	return fmt.Errorf("path '%s' is not within any of the allowed paths: %v", inputPath, allowedPaths)
-}
-
 // normalizePathForAllowedPaths normalizes a path relative to the first matching allowed path
 // Returns the normalized path and the matching allowed path index
 func normalizePathForAllowedPaths(allowedPaths []string, inputPath string) (string, int, error) {

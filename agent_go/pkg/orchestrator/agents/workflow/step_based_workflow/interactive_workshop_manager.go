@@ -70,20 +70,6 @@ func collectAllSteps(steps []PlanStepInterface) []WorkshopStepInfo {
 	return result
 }
 
-// collectAllStepsWithOrphans returns a flat list of all steps including orphan steps.
-func collectAllStepsWithOrphans(steps []PlanStepInterface, orphanSteps []PlanStepInterface) []WorkshopStepInfo {
-	result := collectAllSteps(steps)
-	for _, step := range orphanSteps {
-		result = append(result, WorkshopStepInfo{
-			Step:     step,
-			TopIndex: -1,
-			IsOrphan: true,
-		})
-		result = append(result, collectInnerSteps(step)...)
-	}
-	return result
-}
-
 // collectInnerSteps recursively extracts inner steps from a step.
 func collectInnerSteps(step PlanStepInterface) []WorkshopStepInfo {
 	var result []WorkshopStepInfo
@@ -150,33 +136,6 @@ func findWorkshopStepByID(steps []PlanStepInterface, stepID string) *WorkshopSte
 	for _, info := range all {
 		if info.Step.GetID() == stepID {
 			return &info
-		}
-	}
-	return nil
-}
-
-// findWorkshopStepByIDWithOrphans searches all steps including orphans for a matching ID.
-func findWorkshopStepByIDWithOrphans(steps []PlanStepInterface, orphanSteps []PlanStepInterface, stepID string) *WorkshopStepInfo {
-	// First search main steps
-	info := findWorkshopStepByID(steps, stepID)
-	if info != nil {
-		return info
-	}
-	// Then search orphan steps
-	for _, step := range orphanSteps {
-		if step.GetID() == stepID {
-			return &WorkshopStepInfo{
-				Step:     step,
-				TopIndex: -1,
-				IsOrphan: true,
-			}
-		}
-		// Check inner steps of orphan
-		for _, inner := range collectInnerSteps(step) {
-			if inner.Step.GetID() == stepID {
-				inner.IsOrphan = true
-				return &inner
-			}
 		}
 	}
 	return nil
@@ -1660,68 +1619,6 @@ All paths below are relative to this root.
 `)
 
 var interactiveWorkshopUserTemplate = MustRegisterTemplate("interactiveWorkshopUser", `{{if .UserRequest}}{{.UserRequest}}{{else}}What would you like to do in the workshop?{{end}}`)
-
-// workflowOptimizerSystemTemplate is the system prompt for the workflow optimizer phase.
-// Has the same tools as workflow-builder but focused on optimization: reviewing learnings,
-// fixing stale references, adding validation schemas, and marking steps as optimized.
-var workflowOptimizerSystemTemplate = MustRegisterTemplate("workflowOptimizerSystem", `# Workflow Optimizer Agent
-
-You are optimizing a workflow — making each step reliable and efficient. The workflow structure is already set. Your job is to systematically review each step: run it, check for wasted tool calls, review learnings quality, add validation schemas, and mark steps as optimized when they meet all criteria.
-
-## ROLE
-- **Your shell working directory is already set to `+"`{{.WorkspacePath}}/`"+`** — use RELATIVE paths in all shell commands (e.g., `+"`cat planning/plan.json`"+`, NOT `+"`cat {{.WorkspacePath}}/planning/plan.json`"+`). All workflow files live here: planning/, learnings/, runs/, step_config.json, variables.json, knowledgebase/.
-- You have the same tools and capabilities as the Workflow Builder, but your focus is purely on optimization — NOT structural changes.
-- Do NOT add, remove, or reorder steps. If the workflow structure needs changing, tell the user to switch to the Workflow Builder phase.
-
-## STEPS TO OPTIMIZE
-{{if .UnoptimizedSteps}}
-The following steps are NOT yet optimized: **{{.UnoptimizedSteps}}**
-
-**IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next.
-
-Workflow for the current step:
-1. **Ask which step** — If the user hasn't specified, show unoptimized steps and ask which one to optimize next.
-2. **Run the step** — execute_step(step_id) to get a fresh execution
-3. **Review execution quality** — check for wasted tool calls, wrong server names, unnecessary exploration
-4. **Review learnings** — read learnings/{step-id}/SKILL.md and check:
-   - Do they reference correct server/tool names matching the step config?
-   - Are they specific and actionable (not vague)?
-   - Do they contradict the step description?
-5. **Fix issues** — edit learnings with diff_patch_workspace_file, update step descriptions, add/fix validation schemas
-6. **Re-run if needed** — verify fixes produce clean execution with no wasted turns
-7. **Mark optimized** — only when ALL criteria are met:
-   - Learnings exist with correct tool/server references
-   - Pre-validation schema is defined
-   - Successful execution with no wasted tool calls
-   - Then: update_step_config(step_id, optimized=true)
-8. **Report and ask** — Tell the user the step is optimized and ask which step to work on next.
-{{else}}
-All steps are optimized! Consider switching to the **Human In The Loop** phase for execution-only mode.
-{{end}}
-
-## Auto-Notification Behavior
-When a step completes:
-- **Success (not yet optimized)**: Call optimize_step(step_id) to analyze, then review and apply fixes before marking optimized.
-- **Success (already optimized)**: Report result and ask the user what to do next.
-- **Failed**: Reset optimized flag (update_step_config(step_id, optimized=false)), investigate the failure, fix root cause, and re-run.
-
-## WORKSPACE CONTEXT
-
-- **Workspace**: {{.WorkspacePath}}
-- **Run Folder**: {{.RunFolder}}
-{{if .StepConfigSummary}}- **Step Configs**: {{.StepConfigSummary}}{{end}}
-- **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
-
-{{if and .StepSummary (ne .WorkshopMode "output")}}
-### Step Summary
-{{.StepSummary}}
-{{end}}
-
-{{if .GroupInfo}}
-## Group Configuration
-{{.GroupInfo}}
-{{end}}
-`)
 
 // Execute implements OrchestratorAgent interface for the interactive workshop agent
 func (agent *WorkflowInteractiveWorkshopAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {

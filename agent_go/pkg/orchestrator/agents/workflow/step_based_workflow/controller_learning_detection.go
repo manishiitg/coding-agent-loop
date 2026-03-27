@@ -340,73 +340,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) syncSuccessfulRunsToStepConfig(ctx co
 	}
 }
 
-// updateUnlockMetadata updates the learning metadata file with unlock information
-func (hcpo *StepBasedWorkflowOrchestrator) updateUnlockMetadata(
-	ctx context.Context,
-	stepID string,
-	stepIndex int,
-	stepPath string,
-	learningPathIdentifier string,
-	unlockReason string,
-) error {
-	// Use relative path - ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath
-	learningsBase := hcpo.getLearningsBasePath()
-	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
-
-	// Read existing metadata or create new
-	var metadata LearningMetadata
-	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
-	if err != nil {
-		// Metadata doesn't exist - create new
-		metadata = LearningMetadata{
-			StepID:           fmt.Sprintf("step-%d", stepIndex+1),
-			StepPath:         stepPath,
-			TotalIterations:  0,
-			DetectionHistory: []DetectionHistoryEntry{},
-		}
-	} else {
-		// Parse existing metadata
-		if err := json.Unmarshal([]byte(content), &metadata); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to parse learning metadata: %v (creating new)", err))
-			metadata = LearningMetadata{
-				StepID:           fmt.Sprintf("step-%d", stepIndex+1),
-				StepPath:         stepPath,
-				TotalIterations:  0,
-				DetectionHistory: []DetectionHistoryEntry{},
-			}
-		}
-	}
-
-	// Initialize DetectionHistory if nil (for backward compatibility)
-	if metadata.DetectionHistory == nil {
-		metadata.DetectionHistory = []DetectionHistoryEntry{}
-	}
-
-	// Update unlock information
-	metadata.AutoUnlockedAt = time.Now().Format(time.RFC3339)
-	metadata.AutoUnlockReason = unlockReason
-	metadata.AutoUnlockIteration = metadata.TotalIterations
-
-	// Clear auto-lock info to prevent UI from showing "Locked (Auto)" state
-	// The UI checks if AutoLockedAt is set to determine if it's auto-locked
-	metadata.AutoLockedAt = ""
-	metadata.AutoLockReason = ""
-	metadata.AutoLockIteration = 0
-
-	// Write updated metadata
-	metadataJSON, err := json.MarshalIndent(metadata, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal learning metadata: %w", err)
-	}
-
-	if err := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); err != nil {
-		return fmt.Errorf("failed to write learning metadata: %w", err)
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("✅ Updated unlock metadata for %s (reason: %s)", learningPathIdentifier, unlockReason))
-	return nil
-}
-
 // unlockStepLearningsInConfig updates step_config.json to set LockLearnings = false (unlocks learnings)
 func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsInConfig(
 	ctx context.Context,
@@ -460,61 +393,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsInConfig(
 
 	hcpo.GetLogger().Info(fmt.Sprintf("✅ Unlocked learnings for step %s (LockLearnings = false)", stepID))
 	return nil
-}
-
-// unlockStepLearningsAndResetMetadata unlocks learnings and resets metadata counter
-func (hcpo *StepBasedWorkflowOrchestrator) unlockStepLearningsAndResetMetadata(
-	ctx context.Context,
-	stepID string,
-	stepIndex int,
-	stepPath string,
-	learningPathIdentifier string,
-) error {
-	// Unlock in step config
-	if err := hcpo.unlockStepLearningsInConfig(ctx, stepID); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to unlock learnings in config for step %s: %v", stepID, err))
-		// Continue to reset metadata even if config unlock fails
-	}
-
-	// Reset validation failure count for UI (since step is being unlocked/reset)
-	if err := hcpo.ResetValidationFailureCount(ctx, stepPath); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to reset validation failure count for %s: %v", stepPath, err))
-	}
-
-	// Reset metadata counter - use relative path (ReadWorkspaceFile/WriteWorkspaceFile auto-prepend workspacePath)
-	learningsBase := hcpo.getLearningsBasePath()
-	metadataPath := filepath.Join(learningsBase, learningPathIdentifier, ".learning_metadata.json")
-
-	content, err := hcpo.BaseOrchestrator.ReadWorkspaceFile(ctx, metadataPath)
-	if err == nil {
-		// Metadata exists - reset counter
-		var metadata LearningMetadata
-		if err := json.Unmarshal([]byte(content), &metadata); err == nil {
-			metadataJSON, marshalErr := json.MarshalIndent(metadata, "", "  ")
-			if marshalErr == nil {
-				if writeErr := hcpo.BaseOrchestrator.WriteWorkspaceFile(ctx, metadataPath, string(metadataJSON)); writeErr == nil {
-					hcpo.GetLogger().Info(fmt.Sprintf("✅ Reset learning metadata counter for %s", learningPathIdentifier))
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// createUnlockLearningsFunction creates a function that can unlock learnings for a step
-// This function can be passed to planning agent executors
-func (hcpo *StepBasedWorkflowOrchestrator) createUnlockLearningsFunction() func(context.Context, string, int) error {
-	return func(ctx context.Context, stepID string, stepIndex int) error {
-		// Use step ID for learning path identifier (new format)
-		learningPathIdentifier := stepID
-
-		// Calculate step path (relative to workspace)
-		stepPath := fmt.Sprintf("planning/step-%d", stepIndex+1)
-
-		// Call the full unlock function
-		return hcpo.unlockStepLearningsAndResetMetadata(ctx, stepID, stepIndex, stepPath, learningPathIdentifier)
-	}
 }
 
 // Note: savePreviousLearningsToMetadata has been removed

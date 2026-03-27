@@ -43,16 +43,6 @@ func readEvaluationPlanFromFile(ctx context.Context, workspacePath string, readF
 	return &plan, nil
 }
 
-// writeEvaluationPlanToFile writes evaluation_plan.json to the workspace.
-func writeEvaluationPlanToFile(ctx context.Context, workspacePath string, plan *EvaluationPlan, writeFile func(context.Context, string, string) error) error {
-	planPath := filepath.Join("evaluation", "evaluation_plan.json")
-	data, err := json.MarshalIndent(plan, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFile(ctx, planPath, string(data))
-}
-
 // registerEvaluationValidationTools registers the validate_evaluation_plan tool on an MCP agent.
 // Used by planning_exports.go for workflow-builder chat sessions.
 func registerEvaluationValidationTools(

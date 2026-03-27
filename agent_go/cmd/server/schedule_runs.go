@@ -141,27 +141,3 @@ func ListScheduleRuns(ctx context.Context, workspacePath string, scheduleID stri
 	}
 	return filtered[offset:end], total, nil
 }
-
-// cleanupStaleRuns marks any "running" entries as "error" (interrupted by server restart).
-func cleanupStaleRuns(ctx context.Context, workspacePath string) {
-	runs, err := ReadScheduleRuns(ctx, workspacePath)
-	if err != nil || len(runs) == 0 {
-		return
-	}
-
-	changed := false
-	for i := range runs {
-		if runs[i].Status == "running" {
-			runs[i].Status = "error"
-			runs[i].Error = "interrupted by server restart"
-			now := time.Now().UTC()
-			runs[i].CompletedAt = &now
-			changed = true
-			scheduleLogf("[SCHEDULER] Cleaned up stale run %s (schedule %s) in %s", runs[i].ID, runs[i].ScheduleID, workspacePath)
-		}
-	}
-
-	if changed {
-		_ = WriteScheduleRuns(ctx, workspacePath, runs)
-	}
-}

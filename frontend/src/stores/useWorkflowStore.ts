@@ -65,6 +65,7 @@ export interface PresetWorkflowState {
   currentRunningGroupId: string | null
   currentStepId: string | null
   stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
+  skipExecutionCleanup: boolean
   batchProgress: {
     isActive: boolean
     totalGroups: number
@@ -100,6 +101,7 @@ function createDefaultPresetState(): PresetWorkflowState {
     currentRunningGroupId: null,
     currentStepId: null,
     stepStatusMap: new Map(),
+    skipExecutionCleanup: false,
     batchProgress: null,
     selectedExecutionMode: 'with_learning',
     selectedStartPoint: 0,
@@ -124,6 +126,7 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     currentRunningGroupId: state.currentRunningGroupId,
     currentStepId: state.currentStepId,
     stepStatusMap: new Map(state.stepStatusMap),
+    skipExecutionCleanup: state.skipExecutionCleanup,
     batchProgress: state.batchProgress,
     selectedExecutionMode: state.selectedExecutionMode,
     selectedStartPoint: state.selectedStartPoint,
@@ -1461,9 +1464,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setSkipExecutionCleanup: (enabled: boolean) => {
         console.log('[SKIP_CLEANUP_DEBUG] setSkipExecutionCleanup called with:', enabled)
+        const state = get()
         set({ skipExecutionCleanup: enabled })
         try {
-          localStorage.setItem(SKIP_EXECUTION_CLEANUP_KEY, JSON.stringify(enabled))
+          // Persist per-preset in the combined group data key
+          const existing = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
+          const parsed = existing ? JSON.parse(existing) : {}
+          const persistData = {
+            ...(typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            presetId: (state as any)._currentPresetId,
+            skipExecutionCleanup: enabled,
+          }
+          localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
           console.log(`[WorkflowStore] Skip execution cleanup set: ${enabled}`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to save skip execution cleanup to localStorage:', error)
@@ -2098,6 +2111,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           let savedRunFolder: string | null = null
           let savedGroupIds: string[] = []
           let savedCurrentRunningGroupId: string | null = null
+          let savedSkipExecutionCleanup: boolean | null = null
           let canRestoreLegacyKeys = false
 
           try {
@@ -2118,6 +2132,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
                   if (parsed.runFolder) {
                     savedRunFolder = parsed.runFolder
                   }
+                  if (typeof parsed.skipExecutionCleanup === 'boolean') {
+                    savedSkipExecutionCleanup = parsed.skipExecutionCleanup
+                  }
                 }
                 // Note: startPoint is intentionally NOT restored - calculated from progress
               }
@@ -2125,6 +2142,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
               else if (Array.isArray(parsed)) {
                 canRestoreLegacyKeys = true
                 savedGroupIds = parsed
+              }
+            }
+
+            // Fallback for skipExecutionCleanup to legacy global key
+            if (savedSkipExecutionCleanup === null) {
+              const skipStr = localStorage.getItem(SKIP_EXECUTION_CLEANUP_KEY)
+              if (skipStr !== null) {
+                savedSkipExecutionCleanup = JSON.parse(skipStr) as boolean
               }
             }
 
@@ -2154,6 +2179,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             selectedRunFolder: savedRunFolder,
             selectedExecutionMode: 'with_learning',
             selectedStartPoint: 0,  // Always start fresh - calculated from progress
+            skipExecutionCleanup: savedSkipExecutionCleanup ?? false,
             selectedBranchStep: null,
             selectedGroupIds: savedGroupIds,
             currentRunningGroupId: savedCurrentRunningGroupId,
@@ -2259,6 +2285,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             currentRunningGroupId: restored.currentRunningGroupId,
             currentStepId: restored.currentStepId,
             stepStatusMap: new Map(restored.stepStatusMap),
+            skipExecutionCleanup: restored.skipExecutionCleanup,
             batchProgress: restored.batchProgress,
             selectedExecutionMode: restored.selectedExecutionMode,
             selectedStartPoint: restored.selectedStartPoint,

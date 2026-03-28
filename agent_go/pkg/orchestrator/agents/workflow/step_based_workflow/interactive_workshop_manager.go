@@ -707,6 +707,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, stepConfig...)
 		tools = append(tools, planMod...)
 		tools = append(tools, variableConfig...)
+		tools = append(tools, schedule...)
 		tools = append(tools, skills...)
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
@@ -1573,9 +1574,27 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 ### Schedule Management
 - **create_schedule / update_schedule / delete_schedule / trigger_schedule / get_schedule_runs**
 - To view existing schedules, read `+"`workflow.json`"+` via `+"`execute_shell_command`"+` — schedules are under the `+"`schedules`"+` key.
-- Schedule management is only available in **builder mode**. If the user asks about schedules in another mode, tell them to switch to builder mode.
-- Schedules support two execution modes: `+"`mode=\"workflow\"`"+` (direct orchestrator, default) and `+"`mode=\"workshop\"`"+` (LLM-driven via workshop builder with per-step notifications).
-- Workshop mode takes `+"`messages`"+` (predefined message queue sent one-by-one) and `+"`workshop_mode`"+` (`+"`runner`"+` or `+"`optimizer`"+`).
+- Each schedule entry in `+"`workflow.json`"+` has this shape:
+  `+"`"+`{ "id": "...", "name": "...", "description": "...", "cron_expression": "0 9 * * 1-5", "timezone": "UTC", "enabled": true, "trigger_payload": {}, "group_ids": [] }`+"`"+`
+  Fields: `+"`id`"+` (auto-assigned), `+"`name`"+` (display label), `+"`description`"+` (optional), `+"`cron_expression`"+` (standard 5-field cron), `+"`timezone`"+` (IANA tz e.g. America/New_York), `+"`enabled`"+` (bool), `+"`trigger_payload`"+` (arbitrary JSON passed to the run), `+"`group_ids`"+` (array of group strings for filtering).
+- Schedule management is available in **builder and optimizer modes**. If the user asks about schedules in another mode, tell them to switch to builder or optimizer mode.
+- **3 ways to schedule a workflow:**
+  1. **Execute** (mode=workflow, default) — runs the orchestrator directly, no LLM involved. Fast, no messages needed.
+  2. **Run** (mode=workshop, workshop_mode=runner) — LLM-driven execution with per-step notifications. Requires `+"`messages`"+` array (e.g. a single message: "Run the full workflow using run_full_workflow").
+  3. **Optimize** (mode=workshop, workshop_mode=optimizer) — LLM-driven optimization run. Requires `+"`messages`"+` array instructing the agent to optimize steps one-by-one.
+- `+"`messages`"+` is an ordered queue of strings sent to the workshop LLM one-by-one as user turns. The LLM completes all tool calls triggered by message N before message N+1 is sent.
+- **How to write messages:**
+  - Write each message as a plain instruction, like you would type in chat: "Run the full workflow", "Generate the final report"
+  - **Run mode**: typically one message, e.g. "Run the full workflow using run_full_workflow. Use the latest run folder."
+  - **Optimize mode**: one message with stop conditions (see optimizer best practices below)
+  - Use multiple messages to break work into sequential phases, e.g. ["Run the workflow", "Generate the final report"]
+  - Read `+"`variables.json`"+` for available group IDs and include them explicitly in the message if needed
+- **CRITICAL — schedules run unattended, messages must never require human input:**
+  - Explicitly tell the agent to make all decisions autonomously: "Do not ask for confirmation, proceed automatically"
+  - Provide all required parameters upfront in the message (group IDs, run folders, step IDs) so the agent never needs to ask
+  - Tell the agent to skip or use defaults for anything unclear rather than pausing to ask
+  - Never include open-ended questions or "let me know" style instructions
+  - Bad: "Run the workflow and ask me which steps to optimize" — Good: "Run the workflow, then optimize all unoptimized steps automatically"
 - **Optimizer schedule best practices**: When creating a schedule with `+"`workshop_mode=\"optimizer\"`"+`, craft the message to optimize steps **one by one** after each step completes. Example message: "Run the full workflow using run_full_workflow. After each step completes, if it succeeded and is not yet optimized, call optimize_step and apply fixes. If a step fails, retry it once after fixing — if it fails again, skip it and move to the next step. Do NOT retry the same step more than 2 times to avoid infinite loops."
 - **Infinite loop prevention**: Scheduled optimizer runs are unattended — they MUST have built-in stop conditions. The message should instruct the agent to: (1) skip already-optimized steps, (2) limit retries per step to 2 attempts max, (3) move on to the next step after repeated failures instead of looping, (4) stop after all steps have been attempted once.
 
@@ -5549,6 +5568,20 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			// Only show preset learning LLM when tiered mode is not active (tiered mode overrides it)
 			writeLLMDefault("Phase LLM", ctrl.presetPhaseLLM)
+
+			// --- Schedules ---
+			if iwm.schedulerFuncs != nil && iwm.schedulerWorkspacePath != "" {
+				sb.WriteString("\n### Schedules\n")
+				scheduleList, schedErr := iwm.schedulerFuncs.ListSchedules(ctx, iwm.schedulerWorkspacePath)
+				if schedErr != nil {
+					sb.WriteString(fmt.Sprintf("_Could not load schedules: %v_\n", schedErr))
+				} else if strings.TrimSpace(scheduleList) == "" {
+					sb.WriteString("No schedules configured.\n")
+				} else {
+					sb.WriteString(scheduleList)
+					sb.WriteString("\n")
+				}
+			}
 
 			return sb.String(), nil
 		},

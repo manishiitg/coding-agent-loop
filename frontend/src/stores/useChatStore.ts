@@ -137,6 +137,7 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'step_progress_updated',
     'phase_started',
     'phase_completed',
+    'todo_task_status_update',
     // Delegation structural events - must survive for sub-agent cards
     'delegation_start',
     'delegation_end',

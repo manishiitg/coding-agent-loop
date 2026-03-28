@@ -93,6 +93,8 @@ services:
     environment:
       # Override workspace URL for Docker networking (workspace-api listens on 8080 internally)
       - WORKSPACE_API_URL=http://workspace-api:8080
+      # Absolute path to workspace-docs inside the container (mounted volume)
+      - WORKSPACE_DOCS_PATH=/app/workspace-docs
       - LOCAL_MODE=true
       - TOOL_EXECUTION_TIMEOUT=15m
       - MCP_CACHE_TTL_MINUTES=10080

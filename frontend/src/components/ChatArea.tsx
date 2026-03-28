@@ -304,10 +304,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? activeTab.config.selectedServers 
       : selectedServers
     
-    // If no servers are selected (empty array), default to no servers (pure LLM mode)
-    // User must explicitly select servers to enable tools
+    // If no servers are selected (empty array), default to all connected servers
     if (tabSelectedServers.length === 0) {
-      return ["NO_SERVERS"]
+      const all = Array.from(connectedServers)
+      return all.length > 0 ? all : ["NO_SERVERS"]
     }
     // Filter out servers that aren't currently connected (status=ok).
     // Stale servers from localStorage could block queries if sent to backend.
@@ -2346,7 +2346,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         hasActivePreset: !!activePreset,
         effectivePlanPhase,
         decryptedSecrets,
-        selectedGlobalSecrets: (activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : useSecretsStore.getState().selectedGlobalSecretNames) ?? [],
+        selectedGlobalSecrets: activePreset?.selectedGlobalSecretNames !== undefined ? activePreset.selectedGlobalSecretNames : null, // null = all global secrets included by default
       })
 
       // Validate execution groups for workflow mode

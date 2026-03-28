@@ -30,27 +30,39 @@ func GetAgentInstructions(workspaceAbsPath string) string {
 		wsPathNote = fmt.Sprintf("\n**Workspace root (absolute path):** `%s`\nAll relative paths below are relative to this root.\n", workspaceAbsPath)
 	}
 
-	// Add chat mode folder restriction note
-	instructions += `
+	// Build per-folder absolute path suffix when workspace root is known
+	absPath := func(rel string) string {
+		if workspaceAbsPath == "" {
+			return ""
+		}
+		return fmt.Sprintf(" (`%s/%s`)", workspaceAbsPath, rel)
+	}
 
-## Workspace Folder Structure
-` + wsPathNote + `
+	// Add chat mode folder restriction note
+	instructions += "\n\n## Workspace Folder Structure\n" + wsPathNote + `
 The workspace is organized into the following folders:
 
-- **Chats/** (read/write) - Your personal workspace for this conversation. Save all output files here (e.g., "Chats/output.txt", "Chats/results.json", "Chats/report.md"). Multi-agent plans also live here, typically as "Chats/<plan-id>/plan.md".
-- **skills/** (read-only) - Contains reusable skill definitions that extend agent capabilities. Each skill has a SKILL.md with instructions and optional supporting files.
-- **Workflow/** (read-only) - Stores workflow definitions that automate multi-step processes. Workflows chain together skills and tools into repeatable sequences.
-- **Downloads/** (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).
-- **subagents/** (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.
+` + fmt.Sprintf("- **Chats/**%s (read/write) - Your personal workspace for this conversation. Save all output files here.", absPath("Chats")) + `
+` + fmt.Sprintf("- **skills/**%s (read-only) - Contains reusable skill definitions that extend agent capabilities. Each skill has a SKILL.md with instructions and optional supporting files.", absPath("skills")) + `
+` + fmt.Sprintf("- **Workflow/**%s (read-only) - Stores workflow definitions that automate multi-step processes.", absPath("Workflow")) + `
+` + fmt.Sprintf("- **Downloads/**%s (read-only) - User's downloaded files and browser-captured content (screenshots, downloaded pages).", absPath("Downloads")) + `
+` + fmt.Sprintf("- **subagents/**%s (read-only) - Sub-agent templates that configure specialized delegated agents with custom instructions and tool/skill settings.", absPath("subagents")) + `
+` + fmt.Sprintf("- **config/**%s (read/write) - Configuration files for this agent session. Read and update using execute_shell_command. Changes take effect immediately when the next sub-agent spawns.", absPath("config")) + `
 - **_users/** (blocked) - Internal directory, access not allowed.
 
-## How to Read Skills
-Skills are stored at skills/<skill-name>/SKILL.md. To use a skill:
-1. Read the SKILL.md file: execute_shell_command(command: "cat skills/<skill-name>/SKILL.md")
-2. If SKILL.md references supporting files (scripts, templates, examples), read those files too from the same skill folder.
-3. Follow the instructions in the SKILL.md to complete the user's request.
+## LLM Tier Configuration
+` + fmt.Sprintf("Edit `config/delegation-tier-config.json`%s to change which model/provider each reasoning tier uses. Changes take effect immediately on next sub-agent spawn.", absPath("config/delegation-tier-config.json")) + `
+- Read: `+"`execute_shell_command(command: \"cat config/delegation-tier-config.json\")`"+`
+- Write: `+"`execute_shell_command(command: \"printf '%s' '{...json...}' > config/delegation-tier-config.json\")`"+`
+- Schema: `+"`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\"},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`"+`
 
-Skills are located at the **workspace root** — use workspace-relative paths (e.g., "skills/<skill-name>/SKILL.md") when accessing them.
+## Workflows
+Browse existing workflow definitions and their execution data (read-only):
+- List all: `+"`execute_shell_command(command: \"ls Workflow/\")`"+`
+- View steps & config: `+"`execute_shell_command(command: \"cat Workflow/<name>/workflow.json\")`"+`
+- View learnings: `+"`execute_shell_command(command: \"cat Workflow/<name>/learnings.md\")`"+`
+- View knowledgebase: `+"`execute_shell_command(command: \"cat Workflow/<name>/knowledgebase.md\")`"+`
+
 `
 	return instructions
 }
@@ -140,11 +152,25 @@ The following skills are available for this conversation. Each skill extends you
 ### Available Skills:
 `)
 
-	// List each skill with its path (relative + absolute)
+	// Group gws-* skills into a single entry; list all others individually
+	wsURL := ""
+	if len(workspaceAPIURL) > 0 {
+		wsURL = workspaceAPIURL[0]
+	}
+	gwsAdded := false
 	for _, folderName := range selectedSkills {
-		wsURL := ""
-		if len(workspaceAPIURL) > 0 {
-			wsURL = workspaceAPIURL[0]
+		if strings.HasPrefix(folderName, "gws-") {
+			if !gwsAdded {
+				gwsAdded = true
+				gwsNote := ""
+				if workspaceAbsPath != "" {
+					gwsNote = fmt.Sprintf(" (`%s/skills/gws-*/SKILL.md`)", workspaceAbsPath)
+				}
+				promptParts = append(promptParts, fmt.Sprintf(
+					"- **Google Workspace (gws-\\*)**: Drive, Gmail, Calendar, Docs, Sheets, Slides, and shared utilities.%s\n  List available: `execute_shell_command(command: \"ls skills/gws-*/SKILL.md\")`",
+					gwsNote))
+			}
+			continue
 		}
 		skill, err := skills.GetSkill(wsURL, folderName)
 		relPath := fmt.Sprintf("skills/%s/SKILL.md", folderName)
@@ -157,7 +183,6 @@ The following skills are available for this conversation. Each skill extends you
 			promptParts = append(promptParts, fmt.Sprintf("- **%s**: Read instructions from `%s`%s", folderName, relPath, absNote))
 			continue
 		}
-
 		promptParts = append(promptParts, fmt.Sprintf("- **%s**: %s\n  - Path: `%s`%s",
 			skill.Frontmatter.Name,
 			skill.Frontmatter.Description,
@@ -166,10 +191,8 @@ The following skills are available for this conversation. Each skill extends you
 	}
 
 	promptParts = append(promptParts, `
-**How to read skills efficiently:**
-1. **Quick scan first:** Use execute_shell_command(command: "head -100 skills/<name>/SKILL.md") to read the first few lines (frontmatter + description) of each skill to determine if it is relevant to the user's request.
-2. **Read fully if relevant:** If a skill matches the user's intent, read the complete file: execute_shell_command(command: "cat skills/<name>/SKILL.md"). Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
-3. **Skip if not relevant:** If the description clearly does not match the user's request, move on — no need to read the full file.
+Read each relevant skill in full: execute_shell_command(command: "cat skills/<name>/SKILL.md")
+Then read any supporting files (scripts, templates, examples) referenced in the SKILL.md.
 `)
 
 	return strings.Join(promptParts, "\n")

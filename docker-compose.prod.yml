@@ -17,6 +17,8 @@ services:
     environment:
       - PORT=8000
       - WORKSPACE_API_URL=http://workspace-api:8080
+      # Absolute path to workspace-docs inside the container
+      - WORKSPACE_DOCS_PATH=/app/workspace-docs
       # Host-side absolute path of workspace-docs — passed to `docker run -v` for
       # per-project containers (bind-mount always takes the host path, not the
       # container-internal path).

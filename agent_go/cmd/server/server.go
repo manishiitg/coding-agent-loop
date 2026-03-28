@@ -825,30 +825,25 @@ func runServer(cmd *cobra.Command, args []string) {
 	// but this covers any direct HTTP /api/mcp/execute calls that bypass the agent.
 	// Resolves workspace-relative paths (e.g. "Downloads/file.pdf") to absolute host paths
 	// so Playwright MCP can find them — Playwright requires absolute paths for browser_file_upload.
-	workspaceAbsPath, wpErr := filepath.Abs("../workspace-docs/_users/default")
-	if wpErr != nil {
-		log.Printf("[BROWSER_UPLOAD] Warning: failed to resolve workspace-docs abs path: %v", wpErr)
-	} else {
-		log.Printf("[BROWSER_UPLOAD] Registered browser_file_upload transformer, workspace=%s", workspaceAbsPath)
-		executorHandlers.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
-			paths, ok := args["paths"].([]interface{})
-			if !ok || len(paths) == 0 {
-				log.Printf("[BROWSER_UPLOAD] No paths in args or wrong type, skipping transform")
-				return
+	workspaceAbsPath := filepath.Join(getWorkspaceDocsAbsPath(), "_users/default")
+	log.Printf("[BROWSER_UPLOAD] Registered browser_file_upload transformer, workspace=%s", workspaceAbsPath)
+	executorHandlers.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
+		paths, ok := args["paths"].([]interface{})
+		if !ok || len(paths) == 0 {
+			log.Printf("[BROWSER_UPLOAD] No paths in args or wrong type, skipping transform")
+			return
+		}
+		for i, p := range paths {
+			pathStr, ok := p.(string)
+			if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
+				log.Printf("[BROWSER_UPLOAD] Skipping path[%d]=%q (abs or empty)", i, p)
+				continue
 			}
-			for i, p := range paths {
-				pathStr, ok := p.(string)
-				if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
-					log.Printf("[BROWSER_UPLOAD] Skipping path[%d]=%q (abs or empty)", i, p)
-					continue
-				}
-				// Join with absolute workspace path to produce host-resolvable path
-				resolved := filepath.Join(workspaceAbsPath, pathStr)
-				log.Printf("[BROWSER_UPLOAD] Resolved path[%d]: %q -> %q", i, pathStr, resolved)
-				paths[i] = resolved
-			}
-		})
-	}
+			resolved := filepath.Join(workspaceAbsPath, pathStr)
+			log.Printf("[BROWSER_UPLOAD] Resolved path[%d]: %q -> %q", i, pathStr, resolved)
+			paths[i] = resolved
+		}
+	})
 
 	apiRouter.HandleFunc("/mcp/execute", executorHandlers.HandleMCPExecute).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/custom/execute", executorHandlers.HandleCustomExecute).Methods("POST", "OPTIONS")
@@ -949,6 +944,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	// Provider API keys (encrypted file storage for scheduled runs)
 	apiRouter.HandleFunc("/provider-keys", api.handleSaveProviderKeys).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/provider-keys", api.handleLoadProviderKeys).Methods("GET", "OPTIONS")
+
+	// Delegation tier config (plain JSON file storage, shared by chat and bot connector)
+	apiRouter.HandleFunc("/delegation-tier-config", api.handleSaveDelegationTierConfig).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/delegation-tier-config", api.handleLoadDelegationTierConfig).Methods("GET", "OPTIONS")
 
 	// OAuth API routes (from oauth_routes.go)
 	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
@@ -1801,6 +1800,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		selectedServers = req.Servers
 	}
 
+	// Strip browser-specific MCP servers (playwright, camofox) when no browser is selected.
+	// These servers only work when a browser is active; including them otherwise causes errors.
+	if req.BrowserMode == "" || req.BrowserMode == "none" {
+		var filteredForBrowser []string
+		for _, s := range selectedServers {
+			if s != "playwright" && s != "camofox" {
+				filteredForBrowser = append(filteredForBrowser, s)
+			}
+		}
+		if len(filteredForBrowser) != len(selectedServers) {
+			log.Printf("[SERVERS] Stripped browser-specific servers (playwright/camofox) — no browser mode active (was %d, now %d)", len(selectedServers), len(filteredForBrowser))
+			selectedServers = filteredForBrowser
+		}
+	}
+
 	// Default to NO_SERVERS if none specified (user didn't select any MCP servers)
 	// This ensures the orchestrator and all sub-agents correctly get "no servers"
 	// instead of an empty slice which would be treated as "all servers" downstream
@@ -2212,13 +2226,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					finalModelID = manifest.Capabilities.LLMConfig.PhaseLLM.ModelID
 					log.Printf("[WORKFLOW_PHASE] Using phase LLM from manifest: %s/%s", finalProvider, finalModelID)
 				}
-				if req.SelectedGlobalSecrets == nil {
-					if manifest.Capabilities.SelectedGlobalSecretNames != nil {
-						req.SelectedGlobalSecrets = manifest.Capabilities.SelectedGlobalSecretNames
-					} else {
-						emptyNames := []string{}
-						req.SelectedGlobalSecrets = &emptyNames
-					}
+				// If manifest has explicit selection, use it; otherwise leave nil (= all globals included)
+				if req.SelectedGlobalSecrets == nil && manifest.Capabilities.SelectedGlobalSecretNames != nil {
+					req.SelectedGlobalSecrets = manifest.Capabilities.SelectedGlobalSecretNames
 				}
 			}
 		}
@@ -2317,12 +2327,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					serverList = strings.Join(selectedServers, ",")
 				}
 
-				// Global secrets from manifest
+				// Global secrets from manifest — if explicit selection, use it; otherwise leave nil (= all globals included)
 				if caps.SelectedGlobalSecretNames != nil {
 					req.SelectedGlobalSecrets = caps.SelectedGlobalSecretNames
-				} else if req.SelectedGlobalSecrets == nil {
-					emptyNames := []string{}
-					req.SelectedGlobalSecrets = &emptyNames
 				}
 
 				// Browser mode from manifest
@@ -2488,21 +2495,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// Use code execution mode from request if preset didn't provide any
-		if !useCodeExecutionMode && req.UseCodeExecutionMode {
-			useCodeExecutionMode = req.UseCodeExecutionMode
-			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
-		}
-
-		// NOTE: Code execution mode for claude-code/gemini-cli is NOT auto-enabled at the workflow level.
-		// Each agent determines its own mode based on its actual LLM provider (which may differ from req.Provider
-		// due to tiered config). The agent.go layer auto-enables code execution for claude-code/gemini-cli providers.
-		// See: agent.go line ~1753 (ProviderClaudeCode auto-enable) and controller_agent_factory.go (provider-based resolution).
-
-		// Use tool search mode from request if preset didn't provide any
-		if !useToolSearchMode && req.UseToolSearchMode {
-			useToolSearchMode = req.UseToolSearchMode
-			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
+		// Auto-determine execution mode from browser selection (overrides manifest setting):
+		// - Browser active → tool_search mode
+		// - No browser → code_exec mode
+		// NOTE: Per-agent code execution override for claude-code/gemini-cli providers happens at the agent layer.
+		if workflowBrowserMode != "" && workflowBrowserMode != "none" {
+			useCodeExecutionMode = false
+			useToolSearchMode = true
+			log.Printf("[TOOL_SEARCH] Tool search mode auto-enabled based on browser_mode=%s", workflowBrowserMode)
+		} else {
+			useCodeExecutionMode = true
+			useToolSearchMode = false
+			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
 		}
 
 		// Create workflow orchestrator for this request
@@ -3183,9 +3187,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var selectedTools []string
 		var useCodeExecutionMode bool
 		var useToolSearchMode bool
-		var presetSetCodeExecutionMode bool // Track if preset explicitly set the value
 
-		// Load tools and execution mode from manifest (no DB dependency)
+		// Load selected tools from manifest (no DB dependency)
 		{
 			wsPath := req.SelectedFolder
 			if wsPath == "" && req.PresetQueryID != "" {
@@ -3198,15 +3201,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					selectedTools = manifest.Capabilities.SelectedTools
 					if len(selectedTools) > 0 {
 						log.Printf("[TOOLS] Loaded %d specific tools from manifest", len(selectedTools))
-					}
-					useCodeExecutionMode = manifest.Capabilities.UseCodeExecutionMode
-					presetSetCodeExecutionMode = true
-					useToolSearchMode = manifest.Capabilities.UseToolSearchMode
-					if useCodeExecutionMode {
-						log.Printf("[CODE_EXECUTION] Code execution mode enabled from manifest")
-					}
-					if useToolSearchMode {
-						log.Printf("[TOOL_SEARCH] Tool search mode enabled from manifest")
 					}
 				}
 			}
@@ -3224,49 +3218,42 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[TOOLS] No tool selection specified - will use ALL tools from selected servers")
 		}
 
-		// CRITICAL: Always respect request value when explicitly set (frontend always sends explicit value)
-		// The frontend explicitly sends use_code_execution_mode (true or false), so we should use it
-		// This ensures that when user selects "simple" mode without preset, the request value is respected
-		useCodeExecutionMode = req.UseCodeExecutionMode
-		if useCodeExecutionMode {
-			log.Printf("[CODE_EXECUTION] Code execution mode enabled from request")
+		// Auto-determine execution mode from browser selection:
+		// - Browser active (not none/empty) → tool_search mode (agent can discover tools on-demand)
+		// - No browser → code_exec mode (agent calls tools via HTTP code)
+		if req.BrowserMode != "" && req.BrowserMode != "none" {
+			useToolSearchMode = true
+			log.Printf("[TOOL_SEARCH] Tool search mode auto-enabled based on browser_mode=%s", req.BrowserMode)
 		} else {
-			if presetSetCodeExecutionMode {
-				log.Printf("[CODE_EXECUTION] Code execution mode disabled by request (overriding preset value)")
-			} else {
-				log.Printf("[CODE_EXECUTION] Code execution mode disabled (default)")
-			}
+			useCodeExecutionMode = true
+			log.Printf("[CODE_EXECUTION] Code execution mode auto-enabled (no browser selected)")
 		}
 
 		// Auto-enable code execution mode for claude-code provider.
 		// Claude Code accesses MCP tools via the HTTP bridge (mcpbridge stdio binary),
 		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "claude-code" && !useCodeExecutionMode {
+		if req.Provider == "claude-code" {
 			useCodeExecutionMode = true
-			log.Printf("[CLAUDE CODE] Auto-enabled code execution mode for MCP tool access via bridge")
+			useToolSearchMode = false
+			log.Printf("[CLAUDE CODE] Code execution mode enforced for MCP tool access via bridge")
 		}
 
 		// Auto-enable code execution mode for gemini-cli provider.
 		// Gemini CLI accesses MCP tools via the pre-configured bridge,
 		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "gemini-cli" && !useCodeExecutionMode {
+		if req.Provider == "gemini-cli" {
 			useCodeExecutionMode = true
-			log.Printf("[GEMINI CLI] Auto-enabled code execution mode for MCP tool access via bridge")
+			useToolSearchMode = false
+			log.Printf("[GEMINI CLI] Code execution mode enforced for MCP tool access via bridge")
 		}
 
 		// Auto-enable code execution mode for codex-cli provider.
 		// Codex CLI accesses MCP tools via the pre-configured bridge,
 		// which requires code execution mode to expose per-tool API endpoints.
-		if req.Provider == "codex-cli" && !useCodeExecutionMode {
+		if req.Provider == "codex-cli" {
 			useCodeExecutionMode = true
-			log.Printf("[CODEX CLI] Auto-enabled code execution mode for MCP tool access via bridge")
-		}
-
-		// CRITICAL: Always respect request value for tool search mode when explicitly set
-		// The frontend explicitly sends use_tool_search_mode (true or false), so we should use it
-		useToolSearchMode = req.UseToolSearchMode
-		if useToolSearchMode {
-			log.Printf("[TOOL_SEARCH] Tool search mode enabled from request")
+			useToolSearchMode = false
+			log.Printf("[CODEX CLI] Code execution mode enforced for MCP tool access via bridge")
 		}
 
 		// In plan delegation mode, the orchestrator should NEVER use code execution mode
@@ -3845,7 +3832,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					)
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied %s/ folder restriction (additional: %v)", virtualtools.PlanFileFolderPath, additionalFolders)
 				} else {
-					extraFolders := []string{}
+					extraFolders := []string{"config/"}
 					if hasSkillCreator {
 						extraFolders = append(extraFolders, "skills/custom/")
 					}
@@ -3854,10 +3841,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					extraFolders = append(extraFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
-					workspace.SetSessionWorkingDir(sessionID, "Chats/")
+					workspace.SetSessionWorkingDir(sessionID, "")
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
-						append([]string{"Chats/", "Downloads/"}, extraFolders...),
+						append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}, extraFolders...),
+						append([]string{"Chats/", "Downloads/", "config/"}, extraFolders...),
 					)
 					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
 				}
@@ -4393,9 +4380,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// rules don't apply; background sub-agents get their own instructions.
 			// Also skip for organization chat — it has its own dedicated role and tools.
 			// Resolve workspace absolute path for use in instructions.
-			// In Docker: resolves to /app/workspace-docs. Locally: resolves to the dev path.
 			// Uses the shared root (not per-user) since skills/, subagents/, etc. live there.
-			wsAbsPath, _ := filepath.Abs("../workspace-docs")
+			wsAbsPath := getWorkspaceDocsAbsPath()
 
 			if isOrganizationChat {
 				underlyingAgent.AppendSystemPrompt(getOrganizationChatInstructions())
@@ -4413,6 +4399,39 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if hasSubAgentCreator {
 				underlyingAgent.AppendSystemPrompt(GetSubAgentBuilderInstructions())
 				log.Printf("[SUBAGENT BUILDER] Added sub-agent builder instructions to system prompt")
+			}
+
+			// Add workflow context if workflow paths are selected (via # in chat)
+			if len(req.WorkflowContextPaths) > 0 {
+				workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
+				if workflowPrompt != "" {
+					underlyingAgent.AppendSystemPrompt(workflowPrompt)
+					log.Printf("[WORKFLOW-CTX] Added workflow context to system prompt (%d workflows)", len(req.WorkflowContextPaths))
+				}
+			}
+
+			// Add delegation instructions — unified autonomous mode for all delegation modes
+			// Skip for organization chat — it has its own role and tools, delegation doesn't apply.
+			// Placed before skills/browser/GWS since delegation is the agent's core operating mode.
+			if !isOrganizationChat && (req.DelegationMode == "plan" || req.DelegationMode == "spawn") {
+				if req.PlanPhase == "execution" {
+					// Execution-only mode: skip planning, delegate directly
+					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
+					log.Printf("[DELEGATION] Added execution-only instructions to system prompt")
+				} else {
+					// Autonomous mode: agent decides whether to plan, delegate, or do it itself
+					underlyingAgent.AppendSystemPrompt(virtualtools.GetAutonomousDelegationInstructions())
+					log.Printf("[DELEGATION] Added autonomous delegation instructions to system prompt (mode: %s)", req.DelegationMode)
+				}
+				if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
+					underlyingAgent.AppendSystemPrompt(section)
+				}
+				// Inject custom tier descriptions into system prompt so the manager knows about them
+				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
+					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
+						underlyingAgent.AppendSystemPrompt(tierSection)
+					}
+				}
 			}
 
 			// Add skill instructions if skills are selected
@@ -4438,38 +4457,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[GWS] Added GWS quick-start instructions to system prompt")
 			}
 
-			// Add workflow context if workflow paths are selected (via # in chat)
-			if len(req.WorkflowContextPaths) > 0 {
-				workflowPrompt := buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
-				if workflowPrompt != "" {
-					underlyingAgent.AppendSystemPrompt(workflowPrompt)
-					log.Printf("[WORKFLOW-CTX] Added workflow context to system prompt (%d workflows)", len(req.WorkflowContextPaths))
-				}
-			}
-
-			// Add delegation instructions — unified autonomous mode for all delegation modes
-			// Skip for organization chat — it has its own role and tools, delegation doesn't apply.
-			if !isOrganizationChat && (req.DelegationMode == "plan" || req.DelegationMode == "spawn") {
-				if req.PlanPhase == "execution" {
-					// Execution-only mode: skip planning, delegate directly
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
-					log.Printf("[DELEGATION] Added execution-only instructions to system prompt")
-				} else {
-					// Autonomous mode: agent decides whether to plan, delegate, or do it itself
-					underlyingAgent.AppendSystemPrompt(virtualtools.GetAutonomousDelegationInstructions())
-					log.Printf("[DELEGATION] Added autonomous delegation instructions to system prompt (mode: %s)", req.DelegationMode)
-				}
-				if section := virtualtools.BuildSpawnCapabilitiesSection(buildCapabilitiesContext(req)); section != "" {
-					underlyingAgent.AppendSystemPrompt(section)
-				}
-				// Inject custom tier descriptions into system prompt so the manager knows about them
-				if delegationTierCfg := resolveDelegationTierConfig(req.DelegationTierConfig); delegationTierCfg != nil {
-					if tierSection := virtualtools.BuildCustomTierPromptSection(delegationTierCfg); tierSection != "" {
-						underlyingAgent.AppendSystemPrompt(tierSection)
-					}
-				}
-			}
-
 			// Memory tools are available in all chat modes.
 			// Use per-session memory folder if set.
 			// Session state (memFolderForPrompt, llmGuidance) was already read above.
@@ -4484,21 +4471,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.GetSystemPrompt()), req.LLMGuidance != "" || llmGuidance != "")
 
-			// Add CLI-specific human tool override when using CLI-based providers.
-			// This covers delegation tools, memory tools, and human interaction tools —
-			// all registered under the "human" category and accessible only via HTTP API.
-			if req.Provider == "claude-code" {
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
-				log.Printf("[CLAUDE CODE] Added human tool HTTP API override instructions")
-			}
-			if req.Provider == "gemini-cli" {
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
-				log.Printf("[GEMINI CLI] Added human tool HTTP API override instructions")
-			}
-			if req.Provider == "codex-cli" {
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
-				log.Printf("[CODEX CLI] Added human tool HTTP API override instructions")
-			}
 
 			// [BROWSER_UPLOAD] Inject file upload instructions into the agent's system prompt
 			// and register the path transformer on the agent itself (primary interception point).
@@ -4522,8 +4494,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Register transformer on the agent (primary path for LLM-driven tool calls).
 				// Agent tool calls go through conversation.go → toolArgTransformers, NOT through
 				// the HTTP /api/mcp/execute handler. Without this, the transformer never fires.
-				wsAbsPath, err := filepath.Abs("../workspace-docs/_users/default")
-				if err == nil {
+				{
+					wsAbsPath := filepath.Join(getWorkspaceDocsAbsPath(), "_users/default")
 					underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
 						paths, ok := args["paths"].([]interface{})
 						if !ok || len(paths) == 0 {
@@ -7383,7 +7355,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	}
 	var tierFallbacks []agent.FallbackModel
 	if reasoningLevel != "" {
-		tierConfig := resolveDelegationTierConfig(parentReq.DelegationTierConfig)
+		// Load fresh from workspace file at delegation time so LLM-written tier changes take effect immediately
+		tierConfig := LoadAndResolveTierConfig(ctx, parentReq.DelegationTierConfig)
 		if tierConfig != nil {
 			var tierModel *virtualtools.TierModel
 			switch reasoningLevel {
@@ -7737,7 +7710,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		log.Printf("[DELEGATION] Added event observers for sub-agent at depth %d", currentDepth)
 
 		// Resolve workspace absolute path for sub-agent instructions (shared root, not per-user)
-		subWsAbs, _ := filepath.Abs("../workspace-docs")
+		subWsAbs := getWorkspaceDocsAbsPath()
 
 		// Add skill instructions to sub-agent system prompt (mirrors parent agent setup)
 		if len(parentReq.SelectedSkills) > 0 {
@@ -7828,26 +7801,24 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 		}
 		if hasBrowserAccess || hasPlaywright || hasCamofox {
-			wsAbsPath, err := filepath.Abs("../workspace-docs/_users/default")
-			if err == nil {
-				underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
-					paths, ok := args["paths"].([]interface{})
-					if !ok || len(paths) == 0 {
-						log.Printf("[BROWSER_UPLOAD] Sub-agent: no paths in args, skipping transform")
-						return
+			wsAbsPath := filepath.Join(getWorkspaceDocsAbsPath(), "_users/default")
+			underlyingAgent.SetToolArgTransformer("browser_file_upload", func(args map[string]interface{}) {
+				paths, ok := args["paths"].([]interface{})
+				if !ok || len(paths) == 0 {
+					log.Printf("[BROWSER_UPLOAD] Sub-agent: no paths in args, skipping transform")
+					return
+				}
+				for i, p := range paths {
+					pathStr, ok := p.(string)
+					if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
+						continue
 					}
-					for i, p := range paths {
-						pathStr, ok := p.(string)
-						if !ok || pathStr == "" || filepath.IsAbs(pathStr) {
-							continue
-						}
-						resolved := filepath.Join(wsAbsPath, pathStr)
-						log.Printf("[BROWSER_UPLOAD] Sub-agent resolved path[%d]: %q -> %q", i, pathStr, resolved)
-						paths[i] = resolved
-					}
-				})
-				log.Printf("[BROWSER_UPLOAD] Registered sub-agent browser_file_upload transformer, workspace=%s", wsAbsPath)
-			}
+					resolved := filepath.Join(wsAbsPath, pathStr)
+					log.Printf("[BROWSER_UPLOAD] Sub-agent resolved path[%d]: %q -> %q", i, pathStr, resolved)
+					paths[i] = resolved
+				}
+			})
+			log.Printf("[BROWSER_UPLOAD] Registered sub-agent browser_file_upload transformer, workspace=%s", wsAbsPath)
 		}
 
 		// Browser isolation: when share_browser=false, tell the sub-agent to use a unique
@@ -7934,7 +7905,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				)
 				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
 			} else {
-				extraFolders := []string{}
+				extraFolders := []string{"config/"}
 				if hasSkillCreator {
 					extraFolders = append(extraFolders, "skills/custom/")
 				}
@@ -7943,10 +7914,10 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				}
 				extraFolders = append(extraFolders, fileContextFolders...)
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
-				workspace.SetSessionWorkingDir(sessionID, "Chats/")
+				workspace.SetSessionWorkingDir(sessionID, "")
 				workspace.SetSessionFolderGuard(sessionID,
-					append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...),
-					append([]string{"Chats/", "Downloads/"}, extraFolders...),
+					append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}, extraFolders...),
+					append([]string{"Chats/", "Downloads/", "config/"}, extraFolders...),
 				)
 			}
 
@@ -8083,13 +8054,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			// NOTE: Sub-agents do NOT get the delegate tool themselves (v1 design choice)
 			// This prevents runaway delegation chains
 
-			// Apply CLI provider override to sub-agents when the parent uses a CLI-based provider.
-			// Without this, sub-agents spawned by a claude-code/gemini-cli main agent would try to
-			// call workspace/delegation tools as native Bash/Read/Write — which are blocked.
-			if parentReq.Provider == "claude-code" || parentReq.Provider == "gemini-cli" || parentReq.Provider == "codex-cli" {
-				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
-				log.Printf("[DELEGATION] Applied CLI provider override to sub-agent (provider: %s)", parentReq.Provider)
-			}
 
 			// Add plan update instructions to worker sub-agents
 			// Workers update plan.md as they work — adding findings, marking progress, noting issues

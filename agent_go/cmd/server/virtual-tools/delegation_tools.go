@@ -1242,39 +1242,27 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// BuildSpawnCapabilitiesSection returns a prompt section listing available sub-agent templates and skills.
+// BuildSpawnCapabilitiesSection returns a prompt section listing available sub-agent templates.
+// Skills are already listed by buildSkillPrompt — only sub-agent templates are listed here.
 // Appended to the spawn-mode agent's system prompt so it knows what templates
 // are available when calling delegate().
 func BuildSpawnCapabilitiesSection(caps *CapabilitiesContext) string {
-	if caps == nil || (len(caps.SubAgentTemplates) == 0 && len(caps.Skills) == 0) {
+	if caps == nil || len(caps.SubAgentTemplates) == 0 {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString("\n## Available Capabilities\n")
-
-	if len(caps.Skills) > 0 {
-		sb.WriteString("\n### Skills\n")
-		sb.WriteString("The following skills are activated. Read each skill file before using it:\n")
-		for _, skill := range caps.Skills {
-			sb.WriteString(fmt.Sprintf("- **%s** (`skills/%s/SKILL.md`): %s\n", skill.Name, skill.FolderName, skill.Description))
+	sb.WriteString("\n## Sub-Agent Templates\n")
+	sb.WriteString("Pass `agent_template: \"<folder_name>\"` in delegate() to apply a template's specialized instructions:\n")
+	for _, tmpl := range caps.SubAgentTemplates {
+		line := fmt.Sprintf("- **%s** (`subagents/%s/`): %s", tmpl.Name, tmpl.FolderName, tmpl.Description)
+		if tmpl.DefaultReasoningLevel != "" {
+			line += fmt.Sprintf(" [reasoning: %s]", tmpl.DefaultReasoningLevel)
 		}
-	}
-
-	if len(caps.SubAgentTemplates) > 0 {
-		sb.WriteString("\n### Sub-Agent Templates\n")
-		sb.WriteString("Pass `agent_template: \"<folder_name>\"` in delegate() to apply a template's specialized instructions:\n")
-		for _, tmpl := range caps.SubAgentTemplates {
-			line := fmt.Sprintf("- **%s** (`subagents/%s/`): %s", tmpl.Name, tmpl.FolderName, tmpl.Description)
-			if tmpl.DefaultReasoningLevel != "" {
-				line += fmt.Sprintf(" [reasoning: %s]", tmpl.DefaultReasoningLevel)
-			}
-			if tmpl.DefaultToolMode != "" {
-				line += fmt.Sprintf(" [tool_mode: %s]", tmpl.DefaultToolMode)
-			}
-			sb.WriteString(line + "\n")
+		if tmpl.DefaultToolMode != "" {
+			line += fmt.Sprintf(" [tool_mode: %s]", tmpl.DefaultToolMode)
 		}
+		sb.WriteString(line + "\n")
 	}
-
 	return sb.String()
 }
 
@@ -1364,7 +1352,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 - It benefits from 3+ parallel workers across multiple phases
 - The user explicitly asks for a breakdown
 
-**Ask the user** when the task falls in between — medium complexity where either path could work. Use ` + "`human_feedback`" + ` to ask: *"Would you like me to create a structured plan first, or should I dive in directly?"*
+**Use your judgment** when the task falls in between — medium complexity where either path could work. Proceed directly if requirements are clear; create a plan if the approach is uncertain.
 
 ### Delegation Tools
 
@@ -1389,10 +1377,6 @@ You are a fully capable agent — you can do any task yourself using your tools.
 
 **` + "`list_agents`" + `** — See all tasks and their status
 
-**` + "`human_questions`" + `** — Ask the user 3-8 structured questions to clarify requirements before starting work.
-
-**` + "`human_feedback`" + `** — Ask a single question, present multiple-choice options, or get free-text input from the user.
-
 ### Tool Mode (optional, for ` + "`delegate`" + `):
 - **"simple"** (default): Worker gets all tools directly. Best for most tasks, including **writing Python/Bash scripts** — use workspace shell tools (` + "`execute_shell_command`" + `) to create and run scripts.
 - **"code_execution"**: Worker writes Python code to call MCP tools via HTTP API. Best for **data analysis with MCP tools** — e.g., fetching data from MCP servers, transforming responses, batch operations, loops over tool results. NOT recommended for simple script writing.
@@ -1402,7 +1386,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 
 ### Direct Delegation Workflow
 
-1. If requirements are unclear, use ` + "`human_questions`" + ` to clarify first. Skip if the request is already clear.
+1. If requirements are unclear, ask directly in your reply to clarify first. Skip if the request is already clear.
 2. **If the task will produce file outputs** (reports, scripts, data, code), create an output folder first:
    execute_shell_command(command: "mkdir -p Chats/{kebab-task-name}")
    Then pass ` + "`plan_folder: \"Chats/{kebab-task-name}\"`" + ` in the delegate call so the worker saves there.
@@ -1420,7 +1404,7 @@ You are a fully capable agent — you can do any task yourself using your tools.
 4. When tasks complete, re-read plan.md for learnings, then delegate the next batch.
 
 #### If no plan exists yet:
-1. If the user's request is vague, use ` + "`human_questions`" + ` to clarify first.
+1. If the user's request is vague, ask directly in your reply to clarify first.
 2. Check for related existing plans: execute_shell_command(command: "ls -1 Chats/ 2>/dev/null")
 3. Call ` + "`create_delegation_plan`" + ` — **END YOUR TURN** immediately after.
 4. When planning completes, call ` + "`confirm_plan_execution(plan_summary)`" + ` to present the plan for approval. **END YOUR TURN**.
@@ -1467,24 +1451,19 @@ Chats/{plan_id}/
 // The user chose "Exec" mode, so the LLM should delegate tasks directly without creating a plan first.
 func GetExecutionOnlyInstructions() string {
 	return `
-## How You Work — Execution Mode
+## How You Work
 
-You are an intelligent assistant that executes tasks efficiently using delegation. The user has chosen **execution mode**, which means you should **skip planning and execute directly**.
+You are an intelligent assistant that executes tasks efficiently using delegation. **Default: break tasks into sub-tasks and delegate directly.** Use ` + "`create_delegation_plan`" + ` only when the task is large and genuinely complex (3+ interdependent phases) or when the user explicitly asks for a plan.
 
 ### Workflow
 
-1. If the user's request is vague or has open questions, use ` + "`human_questions`" + ` to ask clarifying questions first. Skip this if the request is already clear.
+1. If the request is unclear, ask a clarifying question directly in your reply — keep it conversational.
 2. Break the task into concrete sub-tasks and immediately delegate them using ` + "`delegate(name, instruction)`" + `.
 3. Call multiple delegate() in one turn for **parallel execution** — this is the key advantage.
 4. **After delegating, END YOUR TURN.** Tell the user what's being worked on in natural language.
 5. You will receive automatic notifications when tasks complete — no need to poll.
 6. When notified, review results and delegate the next batch if needed.
 7. When ALL work is done, summarize results to the user.
-
-### Important
-- **Default: delegate directly** without creating a plan — just break into sub-tasks and delegate.
-- You can still use ` + "`human_questions`" + ` or ` + "`human_feedback`" + ` if you need clarification.
-- **Only create a plan** (via create_delegation_plan) when the task is large and complex with 3+ interdependent phases that require careful sequencing, or when the user explicitly asks for a plan.
 
 ### Output Organization
 - If an active plan folder exists for this session, first check what work is already done:
@@ -1517,10 +1496,6 @@ You are an intelligent assistant that executes tasks efficiently using delegatio
 **` + "`terminate_agent(agent_id)`" + `** — Cancel a running task
 
 **` + "`list_agents()`" + `** — See all tasks and their status
-
-**` + "`human_questions`" + `** — Ask the user structured questions to clarify requirements
-
-**` + "`human_feedback`" + `** — Ask a single question or present choices to the user
 
 ### Task Granularity — Keep Tasks Small
 - **Prefer many small tasks over few large ones**. Each completed task triggers an update to the user, so more tasks = better progress visibility.
@@ -1563,17 +1538,13 @@ Whenever the instructions above mention ` + "`execute_shell_command(...)`" + `, 
 - Instructions say: execute_shell_command(command: "ls Chats/")
 - You call: mcp__api-bridge__execute_shell_command(command: "ls Chats/")
 
-### Calling Human Tools via HTTP API
+### Calling Custom Tools via HTTP API
 The following tools are NOT available as direct function calls — call them via curl through ` + "`mcp__api-bridge__execute_shell_command`" + `:
 
 - **Delegation tools**: delegate, create_delegation_plan, confirm_plan_execution, query_agent, terminate_agent, list_agents
-- **Human interaction tools**: human_feedback, human_questions
 - **Memory tools**: save_memory, recall_memory, compress_memory
 
-**Pattern for calling any human tool:**
-1. Optionally use ` + "`mcp__api-bridge__get_api_spec(server_name=\"human\", tool_name=\"delegate\")`" + ` to see the full API spec
-2. Call via ` + "`mcp__api-bridge__execute_shell_command`" + ` using curl:
-
+**Pattern:**
 ` + "```" + `bash
 curl -s -X POST "$MCP_API_URL/tools/custom/{tool_name}" \
   -H "Authorization: Bearer $MCP_API_TOKEN" \
@@ -1591,24 +1562,16 @@ curl -s -X POST "$MCP_API_URL/tools/custom/delegate" \
   -d '{"instruction": "Your task instructions here", "reasoning_level": "medium"}'
 ` + "```" + `
 
-create a delegation plan:
+save a memory:
 ` + "```" + `bash
-curl -s -X POST "$MCP_API_URL/tools/custom/create_delegation_plan" \
+curl -s -X POST "$MCP_API_URL/tools/custom/save_memory" \
   -H "Authorization: Bearer $MCP_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"plan_name": "my-plan", "objective": "...", "context": "..."}'
-` + "```" + `
-
-ask the user questions:
-` + "```" + `bash
-curl -s -X POST "$MCP_API_URL/tools/custom/human_questions" \
-  -H "Authorization: Bearer $MCP_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"questions": [{"question": "What framework do you prefer?", "context": "For the frontend"}]}'
+  -d '{"content": "Important context to remember"}'
 ` + "```" + `
 
 $MCP_API_URL and $MCP_API_TOKEN are pre-set environment variables — use them as-is.
 
-**Important:** Whenever the instructions mention calling a tool like ` + "`delegate(instruction: \"...\")`" + `, ` + "`save_memory(content: \"...\")`" + `, or ` + "`human_questions(...)`" + `, translate that to the curl HTTP API pattern above. Do NOT attempt to call these as direct function calls — they will not be found.
+**Important:** Whenever instructions mention ` + "`delegate(...)`" + ` or ` + "`save_memory(...)`" + `, translate to the curl pattern above. Do NOT call these as direct function calls.
 `
 }

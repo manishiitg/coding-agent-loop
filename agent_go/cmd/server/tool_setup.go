@@ -233,14 +233,10 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 		return originalDescription
 	}
 
-	// Write tools are restricted to Chats/
+	// Write tools are restricted to Chats/ (chat mode only has diff_patch + shell)
 	writeTools := map[string]bool{
-		"update_workspace_file":     true,
 		"diff_patch_workspace_file": true,
-		"delete_workspace_file":     true,
-		"write_workspace_file":      true,
-		"move_workspace_file":       true,
-		"execute_shell_command":     true, // Shell can write too
+		"execute_shell_command":     true,
 	}
 
 	var accessInfo strings.Builder
@@ -268,12 +264,9 @@ func enhanceToolDescriptionForPlanMode(toolName, originalDescription string) str
 		return originalDescription
 	}
 
+	// Write tools in plan/multi-agent mode (diff_patch + shell only)
 	writeTools := map[string]bool{
-		"update_workspace_file":     true,
 		"diff_patch_workspace_file": true,
-		"delete_workspace_file":     true,
-		"write_workspace_file":      true,
-		"move_workspace_file":       true,
 		"execute_shell_command":     true,
 	}
 
@@ -421,10 +414,10 @@ func wrapExecutorsWithChatModeFolderGuard(executors map[string]func(ctx context.
 				// Inject allowed write folders for kernel-level sandboxing
 				ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, shellAllowedFolders)
 				// Set chat-mode read paths: all standard user folders + shared resources
-				chatReadFolders := []string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/"}
+				chatReadFolders := []string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}
 				ctx = context.WithValue(ctx, common.FolderGuardReadPathsKey, chatReadFolders)
-				// Default working directory for chat mode — "." → "Chats"
-				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, "Chats")
+				// Default working directory for chat mode — workspace root
+				ctx = context.WithValue(ctx, common.DefaultWorkingDirKey, "")
 				fmt.Printf("[CHAT FOLDER GUARD WRAPPER] Injected FolderGuardAllowedWriteFolderKey=%v ReadPaths=%v for %s\n", shellAllowedFolders, chatReadFolders, toolNameCopy)
 			}
 

@@ -53,8 +53,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [folderDialogPosition, setFolderDialogPosition] = useState({ top: 0, left: 0 });
   const [llmConfig, setLlmConfig] = useState<PresetLLMConfig | null>(null);
-  const [useCodeExecutionMode, setUseCodeExecutionMode] = useState(false);
-  const [useToolSearchMode, setUseToolSearchMode] = useState(false);
   const enableContextSummarization = true;
   const [useKnowledgebase, setUseKnowledgebase] = useState(true);
   const [browserMode, setBrowserModeState] = useState<'none' | 'headless' | 'cdp' | 'playwright' | 'stealth'>('none');
@@ -185,21 +183,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     }
   }, []);
 
-  // Helper to manage execution modes (mutually exclusive in UI for simplicity)
-  const setExecutionMode = useCallback((mode: 'simple' | 'code' | 'search') => {
-    if (mode === 'code') {
-      setUseCodeExecutionMode(true);
-      setUseToolSearchMode(false);
-    } else if (mode === 'search') {
-      setUseCodeExecutionMode(false);
-      setUseToolSearchMode(true);
-    } else {
-      // simple
-      setUseCodeExecutionMode(false);
-      setUseToolSearchMode(false);
-    }
-  }, []);
-
   // LLM selection handler - updates local preset LLM config
   const handleLLMSelect = useCallback((llm: LLMOption) => {
     setLlmConfig({
@@ -239,9 +222,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       };
       setLlmConfig(presetLLM);
-      setUseCodeExecutionMode(editingPreset.useCodeExecutionMode || false);
-      // For workflow presets, default to true if not explicitly set
-      setUseToolSearchMode(editingPreset.useToolSearchMode !== undefined ? editingPreset.useToolSearchMode : true); // Default true for workflow
       setUseKnowledgebase(presetLLM.use_knowledgebase !== false); // Default true unless explicitly false
       // Load browser mode: prefer explicit browserMode, fall back to legacy derivation
       if (editingPreset.browserMode && editingPreset.browserMode !== 'none') {
@@ -290,9 +270,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         model_id: primaryConfig.model_id
       };
       setLlmConfig(defaultLLM);
-      setUseCodeExecutionMode(false);
-      // Default tool search mode to true for workflow presets
-      setUseToolSearchMode(true);
       setUseKnowledgebase(true); // Default true
       setBrowserModeState('none'); // Default no browser
       setCamofoxHeaded(true); // Default headed
@@ -392,32 +369,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         defaultAgentLLM: llmConfig?.provider && llmConfig?.model_id ? { provider: llmConfig.provider, model_id: llmConfig.model_id } : undefined,
         finalLLMConfig: finalLLMConfig,
       });
-      console.log('[code_execution] [PRESET_MODAL] Saving preset with code execution mode:', {
-        useCodeExecutionMode,
-        useToolSearchMode,
-        type: typeof useCodeExecutionMode,
-        label: label.trim(),
-        finalLLMConfig: finalLLMConfig ? 'defined' : 'undefined',
-        selectedFolder: selectedFolder ? 'defined' : 'undefined'
-      })
-      
-      console.log('[code_execution] [PRESET_MODAL] Calling onSave with all parameters:', {
-        param1: label.trim(),
-        param2: query.trim(),
-        param3: selectedServers,
-        param4: selectedTools,
-        param5: effectiveAgentMode,
-        param6: selectedFolder || undefined,
-        param7: finalLLMConfig,
-        param8: useCodeExecutionMode,
-        param10: useToolSearchMode
-      })
-      
-      // CRITICAL FIX: Always pass useCodeExecutionMode explicitly, even if it's undefined
-      // JavaScript can drop trailing undefined parameters, so we ensure it's always a boolean
-      const codeExecutionModeToPass = useCodeExecutionMode === undefined ? false : useCodeExecutionMode
-      const toolSearchModeToPass = useToolSearchMode === undefined ? false : useToolSearchMode
-      
       onSave(
         label.trim(),
         effectiveAgentMode === 'workflow' ? '' : query.trim(),
@@ -427,9 +378,9 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         effectiveAgentMode,
         selectedFolder || undefined,
         finalLLMConfig,
-        codeExecutionModeToPass,  // Always pass explicit boolean, never undefined
+        false, // useCodeExecutionMode — backend determines mode from browser selection
         enableContextSummarization,
-        toolSearchModeToPass, // Always pass explicit boolean
+        false, // useToolSearchMode — backend determines mode from browser selection
         enableBrowserAccess, // Browser automation access
         selectedSecrets, // Secret IDs for injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
@@ -438,7 +389,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       );
       onClose();
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, learningLLM, phaseLLM, useCodeExecutionMode, useToolSearchMode, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1LLM, tier2LLM, tier3LLM, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization]);
+  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, executionLLM, learningLLM, phaseLLM, useKnowledgebase, enableBrowserAccess, browserMode, camofoxHeaded, tier1LLM, tier2LLM, tier3LLM, tier1Fallbacks, tier2Fallbacks, tier3Fallbacks, onSave, onClose, enableContextSummarization]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -528,76 +479,6 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                     Agent LLM Configuration
                   </label>
                   <div className="p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md space-y-4">
-                    {/* Execution Mode Selection */}
-                    <div className="mb-4">
-                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-                        Execution Mode
-                      </label>
-                      <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md overflow-hidden">
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                onClick={() => setExecutionMode('simple')}
-                                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                  !useCodeExecutionMode && !useToolSearchMode ? 'agent-mode-selected' : 'agent-mode-unselected'
-                                }`}
-                              >
-                                <Sparkles className="w-3.5 h-3.5 inline mr-1.5" />
-                                Simple
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="font-medium">Simple Mode</p>
-                              <p className="text-xs mt-1">Direct MCP tool access. Agent calls tools directly without code generation.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                onClick={() => setExecutionMode('code')}
-                                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors border-r border-gray-300 dark:border-gray-600 ${
-                                  useCodeExecutionMode ? 'agent-mode-selected' : 'agent-mode-unselected'
-                                }`}
-                              >
-                                <Code2 className="w-3.5 h-3.5 inline mr-1.5" />
-                                Code Exec
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="font-medium">Code Execution Mode</p>
-                              <p className="text-xs mt-1">MCP tools accessed via generated Go code. Better for complex multi-tool workflows.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                onClick={() => setExecutionMode('search')}
-                                className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-                                  useToolSearchMode ? 'agent-mode-selected' : 'agent-mode-unselected'
-                                }`}
-                              >
-                                <Search className="w-3.5 h-3.5 inline mr-1.5" />
-                                Tool Search
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="font-medium">Tool Search Mode</p>
-                              <p className="text-xs mt-1">Dynamic tool discovery. Agent searches for tools as needed. Selected tools become pre-discovered.</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {!useCodeExecutionMode && !useToolSearchMode && 'Simple: Direct MCP tool access'}
-                        {useCodeExecutionMode && 'Code Exec: Tools accessed via generated Go code'}
-                        {useToolSearchMode && 'Tool Search: Dynamic tool discovery as needed'}
-                      </div>
-                    </div>
-
                     {[
                           { label: 'Tier 1 - High Reasoning', tooltip: 'Used for first-time execution (no learnings yet) and initial learning extraction.', desc: 'Most capable model for complex first-time tasks.', llm: tier1LLM, setLLM: setTier1LLM, fallbacks: tier1Fallbacks, setFallbacks: setTier1Fallbacks, num: 1 },
                           { label: 'Tier 2 - Medium Reasoning', tooltip: 'Used for execution with existing learnings and learning refinement.', desc: 'Balanced model for tasks with existing learnings.', llm: tier2LLM, setLLM: setTier2LLM, fallbacks: tier2Fallbacks, setFallbacks: setTier2Fallbacks, num: 2 },

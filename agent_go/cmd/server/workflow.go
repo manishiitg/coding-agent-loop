@@ -221,6 +221,17 @@ func getWorkspaceAPIURL() string {
 	return "http://localhost:8081"
 }
 
+// getWorkspaceDocsAbsPath returns the absolute filesystem path to the workspace docs root.
+// Uses WORKSPACE_DOCS_PATH env var if set (e.g. /app/workspace-docs in Docker),
+// otherwise resolves ../workspace-docs relative to the working directory.
+func getWorkspaceDocsAbsPath() string {
+	if p := os.Getenv("WORKSPACE_DOCS_PATH"); p != "" {
+		return p
+	}
+	abs, _ := filepath.Abs("../workspace-docs")
+	return abs
+}
+
 // readFileFromWorkspace reads a file from the workspace API and returns its content as a string
 // Returns (content, true, nil) if file exists, (empty, false, nil) if file doesn't exist (404), or (empty, false, error) on error
 func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, error) {

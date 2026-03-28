@@ -2830,91 +2830,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             )}
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-2">
-                {/* Agent Mode Selector — hidden in workflow mode, show LLM label instead */}
-                {hideExtras ? (
-                  isWorkflowPhaseChat ? (
-                    <div className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs">
-                      {primaryLLM?.provider && primaryLLM?.model ? `${primaryLLM.provider}/${primaryLLM.model.split('/').pop()}` : 'LLM'}
-                    </div>
-                  ) : null
-                ) : (
-                  isClaudeCode ? (
-                    /* Claude Code always uses code execution mode */
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-1 p-1.5 rounded-md border border-amber-400 dark:border-amber-600 bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 cursor-default">
-                          <Code2 className="w-4 h-4 flex-shrink-0" />
-                          <span className="text-xs font-medium">Code</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent side="top">
-                        <p>Claude Code always uses code execution mode</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                  <div className="flex items-center gap-1">
-                    {/* Simple Mode */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUseCodeExecutionMode(false)
-                        setUseToolSearchMode(false)
-                      }}
-                      disabled={isStreaming || isSummarizing}
-                      data-testid="agent-mode-simple"
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        !useCodeExecutionMode && !useToolSearchMode
-                          ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-400 dark:border-purple-600 text-purple-600 dark:text-purple-400'
-                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <Sparkles className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
-                        Simple
-                      </span>
-                    </button>
-                    {/* Code Execution Mode */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUseCodeExecutionMode(true)
-                        setUseToolSearchMode(false)
-                      }}
-                      disabled={isStreaming || isSummarizing}
-                      data-testid="agent-mode-code-exec"
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        useCodeExecutionMode
-                          ? 'bg-amber-100 dark:bg-amber-900/40 border-amber-400 dark:border-amber-600 text-amber-600 dark:text-amber-400'
-                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <Code2 className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
-                        Code
-                      </span>
-                    </button>
-                    {/* Tool Search Mode */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setUseCodeExecutionMode(false)
-                        setUseToolSearchMode(true)
-                      }}
-                      disabled={isStreaming || isSummarizing}
-                      data-testid="agent-mode-tool-search"
-                      className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
-                        useToolSearchMode
-                          ? 'bg-cyan-100 dark:bg-cyan-900/40 border-cyan-400 dark:border-cyan-600 text-cyan-600 dark:text-cyan-400'
-                          : 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-400 dark:text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
-                    >
-                      <Search className="w-4 h-4 flex-shrink-0" />
-                      <span className="text-xs font-medium max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[50px] transition-all duration-200">
-                        Search
-                      </span>
-                    </button>
+                {/* Workflow phase chat: show active LLM label */}
+                {hideExtras && isWorkflowPhaseChat && (
+                  <div className="flex items-center gap-1 px-2 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-xs">
+                    {primaryLLM?.provider && primaryLLM?.model ? `${primaryLLM.provider}/${primaryLLM.model.split('/').pop()}` : 'LLM'}
                   </div>
-                  )
                 )}
 
                 {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}

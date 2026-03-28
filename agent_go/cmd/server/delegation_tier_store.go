@@ -5,15 +5,130 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	virtualtools "mcp-agent-builder-go/agent_go/cmd/server/virtual-tools"
 )
 
 const delegationTierConfigFilePath = "config/delegation-tier-config.json"
 
+func sanitizeDelegationTierConfig(config *virtualtools.DelegationTierConfig) *virtualtools.DelegationTierConfig {
+	if config == nil {
+		return nil
+	}
+
+	result := &virtualtools.DelegationTierConfig{}
+	hasAny := false
+
+	if main := sanitizeTierModel(config.Main); main != nil {
+		result.Main = main
+		hasAny = true
+	}
+	if high := sanitizeTierModel(config.High); high != nil {
+		result.High = high
+		hasAny = true
+	}
+	if medium := sanitizeTierModel(config.Medium); medium != nil {
+		result.Medium = medium
+		hasAny = true
+	}
+	if low := sanitizeTierModel(config.Low); low != nil {
+		result.Low = low
+		hasAny = true
+	}
+
+	if len(config.Custom) > 0 {
+		custom := make(map[string]*virtualtools.CustomTierModel)
+		for slug, tier := range config.Custom {
+			if tier == nil {
+				continue
+			}
+			cleanSlug := strings.TrimSpace(slug)
+			provider := strings.TrimSpace(tier.Provider)
+			modelID := strings.TrimSpace(tier.ModelID)
+			if cleanSlug == "" || provider == "" || modelID == "" {
+				continue
+			}
+			custom[cleanSlug] = &virtualtools.CustomTierModel{
+				Description: strings.TrimSpace(tier.Description),
+				Provider:    provider,
+				ModelID:     modelID,
+			}
+		}
+		if len(custom) > 0 {
+			result.Custom = custom
+			hasAny = true
+		}
+	}
+
+	if !hasAny {
+		return nil
+	}
+	return result
+}
+
+func mergeDelegationTierConfig(base, override *virtualtools.DelegationTierConfig) *virtualtools.DelegationTierConfig {
+	base = sanitizeDelegationTierConfig(base)
+	override = sanitizeDelegationTierConfig(override)
+
+	if base == nil && override == nil {
+		return nil
+	}
+	if base == nil {
+		return override
+	}
+	if override == nil {
+		return base
+	}
+
+	result := &virtualtools.DelegationTierConfig{
+		Main:   base.Main,
+		High:   base.High,
+		Medium: base.Medium,
+		Low:    base.Low,
+	}
+
+	if len(base.Custom) > 0 {
+		result.Custom = make(map[string]*virtualtools.CustomTierModel, len(base.Custom))
+		for slug, tier := range base.Custom {
+			tierCopy := *tier
+			result.Custom[slug] = &tierCopy
+		}
+	}
+
+	if override.Main != nil {
+		result.Main = override.Main
+	}
+	if override.High != nil {
+		result.High = override.High
+	}
+	if override.Medium != nil {
+		result.Medium = override.Medium
+	}
+	if override.Low != nil {
+		result.Low = override.Low
+	}
+	if len(override.Custom) > 0 {
+		if result.Custom == nil {
+			result.Custom = make(map[string]*virtualtools.CustomTierModel, len(override.Custom))
+		}
+		for slug, tier := range override.Custom {
+			tierCopy := *tier
+			result.Custom[slug] = &tierCopy
+		}
+	}
+
+	return sanitizeDelegationTierConfig(result)
+}
+
 // SaveDelegationTierConfig saves delegation tier config as plain JSON to the workspace.
 func SaveDelegationTierConfig(ctx context.Context, config *virtualtools.DelegationTierConfig) error {
-	data, err := json.Marshal(config)
+	sanitized := sanitizeDelegationTierConfig(config)
+	if sanitized == nil {
+		sanitized = &virtualtools.DelegationTierConfig{}
+	}
+
+	data, err := json.Marshal(sanitized)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tier config: %w", err)
 	}
@@ -37,44 +152,18 @@ func LoadDelegationTierConfig(ctx context.Context) (*virtualtools.DelegationTier
 	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tier config: %w", err)
 	}
-	return &cfg, nil
+	return sanitizeDelegationTierConfig(&cfg), nil
 }
 
 // LoadAndResolveTierConfig loads tier config from the workspace file and merges with a request-level
 // override (request config takes priority over file config, file over env vars).
 // Use this at delegation spawn time so tier changes written mid-session take effect immediately.
 func LoadAndResolveTierConfig(ctx context.Context, requestConfig *virtualtools.DelegationTierConfig) *virtualtools.DelegationTierConfig {
-	fileConfig, _ := LoadDelegationTierConfig(ctx)
-	if fileConfig == nil && requestConfig == nil {
-		return nil
+	fileConfig, err := LoadDelegationTierConfig(ctx)
+	if err != nil {
+		return resolveDelegationTierConfig(requestConfig)
 	}
-	// Start with file config as base, then overlay request config fields on top
-	merged := &virtualtools.DelegationTierConfig{}
-	if fileConfig != nil {
-		merged.Main = fileConfig.Main
-		merged.High = fileConfig.High
-		merged.Medium = fileConfig.Medium
-		merged.Low = fileConfig.Low
-		merged.Custom = fileConfig.Custom
-	}
-	if requestConfig != nil {
-		if requestConfig.Main != nil {
-			merged.Main = requestConfig.Main
-		}
-		if requestConfig.High != nil {
-			merged.High = requestConfig.High
-		}
-		if requestConfig.Medium != nil {
-			merged.Medium = requestConfig.Medium
-		}
-		if requestConfig.Low != nil {
-			merged.Low = requestConfig.Low
-		}
-		if len(requestConfig.Custom) > 0 {
-			merged.Custom = requestConfig.Custom
-		}
-	}
-	return merged
+	return resolveDelegationTierConfig(mergeDelegationTierConfig(fileConfig, requestConfig))
 }
 
 // handleSaveDelegationTierConfig saves delegation tier config to the workspace filesystem.
@@ -94,7 +183,7 @@ func (api *StreamingAPI) handleSaveDelegationTierConfig(w http.ResponseWriter, r
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
 }
 
 // handleLoadDelegationTierConfig loads delegation tier config from the workspace filesystem.
@@ -113,5 +202,5 @@ func (api *StreamingAPI) handleLoadDelegationTierConfig(w http.ResponseWriter, r
 		cfg = &virtualtools.DelegationTierConfig{}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(cfg)
+	_ = json.NewEncoder(w).Encode(cfg)
 }

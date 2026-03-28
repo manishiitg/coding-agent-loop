@@ -1053,9 +1053,11 @@ type PlanStep = PlanStepInterface
 // PlanningResponse represents the structured response from planning
 // Uses type-safe PlanStepInterface - all plans must be in new format with "type" field
 type PlanningResponse struct {
-	Objective   string              `json:"objective,omitempty"`
-	Steps       []PlanStepInterface `json:"-"`
-	OrphanSteps []PlanStepInterface `json:"-"`
+	Objective         string              `json:"objective,omitempty"`
+	SuccessCriteria   string              `json:"success_criteria,omitempty"`
+	WorkflowOptimized *bool               `json:"workflow_optimized,omitempty"`
+	Steps             []PlanStepInterface `json:"-"`
+	OrphanSteps       []PlanStepInterface `json:"-"`
 }
 
 // parseStepFromJSON parses a single step from raw JSON using the type field
@@ -1122,15 +1124,19 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 // UnmarshalJSON implements custom unmarshaling for typed steps
 func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 	var temp struct {
-		Objective   string            `json:"objective"`
-		Steps       []json.RawMessage `json:"steps"`
-		OrphanSteps []json.RawMessage `json:"orphan_steps"`
+		Objective         string            `json:"objective"`
+		SuccessCriteria   string            `json:"success_criteria"`
+		WorkflowOptimized *bool             `json:"workflow_optimized"`
+		Steps             []json.RawMessage `json:"steps"`
+		OrphanSteps       []json.RawMessage `json:"orphan_steps"`
 	}
 	if err := json.Unmarshal(data, &temp); err != nil {
 		return fmt.Errorf("failed to unmarshal plan: %w", err)
 	}
 
 	pr.Objective = temp.Objective
+	pr.SuccessCriteria = temp.SuccessCriteria
+	pr.WorkflowOptimized = temp.WorkflowOptimized
 	pr.Steps = make([]PlanStepInterface, len(temp.Steps))
 	for i, stepData := range temp.Steps {
 		typedStep, err := parseStepFromJSON(stepData, i, "step")
@@ -1171,6 +1177,12 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 
 	if pr.Objective != "" {
 		result["objective"] = pr.Objective
+	}
+	if pr.SuccessCriteria != "" {
+		result["success_criteria"] = pr.SuccessCriteria
+	}
+	if pr.WorkflowOptimized != nil {
+		result["workflow_optimized"] = *pr.WorkflowOptimized
 	}
 
 	if len(pr.OrphanSteps) > 0 {

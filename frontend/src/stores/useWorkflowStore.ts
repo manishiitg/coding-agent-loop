@@ -2148,6 +2148,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           // Build state update object - restore from localStorage or use defaults
           // startPoint is always 0 - will be calculated from progress via loadProgress
+          // NOTE: activePhase is NOT reset here — it's saved/restored by switchToPreset's
+          // per-preset snapshot mechanism. Resetting it here would clobber the restored phase.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
             selectedExecutionMode: 'with_learning',
@@ -2155,7 +2157,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             selectedBranchStep: null,
             selectedGroupIds: savedGroupIds,
             currentRunningGroupId: savedCurrentRunningGroupId,
-            activePhase: null
           }
 
           // Single set() call to avoid multiple re-renders

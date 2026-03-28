@@ -1996,10 +1996,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       )
     }
 
-    // Disconnect SSE for sessions that are no longer active
+    // Disconnect SSE for sessions that are no longer active.
+    // Safety guard: never disconnect a session whose tab still has isStreaming=true —
+    // tabsWithActiveSessions may have computed before the latest setTabStreaming(true) call,
+    // and disconnecting mid-execution would make the stop button disappear.
+    const freshChatTabs = useChatStore.getState().chatTabs
     for (const sid of Object.keys(currentSSE)) {
       if (!neededSessionIds.has(sid)) {
-        disconnectSSE(sid)
+        const stillStreaming = Object.values(freshChatTabs).some(
+          t => t.sessionId === sid && t.isStreaming === true && !t.isCompleted
+        )
+        if (!stillStreaming) {
+          disconnectSSE(sid)
+        }
       }
     }
 

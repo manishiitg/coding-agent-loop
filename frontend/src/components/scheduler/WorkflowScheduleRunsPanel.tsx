@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import ReactDOM from 'react-dom'
 import cronstrue from 'cronstrue'
 import {
   X, Play, Trash2, Clock, CheckCircle, XCircle, Minus, Loader,
   Terminal, Pause, Calendar, ClipboardCheck,
-  ChevronDown, ChevronRight, RefreshCw, Square, Radio
+  ChevronDown, ChevronRight, RefreshCw, Square, Radio, Search
 } from 'lucide-react'
 import { schedulerApi } from '../../api/scheduler'
 import { agentApi } from '../../services/api'
@@ -22,6 +22,7 @@ interface WorkflowScheduleRunsPanelProps {
 }
 
 type ActivePopup = 'costs' | 'logs' | 'eval' | 'live' | null
+type JobFilter = 'running' | 'enabled' | 'paused' | 'issues' | 'all'
 
 interface JobPopupState {
   jobId: string
@@ -97,11 +98,60 @@ function formatRunTime(dateStr: string): string {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+function formatTimeUntil(dateStr?: string): string {
+  if (!dateStr) return '—'
+
+  const diffMs = new Date(dateStr).getTime() - Date.now()
+  if (Number.isNaN(diffMs)) return '—'
+  if (diffMs <= 0) return 'due now'
+
+  const totalMinutes = Math.ceil(diffMs / 60000)
+  if (totalMinutes < 60) return `in ${totalMinutes}m`
+
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours < 24) return minutes > 0 ? `in ${hours}h ${minutes}m` : `in ${hours}h`
+
+  const days = Math.floor(hours / 24)
+  const remHours = hours % 24
+  if (days < 7) return remHours > 0 ? `in ${days}d ${remHours}h` : `in ${days}d`
+
+  return new Date(dateStr).toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+function sortJobs(a: ScheduledJob, b: ScheduledJob): number {
+  const rank = (job: ScheduledJob) => {
+    if (job.last_status === 'running') return 0
+    if (job.enabled && job.next_run_at) return 1
+    if (job.enabled) return 2
+    if (job.last_status === 'error') return 3
+    return 4
+  }
+
+  const rankDiff = rank(a) - rank(b)
+  if (rankDiff !== 0) return rankDiff
+
+  if (a.enabled && b.enabled) {
+    if (a.next_run_at && b.next_run_at) {
+      return a.next_run_at.localeCompare(b.next_run_at)
+    }
+    if (a.next_run_at) return -1
+    if (b.next_run_at) return 1
+  }
+
+  const aTime = a.updated_at || a.last_run_at || a.created_at || ''
+  const bTime = b.updated_at || b.last_run_at || b.created_at || ''
+  return bTime.localeCompare(aTime)
+}
+
 const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose }) => {
   const [jobs, setJobs] = useState<ScheduledJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null)
+  const [activeFilter, setActiveFilter] = useState<JobFilter>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedWorkflowFilter, setSelectedWorkflowFilter] = useState('all')
 
   // Auto-expand running jobs
   useEffect(() => {
@@ -149,12 +199,10 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
   }, [])
 
-  // Initial load — run once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadJobs(true)
     refreshPresets()
-  }, [])
+  }, [loadJobs, refreshPresets])
 
   const loadRunsForJob = useCallback(async (jobId: string) => {
     setLoadingRuns(jobId)
@@ -172,7 +220,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
   const loadCostsForRuns = useCallback(async (jobId: string, runs: ScheduledJobRun[]) => {
     const job = jobs.find(j => j.id === jobId)
     const preset = presetMap.get(job?.preset_query_id ?? '')
-    const workspacePath = (job as any)?.workspace_path || preset?.workspacePath
+    const workspacePath = job?.workspace_path || preset?.workspacePath
     if (!workspacePath) return
 
     const foldersToLoad = runs
@@ -209,9 +257,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         newCosts[folder] = null
       }
     })
-
     setRunCosts(prev => ({ ...prev, ...newCosts }))
-  }, [presetMap, jobs, runCosts])
+  }, [presetMap, jobs, runCosts, runningRunFolders])
 
   // Auto-load runs when a job is expanded
   useEffect(() => {
@@ -248,6 +295,97 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
   // Auto-refresh while any job is running: jobs list + runs + costs (every 5s)
   const hasRunningJob = jobs.some(j => j.last_status === 'running')
+  const activeJobs = jobs.filter(j => j.enabled).length
+
+  const summary = useMemo(() => {
+    const running = jobs.filter(j => j.last_status === 'running').length
+    const issues = jobs.filter(j => j.last_status === 'error').length
+    const paused = jobs.filter(j => !j.enabled).length
+    return {
+      running,
+      issues,
+      paused,
+      enabled: activeJobs,
+      total: jobs.length,
+    }
+  }, [jobs, activeJobs])
+
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const workflowOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+
+    jobs.forEach((job) => {
+      const preset = presetMap.get(job.preset_query_id)
+      const label = preset?.label || job.workflow_label || job.name
+      if (!label) return
+      if (!seen.has(label)) seen.set(label, label)
+    })
+
+    return Array.from(seen.entries())
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [jobs, presetMap])
+
+  const upcomingJobs = useMemo(() => {
+    return [...jobs]
+      .filter(job => {
+        if (!job.enabled || !job.next_run_at) return false
+        if (selectedWorkflowFilter === 'all') return true
+        const preset = presetMap.get(job.preset_query_id)
+        const workflowLabel = preset?.label || job.workflow_label || job.name
+        return workflowLabel === selectedWorkflowFilter
+      })
+      .sort((a, b) => (a.next_run_at || '').localeCompare(b.next_run_at || ''))
+      .slice(0, 4)
+  }, [jobs, presetMap, selectedWorkflowFilter])
+
+  const filteredJobs = useMemo(() => {
+    return [...jobs]
+      .sort(sortJobs)
+      .filter((job) => {
+        switch (activeFilter) {
+          case 'running':
+            if (job.last_status !== 'running') return false
+            break
+          case 'enabled':
+            if (!job.enabled) return false
+            break
+          case 'paused':
+            if (job.enabled) return false
+            break
+          case 'issues':
+            if (job.last_status !== 'error') return false
+            break
+          case 'all':
+          default:
+            break
+        }
+
+        if (!normalizedSearch) return true
+
+        const preset = presetMap.get(job.preset_query_id)
+        const workflowLabel = preset?.label || job.workflow_label || job.name
+
+        if (selectedWorkflowFilter !== 'all' && workflowLabel !== selectedWorkflowFilter) {
+          return false
+        }
+
+        const haystack = [
+          job.name,
+          job.description,
+          workflowLabel,
+          preset?.label,
+          job.workspace_path,
+          job.cron_expression,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+
+        return haystack.includes(normalizedSearch)
+      })
+  }, [jobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter])
+
   useEffect(() => {
     if (!hasRunningJob) return
     const interval = setInterval(async () => {
@@ -372,7 +510,13 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     }
   }
 
-  const activeJobs = jobs.filter(j => j.enabled).length
+  const filterPills: Array<{ key: JobFilter; label: string; count: number }> = [
+    { key: 'running', label: 'Running', count: summary.running },
+    { key: 'enabled', label: 'Enabled', count: summary.enabled },
+    { key: 'paused', label: 'Paused', count: summary.paused },
+    { key: 'issues', label: 'Issues', count: summary.issues },
+    { key: 'all', label: 'All', count: summary.total },
+  ]
 
   return ReactDOM.createPortal(
     <TooltipProvider delayDuration={300}>
@@ -380,18 +524,18 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="w-full max-w-3xl mx-4 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col max-h-[85vh]">
+      <div className="w-full max-w-3xl mx-4 bg-card text-card-foreground rounded-xl shadow-2xl border border-border flex flex-col max-h-[85vh]">
 
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-2">
             <Calendar className="w-5 h-5 text-amber-500" />
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+            <h2 className="text-base font-semibold text-foreground">
               Scheduled Workflows
             </h2>
             {!isLoading && (
-              <span className="text-xs text-gray-400 dark:text-gray-500 ml-1">
-                {activeJobs} active · {jobs.length} total
+              <span className="text-xs text-muted-foreground ml-1">
+                {summary.running} running · {activeJobs} active · {jobs.length} total
               </span>
             )}
           </div>
@@ -399,15 +543,15 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  onClick={loadJobs}
-                  className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                  onClick={() => loadJobs()}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">Refresh</TooltipContent>
             </Tooltip>
-            <button onClick={onClose} className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+            <button onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -415,19 +559,174 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
+          {!isLoading && jobs.length > 0 && (
+            <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-4 space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <button
+                  onClick={() => setActiveFilter('running')}
+                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
+                    activeFilter === 'running'
+                      ? 'border-amber-400/70 bg-muted text-foreground shadow-sm'
+                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Running now</div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <Radio className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="text-lg font-semibold text-foreground">{summary.running}</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => setActiveFilter('enabled')}
+                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
+                    activeFilter === 'enabled'
+                      ? 'border-emerald-400/70 bg-muted text-foreground shadow-sm'
+                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Enabled</div>
+                  <div className="mt-1 text-lg font-semibold text-foreground">{summary.enabled}</div>
+                </button>
+                <button
+                  onClick={() => setActiveFilter('paused')}
+                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
+                    activeFilter === 'paused'
+                      ? 'border-border bg-muted text-foreground shadow-sm'
+                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Paused</div>
+                  <div className="mt-1 text-lg font-semibold text-foreground">{summary.paused}</div>
+                </button>
+                <button
+                  onClick={() => setActiveFilter('issues')}
+                  className={`text-left rounded-xl border px-3 py-2 transition-colors ${
+                    activeFilter === 'issues'
+                      ? 'border-red-400/70 bg-muted text-foreground shadow-sm'
+                      : 'border-border bg-background text-foreground shadow-sm hover:bg-muted'
+                  }`}
+                >
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Issues</div>
+                  <div className="mt-1 text-lg font-semibold text-foreground">{summary.issues}</div>
+                </button>
+              </div>
+
+              <div className="rounded-xl border border-border bg-background px-3 py-3">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Next scheduled</div>
+                    <div className="text-sm font-medium text-foreground">Which workflows will run soonest</div>
+                  </div>
+                  <div className="text-xs text-muted-foreground whitespace-nowrap">
+                    {upcomingJobs.length} upcoming
+                  </div>
+                </div>
+
+                {upcomingJobs.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No upcoming enabled schedules.</div>
+                ) : (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {upcomingJobs.map((job) => {
+                      const preset = presetMap.get(job.preset_query_id)
+                      const label = preset?.label || job.workflow_label || job.name
+                      return (
+                        <button
+                          key={`upcoming-${job.id}`}
+                          onClick={() => setExpandedJobId(job.id)}
+                          className="rounded-lg border border-border bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="truncate text-sm font-medium text-foreground" title={label}>
+                              {label}
+                            </span>
+                            <span className="text-xs font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                              {formatTimeUntil(job.next_run_at)}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                            <span className="truncate" title={job.name}>{job.name}</span>
+                            <span className="whitespace-nowrap">{formatNext(job.next_run_at)}</span>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-1 max-w-3xl flex-col gap-3 md:flex-row">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search by workflow, preset, cron, workspace..."
+                      className="w-full rounded-lg border border-border bg-background px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50"
+                    />
+                  </div>
+                  <select
+                    value={selectedWorkflowFilter}
+                    onChange={(e) => setSelectedWorkflowFilter(e.target.value)}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-400/50 md:min-w-[220px]"
+                  >
+                    <option value="all">All workflows</option>
+                    {workflowOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {filterPills.map((pill) => (
+                    <button
+                      key={pill.key}
+                      onClick={() => setActiveFilter(pill.key)}
+                      className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                        activeFilter === pill.key
+                          ? 'bg-foreground text-background'
+                          : 'border border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                      }`}
+                    >
+                      {pill.label} ({pill.count})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {isLoading && jobs.length === 0 ? (
-            <div className="flex items-center justify-center h-40 text-sm text-gray-400">Loading...</div>
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">Loading...</div>
           ) : error ? (
             <div className="flex items-center justify-center h-40 text-sm text-red-500">{error}</div>
           ) : jobs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-gray-400 dark:text-gray-500">
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground">
               <Clock className="w-8 h-8 opacity-30" />
               <p>No scheduled workflows yet.</p>
               <p className="text-xs">Click the clock icon on a workflow preset to add one.</p>
             </div>
+          ) : filteredJobs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 gap-2 text-sm text-muted-foreground px-6 text-center">
+              <Search className="w-8 h-8 opacity-30" />
+              <p>No workflows match the current filter.</p>
+              <button
+                onClick={() => {
+                  setSearchQuery('')
+                  setActiveFilter('all')
+                  setSelectedWorkflowFilter('all')
+                }}
+                className="text-xs text-amber-600 dark:text-amber-400 hover:underline"
+              >
+                Clear search and show all schedules
+              </button>
+            </div>
           ) : (
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
-              {jobs.map((job) => {
+              {filteredJobs.map((job) => {
                 const preset = presetMap.get(job.preset_query_id)
                 const cronDesc = describeCron(job.cron_expression)
                 const isExpanded = expandedJobId === job.id

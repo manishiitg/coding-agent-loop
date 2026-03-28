@@ -244,11 +244,6 @@ func (agent *WorkflowLearningAgent) Execute(ctx context.Context, templateVars ma
 
 // learningSystemPromptProcessor creates the system prompt that always captures both success and failure patterns
 func (agent *WorkflowLearningAgent) learningSystemPromptProcessor(templateVars map[string]string) string {
-	learningDetailLevel := templateVars["LearningDetailLevel"]
-	if learningDetailLevel == "" {
-		learningDetailLevel = "exact"
-	}
-
 	workspacePath := templateVars["WorkspacePath"]
 	stepNumber := templateVars["StepNumber"]
 	stepTitle := templateVars["StepTitle"]

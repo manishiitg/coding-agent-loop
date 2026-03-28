@@ -1877,41 +1877,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 	}
 }
 
-// wrapCompletionToolExecutor wraps a completion tool executor to inject the mark step complete function into context
-func (hcpo *StepBasedWorkflowOrchestrator) wrapCompletionToolExecutor(
-	originalExecutor func(ctx context.Context, args map[string]interface{}) (string, error),
-	markStepCompleteFunc virtualtools.MarkStepCompleteFunc,
-) func(ctx context.Context, args map[string]interface{}) (string, error) {
-	return func(ctx context.Context, args map[string]interface{}) (string, error) {
-		ctx = context.WithValue(ctx, virtualtools.MarkStepCompleteKey, markStepCompleteFunc)
-		return originalExecutor(ctx, args)
-	}
-}
-
-// createMarkStepCompleteFunc creates a function that writes completed.txt to signal step completion
-// The file is written to {stepExecutionPath}/completed.txt via the workspace API
-func (hcpo *StepBasedWorkflowOrchestrator) createMarkStepCompleteFunc(stepPath string) virtualtools.MarkStepCompleteFunc {
-	return func(ctx context.Context, reason string) (string, error) {
-		// Build the completed.txt path (relative to workspace)
-		var stepExecutionPath string
-		if hcpo.selectedRunFolder != "" {
-			stepExecutionPath = filepath.Join("runs", hcpo.selectedRunFolder, "execution", stepPath)
-		} else {
-			stepExecutionPath = filepath.Join("execution", stepPath)
-		}
-		completedFilePath := filepath.Join(stepExecutionPath, "completed.txt")
-
-		// Write the reason to completed.txt
-		if err := hcpo.WriteWorkspaceFile(ctx, completedFilePath, reason); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to write completed.txt: %s: %v", completedFilePath, err))
-			return "", fmt.Errorf("failed to write completion marker: %w", err)
-		}
-
-		hcpo.GetLogger().Info(fmt.Sprintf("✅ Step marked as complete via mark_step_complete tool: %s (reason: %s)", completedFilePath, reason))
-		return fmt.Sprintf("Step marked as complete. Reason recorded: %s", reason), nil
-	}
-}
-
 // createValidateTodoExistsFunc creates a function that validates if a task exists
 // This function is injected into context for call_sub_agent/call_generic_agent to use
 // Reads tasks.md and parses markdown checkboxes to find tasks

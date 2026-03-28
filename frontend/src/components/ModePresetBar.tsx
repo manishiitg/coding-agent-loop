@@ -131,6 +131,7 @@ export const ModePresetBar: React.FC = () => {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showRunsPanel, setShowRunsPanel] = useState(false)
   const [workflowScheduleCount, setWorkflowScheduleCount] = useState(0)
+  const [runningScheduledWorkflowCount, setRunningScheduledWorkflowCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
   const [restoreWorkspaceAfterTierModal, setRestoreWorkspaceAfterTierModal] = useState(false)
@@ -152,18 +153,40 @@ export const ModePresetBar: React.FC = () => {
     setShowWorkflowsOverview(false)
   }, [setModeCategory, setShowWorkflowsOverview, setWorkspaceMinimized])
 
-  // Fetch workflow schedule count for badge (filtered to current workflow)
+  // Fetch global workflow schedule metadata for the header so it can show
+  // running/total counts before the schedules popup is opened.
   useEffect(() => {
-    if (selectedModeCategory !== 'workflow') return
-    const currentPresetId = activePreset?.id
-    schedulerApi.listJobs({ entity_type: 'workflow' })
-      .then(resp => {
+    if (selectedModeCategory !== 'workflow') {
+      setWorkflowScheduleCount(0)
+      setRunningScheduledWorkflowCount(0)
+      return
+    }
+
+    let cancelled = false
+
+    const loadScheduleState = async () => {
+      try {
+        const resp = await schedulerApi.listJobs({ entity_type: 'workflow' })
+        if (cancelled) return
+
         const jobs = resp.jobs ?? []
-        const filtered = currentPresetId ? jobs.filter(j => j.preset_query_id === currentPresetId) : []
-        setWorkflowScheduleCount(filtered.length)
-      })
-      .catch(() => {})
-  }, [selectedModeCategory, showRunsPanel, activePreset?.id]) // refresh after runs panel closes or workflow changes
+        setWorkflowScheduleCount(jobs.length)
+        setRunningScheduledWorkflowCount(jobs.filter(j => j.last_status === 'running').length)
+      } catch {
+        if (cancelled) return
+        setWorkflowScheduleCount(0)
+        setRunningScheduledWorkflowCount(0)
+      }
+    }
+
+    loadScheduleState()
+    const interval = window.setInterval(loadScheduleState, 10000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [selectedModeCategory, showRunsPanel]) // refresh after runs panel closes or mode changes
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -696,17 +719,29 @@ export const ModePresetBar: React.FC = () => {
                     <TooltipTrigger asChild>
                       <button
                         onClick={() => setShowRunsPanel(true)}
-                        className="relative p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                        className={`relative flex items-center gap-2 px-2 py-1 rounded-md transition-colors ${
+                          runningScheduledWorkflowCount > 0
+                            ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30'
+                            : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200'
+                        }`}
                       >
-                        <CalendarDays className="w-4 h-4" />
-                        {workflowScheduleCount > 0 && (
-                          <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-amber-500 text-white text-[9px] font-bold leading-none px-0.5">
-                            {workflowScheduleCount}
-                          </span>
+                        <CalendarDays className="w-4 h-4 flex-shrink-0" />
+                        <span className="text-xs font-medium whitespace-nowrap">
+                          {runningScheduledWorkflowCount}/{workflowScheduleCount} schedules
+                        </span>
+                        {runningScheduledWorkflowCount > 0 && (
+                          <>
+                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 border border-white dark:border-gray-800" />
+                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-50" />
+                          </>
                         )}
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">Scheduled workflow runs</TooltipContent>
+                    <TooltipContent side="bottom">
+                      {runningScheduledWorkflowCount > 0
+                        ? `${runningScheduledWorkflowCount} of ${workflowScheduleCount} scheduled workflows running now`
+                        : `${workflowScheduleCount} scheduled workflows`}
+                    </TooltipContent>
                   </Tooltip>
                 </>
               )}

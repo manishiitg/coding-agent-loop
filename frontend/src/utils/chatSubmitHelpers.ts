@@ -245,7 +245,7 @@ export function buildQueryRequestPayload(params: {
     enable_context_editing: enableContextEditing,
     decrypted_secrets: (isChatWithExtras || selectedModeCategory === 'workflow') && decryptedSecrets?.length ? decryptedSecrets : undefined,
     selected_global_secrets: (isChatWithExtras || selectedModeCategory === 'workflow') ? selectedGlobalSecrets : undefined,
-    workflow_context_paths: isChatWithExtras && currentTab?.config?.workflowContext?.length
+    workflow_context_paths: (isChatWithExtras || selectedModeCategory === 'workflow') && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
     plan_folder: isMultiAgentMode

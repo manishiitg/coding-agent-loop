@@ -385,10 +385,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
 		if !hcpo.isEvaluationMode {
+			// Save selectedRunFolder before auto-evaluation: ExecuteEvaluationOnly overwrites it
+			// to "../evaluation/runs/..." and we need the original value for report generation.
+			savedRunFolder := hcpo.selectedRunFolder
 			if evalErr := hcpo.MaybeRunAutoEvaluation(ctx); evalErr != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-evaluation failed for group %s: %v", group.GroupID, evalErr))
 				// Don't fail the group if auto-evaluation fails
 			}
+			// Restore selectedRunFolder so MaybeRunAutoFinalOutput targets the correct runs/ path.
+			hcpo.selectedRunFolder = savedRunFolder
+			hcpo.isEvaluationMode = false
 			if outputErr := hcpo.MaybeRunAutoFinalOutput(ctx); outputErr != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-output generation failed for group %s: %v", group.GroupID, outputErr))
 				// Don't fail the group if auto-output fails

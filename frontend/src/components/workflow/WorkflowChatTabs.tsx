@@ -5,12 +5,8 @@ import { useChatStore, type ChatTab, type TabSessionStatus } from '../../stores/
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
-import { shouldShowEventByMode } from '../events/eventModeUtils'
 import { agentApi } from '../../services/api'
 import { logger } from '../../utils/logger'
-import type { PollingEvent } from '../../services/api-types'
-
-const EMPTY_EVENTS: PollingEvent[] = []
 
 // ---------------------------------------------------------------------------
 // WorkflowTabItem — per-tab component with narrow store subscriptions
@@ -33,17 +29,12 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
   onTabClose,
   onStopSession,
 }) => {
-  // Narrow selector: only re-renders when THIS tab's events change
-  const events = useChatStore(
-    state => tab.sessionId ? state.tabEvents[tab.sessionId] || EMPTY_EVENTS : EMPTY_EVENTS
-  )
-
-  // Narrow selector for streaming status (inlined from getTabStreamingStatus)
+  // Narrow selector for streaming status — uses isStreaming flag directly.
+  // pollingInterval is null in SSE mode, so we can't use it as the sole indicator.
   const isTabStreaming = useChatStore(state => {
     const storeTab = state.chatTabs[tab.tabId]
     if (!storeTab || storeTab.isCompleted) return false
-    const isPolling = state.pollingInterval !== null
-    return isPolling ? storeTab.isStreaming !== false : false
+    return storeTab.isStreaming === true
   })
 
   const indicatorColor = useMemo(() => {
@@ -63,15 +54,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
     if (tab.isCompleted) return 'bg-gray-400'
     return 'bg-gray-400'
   }, [tab.isStreaming, tab.isCompleted, sessionStatus?.status])
-
-  const newEventCount = useMemo(() => {
-    if (isActive || !tab.sessionId) return 0
-    const visibleEvents = events.filter(
-      e => e.type && shouldShowEventByMode(e.type)
-    )
-    const lastViewedCount = tab.lastViewedEventCounts?.micro ?? tab.lastViewedEventCount ?? 0
-    return Math.max(0, visibleEvents.length - lastViewedCount)
-  }, [isActive, tab.sessionId, tab.lastViewedEventCounts, tab.lastViewedEventCount, events])
 
   const canStop = tab.sessionId && (isTabStreaming || tab.isStreaming)
 
@@ -94,14 +76,6 @@ const WorkflowTabItem = React.memo<WorkflowTabItemProps>(({
 
       {/* Tab Name */}
       <span className="whitespace-nowrap">{tab.name}</span>
-
-      {/* New Events Badge - show for inactive tabs with new events */}
-      {!isActive && newEventCount > 0 && (
-        <span className="flex items-center justify-center min-w-[18px] h-4 px-1.5 text-xs font-semibold text-white bg-red-500 dark:bg-red-600 rounded-full">
-          {newEventCount > 99 ? '99+' : newEventCount}
-        </span>
-      )}
-
 
       {/* Stop Button - show for tabs with sessionId that are streaming/running */}
       {canStop && (

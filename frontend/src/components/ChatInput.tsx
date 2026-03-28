@@ -1437,17 +1437,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Skip most special character triggers for workflow phase chat — but allow @ for file references
     if (isWorkflowPhaseChat) {
-      // Only process @ trigger in workflow phase chat
+      // Process @ and # triggers in workflow phase chat
       const cursorPos = e.target.selectionStart || 0
       const textBefore = newValue.substring(0, cursorPos)
       const atIdx = textBefore.lastIndexOf('@')
-      if (atIdx >= 0 && enableWorkspaceAccess) {
+      const hashIdx = textBefore.lastIndexOf('#')
+
+      // Determine closest trigger
+      const atDist = atIdx >= 0 ? cursorPos - atIdx : Infinity
+      const hashDist = hashIdx >= 0 ? cursorPos - hashIdx : Infinity
+
+      if (atIdx >= 0 && atDist <= hashDist && enableWorkspaceAccess) {
         const textAfterAt = textBefore.substring(atIdx + 1)
         const hasValidAt = textAfterAt === '' || textAfterAt.match(/^[a-zA-Z0-9/._\-\\]*$/)
         if (hasValidAt) {
           setAtPosition(atIdx)
           setFileSearchQuery(textAfterAt)
           setShowFileDialog(true)
+          setShowWorkflowDialog(false)
 
           const textarea = e.target
           const rect = textarea.getBoundingClientRect()
@@ -1462,10 +1469,33 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           setAtPosition(-1)
           setFileSearchQuery('')
         }
+      } else if (hashIdx >= 0 && hashDist < atDist) {
+        const textAfterHash = textBefore.substring(hashIdx + 1)
+        const hasValidHash = textAfterHash === '' || textAfterHash.match(/^[a-zA-Z0-9_-]*$/)
+        if (hasValidHash) {
+          setHashPosition(hashIdx)
+          setWorkflowSearchQuery(textAfterHash)
+          setShowWorkflowDialog(true)
+          setShowFileDialog(false)
+
+          const textarea = e.target
+          const rect = textarea.getBoundingClientRect()
+          setWorkflowDialogPosition({
+            bottom: window.innerHeight - rect.top + 8,
+            left: rect.left + window.scrollX
+          })
+        } else {
+          setShowWorkflowDialog(false)
+          setHashPosition(-1)
+          setWorkflowSearchQuery('')
+        }
       } else {
         setShowFileDialog(false)
         setAtPosition(-1)
         setFileSearchQuery('')
+        setShowWorkflowDialog(false)
+        setHashPosition(-1)
+        setWorkflowSearchQuery('')
       }
       return
     }

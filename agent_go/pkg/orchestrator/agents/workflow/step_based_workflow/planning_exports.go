@@ -95,6 +95,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
 		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
 		templateData["WorkflowObjective"] = templateVars["WorkflowObjective"]
+		templateData["WorkflowSuccessCriteria"] = templateVars["WorkflowSuccessCriteria"]
 		templateData["UseToolSearchMode"] = templateVars["UseToolSearchMode"]
 		templateData["PlanJSON"] = ""    // Intentionally empty — agent reads plan.json on demand via shell command
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation

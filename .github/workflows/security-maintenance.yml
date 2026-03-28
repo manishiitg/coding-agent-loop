@@ -68,14 +68,18 @@ jobs:
         # Check npm security updates
         if [ -f "frontend/package-lock.json" ]; then
           cd frontend
-          npm audit fix --dry-run
+          if ! npm audit fix --dry-run; then
+            echo "npm audit reported vulnerabilities or suggested updates; continuing so the report step can capture details."
+          fi
           cd ..
         fi
         
         # Check Go security updates
         if [ -f "agent_go/go.mod" ]; then
           cd agent_go
-          go list -u -m all | grep -E '\[SECURITY\]'
+          if ! go list -u -m all | grep -E '\[SECURITY\]'; then
+            echo "No Go module updates marked with [SECURITY]."
+          fi
           cd ..
         fi
     

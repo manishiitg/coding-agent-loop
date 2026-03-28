@@ -7092,16 +7092,6 @@ func (api *StreamingAPI) updateSessionActivity(sessionID string) {
 	}
 }
 
-// isWorkflowSession checks if the session is a workflow session (no DB chat record).
-func (api *StreamingAPI) isWorkflowSession(sessionID string) bool {
-	api.activeSessionsMux.RLock()
-	defer api.activeSessionsMux.RUnlock()
-	if session, exists := api.activeSessions[sessionID]; exists {
-		return session.AgentMode == "workflow" || session.AgentMode == "workflow_phase"
-	}
-	return false
-}
-
 // updateSessionStatus updates the status of an active session
 func (api *StreamingAPI) updateSessionStatus(sessionID, status string) {
 	api.activeSessionsMux.Lock()

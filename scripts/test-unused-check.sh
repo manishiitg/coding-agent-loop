@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Test script to check for unused functions/variables/types
+# Test script to check for unused code and ineffassign issues
 # Simulates what the pre-commit hook would do
 
 set -e
@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}🔍 Testing unused code detection (pre-commit hook simulation)...${NC}"
+echo -e "${BLUE}🔍 Testing blocking lint detection (pre-commit hook simulation)...${NC}"
 echo ""
 
 # Check if golangci-lint is available
@@ -89,10 +89,12 @@ fi
 TOTAL_ISSUE_COUNT=$(echo "$COMBINED_LINT_OUTPUT" | grep -E "issues:" | grep -oE "[0-9]+ issues" | grep -oE "[0-9]+" || echo "0")
 TOTAL_CRITICAL_ISSUES=$(echo "$COMBINED_LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d " ")
 TOTAL_UNUSED_ISSUES=$(echo "$COMBINED_LINT_OUTPUT" | grep -E "is unused \(unused\)" | wc -l | tr -d " ")
+TOTAL_INEFFASSIGN_ISSUES=$(echo "$COMBINED_LINT_OUTPUT" | grep -E "\(ineffassign\)" | wc -l | tr -d " ")
 
 echo "Total issues: $TOTAL_ISSUE_COUNT"
 echo "Critical security issues: $TOTAL_CRITICAL_ISSUES"
 echo -e "${YELLOW}Unused functions/variables/types: $TOTAL_UNUSED_ISSUES${NC}"
+echo -e "${YELLOW}Ineffectual assignments: $TOTAL_INEFFASSIGN_ISSUES${NC}"
 echo ""
 
 if [ "$TOTAL_CRITICAL_ISSUES" -gt 0 ]; then
@@ -105,6 +107,12 @@ elif [ "$TOTAL_UNUSED_ISSUES" -gt 0 ]; then
     echo "Unused code found:"
     echo "$COMBINED_LINT_OUTPUT" | grep -E "is unused \(unused\)" | head -20
     exit 1
+elif [ "$TOTAL_INEFFASSIGN_ISSUES" -gt 0 ]; then
+    echo -e "${RED}❌ Would BLOCK: Ineffectual assignments detected ($TOTAL_INEFFASSIGN_ISSUES items)${NC}"
+    echo ""
+    echo "Ineffectual assignments found:"
+    echo "$COMBINED_LINT_OUTPUT" | grep -E "\(ineffassign\)" | head -20
+    exit 1
 elif [ "$TOTAL_ISSUE_COUNT" -gt 200 ]; then
     echo -e "${RED}❌ Would BLOCK: Too many issues ($TOTAL_ISSUE_COUNT)${NC}"
     exit 1
@@ -113,4 +121,3 @@ else
     echo "Would allow commit to proceed."
     exit 0
 fi
-

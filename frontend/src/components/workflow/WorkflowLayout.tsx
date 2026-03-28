@@ -893,8 +893,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         .sort((a, b) => b.createdAt - a.createdAt)
 
       if (newPresetTabs.length > 0) {
-        console.log(`[WorkflowLayout] Switching to tab: ${newPresetTabs[0].tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset)`)
-        chatStore.switchTab(newPresetTabs[0].tabId)
+        // Prefer a currently-streaming tab (e.g. execution running in background) over
+        // the most-recently-created tab. Without this, the default "Workflow Builder" tab
+        // created on initial mount (newer createdAt) would be selected even when execution
+        // is actively running, showing an empty builder instead of the execution chat.
+        const streamingTab = newPresetTabs.find(t => chatStore.getTabStreamingStatus(t.tabId))
+        const targetTab = streamingTab || newPresetTabs[0]
+        console.log(`[WorkflowLayout] Switching to tab: ${targetTab.tabId.slice(0,8)} (${newPresetTabs.length} tabs for preset, streaming=${!!streamingTab})`)
+        chatStore.switchTab(targetTab.tabId)
         setShowChatArea(true)
       } else {
         console.log(`[WorkflowLayout] No tabs for new preset, clearing activeTabId`)

@@ -645,7 +645,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Step config & analysis tools
 	stepConfig := []string{
 		"update_step_config", "analyze_step", "generate_learnings", "optimize_step",
-		"infer_objective", "set_workflow_objective", "optimize_workflow",
+		"infer_objective", "set_workflow_objective", "optimize_workflow", "mark_workflow_optimized",
 	}
 
 	// Plan modification tools
@@ -845,8 +845,10 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		useKB = "true"
 	}
 	workflowObjective := ""
+	workflowSuccessCriteria := ""
 	if iwm.controller.approvedPlan != nil {
 		workflowObjective = iwm.controller.approvedPlan.Objective
+		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
 	}
 	templateVars := map[string]string{
 		"WorkspacePath":       workspacePath,
@@ -862,7 +864,8 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"SessionID":           iwm.sessionID,
 		"WorkflowID":          iwm.workflowID,
 		"UseKnowledgebase":    useKB,
-		"WorkflowObjective":   workflowObjective,
+		"WorkflowObjective":        workflowObjective,
+		"WorkflowSuccessCriteria":  workflowSuccessCriteria,
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -1012,12 +1015,14 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
 
-**Before optimizing individual steps, ensure the plan structure is sound:**
-1. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}" — proceed to step-by-step optimization or run `+"`optimize_workflow`"+` to verify the plan structure achieves it.{{else}}**Objective is missing** — run `+"`infer_objective`"+` first. It reads the plan, proposes an objective, and asks you to confirm before saving. A clear objective is required for `+"`optimize_workflow`"+` to analyze whether the plan structure is optimal.{{end}}
-2. Once the objective is confirmed, run `+"`optimize_workflow`"+` **once** at the start of an optimization session. It analyzes the full plan against the objective and returns a full structural report including: missing steps to add, redundant steps to remove, wrong step ordering, wrong step types, and broken context dependencies. **Fix all structural issues before optimizing individual steps.**
-3. When `+"`optimize_workflow`"+` recommends structural changes, act on them immediately using plan modification tools (add_regular_step, delete_plan_steps, update_regular_step, etc.). Do NOT defer structural fixes to the user — you are the builder, make the changes.
-4. After structural fixes are applied, re-run `+"`optimize_workflow`"+` to confirm the plan now fully covers the objective before starting step-by-step optimization.
-5. Then optimize steps one by one using the workflow below.
+**All optimization must be driven by the success criteria — every change should move the workflow closer to reliably achieving it.**
+
+**Before optimizing individual steps, ensure the foundation is set:**
+1. {{if .WorkflowSuccessCriteria}}**Success criteria is set**: "{{.WorkflowSuccessCriteria}}"{{else}}**Success criteria is missing** — ask the user directly: "What does success look like for this workflow? How will you know it's working correctly?" Capture the answer and save it via `+"`set_workflow_objective(success_criteria=...)`"+`. This is the north star for all optimization.{{end}}
+2. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}"{{else}}**Objective is missing** — run `+"`infer_objective`"+` to infer it from the plan structure, then confirm with the user.{{end}}
+3. Once both are set, run `+"`optimize_workflow`"+` **once** at the start. It analyzes the full plan — including nested orchestrators and evaluation coverage — against the objective and success criteria. **Fix all structural issues before touching individual steps.**
+4. When `+"`optimize_workflow`"+` recommends structural changes, act on them immediately using plan modification tools. Do NOT defer to the user.
+5. Then optimize steps one by one. For each step, the question is: **does this step reliably produce what the success criteria requires?**
 
 **IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next. This gives the user control over the order and lets them review each step's optimization before moving on.
 
@@ -1134,6 +1139,7 @@ Do NOT modify execution steps or evaluation steps in output mode unless the user
 - **Workspace**: {{.WorkspacePath}} (`+"`/app/workspace-docs/{{.WorkspacePath}}/`"+`)
 - **Run Folder**: {{.RunFolder}}
 - **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else}}⚠️ Not defined — use `+"`infer_objective`"+` to infer and confirm it{{end}}
+- **Success Criteria**: {{if .WorkflowSuccessCriteria}}{{.WorkflowSuccessCriteria}}{{else}}⚠️ Not defined — ask the user what success looks like for this workflow, then save via `+"`set_workflow_objective`"+`{{end}}
 - **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
@@ -1529,9 +1535,10 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **analyze_step(step_id)** — Config and execution history analysis
 {{if eq .WorkshopMode "optimizer"}}- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
 - **optimize_step(step_id, focus?, forced?)** — Start optimization agent in background for a single step
-- **infer_objective(focus?)** — Infer the workflow objective from the plan; returns a proposed objective for you to confirm with the user before saving
-- **set_workflow_objective(objective)** — Save the confirmed objective to plan.json
-- **optimize_workflow(focus?)** — Analyze the entire plan structure against the objective; flags structural issues (missing steps, wrong order, redundant steps, bad step types){{end}}
+- **infer_objective(focus?)** — Infer the workflow objective from the plan and draft success criteria from step outputs; returns both for user confirmation before saving
+- **set_workflow_objective(objective?, success_criteria?)** — Save confirmed objective and/or success criteria to plan.json (at least one required)
+- **optimize_workflow(focus?)** — Analyze the entire plan structure against the objective; flags structural issues (missing steps, wrong order, redundant steps, bad step types)
+- **mark_workflow_optimized** — Code-based readiness check: verifies all steps are optimized, learnings present, pre-discovered tools set (for tool-search steps), eval plan exists, output plan configured, no orphan learnings or skill references. Marks workflow_optimized=true in plan.json only if all checks pass.{{end}}
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
@@ -4588,7 +4595,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 	// Tool 7c: infer_objective — background agent that infers workflow objective from plan structure
 	if err := mcpAgent.RegisterCustomTool(
 		"infer_objective",
-		"Start a background agent that reads plan.json and infers the workflow objective from the step structure. Returns execution_id immediately. You will be notified when done. After reviewing the result, present the proposed objective to the user for confirmation before calling set_workflow_objective.",
+		"Start a background agent that reads plan.json and infers the workflow objective from the step structure. Also produces a draft success criteria based on step outputs and validation schemas. Returns execution_id immediately. You will be notified when done. After reviewing the result, present both the proposed objective and draft success criteria to the user for confirmation/refinement before calling set_workflow_objective.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -4689,37 +4696,48 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}()
 
 			logger.Info(fmt.Sprintf("🔍 Workshop: infer_objective agent started in background, execution_id=%q", execID))
-			return fmt.Sprintf("Infer objective agent started in background.\nexecution_id: %q\nYou will be automatically notified when it completes. After reviewing the proposed objective, present it to the user and ask for confirmation before calling set_workflow_objective.", execID), nil
+			return fmt.Sprintf("Infer objective agent started in background.\nexecution_id: %q\nYou will be automatically notified when it completes. After reviewing the result: (1) present the proposed objective to the user and ask for confirmation before calling set_workflow_objective(objective=...); (2) also present the draft success criteria and ask the user to confirm or refine it, then save via set_workflow_objective(success_criteria=...).", execID), nil
 		},
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register infer_objective tool: %v", err))
 	}
 
-	// Tool 7d: set_workflow_objective — save confirmed objective to plan.json
+	// Tool 7d: set_workflow_objective — save confirmed objective and/or success criteria to plan.json
 	if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_objective",
-		"Save the user-confirmed workflow objective to the 'objective' field in planning/plan.json. Call this ONLY after the user has confirmed the proposed objective from infer_objective.",
+		"Save the confirmed workflow objective and/or success criteria to planning/plan.json. At least one of 'objective' or 'success_criteria' must be provided. Call objective ONLY after user has confirmed the proposed objective from infer_objective. Ask the user directly for success_criteria.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"objective": map[string]interface{}{
 					"type":        "string",
-					"description": "The confirmed objective string to store in plan.json.",
+					"description": "The confirmed objective string to store in plan.json. Omit if only updating success_criteria.",
+				},
+				"success_criteria": map[string]interface{}{
+					"type":        "string",
+					"description": "What success looks like for the full workflow — the north star for all optimization. Store in plan.json.",
 				},
 			},
-			"required": []string{"objective"},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			objectiveRaw, ok := args["objective"]
-			if !ok || objectiveRaw == nil {
-				return "objective is required", nil
+			objective := ""
+			successCriteria := ""
+
+			if v, ok := args["objective"]; ok && v != nil {
+				if s, ok := v.(string); ok {
+					objective = strings.TrimSpace(s)
+				}
 			}
-			objective, ok := objectiveRaw.(string)
-			if !ok || strings.TrimSpace(objective) == "" {
-				return "objective must be a non-empty string", nil
+			if v, ok := args["success_criteria"]; ok && v != nil {
+				if s, ok := v.(string); ok {
+					successCriteria = strings.TrimSpace(s)
+				}
 			}
-			objective = strings.TrimSpace(objective)
+
+			if objective == "" && successCriteria == "" {
+				return "at least one of 'objective' or 'success_criteria' must be a non-empty string", nil
+			}
 
 			// Reload plan to get current content
 			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
@@ -4730,8 +4748,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "No plan loaded. Create a plan first.", nil
 			}
 
-			// Set objective and marshal back to JSON
-			plan.Objective = objective
+			// Set fields and marshal back to JSON
+			if objective != "" {
+				plan.Objective = objective
+			}
+			if successCriteria != "" {
+				plan.SuccessCriteria = successCriteria
+			}
 			planBytes, err := json.MarshalIndent(plan, "", "  ")
 			if err != nil {
 				return fmt.Sprintf("Failed to marshal plan.json: %v", err), nil
@@ -4740,8 +4763,16 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return fmt.Sprintf("Failed to write plan.json: %v", err), nil
 			}
 
-			logger.Info(fmt.Sprintf("✅ Workshop: workflow objective set: %q", objective))
-			return fmt.Sprintf("Workflow objective saved to planning/plan.json:\n%q\n\nYou can now run optimize_workflow to analyze the plan structure against this objective.", objective), nil
+			var parts []string
+			if objective != "" {
+				logger.Info(fmt.Sprintf("✅ Workshop: workflow objective set: %q", objective))
+				parts = append(parts, fmt.Sprintf("objective: %q", objective))
+			}
+			if successCriteria != "" {
+				logger.Info(fmt.Sprintf("✅ Workshop: workflow success_criteria set: %q", successCriteria))
+				parts = append(parts, fmt.Sprintf("success_criteria: %q", successCriteria))
+			}
+			return fmt.Sprintf("Saved to planning/plan.json:\n%s\n\nYou can now run optimize_workflow to analyze the plan structure against the objective and success criteria.", strings.Join(parts, "\n")), nil
 		},
 		"workflow",
 	); err != nil {
@@ -4861,6 +4892,22 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_workflow tool: %v", err))
+	}
+
+	// Tool 7f: mark_workflow_optimized — code-based readiness check, no LLM
+	if err := mcpAgent.RegisterCustomTool(
+		"mark_workflow_optimized",
+		"Run a code-based readiness check and mark the workflow as optimized if all criteria pass. Checks: all executable steps are optimized, learnings exist for each step, pre-discovered tools set for tool-search steps, evaluation plan exists, output plan is configured, no orphan learnings or skill references. Writes workflow_optimized=true to plan.json only when every check passes. Returns a detailed checklist either way.",
+		map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			return iwm.runMarkWorkflowOptimized(ctx)
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register mark_workflow_optimized tool: %v", err))
 	}
 
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
@@ -6637,7 +6684,8 @@ Read `+"`planning/plan.json`"+` and analyze all steps — their titles, descript
 1. **Read-Only**: Do NOT modify any files.
 2. **Infer from structure**: Base the objective on what the steps actually do, not on what you guess might be intended.
 3. **Be specific**: Name the domain, the inputs, and the expected end result.
-4. **Be concise**: 1-3 sentences max. Avoid vague language like "automate tasks" or "process data".
+4. **Be concise**: Objective: 1-3 sentences max. Avoid vague language like "automate tasks" or "process data".
+5. **Propose success criteria draft**: Based on the step outputs and validation schemas you see, draft what success would look like — but note clearly that success criteria is ultimately defined by the user and your draft is only a starting point for discussion.
 
 ## WORKSPACE
 - **Workspace**: {{.WorkspacePath}}
@@ -6663,6 +6711,9 @@ Produce your response in this exact structure:
 
 ### Alternative Framing (optional)
 <If there's a meaningfully different way to frame the objective, offer it here.>
+
+### Draft Success Criteria
+<Based on the step outputs and any validation schemas visible in the plan, draft what "success" looks like for this workflow. This is a starting point — the user must define the real success criteria. Format as 3-5 concrete, measurable conditions, e.g. "The output contains X", "Step Y produces a valid Z", "No step fails silently".>
 `)
 
 var inferObjectiveAgentUserTemplate = MustRegisterTemplate("inferObjectiveAgentUser", `Infer the workflow objective from the plan structure and propose it for user confirmation.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
@@ -6670,9 +6721,9 @@ var inferObjectiveAgentUserTemplate = MustRegisterTemplate("inferObjectiveAgentU
 // optimizeWorkflowAgentSystemTemplate is the system prompt for the whole-plan optimization agent
 var optimizeWorkflowAgentSystemTemplate = MustRegisterTemplate("optimizeWorkflowAgentSystem", `# Workflow Plan Optimization Agent
 
-You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective, and produce a structured report that the builder can act on immediately.
+You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective and success criteria, and produce a structured report that the builder can act on immediately.
 
-You do NOT optimize individual step content (descriptions, learnings, schemas) — that is optimize_step's job. You evaluate whether the plan structure itself is correct and complete for achieving the objective.
+You do NOT optimize individual step content (descriptions, learnings, schemas) — that is optimize_step's job. You evaluate whether the plan structure itself is correct and complete for achieving the objective and satisfying the success criteria.
 
 ## RULES
 1. **Read-Only**: Do NOT modify any files.
@@ -6680,11 +6731,13 @@ You do NOT optimize individual step content (descriptions, learnings, schemas) �
 3. **Be actionable**: Every finding must map to a concrete change the builder can make with a specific tool call.
 4. **Cover all levels**: Analyze top-level steps AND every nested sub-step (routes, branches, sub-agents).
 5. **No hallucinated steps**: Do not reference or recommend steps that don't exist in the plan.
+6. **Success criteria is the north star**: Every structural recommendation must be evaluated against the success criteria first, then the objective.
 
 ## CONTEXT
 
 - **Workspace**: {{.WorkspacePath}}
 {{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — analyze based on inferred intent from step structure and flag this as the first priority action{{end}}
+{{if .WorkflowSuccessCriteria}}- **Success Criteria**: {{.WorkflowSuccessCriteria}}{{else}}- **Success Criteria**: ⚠️ NOT SET — flag as high priority; without it, structural fitness cannot be fully evaluated{{end}}
 {{if .RunFolder}}- **Run Folder**: {{.RunFolder}}{{end}}
 
 {{if .PlanJSON}}## CURRENT PLAN
@@ -6722,19 +6775,20 @@ Also check `+"`orphan_steps`"+` if present — orphan steps are not in the main 
 
 Work through these checks in order:
 
-1. **Objective coverage** — Walk through the objective stage by stage. For each stage, identify which step (or route) covers it. Flag any stage with no step covering it.
-2. **Nested orchestrator completeness** — For every `+"`todo_task`"+` / `+"`orchestration`"+` / `+"`routing`"+` step: list all routes and check if any case the objective requires is unhandled.
-3. **Step ordering and dependencies** — Are steps and routes sequenced correctly? Does each step have the right `+"`context_dependencies`"+` pointing to the outputs it needs?
-4. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
-5. **Granularity** — Any step too coarse (multiple distinct outputs, should be split)? Any two steps that should be merged (share context, no independent value)?
-6. **Redundancy** — Any two steps or routes doing the same work?
-7. **Orphan steps** — Are any `+"`orphan_steps`"+` actually needed in the main flow?
-8. **Evaluation coverage** — Read `+"`evaluation/evaluation_plan.json`"+` via shell. If it exists: does each eval step map to a real workflow output? Does the set of eval steps cover every critical output the objective requires? Are any eval success criteria inconsistent with the workflow's validation schemas? If the file does not exist, flag it as missing.
+1. **Success criteria alignment** — If success criteria is set, walk through it condition by condition. For each condition, identify which step (or route) produces the output that satisfies it. Flag any condition with no step covering it.
+2. **Objective coverage** — Walk through the objective stage by stage. For each stage, identify which step (or route) covers it. Flag any stage with no step covering it.
+3. **Nested orchestrator completeness** — For every `+"`todo_task`"+` / `+"`orchestration`"+` / `+"`routing`"+` step: list all routes and check if any case the objective or success criteria requires is unhandled.
+4. **Step ordering and dependencies** — Are steps and routes sequenced correctly? Does each step have the right `+"`context_dependencies`"+` pointing to the outputs it needs?
+5. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
+6. **Granularity** — Any step too coarse (multiple distinct outputs, should be split)? Any two steps that should be merged (share context, no independent value)?
+7. **Redundancy** — Any two steps or routes doing the same work?
+8. **Orphan steps** — Are any `+"`orphan_steps`"+` actually needed in the main flow?
+9. **Evaluation coverage** — Read `+"`evaluation/evaluation_plan.json`"+` via shell. If it exists: does each eval step map to a real workflow output? Does the set of eval steps cover every condition in the success criteria and every critical output the objective requires? Are any eval success criteria inconsistent with the workflow's validation schemas? If the file does not exist, flag it as missing.
 
 ## REPORT FORMAT
 
-### Objective Alignment
-Score the plan 1-10 against the objective and explain why. If no objective is set, estimate from the step structure and note that the objective should be defined.
+### Objective & Success Criteria Alignment
+Score the plan 1-10 against the objective and explain why. If success criteria is set, score separately against it and identify which success conditions are at risk. If no objective is set, estimate from the step structure and note that both objective and success criteria should be defined.
 
 ### Step Structure Analysis
 List only steps with structural issues (skip steps that are correctly placed and typed). For steps with no issues, give a one-line count at the top: "X of Y top-level steps have no structural issues."
@@ -6771,10 +6825,10 @@ For each broken or missing dependency:
 ### Evaluation Coverage
 Read `+"`evaluation/evaluation_plan.json`"+` and assess:
 - **Present / Missing**: Does the file exist? If not, flag it.
-- **Coverage gaps**: Which critical workflow outputs (from the objective) have no corresponding eval step?
-- **Phantom evals**: Which eval steps test outputs that don't exist or don't matter for the objective?
+- **Coverage gaps**: Which conditions in the success criteria (or critical outputs from the objective if no success criteria) have no corresponding eval step?
+- **Phantom evals**: Which eval steps test outputs that don't exist or don't matter for the success criteria / objective?
 - **Schema consistency**: Are any eval success criteria contradicting the workflow's validation schemas for the same step?
-- **Recommendation**: What eval steps should be added, removed, or updated?
+- **Recommendation**: What eval steps should be added, removed, or updated to fully cover the success criteria?
 
 ### Priority Structural Changes
 The top 3-5 changes ordered by impact. Each must be a concrete tool call the builder should make next:
@@ -7163,8 +7217,10 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 		logger.Warn(fmt.Sprintf("⚠️ optimize_workflow: failed to reload plan for objective: %v (using cached value)", err))
 	}
 	workflowObjective := ""
+	workflowSuccessCriteria := ""
 	if iwm.controller.approvedPlan != nil {
 		workflowObjective = iwm.controller.approvedPlan.Objective
+		workflowSuccessCriteria = iwm.controller.approvedPlan.SuccessCriteria
 	}
 
 	// Read-only folder guard
@@ -7209,22 +7265,250 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 	runFolder := iwm.controller.selectedRunFolder
 
 	templateVars := map[string]string{
-		"WorkspacePath":     workspacePath,
-		"RunFolder":         runFolder,
-		"PlanJSON":          planJSON,
-		"StepConfigSummary": stepConfigSummary,
-		"WorkflowObjective": workflowObjective,
-		"Focus":             focus,
-		"SessionID":         iwm.sessionID,
-		"WorkflowID":        iwm.workflowID,
+		"WorkspacePath":          workspacePath,
+		"RunFolder":              runFolder,
+		"PlanJSON":               planJSON,
+		"StepConfigSummary":      stepConfigSummary,
+		"WorkflowObjective":      workflowObjective,
+		"WorkflowSuccessCriteria": workflowSuccessCriteria,
+		"Focus":                  focus,
+		"SessionID":              iwm.sessionID,
+		"WorkflowID":             iwm.workflowID,
 	}
 
-	logger.Info(fmt.Sprintf("🔍 Running optimize_workflow agent (objective: %q, focus: %q)", workflowObjective, focus))
+	logger.Info(fmt.Sprintf("🔍 Running optimize_workflow agent (objective: %q, success_criteria: %q, focus: %q)", workflowObjective, workflowSuccessCriteria, focus))
 	result, _, err := agent.Execute(ctx, templateVars, nil)
 	if err != nil {
 		return "", fmt.Errorf("optimize_workflow agent failed: %w", err)
 	}
 	return result, nil
+}
+
+// runMarkWorkflowOptimized performs a code-based readiness check and, if all checks pass,
+// writes workflow_optimized=true to planning/plan.json. No LLM is used.
+func (iwm *InteractiveWorkshopManager) runMarkWorkflowOptimized(ctx context.Context) (string, error) {
+	logger := iwm.controller.GetLogger()
+
+	// Reload plan and step configs to get latest state
+	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+		return fmt.Sprintf("Failed to reload plan.json: %v", err), nil
+	}
+	plan := iwm.controller.approvedPlan
+	if plan == nil {
+		return "No plan loaded. Create a plan first.", nil
+	}
+	stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
+	stepConfigMap := make(map[string]*StepConfig)
+	for i := range stepConfigs {
+		stepConfigMap[stepConfigs[i].ID] = &stepConfigs[i]
+	}
+
+	// Collect all step IDs currently in the plan (top-level + nested branches)
+	type stepEntry struct {
+		id       string
+		stepType StepType
+		title    string
+	}
+	var collectSteps func(steps []PlanStepInterface) []stepEntry
+	collectSteps = func(steps []PlanStepInterface) []stepEntry {
+		var out []stepEntry
+		for _, s := range steps {
+			out = append(out, stepEntry{id: s.GetID(), stepType: s.StepType(), title: s.GetTitle()})
+			// Recurse into conditional branches
+			if c, ok := s.(*ConditionalPlanStep); ok {
+				out = append(out, collectSteps(c.IfTrueSteps)...)
+				out = append(out, collectSteps(c.IfFalseSteps)...)
+			}
+		}
+		return out
+	}
+	allSteps := collectSteps(plan.Steps)
+
+	// Build set of all plan step IDs for orphan detection
+	planStepIDs := make(map[string]bool, len(allSteps))
+	for _, e := range allSteps {
+		planStepIDs[e.id] = true
+	}
+
+	// Step types that require agent execution (optimization + learnings apply)
+	needsOptimization := func(t StepType) bool {
+		return t == StepTypeRegular || t == StepTypeConditional || t == StepTypeTodoTask || t == StepTypeRouting
+	}
+
+	var issues []string
+	var lines []string
+
+	// ── 1. Plan metadata ──────────────────────────────────────────────────────
+	lines = append(lines, "### Plan Metadata")
+	if plan.Objective != "" {
+		lines = append(lines, fmt.Sprintf("✅ Objective set: %q", truncateString(plan.Objective, 80)))
+	} else {
+		lines = append(lines, "❌ Objective missing — run infer_objective or set_workflow_objective")
+		issues = append(issues, "objective missing")
+	}
+	if plan.SuccessCriteria != "" {
+		lines = append(lines, fmt.Sprintf("✅ Success criteria set: %q", truncateString(plan.SuccessCriteria, 80)))
+	} else {
+		lines = append(lines, "❌ Success criteria missing — run infer_objective or set_workflow_objective")
+		issues = append(issues, "success_criteria missing")
+	}
+
+	// ── 2. Per-step checks ────────────────────────────────────────────────────
+	lines = append(lines, "\n### Steps")
+	learningsBase := iwm.controller.getLearningsBasePath()
+
+	for _, entry := range allSteps {
+		if !needsOptimization(entry.stepType) {
+			lines = append(lines, fmt.Sprintf("⏭️  %s (%s): skipped — no agent execution", entry.id, entry.stepType))
+			continue
+		}
+
+		cfg := stepConfigMap[entry.id]
+		var stepIssues []string
+
+		// 2a. Optimized flag
+		isOptimized := cfg != nil && cfg.AgentConfigs != nil && cfg.AgentConfigs.Optimized != nil && *cfg.AgentConfigs.Optimized
+		if !isOptimized {
+			stepIssues = append(stepIssues, "not optimized")
+		}
+
+		// 2b. Learnings exist
+		learningsPath := fmt.Sprintf("%s/%s", learningsBase, entry.id)
+		learningFiles, _ := iwm.controller.ListWorkspaceFiles(ctx, learningsPath)
+		hasMDLearnings := false
+		for _, f := range learningFiles {
+			if strings.HasSuffix(f, ".md") && f != "_learning_new.md" {
+				hasMDLearnings = true
+				break
+			}
+		}
+		if !hasMDLearnings {
+			stepIssues = append(stepIssues, "no learnings")
+		}
+
+		// 2c. Pre-discovered tools for tool-search steps
+		useToolSearch := cfg != nil && cfg.AgentConfigs != nil && cfg.AgentConfigs.UseToolSearchMode != nil && *cfg.AgentConfigs.UseToolSearchMode
+		if useToolSearch {
+			hasPreDiscovered := cfg != nil && cfg.AgentConfigs != nil && len(cfg.AgentConfigs.PreDiscoveredTools) > 0
+			if !hasPreDiscovered {
+				stepIssues = append(stepIssues, "tool-search mode but no pre-discovered tools")
+			}
+		}
+
+		if len(stepIssues) == 0 {
+			lines = append(lines, fmt.Sprintf("✅ %s (%s)", entry.id, entry.stepType))
+		} else {
+			for _, si := range stepIssues {
+				issues = append(issues, fmt.Sprintf("step %s: %s", entry.id, si))
+			}
+			lines = append(lines, fmt.Sprintf("❌ %s (%s): %s", entry.id, entry.stepType, strings.Join(stepIssues, ", ")))
+		}
+	}
+
+	// ── 3. Infrastructure checks ──────────────────────────────────────────────
+	lines = append(lines, "\n### Infrastructure")
+
+	// 3a. Eval plan
+	evalPlanExists, _ := iwm.controller.CheckWorkspaceFileExists(ctx, "evaluation/evaluation_plan.json")
+	if evalPlanExists {
+		lines = append(lines, "✅ Evaluation plan exists: evaluation/evaluation_plan.json")
+	} else {
+		lines = append(lines, "❌ Evaluation plan missing: evaluation/evaluation_plan.json")
+		issues = append(issues, "evaluation plan missing")
+	}
+
+	// 3b. Output plan
+	outputPlanContent, outputPlanErr := iwm.controller.ReadWorkspaceFile(ctx, "planning/output_plan.json")
+	if outputPlanErr != nil || strings.TrimSpace(outputPlanContent) == "" {
+		lines = append(lines, "❌ Output plan missing: planning/output_plan.json")
+		issues = append(issues, "output plan missing")
+	} else {
+		outputPlan, parseErr := ParseWorkflowOutputPlan(outputPlanContent)
+		var step *WorkflowOutputPlanStep
+		if outputPlan != nil {
+			step = outputPlan.Step
+		}
+		if parseErr != nil || step == nil || !step.Enabled || strings.TrimSpace(step.Instructions) == "" {
+			lines = append(lines, "❌ Output plan exists but not properly configured (enabled=false or no instructions)")
+			issues = append(issues, "output plan not configured")
+		} else {
+			lines = append(lines, fmt.Sprintf("✅ Output plan configured: %q", truncateString(step.Instructions, 60)))
+		}
+	}
+
+	// ── 4. Orphan checks ──────────────────────────────────────────────────────
+	lines = append(lines, "\n### Orphans")
+
+	// 4a. Orphan learnings
+	learningDirs, listErr := iwm.controller.ListWorkspaceDirectories(ctx, learningsBase)
+	if listErr == nil {
+		var orphanLearnings []string
+		for _, dir := range learningDirs {
+			if !planStepIDs[dir] {
+				orphanLearnings = append(orphanLearnings, dir)
+			}
+		}
+		if len(orphanLearnings) == 0 {
+			lines = append(lines, "✅ No orphan learnings")
+		} else {
+			lines = append(lines, fmt.Sprintf("⚠️  Orphan learnings (steps deleted from plan): %v", orphanLearnings))
+			issues = append(issues, fmt.Sprintf("orphan learnings: %v", orphanLearnings))
+		}
+	} else {
+		lines = append(lines, "⏭️  Could not check orphan learnings (folder may not exist yet)")
+	}
+
+	// 4b. Orphan skill references in step configs
+	selectedSkills := make(map[string]bool)
+	for _, sk := range iwm.controller.GetSelectedSkills() {
+		selectedSkills[sk] = true
+	}
+	var orphanSkillRefs []string
+	for _, sc := range stepConfigs {
+		if sc.AgentConfigs == nil {
+			continue
+		}
+		for _, skill := range sc.AgentConfigs.EnabledSkills {
+			if !selectedSkills[skill] {
+				orphanSkillRefs = append(orphanSkillRefs, fmt.Sprintf("%s→%s", sc.ID, skill))
+			}
+		}
+	}
+	if len(orphanSkillRefs) == 0 {
+		lines = append(lines, "✅ No orphan skill references")
+	} else {
+		lines = append(lines, fmt.Sprintf("⚠️  Step skill refs not in workflow selected skills: %v", orphanSkillRefs))
+		issues = append(issues, fmt.Sprintf("orphan skill refs: %v", orphanSkillRefs))
+	}
+
+	// ── Result ────────────────────────────────────────────────────────────────
+	lines = append(lines, "")
+	if len(issues) > 0 {
+		lines = append(lines, fmt.Sprintf("---\n❌ Workflow NOT ready (%d issue(s) found). Fix the above before marking as optimized.", len(issues)))
+		return strings.Join(lines, "\n"), nil
+	}
+
+	// All checks passed — write workflow_optimized: true
+	trueVal := true
+	plan.WorkflowOptimized = &trueVal
+	planBytes, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("All checks passed but failed to marshal plan.json: %v", err), nil
+	}
+	if err := iwm.controller.WriteWorkspaceFile(ctx, "planning/plan.json", string(planBytes)); err != nil {
+		return fmt.Sprintf("All checks passed but failed to write plan.json: %v", err), nil
+	}
+	logger.Info("✅ Workflow marked as optimized (workflow_optimized=true written to plan.json)")
+	lines = append(lines, "---\n✅ All checks passed. Workflow marked as optimized (workflow_optimized=true saved to plan.json).")
+	return strings.Join(lines, "\n"), nil
+}
+
+// truncateString truncates s to maxLen characters, appending "…" if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "…"
 }
 
 // updateWorkshopLearningMetadata updates .learning_metadata.json after workshop generate_learnings completes.

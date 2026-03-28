@@ -203,6 +203,7 @@ else
     ISSUE_COUNT=$(echo "$LINT_OUTPUT" | grep -E "issues:" | grep -oE "[0-9]+ issues" | grep -oE "[0-9]+" || echo "0")
     CRITICAL_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "G201|G202|G204|G304" | grep -v "_test.go" | grep -v "/testing/" | wc -l | tr -d ' ')
     UNUSED_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | wc -l | tr -d ' ')
+    INEFFASSIGN_ISSUES=$(echo "$LINT_OUTPUT" | grep -E "\(ineffassign\)" | wc -l | tr -d ' ')
 
     if [ "$CRITICAL_ISSUES" -gt 0 ]; then
         echo ""
@@ -213,6 +214,11 @@ else
         echo ""
         echo -e "${RED}❌ Unused code detected ($UNUSED_ISSUES unused functions/variables/types)! Commit blocked.${NC}"
         echo "$LINT_OUTPUT" | grep -E "is unused \(unused\)" | head -20
+        exit 1
+    elif [ "$INEFFASSIGN_ISSUES" -gt 0 ]; then
+        echo ""
+        echo -e "${RED}❌ Ineffectual assignments detected ($INEFFASSIGN_ISSUES ineffassign issues)! Commit blocked.${NC}"
+        echo "$LINT_OUTPUT" | grep -E "\(ineffassign\)" | head -20
         exit 1
     elif [ "$ISSUE_COUNT" -gt 200 ]; then
         echo ""

@@ -1802,21 +1802,11 @@ export const useChatStore = create<ChatState>()(
       getTabStreamingStatus: (tabId: string) => {
         const state = get()
         const tab = state.chatTabs[tabId]
-        if (!tab) return false
-        
-        // If tab is marked as completed, it's not streaming
-        if (tab.isCompleted) return false
-        
-        // Tab is streaming if:
-        // 1. Polling is active
-        // 2. Not manually paused (stored isStreaming !== false)
-        const isPolling = state.pollingInterval !== null
-        
-        if (isPolling) {
-          return tab.isStreaming !== false // Respect manual pause
-        }
-        
-        return false
+        if (!tab || tab.isCompleted) return false
+        // isStreaming is the authoritative flag — set to true on submit, false on completion/stop.
+        // Don't gate on pollingInterval: in SSE mode pollingInterval is always null, but
+        // isStreaming is still correctly maintained via SSE status updates.
+        return tab.isStreaming === true
       },
       
       checkTabCompletion: (tabId: string, events: Array<{ type: string }>) => {

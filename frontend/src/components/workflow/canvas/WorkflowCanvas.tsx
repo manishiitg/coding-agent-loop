@@ -87,7 +87,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   renderCountRef.current++
   if (lastPresetRef.current !== presetQueryId) {
     console.log(`%c[WorkflowCanvas] Preset switched: ${lastPresetRef.current?.slice(0,8)} → ${presetQueryId?.slice(0,8)}`, 'color: orange; font-weight: bold')
-    console.time(`[WorkflowCanvas] preset-switch-${presetQueryId?.slice(0,8)}`)
     lastPresetRef.current = presetQueryId
   }
   if (renderCountRef.current % 50 === 0) {
@@ -1685,9 +1684,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       prevEdgesRef.current = initialEdges
     }
 
-    if (nodesChanged || edgesChanged) {
-      console.timeEnd(`[WorkflowCanvas] preset-switch-${presetQueryId?.slice(0,8)}`)
-    }
   }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, setLayoutDirection, updateNode, presetQueryId])
 
   // Store selected node ID in ref to track which node is selected
@@ -2372,8 +2368,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       />
 
       {/* React Flow Canvas with Sidebar — skip when toolbarOnly to avoid rendering 1000+ SVG nodes */}
-      {toolbarOnly ? null : <div className="flex-1 relative flex">
-        <div className={`flex-1 transition-all duration-300 ${
+      {toolbarOnly ? null : <div className="flex-1 min-h-0 relative flex">
+        <div className={`flex-1 min-h-0 h-full transition-all duration-300 ${
           selectedNode
             ? (showChatArea ? 'mr-[50vw]' : (isStepSidebarCompact ? 'mr-[400px]' : 'mr-[600px]'))
             : selectedStepIds.length >= 2
@@ -2383,6 +2379,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 : ''
         }`}>
         <ReactFlow
+          className="w-full h-full"
+          style={{ width: '100%', height: '100%' }}
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}

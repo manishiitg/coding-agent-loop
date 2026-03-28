@@ -51,11 +51,11 @@ export const NodeConfigFooter = memo(({
   routeCondition,
   loopCondition,
   maxIterations,
-  evalLLM,
+  evalLLM: _evalLLM,
   decisionQuestion,
-  executionLLM,
+  executionLLM: _executionLLM,
   executionMaxTurns = 100,
-  learningLLM,
+  learningLLM: _learningLLM,
   lockLearnings = false,
   effectiveServers = [],
   toolsDisplayInfo = [],
@@ -78,10 +78,7 @@ export const NodeConfigFooter = memo(({
     routeName ||
     routeCondition ||
     loopCondition ||
-    evalLLM ||
     decisionQuestion ||
-    executionLLM ||
-    learningLLM ||
     effectiveServers.length > 0 ||
     toolsDisplayInfo.length > 0 ||
     hasWorkspaceTools ||
@@ -114,27 +111,12 @@ export const NodeConfigFooter = memo(({
         {/* Badges - only shown when expanded */}
         {isExpanded && (
           <>
-        {evalLLM && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300" title="LLM used for decision evaluation">
-            Eval: {evalLLM}
-          </span>
-        )}
-        {executionLLM && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
-            {executionLLM}
-          </span>
-        )}
         {executionMaxTurns !== 100 && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/30 text-gray-600 dark:text-gray-400">
             {executionMaxTurns} turns
           </span>
         )}
-        {learningLLM && (
-          <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/30 text-amber-600 dark:text-amber-400">
-            Learn: {learningLLM} (Exact){lockLearnings && ' 🔒'}
-          </span>
-        )}
-        {lockLearnings && !learningLLM && (
+        {lockLearnings && (
           <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300" title="Learnings are locked - learning agent will not run but existing learnings will be used">
             Learnings Locked 🔒
           </span>
@@ -252,4 +234,3 @@ export const NodeConfigFooter = memo(({
 })
 
 NodeConfigFooter.displayName = 'NodeConfigFooter'
-

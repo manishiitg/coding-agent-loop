@@ -1,6 +1,6 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { Brain, Info, X } from 'lucide-react'
+import { Brain } from 'lucide-react'
 
 export interface EvaluationNodeData extends Record<string, unknown> {
   id: string
@@ -43,12 +43,10 @@ const statusStyles = {
 export const EvaluationNode = memo(({ data, selected }: EvaluationNodeProps) => {
   const { status } = data
   const styles = statusStyles[status]
-  const [isExpanded, setIsExpanded] = useState(false)
-  const showExpandIcon = data.llmModel && data.llmModel.length > 20
 
   return (
     <div className={`
-      relative ${isExpanded ? 'w-[200px]' : 'w-[160px]'} rounded-lg border-2 ${styles.border} ${styles.bg}
+      relative w-[160px] rounded-lg border-2 ${styles.border} ${styles.bg}
       shadow-md transition-all
       ${selected ? 'ring-2 ring-purple-500/40' : ''}
     `}>
@@ -72,37 +70,10 @@ export const EvaluationNode = memo(({ data, selected }: EvaluationNodeProps) => 
                 {data.evaluationQuestion}
               </div>
             )}
-            {data.llmProvider && data.llmModel ? (
-              <>
-                <div className="text-[8px] text-purple-600 dark:text-purple-400 font-medium truncate mt-0.5">
-                  {data.llmProvider}
-                </div>
-                <div className="text-[8px] text-purple-500 dark:text-purple-300">
-                  {isExpanded ? data.llmModel : (data.llmModel.length > 20 ? `${data.llmModel.slice(0, 20)}...` : data.llmModel)}
-                </div>
-              </>
-            ) : (
-              <div className="text-[8px] text-gray-500 dark:text-gray-400 mt-0.5">
-                LLM evaluation
-              </div>
-            )}
+            <div className="text-[8px] text-gray-500 dark:text-gray-400 mt-0.5">
+              LLM evaluation
+            </div>
           </div>
-          {showExpandIcon && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                setIsExpanded(!isExpanded)
-              }}
-              className="flex-shrink-0 p-0.5 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded transition-colors"
-              title={isExpanded ? 'Hide full model name' : 'Show full model name'}
-            >
-              {isExpanded ? (
-                <X className="w-3 h-3 text-purple-600 dark:text-purple-400" />
-              ) : (
-                <Info className="w-3 h-3 text-purple-600 dark:text-purple-400" />
-              )}
-            </button>
-          )}
         </div>
       </div>
 
@@ -118,4 +89,3 @@ export const EvaluationNode = memo(({ data, selected }: EvaluationNodeProps) => 
 
 EvaluationNode.displayName = 'EvaluationNode'
 export default EvaluationNode
-

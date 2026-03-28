@@ -6695,6 +6695,10 @@ You do NOT optimize individual step content (descriptions, learnings, schemas) �
 {{.StepConfigSummary}}
 {{end}}
 
+## EVALUATION PLAN
+Read `+"`evaluation/evaluation_plan.json`"+` using shell commands if it exists. If it does not exist, flag it in the report as a gap.
+
+
 {{if .Focus}}## FOCUS
 Prioritize this area: **{{.Focus}}**
 {{end}}
@@ -6725,6 +6729,7 @@ Work through these checks in order:
 5. **Granularity** — Any step too coarse (multiple distinct outputs, should be split)? Any two steps that should be merged (share context, no independent value)?
 6. **Redundancy** — Any two steps or routes doing the same work?
 7. **Orphan steps** — Are any `+"`orphan_steps`"+` actually needed in the main flow?
+8. **Evaluation coverage** — Read `+"`evaluation/evaluation_plan.json`"+` via shell. If it exists: does each eval step map to a real workflow output? Does the set of eval steps cover every critical output the objective requires? Are any eval success criteria inconsistent with the workflow's validation schemas? If the file does not exist, flag it as missing.
 
 ## REPORT FORMAT
 
@@ -6762,6 +6767,14 @@ For each step using the wrong type:
 ### Context Flow Issues
 For each broken or missing dependency:
 - **[actual-step-id]**: missing dependency on `+"`[output-file]`"+` from `+"`[step-id]`"+` — **Fix**: add `+"`[output-file]`"+` to context_dependencies
+
+### Evaluation Coverage
+Read `+"`evaluation/evaluation_plan.json`"+` and assess:
+- **Present / Missing**: Does the file exist? If not, flag it.
+- **Coverage gaps**: Which critical workflow outputs (from the objective) have no corresponding eval step?
+- **Phantom evals**: Which eval steps test outputs that don't exist or don't matter for the objective?
+- **Schema consistency**: Are any eval success criteria contradicting the workflow's validation schemas for the same step?
+- **Recommendation**: What eval steps should be added, removed, or updated?
 
 ### Priority Structural Changes
 The top 3-5 changes ordered by impact. Each must be a concrete tool call the builder should make next:
@@ -7160,6 +7173,7 @@ func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Cont
 		fmt.Sprintf("%s/runs", workspacePath),
 		fmt.Sprintf("%s/planning", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
+		fmt.Sprintf("%s/evaluation", workspacePath),
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
 

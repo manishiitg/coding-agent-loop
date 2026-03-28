@@ -8396,7 +8396,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionComplete(execID, name, result s
 			"duration": duration.Truncate(time.Second).String(),
 		})
 	} else {
-		agent.SetResult(truncateForToolResponse(result, 500))
+		agent.SetResult(result) // Store full result — truncation only happens at display/notification time
 		n.api.emitBackgroundAgentEvent(n.sessionID, execID, "background_agent_completed", map[string]interface{}{
 			"agent_id": execID,
 			"name":     name,
@@ -8729,7 +8729,7 @@ func (api *StreamingAPI) processBatchedBackgroundAgentCompletions(sessionID stri
 		snap := agent.GetSnapshot()
 		var resultText string
 		if snap.Status == BGAgentCompleted {
-			resultText = truncateForToolResponse(snap.Result, 1000)
+			resultText = snap.Result // Full result — no truncation in auto-notification
 		} else if snap.Status == BGAgentFailed {
 			resultText = fmt.Sprintf("Error: %s", snap.Error)
 		} else {
@@ -8813,7 +8813,7 @@ func (api *StreamingAPI) processBackgroundAgentCompletion(sessionID, agentID str
 
 	var resultText string
 	if snap.Status == BGAgentCompleted {
-		resultText = truncateForToolResponse(snap.Result, 4000)
+		resultText = snap.Result // Full result — no truncation in auto-notification
 	} else if snap.Status == BGAgentFailed {
 		resultText = fmt.Sprintf("Error: %s", snap.Error)
 	} else {

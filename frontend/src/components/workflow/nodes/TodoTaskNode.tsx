@@ -491,7 +491,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           </div>
         ) : (
           <div
-            className="flex items-center gap-1 px-2 py-1 rounded-md bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 text-[10px] font-semibold"
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-card text-foreground border border-border text-[10px] font-semibold shadow-sm"
             title="Nested todo sub-agents run through the parent todo task"
           >
             <Bot className="w-3 h-3" />
@@ -551,7 +551,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       {/* Rectangle Shape Card */}
       <div
         className={`
-          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-gradient-to-br from-violet-50 via-violet-50 to-purple-50 dark:bg-gradient-to-br dark:from-gray-900 dark:via-gray-900 dark:to-violet-950/20 shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
+          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-card shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
           ${statusBorderColors[status]}
           ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'running' || status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}
@@ -569,13 +569,21 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           style={isHorizontal ? { left: '-6px', top: '50%' } : { top: '-6px', left: '50%' }}
         />
 
+        <Handle
+          type="target"
+          position={isHorizontal ? Position.Left : Position.Top}
+          id="top"
+          className={`!w-3 !h-3 !border-2 !border-white dark:!border-gray-900 ${isNestedTodoSubAgent ? '!bg-violet-500 dark:!bg-violet-600' : '!bg-transparent pointer-events-none opacity-0'}`}
+          style={isHorizontal ? { left: '-6px', top: '30%' } : { top: '-6px', left: '50%' }}
+        />
+
         {/* Content */}
         <div className={`flex flex-col ${isNestedTodoSubAgent ? 'px-3.5 py-3.5' : 'px-4 py-4'}`}>
           {(isNestedTodoSubAgent && (routeName || parentOrchestratorTitle)) && (
             <div className="mb-2 flex flex-wrap items-center justify-center gap-1.5">
               {routeName && (
                 <span
-                  className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800"
+                  className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-muted text-foreground border border-border"
                   title={routeCondition || routeName}
                 >
                   {routeName}
@@ -583,7 +591,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
               )}
               {parentOrchestratorTitle && (
                 <span
-                  className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 max-w-[180px] truncate"
+                  className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-muted text-muted-foreground border border-border max-w-[180px] truncate"
                   title={`Nested under ${parentOrchestratorTitle}`}
                 >
                   {parentOrchestratorTitle}
@@ -601,8 +609,8 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
           {/* Main todo task step title */}
           {todo_task_step && (
-            <div className={`mt-1.5 ${isNestedTodoSubAgent ? 'p-1.5' : 'p-2'} rounded-lg ${isNestedTodoSubAgent ? 'bg-violet-50/80 dark:bg-gray-800/80 border-violet-200/70 dark:border-violet-800/60' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/60'} border`}>
-              <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">
+            <div className={`mt-1.5 ${isNestedTodoSubAgent ? 'p-1.5 bg-muted border-border' : 'p-2 bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/60'} rounded-lg border`}>
+              <p className={`text-[10px] font-semibold ${isNestedTodoSubAgent ? 'text-foreground' : 'text-gray-700 dark:text-gray-300'}`}>
                 Task: {todo_task_step.title || 'Untitled Step'}
               </p>
             </div>
@@ -639,8 +647,8 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
                           key={i}
                           onClick={canOpen ? (e) => handleFileClick(f, e) : undefined}
                           className={`
-                            px-1.5 py-0.5 rounded text-[10px] ${isNestedTodoSubAgent ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'}
-                            ${canOpen ? 'cursor-pointer hover:bg-purple-200 dark:hover:bg-purple-900/50 hover:underline' : ''}
+                            px-1.5 py-0.5 rounded text-[10px] ${isNestedTodoSubAgent ? 'bg-muted text-foreground border border-border' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'}
+                            ${canOpen ? (isNestedTodoSubAgent ? 'cursor-pointer hover:bg-accent hover:text-accent-foreground hover:underline' : 'cursor-pointer hover:bg-purple-200 dark:hover:bg-purple-900/50 hover:underline') : ''}
                           `}
                           title={canOpen ? `Click to open: ${f}` : f}
                         >

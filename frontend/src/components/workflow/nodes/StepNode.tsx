@@ -1,7 +1,6 @@
 import { memo, useMemo, useCallback, type ReactElement, type MouseEvent } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Code, Terminal, ArrowDownToLine, ArrowUpFromLine, Settings, Play, Lock, Search, Bot, Pause } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../ui/tooltip'
 import { useGlobalPresetStore } from '../../../stores/useGlobalPresetStore'
 import { useLLMStore } from '../../../stores/useLLMStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
@@ -44,14 +43,6 @@ const statusIcons: Record<string, ReactElement | null> = {
   running: <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />,
   completed: <CheckCircle className="w-4 h-4 text-green-500" />,
   failed: <XCircle className="w-4 h-4 text-red-500" />
-}
-
-const providerBadgeStyles: Record<string, { bg: string; text: string }> = {
-  anthropic: { bg: 'bg-orange-100 dark:bg-orange-900/40', text: 'text-orange-700 dark:text-orange-300' },
-  openai: { bg: 'bg-emerald-100 dark:bg-emerald-900/40', text: 'text-emerald-700 dark:text-emerald-300' },
-  openrouter: { bg: 'bg-purple-100 dark:bg-purple-900/40', text: 'text-purple-700 dark:text-purple-300' },
-  bedrock: { bg: 'bg-amber-100 dark:bg-amber-900/40', text: 'text-amber-700 dark:text-amber-300' },
-  vertex: { bg: 'bg-blue-100 dark:bg-blue-900/40', text: 'text-blue-700 dark:text-blue-300' }
 }
 
 const getFileName = (path: string): string => path.split('/').pop() || path
@@ -187,7 +178,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     return Array.isArray(output) ? output : [output]
   }, [step.context_output])
 
-  const { executionLLM, executionProvider } = useMemo(() => {
+  const executionLLM = useMemo(() => {
     const presetLLMConfig = activePreset?.llmConfig
     const overrideLLMConfig = stepOverride?.execution_llm  // Global step override (highest priority)
     const stepLLMConfig = stepConfig?.agent_configs?.execution_llm
@@ -202,8 +193,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     if (llmConfig?.provider && llmConfig?.model_id) {
       const llm = availableLLMs?.find(l => l.provider === llmConfig.provider && l.model === llmConfig.model_id)
       return {
-        executionLLM: llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`,
-        executionProvider: llmConfig.provider
+        executionLLM: llm?.label || `${llmConfig.provider} ${llmConfig.model_id.split('-').slice(0, 2).join('-')}`
       }
     }
 
@@ -211,8 +201,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     if (workflowPrimaryConfig?.provider) {
       const llm = availableLLMs?.find(l => l.provider === workflowPrimaryConfig.provider && l.model === workflowPrimaryConfig.model_id)
       return {
-        executionLLM: llm?.label || (workflowPrimaryConfig.model_id ? `${workflowPrimaryConfig.provider} ${workflowPrimaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null),
-        executionProvider: workflowPrimaryConfig.provider
+        executionLLM: llm?.label || (workflowPrimaryConfig.model_id ? `${workflowPrimaryConfig.provider} ${workflowPrimaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null)
       }
     }
 
@@ -220,12 +209,11 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
     if (primaryConfig?.provider) {
       const llm = availableLLMs?.find(l => l.provider === primaryConfig.provider && l.model === primaryConfig.model_id)
       return {
-        executionLLM: llm?.label || (primaryConfig.model_id ? `${primaryConfig.provider} ${primaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null),
-        executionProvider: primaryConfig.provider
+        executionLLM: llm?.label || (primaryConfig.model_id ? `${primaryConfig.provider} ${primaryConfig.model_id.split('-').slice(0, 2).join('-')}` : null)
       }
     }
 
-    return { executionLLM: null, executionProvider: null }
+    return null
   }, [stepOverride?.execution_llm, stepConfig?.agent_configs?.execution_llm, activePreset?.llmConfig, availableLLMs, workflowPrimaryConfig, primaryConfig])
 
   // Learning disabled: override > step config
@@ -559,23 +547,8 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
           <div className="flex-1" />
           {statusIcons[status]}
         </div>
-        {/* Third row: Model info + mode/config indicators */}
+        {/* Third row: mode/config indicators */}
         <div className="flex items-center gap-2 mt-1.5">
-          {executionProvider && executionLLM && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className={`text-[10px] font-medium truncate max-w-[140px] cursor-default ${providerBadgeStyles[executionProvider]?.text || 'text-gray-500 dark:text-gray-400'}`}>
-                    {executionLLM}
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="max-w-xs">
-                  <p className="font-medium">{executionLLM}</p>
-                  <p className="text-xs text-gray-500">{executionProvider}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
           {/* Mode + config flag indicators */}
           {(() => {
             const flags: { icon: ReactElement; label: string; color: string }[] = []
@@ -615,27 +588,11 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
               })
             }
             return (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1 ml-auto cursor-default">
-                      {flags.map((f, i) => (
-                        <span key={i} className={f.color}>{f.icon}</span>
-                      ))}
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="max-w-xs">
-                    <div className="space-y-1">
-                      {flags.map((f, i) => (
-                        <div key={i} className="flex items-center gap-1.5 text-xs">
-                          <span className={f.color}>{f.icon}</span>
-                          <span>{f.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              <div className="flex items-center gap-1 ml-auto">
+                {flags.map((f, i) => (
+                  <span key={i} className={f.color} title={f.label}>{f.icon}</span>
+                ))}
+              </div>
             )
           })()}
         </div>

@@ -51,7 +51,7 @@ func main() {
 	}
 
 	wsClient := workspace.NewClient(workspaceAPIURL, workspace.WithFolderGuard(folderGuard))
-	basicTools := workspace.GetBasicToolDefinitions()
+	basicTools := workspace.GetAdvancedToolDefinitions()
 	shellTools := workspace.GetShellToolDefinitions()
 	var allTools []llmtypes.Tool
 	allTools = append(allTools, basicTools...)

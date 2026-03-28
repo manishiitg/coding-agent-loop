@@ -178,7 +178,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
 	// Include learning mode in agent name
 	learningMode := "exact"
-	successLearningAgentName := fmt.Sprintf("%s-success-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
+	successLearningAgentName := fmt.Sprintf("%s-skill-generation-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
 	successLearningAgent, err := hcpo.createSuccessLearningAgent(ctx, "success_learning", learningPathIdentifier, successLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {
 		return fmt.Errorf("failed to create success learning agent: %w", err)
@@ -406,7 +406,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
 	if stepLabel == "" {
 		stepLabel = learningPathIdentifier
 	}
-	execLabel := fmt.Sprintf("Learning: %s", stepLabel)
+	execLabel := fmt.Sprintf("Skill Generation: %s", stepLabel)
 	execID := fmt.Sprintf("learn-%s-%05d", learningPathIdentifier, time.Now().UnixNano()%100000)
 	execCtx, cancel := context.WithCancel(baseCtx)
 	agentSessionID := fmt.Sprintf("workshop-learning-%s-%d", learningPathIdentifier, time.Now().UnixNano())
@@ -599,7 +599,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runFailureLearningPhase(ctx context.C
 	sanitizedTitle := hcpo.sanitizeTitleForAgentName(resolvedTitle)
 	// Include learning mode in agent name
 	learningMode := "exact"
-	failureLearningAgentName := fmt.Sprintf("%s-failure-learning-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
+	failureLearningAgentName := fmt.Sprintf("%s-skill-generation-%s-%s", learningPathIdentifier, sanitizedTitle, learningMode)
 	failureLearningAgent, err := hcpo.createFailureLearningAgent(ctx, "failure_learning", learningPathIdentifier, failureLearningAgentName, agentConfigs, isCodeExecutionMode, step.GetID(), stepPath, stepIndex)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create failure learning agent: %w", err)

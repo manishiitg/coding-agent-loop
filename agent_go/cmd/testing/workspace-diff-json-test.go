@@ -114,7 +114,7 @@ This test:
 		defer agent.Close()
 
 		// Register only the tools needed for diff testing
-		workspaceTools := append(virtualtools.CreateWorkspaceBasicTools(), virtualtools.CreateWorkspaceAdvancedTools()...)
+		workspaceTools := virtualtools.CreateWorkspaceAdvancedTools()
 		directExecutors := createDirectWorkspaceExecutors(tempDir)
 		workspaceCategory := "workspace_tools"
 

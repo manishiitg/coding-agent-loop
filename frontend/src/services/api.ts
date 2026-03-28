@@ -602,23 +602,25 @@ export const agentApi = {
 
   // Save bot simulator config (delegation tier config + default servers/skills)
   saveBotConfig: async (config: {
-    delegation_tier_config?: Record<string, unknown>;
-    provider_api_keys?: Record<string, string>;
-    default_servers?: string[];
-    default_skills?: string[];
-    delegation_mode?: string;
     allowed_emails?: string[];
   }): Promise<{ success: boolean }> => {
     const response = await api.post('/api/bot/simulate/config', config)
     return response.data
   },
 
-  // Save only delegation tier config to server (for bot sessions)
+  // Save delegation tier config to workspace filesystem (shared by chat and bot connector)
   saveDelegationTierConfig: async (config: Record<string, unknown>, providerApiKeys?: Record<string, string>): Promise<{ success: boolean }> => {
-    const response = await api.post('/api/bot/simulate/config', {
-      delegation_tier_config: config,
-      ...(providerApiKeys ? { provider_api_keys: providerApiKeys } : {}),
-    })
+    await api.put('/api/delegation-tier-config', config)
+    // Save provider API keys to encrypted workspace file if provided
+    if (providerApiKeys && Object.keys(providerApiKeys).length > 0) {
+      await api.put('/api/provider-keys', providerApiKeys).catch(() => {})
+    }
+    return { success: true }
+  },
+
+  // Load delegation tier config from workspace filesystem
+  getDelegationTierConfig: async (): Promise<Record<string, unknown>> => {
+    const response = await api.get('/api/delegation-tier-config')
     return response.data
   },
 

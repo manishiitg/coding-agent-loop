@@ -160,7 +160,7 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 **In code execution mode:** Call agent_browser via HTTP API:
 ` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
 
-For detailed usage, read: execute_shell_command(command="cat /app/workspace-docs/skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
 }
 
 // GetCdpBrowserInstructions returns a single merged section for CDP mode (agent_browser + CDP behaviors).
@@ -200,7 +200,7 @@ For operations that need more control (targeting specific tabs, running complex 
 ` + "```python\nimport json, websocket\n\n# 1. List open tabs\nimport requests\ntabs = requests.get('http://host.docker.internal:9222/json/list', headers={'Host': 'localhost'}).json()\nfor t in tabs:\n    print(f\"{t['id']}: {t['title']} - {t['url']}\")\n\n# 2. Connect to a specific tab (use suppress_origin=True)\ntarget_id = tabs[0]['id']\nws = websocket.create_connection(\n    f'ws://host.docker.internal:9222/devtools/page/{target_id}',\n    header=['Host: localhost'], suppress_origin=True\n)\n\n# 3. Run JS on the page\nws.send(json.dumps({'id': 1, 'method': 'Runtime.evaluate', 'params': {'expression': 'document.title', 'returnByValue': True}}))\nresult = json.loads(ws.recv())\nprint(result['result']['result']['value'])\nws.close()\n```" + `
 **Rules for direct CDP:** Always use ` + "`Host: localhost`" + ` header and ` + "`suppress_origin=True`" + ` for WebSocket. Prefer agent_browser for standard navigation/interaction — use direct CDP only when you need tab-level control or complex JS evaluation.
 
-For detailed usage, read: execute_shell_command(command="cat /app/workspace-docs/skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
 }
 
 // GetHeadlessBrowserInstructions returns a single merged section for headless mode (agent_browser + headless behaviors).
@@ -231,7 +231,7 @@ Key commands: open, snapshot, click, fill, type, press, screenshot, wait, get, s
 **In code execution mode:** Call agent_browser via HTTP API:
 ` + "```python\nimport requests, os\nurl = os.environ[\"MCP_API_URL\"] + \"/tools/mcp/workspace_browser/agent_browser\"\nheaders = {\"Authorization\": f\"Bearer {os.environ['MCP_API_TOKEN']}\", \"Content-Type\": \"application/json\"}\nresp = requests.post(url, json={\"command\": \"snapshot\", \"args\": [\"-i\"], \"session\": \"default\"}, headers=headers)\nprint(resp.json()[\"result\"])\n```" + `
 
-For detailed usage, read: execute_shell_command(command="cat /app/workspace-docs/skills/agent-browser/SKILL.md")`
+For detailed usage, read: execute_shell_command(command="cat skills/agent-browser/SKILL.md")`
 }
 
 // GetCamofoxInstructions returns system prompt instructions specific to the Camofox stealth browser.

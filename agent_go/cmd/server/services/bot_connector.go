@@ -972,41 +972,20 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 }
 
 // buildQueryRequest constructs a request map for startSessionInternal.
-// Reads default_servers/default_skills from the _global config, falling back to all available.
 // userID is the workspace user ID used for loading per-user secrets.
 func (m *BotConversationManager) buildQueryRequest(query string, userID string) map[string]interface{} {
 	req := map[string]interface{}{
-		"query":                    query,
-		"delegation_mode":          "plan", // default, may be overridden from _global config
-		"enable_workspace_access":  true,
+		"query":                   query,
+		"delegation_mode":         "plan",
+		"enable_workspace_access": true,
 	}
 
-	// Load _global bot connector config
-	var defaultServers []string
+	// No default servers — bot starts with no MCP servers (agent has workspace, delegation, and shell tools).
+	req["servers"] = []string{}
+
+	// Auto-discover all available skills.
 	var defaultSkills []string
-
-	globalCfg, _ := m.db.GetBotConnectorConfig(context.Background(), "_global")
-	if globalCfg != nil && globalCfg.ConfigJSON != "" {
-		var cfgData map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(globalCfg.ConfigJSON), &cfgData); err == nil {
-			// Parse default_servers
-			if raw, ok := cfgData["default_servers"]; ok {
-				json.Unmarshal(raw, &defaultServers)
-			}
-			// Parse default_skills
-			if raw, ok := cfgData["default_skills"]; ok {
-				json.Unmarshal(raw, &defaultSkills)
-			}
-			// delegation_mode is always "plan" (unified autonomous mode)
-			// Legacy "spawn" values in config are treated as "plan"
-			req["delegation_mode"] = "plan"
-		}
-	}
-
-	// No fallback for servers — if none configured, start with no MCP servers.
-	// The agent still has workspace, delegation, and shell tools.
-	// Skills are cheap (just prompt text), so fall back to all available.
-	if len(defaultSkills) == 0 && m.workspaceURL != "" {
+	if m.workspaceURL != "" {
 		discoveredSkills, err := skills.DiscoverSkills(m.workspaceURL)
 		if err == nil {
 			for _, s := range discoveredSkills {
@@ -1014,133 +993,34 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string) 
 			}
 		}
 	}
-
-	req["servers"] = defaultServers
 	req["selected_skills"] = defaultSkills
 
-	// Enable tool search mode if >2 servers
-	if len(defaultServers) > 2 {
-		req["use_tool_search_mode"] = true
-	}
-
-	// Load delegation tier config and provider API keys.
-	// Bot sessions use ONLY delegation tiers for LLM selection — no server defaults.
-	var provider, modelID string
-	tierConfigLoaded := false
-
-	if globalCfg != nil && globalCfg.ConfigJSON != "" {
-		var cfgData map[string]json.RawMessage
-		if err := json.Unmarshal([]byte(globalCfg.ConfigJSON), &cfgData); err == nil {
-			if tierJSON, ok := cfgData["delegation_tier_config"]; ok {
-				var tierConfig map[string]interface{}
-				if err := json.Unmarshal(tierJSON, &tierConfig); err == nil && len(tierConfig) > 0 {
-					req["delegation_tier_config"] = tierConfig
-					tierConfigLoaded = true
-					log.Printf("[BOT_MANAGER] Loaded delegation tier config from DB for bot session")
-
-					// Use high tier as the main provider/model for the orchestrator
-					if high, ok := tierConfig["high"].(map[string]interface{}); ok {
-						if p, _ := high["provider"].(string); p != "" {
-							if mid, _ := high["model_id"].(string); mid != "" {
-								provider = p
-								modelID = mid
-								log.Printf("[BOT_MANAGER] Using high tier as main provider/model: %s/%s", provider, modelID)
-							}
-						}
-					}
-				}
-			}
-
-			// Parse provider API keys (will be merged into llm_config after provider/model is resolved)
-			if keysJSON, ok := cfgData["provider_api_keys"]; ok {
-				var providerKeys map[string]string
-				if err := json.Unmarshal(keysJSON, &providerKeys); err == nil && len(providerKeys) > 0 {
-					apiKeys := map[string]interface{}{}
-					for prov, key := range providerKeys {
-						switch prov {
-						case "openrouter", "openai", "anthropic", "vertex":
-							apiKeys[prov] = key
-						case "bedrock":
-							apiKeys["bedrock"] = map[string]interface{}{"region": key}
-						case "azure":
-							apiKeys["azure"] = map[string]interface{}{"api_key": key}
-						}
-					}
-					if len(apiKeys) > 0 {
-						// Store apiKeys temporarily — we'll build llm_config with primary after provider is resolved
-						req["_api_keys_temp"] = apiKeys
-						log.Printf("[BOT_MANAGER] Parsed %d provider API keys for session llm_config", len(apiKeys))
-					}
-				}
-			}
-		}
-	}
-
-	// Fallback: if no tier config in DB, check DELEGATION_TIER env vars
-	if !tierConfigLoaded {
-		tierConfig := map[string]interface{}{}
-		for _, tier := range []string{"high", "medium", "low"} {
-			envP := os.Getenv(fmt.Sprintf("DELEGATION_TIER_%s_PROVIDER", strings.ToUpper(tier)))
-			envM := os.Getenv(fmt.Sprintf("DELEGATION_TIER_%s_MODEL", strings.ToUpper(tier)))
-			if envP != "" && envM != "" {
-				tierConfig[tier] = map[string]interface{}{"provider": envP, "model_id": envM}
-			}
-		}
-		if len(tierConfig) > 0 {
+	// Load delegation tier config from workspace file — same source as multiagent chat.
+	// server.go resolves the orchestrator model from this at request time via resolveDelegationTierConfig.
+	if m.workspaceURL != "" {
+		if tierConfig, exists, err := LoadDelegationTierConfig(context.Background(), m.workspaceURL); err != nil {
+			log.Printf("[BOT_MANAGER] Warning: failed to load tier config from workspace: %v", err)
+		} else if exists && len(tierConfig) > 0 {
 			req["delegation_tier_config"] = tierConfig
-			log.Printf("[BOT_MANAGER] Loaded delegation tier config from env vars for bot session")
-			if high, ok := tierConfig["high"].(map[string]interface{}); ok {
-				if p, _ := high["provider"].(string); p != "" {
-					if mid, _ := high["model_id"].(string); mid != "" {
-						provider = p
-						modelID = mid
-						log.Printf("[BOT_MANAGER] Using high tier (env) as main provider/model: %s/%s", provider, modelID)
-					}
-				}
-			}
+			log.Printf("[BOT_MANAGER] Loaded delegation tier config from workspace file")
+		}
+
+		// Load provider API keys from workspace encrypted file
+		if apiKeys, exists, err := LoadProviderKeys(context.Background(), m.workspaceURL); err != nil {
+			log.Printf("[BOT_MANAGER] Warning: failed to load provider keys from workspace: %v", err)
+		} else if exists && len(apiKeys) > 0 {
+			req["_api_keys_temp"] = apiKeys
+			log.Printf("[BOT_MANAGER] Loaded %d provider API keys from workspace file", len(apiKeys))
 		}
 	}
 
-	// Fallback: use server-level PROVIDER/MODEL env vars if no tier config resolved a provider
-	if provider == "" {
-		provider = os.Getenv("PROVIDER")
-		if provider == "" {
-			provider = os.Getenv("AGENT_PROVIDER")
-		}
-	}
-	if modelID == "" {
-		modelID = os.Getenv("MODEL")
-		if modelID == "" {
-			modelID = os.Getenv("AGENT_MODEL")
-		}
-	}
-	if provider == "" || modelID == "" {
-		log.Printf("[BOT_MANAGER] WARNING: No provider/model resolved from tier config or env vars — bot session will likely fail.")
-	}
-
-	if provider != "" {
-		req["provider"] = provider
-	}
-	if modelID != "" {
-		req["model_id"] = modelID
-	}
-
-	// Build llm_config with primary provider/model + API keys.
-	// This ensures handleQuery stores the correct provider/model in the chat session config
-	// so that sendFollowUpInternal can recover them for follow-ups (plan approvals, human feedback).
+	// Pass API keys via llm_config so handleQuery can use them for all providers.
 	if apiKeys, ok := req["_api_keys_temp"].(map[string]interface{}); ok {
 		delete(req, "_api_keys_temp")
-		llmConfig := map[string]interface{}{
+		req["llm_config"] = map[string]interface{}{
 			"api_keys": apiKeys,
 		}
-		if provider != "" && modelID != "" {
-			llmConfig["primary"] = map[string]interface{}{
-				"provider": provider,
-				"model_id": modelID,
-			}
-		}
-		req["llm_config"] = llmConfig
-		log.Printf("[BOT_MANAGER] Built llm_config with primary=%s/%s and %d API keys", provider, modelID, len(apiKeys))
+		log.Printf("[BOT_MANAGER] Built llm_config with %d API keys", len(apiKeys))
 	}
 
 	// Load server-side user secrets and inject as decrypted_secrets
@@ -1158,8 +1038,8 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string) 
 		}
 	}
 
-	log.Printf("[BOT_MANAGER] buildQueryRequest: query=%s provider=%s model=%s servers=%v skills=%v",
-		botTruncate(query, 60), provider, modelID, defaultServers, defaultSkills)
+	log.Printf("[BOT_MANAGER] buildQueryRequest: query=%s skills=%v",
+		botTruncate(query, 60), defaultSkills)
 
 	return req
 }

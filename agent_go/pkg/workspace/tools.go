@@ -11,7 +11,6 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/common"
 
 	"github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // workspaceEventEmitterKey matches the key used in virtualtools package
@@ -36,122 +35,6 @@ func emitWorkspaceFileEvent(ctx context.Context, operation, filepath, folder str
 		Data:      eventData,
 	}
 	_ = emitter.HandleEvent(ctx, agentEvent)
-}
-
-// --- Tool Definitions ---
-
-// GetBasicToolDefinitions returns the tool definitions for the basic workspace tools
-func GetBasicToolDefinitions() []llmtypes.Tool {
-	var tools []llmtypes.Tool
-
-	// Add list_workspace_files tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "list_workspace_files",
-			Description: "List all files and folders in the workspace.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"folder": map[string]interface{}{
-						"type":        "string",
-						"description": "Folder path to filter results (e.g., 'docs', 'examples', 'folder/subfolder')",
-					},
-					"max_depth": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum depth of hierarchical structure to return (default: 3, max: 10)",
-					},
-				},
-				"required": []string{"folder"},
-			}),
-		},
-	})
-
-	// Add read_workspace_file tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "read_workspace_file",
-			Description: "Read the content of a specific file from the workspace by filepath",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path (e.g., 'docs/example.md', 'configs/settings.json', 'README.md')",
-					},
-				},
-				"required": []string{"filepath"},
-			}),
-		},
-	})
-
-	// Add update_workspace_file tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "update_workspace_file",
-			Description: "Create a new file or update/replace the entire content of an existing file in the workspace (upsert behavior). If you are using existing file prefer to use diff_patch_workspace_file instead",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to create or update (e.g., 'docs/guide.md', 'configs/settings.json')",
-					},
-					"content": map[string]interface{}{
-						"type":        "string",
-						"description": "Content to write to the file (will create new file or replace entire existing file)",
-					},
-				},
-				"required": []string{"filepath", "content"},
-			}),
-		},
-	})
-
-	// Add delete_workspace_file tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "delete_workspace_file",
-			Description: "Delete a specific file from the workspace permanently. This action cannot be undone. Use with caution.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Full file path of the file to delete (e.g., 'docs/example.md', 'configs/settings.json')",
-					},
-				},
-				"required": []string{"filepath"},
-			}),
-		},
-	})
-
-	// Add move_workspace_file tool
-	tools = append(tools, llmtypes.Tool{
-		Type: "function",
-		Function: &llmtypes.FunctionDefinition{
-			Name:        "move_workspace_file",
-			Description: "Move a file from one location to another in the workspace. Can be used to move files between folders or rename files.",
-			Parameters: llmtypes.NewParameters(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"source_filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "Current file path of the file to move (e.g., 'docs/old-file.md', 'configs/settings.json')",
-					},
-					"destination_filepath": map[string]interface{}{
-						"type":        "string",
-						"description": "New file path where the file should be moved (e.g., 'archive/old-file.md', 'settings/config.json')",
-					},
-				},
-				"required": []string{"source_filepath", "destination_filepath"},
-			}),
-		},
-	})
-
-	return tools
 }
 
 // Helper to convert generic map args to typed struct

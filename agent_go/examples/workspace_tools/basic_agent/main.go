@@ -56,8 +56,8 @@ func main() {
 
 	// 2. Initialize Workspace Client & Tools
 	wsClient := workspace.NewClient(workspaceAPIURL)
-	// Use GetBasicToolDefinitions to get only basic file operation tools
-	basicTools := workspace.GetBasicToolDefinitions()
+	
+	basicTools := workspace.GetAdvancedToolDefinitions()
 	// NewBasicExecutor returns all executors, which is fine
 	executors := workspace.NewBasicExecutor(wsClient)
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import SidebarHeader from './sidebar/SidebarHeader'
 import LLMConfigurationSummary from './sidebar/LLMConfigurationSummary'
-import HumanFeedbackConnectorsSection from './sidebar/HumanFeedbackConnectorsSection'
 import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
 import { SecretsSection } from './secrets'
@@ -203,12 +202,6 @@ export default function WorkspaceSidebar({
               </div>
             )}
 
-            {/* Human Feedback Connectors - visible if not multi-user mode or if user is a bot manager */}
-            {(!isMultiUserMode || user?.is_bot_manager) && (
-              <HumanFeedbackConnectorsSection
-                minimized={minimized}
-              />
-            )}
 
             {/* MCP Servers */}
             <MCPServersSection />
@@ -361,12 +354,6 @@ export default function WorkspaceSidebar({
             minimized={true}
           />
 
-          {/* Human Feedback Connectors Icon - visible if not multi-user mode or if user is a bot manager */}
-          {(!isMultiUserMode || user?.is_bot_manager) && (
-            <HumanFeedbackConnectorsSection
-              minimized={true}
-            />
-          )}
 
           {/* MCP Servers Icon */}
           <button

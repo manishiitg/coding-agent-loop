@@ -401,15 +401,24 @@ export const useLLMStore = create<LLMState>()(
 
         loadDelegationTierDefaults: async () => {
           try {
-            const defaults = await llmConfigService.getDelegationTierDefaults()
-            const currentConfig = get().delegationTierConfig
-            // Only set defaults if user hasn't already configured tiers
-            if (!currentConfig) {
-              const hasDefaults = defaults.main || defaults.high || defaults.medium || defaults.low ||
-                (defaults.custom && Object.keys(defaults.custom).length > 0)
-              if (hasDefaults) {
-                set({ delegationTierConfig: defaults })
+            // Try to load saved config from workspace file first
+            try {
+              const saved = await agentApi.getDelegationTierConfig()
+              const hasSaved = saved && (saved.main || saved.high || saved.medium || saved.low ||
+                (saved.custom && Object.keys(saved.custom as object).length > 0))
+              if (hasSaved) {
+                set({ delegationTierConfig: saved as DelegationTierConfig })
+                return
               }
+            } catch {
+              // file not saved yet, fall through to env var defaults
+            }
+            // Fall back to env var defaults
+            const defaults = await llmConfigService.getDelegationTierDefaults()
+            const hasDefaults = defaults.main || defaults.high || defaults.medium || defaults.low ||
+              (defaults.custom && Object.keys(defaults.custom).length > 0)
+            if (hasDefaults) {
+              set({ delegationTierConfig: defaults })
             }
           } catch (error) {
             console.warn('Failed to load delegation tier defaults:', error)

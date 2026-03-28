@@ -1907,9 +1907,9 @@ func getAddTodoTaskRouteSchema() string {
 					},
 					"sub_agent_step": {
 						"type": "object",
-						"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation. Use type='regular' for a focused execution agent, or type='todo_task' when this top-level route needs its own nested orchestrator. Only one nested todo_task layer is allowed.",
+						"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation. Use type='regular' for a focused execution agent. Use type='todo_task' ONLY when this route needs its own nested multi-phase orchestrator (1 level of nesting supported). IMPORTANT: A nested todo_task's routes must use type='regular' — do NOT nest a todo_task inside a todo_task inside a todo_task (2+ levels not supported).",
 						"properties": {
-							"type": {"type": "string", "description": "REQUIRED: Step type. Supported values for todo task routes: 'regular' or 'todo_task'. Nested todo_task routes may not contain another todo_task route."},
+							"type": {"type": "string", "description": "REQUIRED: Step type. Use 'regular' for standard execution. Use 'todo_task' for a nested orchestrator that manages multiple phases via its own routes. Maximum 1 level of todo_task nesting — a nested todo_task's sub_agent_step routes must always be 'regular'."},
 							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 							"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
@@ -1917,10 +1917,9 @@ func getAddTodoTaskRouteSchema() string {
 							"context_dependencies": {"type": "array", "items": {"type": "string"}},
 							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 							"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
-							"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
-							"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
-							"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
-							"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
+							"todo_task_step": {"type": "object", "description": "When type='todo_task': the nested orchestrator's inner regular step metadata."},
+							"predefined_routes": {"type": "array", "description": "When type='todo_task': predefined routes for the nested orchestrator. Each route's sub_agent_step must be type='regular'."},
+							"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task': whether the nested orchestrator can use a generic agent."},
 							"validation_schema": {
 								"type": "object",
 								"description": "OPTIONAL: Validation schema for the sub-agent output"
@@ -1963,9 +1962,9 @@ func getUpdateTodoTaskRouteSchema() string {
 			},
 			"sub_agent_step": {
 				"type": "object",
-				"description": "OPTIONAL: Updated sub-agent step. Can be a regular step or a nested todo_task step. Only one nested todo_task layer is allowed.",
+				"description": "OPTIONAL: Updated sub-agent step. Use type='regular' for standard execution. Use type='todo_task' for a 1-level nested orchestrator. A nested todo_task's own routes must be type='regular' (2+ levels not supported).",
 				"properties": {
-					"type": {"type": "string", "description": "Supported values: 'regular' or 'todo_task'."},
+					"type": {"type": "string", "description": "Use 'regular' or 'todo_task' (1 level max). A nested todo_task's routes must use 'regular'."},
 					"id": {"type": "string"},
 					"title": {"type": "string"},
 					"description": {"type": "string"},
@@ -1973,10 +1972,9 @@ func getUpdateTodoTaskRouteSchema() string {
 					"context_dependencies": {"type": "array", "items": {"type": "string"}},
 					"context_output": {"type": "string"},
 					"has_loop": {"type": "boolean"},
-					"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
-					"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
-					"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
-					"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
+					"todo_task_step": {"type": "object", "description": "When type='todo_task': nested orchestrator inner step metadata."},
+					"predefined_routes": {"type": "array", "description": "When type='todo_task': nested routes — each must be type='regular'."},
+					"enable_generic_agent": {"type": "boolean"},
 					"validation_schema": {"type": "object"}
 				},
 				"required": ["type", "id", "title"]

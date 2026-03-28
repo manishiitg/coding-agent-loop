@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Building2, Settings, Trash2, Copy, DollarSign, Keyboard, CalendarDays, GitBranch, SlidersHorizontal } from 'lucide-react'
+import { Workflow, Users, Building2, Settings, Trash2, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -8,8 +8,8 @@ import PresetModal from './PresetModal'
 import ChatCostsPopup from './ChatCostsPopup'
 import DelegationLogsPopup from './DelegationLogsPopup'
 import WorkflowScheduleRunsPanel from './scheduler/WorkflowScheduleRunsPanel'
-import PlansManagerModal from './PlansManagerModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
+import BotConnectorModal from './settings/BotConnectorModal'
 import { WorkflowsOverviewPopup } from './WorkflowsOverviewPage'
 import { schedulerApi } from '../api/scheduler'
 import { agentApi } from '../services/api'
@@ -20,7 +20,6 @@ import { useAppStore } from '../stores/useAppStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { useRunningWorkflows } from '../stores/useRunningWorkflowsStore'
 import { useChatStore } from '../stores/useChatStore'
-import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
 const getModeIcon = (category: string) => {
   switch (category) {
@@ -134,7 +133,9 @@ export const ModePresetBar: React.FC = () => {
   const [runningScheduledWorkflowCount, setRunningScheduledWorkflowCount] = useState(0)
   const [showPlansManager, setShowPlansManager] = useState(false)
   const [showTierModal, setShowTierModal] = useState(false)
+  const [showBotConnector, setShowBotConnector] = useState(false)
   const [restoreWorkspaceAfterTierModal, setRestoreWorkspaceAfterTierModal] = useState(false)
+  const [restoreWorkspaceAfterBotConnector, setRestoreWorkspaceAfterBotConnector] = useState(false)
   const [showWorkflowsPopup, setShowWorkflowsPopup] = useState(false)
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
@@ -209,16 +210,6 @@ export const ModePresetBar: React.FC = () => {
   const chatTabsForBadge = useChatStore(state => state.chatTabs)
   const tabSessionStatusForBadge = useChatStore(state => state.tabSessionStatus)
   const getTabStreamingStatus = useChatStore(state => state.getTabStreamingStatus)
-  const workspaceFiles = useWorkspaceStore(state => state.files)
-
-  const hasPlansFolder = useMemo(() => {
-    return workspaceFiles.some(f =>
-      f.filepath === 'Chats' ||
-      f.filepath === 'Chats/' ||
-      f.filepath.startsWith('Chats/')
-    )
-  }, [workspaceFiles])
-
   const tierLines = useMemo(() => {
     const lines: string[] = []
     if (delegationTierConfig?.main) lines.push(`Main: ${shortModelName(delegationTierConfig.main.model_id)} (${delegationTierConfig.main.provider})`)
@@ -240,6 +231,19 @@ export const ModePresetBar: React.FC = () => {
     if (restoreWorkspaceAfterTierModal) setWorkspaceMinimized(false)
     setRestoreWorkspaceAfterTierModal(false)
   }, [restoreWorkspaceAfterTierModal, setWorkspaceMinimized])
+
+  const openBotConnector = useCallback(() => {
+    const shouldRestore = !workspaceMinimized
+    setRestoreWorkspaceAfterBotConnector(shouldRestore)
+    if (shouldRestore) setWorkspaceMinimized(true)
+    setShowBotConnector(true)
+  }, [workspaceMinimized, setWorkspaceMinimized])
+
+  const closeBotConnector = useCallback(() => {
+    setShowBotConnector(false)
+    if (restoreWorkspaceAfterBotConnector) setWorkspaceMinimized(false)
+    setRestoreWorkspaceAfterBotConnector(false)
+  }, [restoreWorkspaceAfterBotConnector, setWorkspaceMinimized])
 
   const runningWorkflowCount = useMemo(() => {
     const seenSessionIds = new Set<string>()
@@ -686,19 +690,17 @@ export const ModePresetBar: React.FC = () => {
                       )}
                     </TooltipContent>
                   </Tooltip>
-                  {hasPlansFolder && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={() => setShowPlansManager(true)}
-                          className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
-                        >
-                          <GitBranch className="w-4 h-4" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">Manage Plan Folders</TooltipContent>
-                    </Tooltip>
-                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={openBotConnector}
+                        className="p-1 rounded-md text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                      >
+                        <Bot className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Bot connector</TooltipContent>
+                  </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
@@ -882,6 +884,11 @@ export const ModePresetBar: React.FC = () => {
         onClose={closeTierModal}
       />
 
+      <BotConnectorModal
+        isOpen={showBotConnector}
+        onClose={closeBotConnector}
+      />
+
       {/* Scheduled Workflow Runs Panel */}
       {showRunsPanel && (
         <WorkflowScheduleRunsPanel onClose={() => setShowRunsPanel(false)} />
@@ -893,27 +900,6 @@ export const ModePresetBar: React.FC = () => {
         onClose={() => setShowWorkflowsPopup(false)}
       />
 
-      {/* Plan folders modal (Multi-agent mode) */}
-      <PlansManagerModal
-        isOpen={showPlansManager}
-        onClose={() => setShowPlansManager(false)}
-        onSelectPlan={(folder) => {
-          const chatStore = useChatStore.getState()
-          const activeTabId = chatStore.activeTabId
-          if (activeTabId) {
-            const currentConfig = chatStore.getTabConfig(activeTabId)
-            const existingFileContext = currentConfig?.fileContext ?? []
-            const planName = folder.split('/').pop() || folder
-            const alreadyInContext = existingFileContext.some(f => f.path === folder)
-            if (!alreadyInContext) {
-              chatStore.setTabConfig(activeTabId, {
-                fileContext: [...existingFileContext, { name: planName, path: folder, type: 'folder' as const }]
-              })
-            }
-          }
-          agentApi.updatePlannerFile(`${folder}/.last_used`, new Date().toISOString()).catch(() => {})
-        }}
-      />
     </>
   )
 }

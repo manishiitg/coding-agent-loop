@@ -15,6 +15,7 @@ import (
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents"
 	orchestrator_events "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/agent/codeexec"
 	baseevents "github.com/manishiitg/mcpagent/events"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 	"github.com/manishiitg/mcpagent/mcpclient"
@@ -1776,6 +1777,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) createTodoTaskOrchestratorAgent(ctx c
 	return agent, nil
 }
 
+// restoreSubAgentToolExecutors re-registers the outer todo_task's sub-agent executors in the
+// session-scoped code execution registry. This is called after a nested todo_task sub-agent
+// completes, because the nested todo_task overwrites the session registry entry for call_sub_agent
+// with its own inner routes. Without this restore, any subsequent call_sub_agent calls in the
+// same LLM turn (code execution mode) would incorrectly route to the inner execCtx's routes.
+func (hcpo *StepBasedWorkflowOrchestrator) restoreSubAgentToolExecutors(execCtx *SubAgentExecutionContext) {
+	sessionID := hcpo.getSessionID()
+	if sessionID == "" {
+		return
+	}
+	subAgentExecutors := virtualtools.CreateSubAgentToolExecutors()
+	wrappedExecutors := make(map[string]func(ctx context.Context, args map[string]interface{}) (string, error), len(subAgentExecutors))
+	for toolName, executor := range subAgentExecutors {
+		wrappedExecutors[toolName] = hcpo.wrapSubAgentToolExecutor(executor, execCtx)
+	}
+	codeexec.InitRegistryForSession(sessionID, wrappedExecutors, hcpo.GetLogger())
+	hcpo.GetLogger().Info("🔄 Restored outer sub-agent tool executors in session registry after nested todo_task completion")
+}
+
 // wrapSubAgentToolExecutor wraps a sub-agent tool executor to inject execution functions
 // The wrapper adds: execute_predefined_sub_agent, execute_generic_agent, mark_step_complete, predefined_routes, validate_todo_exists, sub_agent_llm
 func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
@@ -1994,6 +2014,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutePredefinedSubAgentFunc(
 		)
 
 		executionTime := time.Since(startTime)
+
+		// RESTORE: Re-register outer sub-agent executors in the session registry.
+		// A nested todo_task sub-agent overwrites the session-scoped call_sub_agent executor
+		// with its own inner routes. After it returns, restore the outer executor so that
+		// subsequent call_sub_agent calls in the same LLM turn (code execution mode) hit the
+		// correct outer routes and not the inner ones.
+		hcpo.restoreSubAgentToolExecutors(execCtx)
 
 		// Store call record for get_sub_agent_conversation
 		record := SubAgentCallRecord{

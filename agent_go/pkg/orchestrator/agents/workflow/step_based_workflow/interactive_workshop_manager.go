@@ -4133,7 +4133,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			learningPathIdentifier := resolvedID
 			resolvedTitle := ResolveVariables(targetStep.GetTitle(), iwm.controller.variableValues)
 			sanitizedTitle := iwm.controller.sanitizeTitleForAgentName(resolvedTitle)
-			agentName := fmt.Sprintf("%s-workshop-learning-%s", learningPathIdentifier, sanitizedTitle)
+			agentName := fmt.Sprintf("%s-skill-generation-%s", learningPathIdentifier, sanitizedTitle)
 
 			// Get execution history — either from passed parameter or from execution log files
 			var formattedHistory string
@@ -4287,7 +4287,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
+						AgentName:     fmt.Sprintf("Skill Generation: %s", learningDisplayName),
 					}
 					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
 						Type:          orchestrator_events.OrchestratorAgentStart,
@@ -4314,7 +4314,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 							BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 							AgentType:     "workshop-step-learning",
-							AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
+							AgentName:     fmt.Sprintf("Skill Generation: %s", learningDisplayName),
 							Success:       false,
 							Result:        fmt.Sprintf("Failed to create learning agent: %v", createErr),
 						}
@@ -4385,7 +4385,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
 						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
 						AgentType:     "workshop-step-learning",
-						AgentName:     fmt.Sprintf("Learning: %s", learningDisplayName),
+						AgentName:     fmt.Sprintf("Skill Generation: %s", learningDisplayName),
 						Success:       execErr == nil,
 					}
 					if execErr != nil {

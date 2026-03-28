@@ -53,7 +53,7 @@ func main() {
 
 	// 2. Initialize Workspace Client & Tools from our new library
 	wsClient := workspace.NewClient(workspaceAPIURL)
-	basicTools := workspace.GetBasicToolDefinitions()
+	basicTools := workspace.GetAdvancedToolDefinitions()
 	basicExecutors := workspace.NewBasicExecutor(wsClient)
 
 	// 3. Initialize LLM Provider using Constants

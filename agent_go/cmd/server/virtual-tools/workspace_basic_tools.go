@@ -3,18 +3,12 @@ package virtualtools
 import (
 	"context"
 
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"mcp-agent-builder-go/agent_go/pkg/workspace"
 )
 
 // GetWorkspaceBasicToolCategory returns the category name for workspace basic tools
 func GetWorkspaceBasicToolCategory() string {
 	return "workspace_basic"
-}
-
-// CreateWorkspaceBasicTools returns the shared basic workspace tools from the workspace package
-func CreateWorkspaceBasicTools() []llmtypes.Tool {
-	return workspace.GetBasicToolDefinitions()
 }
 
 // getDefaultFolderGuard returns the default FolderGuard config

@@ -551,7 +551,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       {/* Rectangle Shape Card */}
       <div
         className={`
-          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-gradient-to-br from-violet-50 via-violet-50 to-purple-50 dark:bg-gray-900 dark:bg-none shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
+          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-gradient-to-br from-violet-50 via-violet-50 to-purple-50 dark:bg-gradient-to-br dark:from-gray-900 dark:via-gray-900 dark:to-violet-950/20 shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
           ${statusBorderColors[status]}
           ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'running' || status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}

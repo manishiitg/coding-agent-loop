@@ -501,31 +501,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
       disableShellExecAccess: false,
       // Disable read image access (defaults to false, not persisted)
       disableReadImageAccess: false,
-      // Run mode toggle (persists across page refreshes via localStorage)
-      // Default is false: create a new iteration each run unless user opts into reusing one
-      alwaysUseSameRun: (() => {
-        try {
-          const saved = localStorage.getItem(ALWAYS_USE_SAME_RUN_KEY)
-          if (saved !== null) {
-            return JSON.parse(saved) as boolean
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to load always-use-same-run from localStorage:', error)
-        }
-        return false
-      })(),
-      // Skip execution cleanup (persists across page refreshes via localStorage)
-      skipExecutionCleanup: (() => {
-        try {
-          const saved = localStorage.getItem(SKIP_EXECUTION_CLEANUP_KEY)
-          if (saved !== null) {
-            return JSON.parse(saved) as boolean
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to load skip execution cleanup from localStorage:', error)
-        }
-        return false // Default to false
-      })(),
+      // Run mode toggle — loaded from workflow.json execution_defaults on workflow open
+      alwaysUseSameRun: false,
+      // Skip execution cleanup — loaded from workflow.json execution_defaults on workflow open
+      skipExecutionCleanup: false,
 
       // Variables manifest
       variablesManifest: null,
@@ -1454,33 +1433,10 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setAlwaysUseSameRun: (enabled: boolean) => {
         set({ alwaysUseSameRun: enabled })
-        try {
-          localStorage.setItem(ALWAYS_USE_SAME_RUN_KEY, JSON.stringify(enabled))
-          console.log(`[WorkflowStore] Always use same run set: ${enabled}`)
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to save always-use-same-run to localStorage:', error)
-        }
       },
 
       setSkipExecutionCleanup: (enabled: boolean) => {
-        console.log('[SKIP_CLEANUP_DEBUG] setSkipExecutionCleanup called with:', enabled)
-        const state = get()
         set({ skipExecutionCleanup: enabled })
-        try {
-          // Persist per-preset in the combined group data key
-          const existing = localStorage.getItem(SELECTED_GROUP_IDS_KEY)
-          const parsed = existing ? JSON.parse(existing) : {}
-          const persistData = {
-            ...(typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            presetId: (state as any)._currentPresetId,
-            skipExecutionCleanup: enabled,
-          }
-          localStorage.setItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
-          console.log(`[WorkflowStore] Skip execution cleanup set: ${enabled}`)
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to save skip execution cleanup to localStorage:', error)
-        }
       },
 
       setVariablesManifest: (manifest: VariablesManifest | null) => {
@@ -2111,7 +2067,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           let savedRunFolder: string | null = null
           let savedGroupIds: string[] = []
           let savedCurrentRunningGroupId: string | null = null
-          let savedSkipExecutionCleanup: boolean | null = null
           let canRestoreLegacyKeys = false
 
           try {
@@ -2132,9 +2087,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
                   if (parsed.runFolder) {
                     savedRunFolder = parsed.runFolder
                   }
-                  if (typeof parsed.skipExecutionCleanup === 'boolean') {
-                    savedSkipExecutionCleanup = parsed.skipExecutionCleanup
-                  }
                 }
                 // Note: startPoint is intentionally NOT restored - calculated from progress
               }
@@ -2142,14 +2094,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
               else if (Array.isArray(parsed)) {
                 canRestoreLegacyKeys = true
                 savedGroupIds = parsed
-              }
-            }
-
-            // Fallback for skipExecutionCleanup to legacy global key
-            if (savedSkipExecutionCleanup === null) {
-              const skipStr = localStorage.getItem(SKIP_EXECUTION_CLEANUP_KEY)
-              if (skipStr !== null) {
-                savedSkipExecutionCleanup = JSON.parse(skipStr) as boolean
               }
             }
 
@@ -2175,11 +2119,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
           // startPoint is always 0 - will be calculated from progress via loadProgress
           // NOTE: activePhase is NOT reset here — it's saved/restored by switchToPreset's
           // per-preset snapshot mechanism. Resetting it here would clobber the restored phase.
+          // NOTE: skipExecutionCleanup and alwaysUseSameRun are NOT restored here —
+          // they are loaded from workflow.json execution_defaults in WorkflowLayout.
           const stateUpdate: Partial<WorkflowStore> = {
             selectedRunFolder: savedRunFolder,
             selectedExecutionMode: 'with_learning',
             selectedStartPoint: 0,  // Always start fresh - calculated from progress
-            skipExecutionCleanup: savedSkipExecutionCleanup ?? false,
             selectedBranchStep: null,
             selectedGroupIds: savedGroupIds,
             currentRunningGroupId: savedCurrentRunningGroupId,

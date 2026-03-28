@@ -40,6 +40,7 @@ import { agentApi } from '../../../services/api'
 import ConfirmationDialog from '../../ui/ConfirmationDialog'
 import BulkStepConfigModal from '../BulkStepConfigModal'
 import { useCommandDialogStore } from '../../../stores/useCommandDialogStore'
+import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import LearningsPopup from '../LearningsPopup'
 import ExecutionLogsPopup from '../ExecutionLogsPopup'
 import EvaluationPopup from '../EvaluationPopup'
@@ -1574,7 +1575,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
               disabled={isResumingExecution}
               onClick={() => {
                 if (!isResumingExecution) {
-                  setAlwaysUseSameRun(!alwaysUseSameRun)
+                  const newVal = !alwaysUseSameRun
+                  setAlwaysUseSameRun(newVal)
+                  if (workspacePath) {
+                    useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
+                      execution_defaults: {
+                        always_use_same_run: newVal,
+                        skip_execution_cleanup: skipExecutionCleanup,
+                      }
+                    }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
+                  }
                 }
               }}
               tooltip={
@@ -1600,7 +1610,18 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             <ToolbarToggle
               label="Clear Outputs"
               checked={clearOutputsBeforeRun}
-              onClick={() => setSkipExecutionCleanup(!skipExecutionCleanup)}
+              onClick={() => {
+                const newVal = !skipExecutionCleanup
+                setSkipExecutionCleanup(newVal)
+                if (workspacePath) {
+                  useWorkflowManifestStore.getState().updateWorkflow(workspacePath, {
+                    execution_defaults: {
+                      always_use_same_run: alwaysUseSameRun,
+                      skip_execution_cleanup: newVal,
+                    }
+                  }).catch(err => console.error('[WorkflowToolbar] Failed to save execution_defaults:', err))
+                }
+              }}
               tooltip={
                 <div className="space-y-1">
                   <p>

@@ -376,6 +376,20 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activeWorkflowPreset])
 
+  // Load execution_defaults (Reuse Iteration, Clear Outputs) from workflow.json when workspace changes
+  useEffect(() => {
+    if (!workspacePath) return
+    agentApi.getWorkflowManifest(workspacePath)
+      .then(response => {
+        const defaults = response?.manifest?.execution_defaults
+        if (!defaults) return
+        const store = useWorkflowStore.getState()
+        store.setAlwaysUseSameRun(defaults.always_use_same_run)
+        store.setSkipExecutionCleanup(defaults.skip_execution_cleanup)
+      })
+      .catch(() => { /* manifest may not exist yet, use localStorage defaults */ })
+  }, [workspacePath])
+
   // Auto-expand selectedRunFolder and selected groups in workspace sidebar whenever they change
   useEffect(() => {
     if (selectedRunFolder && selectedRunFolder !== 'new' && workspacePath) {

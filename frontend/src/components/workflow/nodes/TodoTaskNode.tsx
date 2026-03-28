@@ -79,7 +79,26 @@ const statusIcons: Record<string, ReactElement | null> = {
 }
 
 export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
-  const { id, title, todo_task_step, predefined_routes, enable_generic_agent, status, stepIndex, changeType, step, onRunFromStep, onOpenSidebar, isExecuting, workspacePath, selectedRunFolder, isOrphan } = data
+  const {
+    id,
+    title,
+    todo_task_step,
+    predefined_routes,
+    enable_generic_agent,
+    status,
+    stepIndex,
+    changeType,
+    step,
+    onRunFromStep,
+    onOpenSidebar,
+    isExecuting,
+    workspacePath,
+    selectedRunFolder,
+    parentOrchestratorTitle,
+    routeName,
+    routeCondition,
+    isOrphan
+  } = data
   const { highlightFile, setShowFileContent, fetchFiles, setSelectedFile, setFileContent, setLoadingFileContent, setError } = useWorkspaceStore()
   const { setWorkspaceMinimized } = useAppStore()
   const layoutDirection = useWorkflowStore(state => state.layoutDirection)
@@ -313,9 +332,11 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
   const hasLargeOutput = (stepOverride?.enable_context_offloading !== undefined
     ? stepOverride.enable_context_offloading
     : stepConfig?.agent_configs?.enable_context_offloading) !== false
+  const isNestedTodoSubAgent = useMemo(() => id.includes('-sub-agent-') && !!parentOrchestratorTitle, [id, parentOrchestratorTitle])
+  const cardWidth = isNestedTodoSubAgent ? 264 : 300
 
   // Button states
-  const isRunDisabled = isExecuting || !onRunFromStep
+  const isRunDisabled = isExecuting || !onRunFromStep || isNestedTodoSubAgent
 
   // Handle run from this step button click
   const handleRunClick = useCallback((e: MouseEvent) => {
@@ -428,20 +449,24 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
   // Calculate node height based on content
   const nodeHeight = useMemo(() => {
-    let height = 80 // Base height (header + title)
-    if (todo_task_step) height += 30
-    if (hasContext) height += 40
-    if (predefined_routes && predefined_routes.length > 0) height += 25
-    if (enable_generic_agent) height += 20
-    return Math.max(height, 120) // Minimum height
-  }, [todo_task_step, hasContext, predefined_routes, enable_generic_agent])
+    let height = isNestedTodoSubAgent ? 72 : 80
+    if (isNestedTodoSubAgent && (routeName || parentOrchestratorTitle)) height += 24
+    if (todo_task_step) height += isNestedTodoSubAgent ? 24 : 30
+    if (hasContext) height += isNestedTodoSubAgent ? 30 : 40
+    if (predefined_routes && predefined_routes.length > 0) height += isNestedTodoSubAgent ? 20 : 25
+    if (enable_generic_agent) height += isNestedTodoSubAgent ? 16 : 20
+    return Math.max(height, isNestedTodoSubAgent ? 108 : 120)
+  }, [isNestedTodoSubAgent, routeName, parentOrchestratorTitle, todo_task_step, hasContext, predefined_routes, enable_generic_agent])
 
   return (
-    <div className={`relative w-[300px] ${changeType ? changeHighlightStyles[changeType] : ''} ${isOrphan ? 'border-dashed border-2 border-amber-400 dark:border-amber-500 rounded-xl' : ''}`}>
+    <div
+      className={`relative ${changeType ? changeHighlightStyles[changeType] : ''} ${isOrphan ? 'border-dashed border-2 border-amber-400 dark:border-amber-500 rounded-xl' : ''}`}
+      style={{ width: `${cardWidth}px` }}
+    >
       {/* Header with buttons - above the card */}
-      <div className="absolute -top-12 left-0 right-0 flex items-center justify-center gap-2 z-20">
+      <div className={`absolute ${isNestedTodoSubAgent ? '-top-10' : '-top-12'} left-0 right-0 flex items-center justify-center gap-2 z-20`}>
         {/* Run from this step button */}
-        {onRunFromStep && !isOrphan ? (
+        {onRunFromStep && !isOrphan && !isNestedTodoSubAgent ? (
           <button
             onClick={handleRunClick}
             disabled={isRunDisabled}
@@ -460,9 +485,17 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
           >
             <Play className="w-3.5 h-3.5" />
           </button>
-        ) : (
+        ) : !isNestedTodoSubAgent ? (
           <div className="w-7 h-7 flex items-center justify-center text-xs text-gray-400" title="Run callback not available">
             <AlertTriangle className="w-3.5 h-3.5" />
+          </div>
+        ) : (
+          <div
+            className="flex items-center gap-1 px-2 py-1 rounded-md bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 text-[10px] font-semibold"
+            title="Nested todo sub-agents run through the parent todo task"
+          >
+            <Bot className="w-3 h-3" />
+            <span>Child</span>
           </div>
         )}
         {/* Settings icon button */}
@@ -502,9 +535,9 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       </div>
 
       {/* Todo Task Badge - Top */}
-      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-purple-600 dark:bg-purple-700 text-white text-[11px] font-semibold shadow-lg">
+      <div className={`absolute ${isNestedTodoSubAgent ? '-top-2' : '-top-2.5'} left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 ${isNestedTodoSubAgent ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'} rounded-full ${isNestedTodoSubAgent ? 'bg-violet-600 dark:bg-violet-700' : 'bg-purple-600 dark:bg-purple-700'} text-white font-semibold shadow-lg`}>
         <ListTodo className="w-3.5 h-3.5" />
-        <span>Todo Task</span>
+        <span>{isNestedTodoSubAgent ? 'Nested Orchestrator' : 'Orchestrator'}</span>
       </div>
 
       {/* Change badge */}
@@ -518,14 +551,14 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       {/* Rectangle Shape Card */}
       <div
         className={`
-          relative rounded-xl border-2 bg-white dark:bg-gray-900 shadow-lg overflow-visible
+          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-gradient-to-br from-violet-50 via-white to-purple-50 dark:from-violet-950/40 dark:via-gray-900 dark:to-purple-950/30 shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
           ${statusBorderColors[status]}
           ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'running' || status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}
         `}
         style={{
           minHeight: `${nodeHeight}px`,
-          width: '300px'
+          width: `${cardWidth}px`
         }}
       >
         {/* Input handle */}
@@ -537,17 +570,38 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
         />
 
         {/* Content */}
-        <div className="flex flex-col px-4 py-4">
-          <div className="flex items-center gap-1.5 mb-2 justify-center">
+        <div className={`flex flex-col ${isNestedTodoSubAgent ? 'px-3.5 py-3.5' : 'px-4 py-4'}`}>
+          {(isNestedTodoSubAgent && (routeName || parentOrchestratorTitle)) && (
+            <div className="mb-2 flex flex-wrap items-center justify-center gap-1.5">
+              {routeName && (
+                <span
+                  className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800"
+                  title={routeCondition || routeName}
+                >
+                  {routeName}
+                </span>
+              )}
+              {parentOrchestratorTitle && (
+                <span
+                  className="px-2 py-0.5 rounded-full text-[9px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 max-w-[180px] truncate"
+                  title={`Nested under ${parentOrchestratorTitle}`}
+                >
+                  {parentOrchestratorTitle}
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className={`flex items-center gap-1.5 ${isNestedTodoSubAgent ? 'mb-1.5' : 'mb-2'} justify-center`}>
             {statusIcons[status]}
           </div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white leading-tight text-center mb-1.5">
-            {title || `Todo Task ${stepIndex + 1}`}
+          <h3 className={`${isNestedTodoSubAgent ? 'text-[13px]' : 'text-sm'} font-semibold text-gray-900 dark:text-white leading-tight text-center mb-1.5`}>
+            {title || `Orchestrator ${stepIndex + 1}`}
           </h3>
 
           {/* Main todo task step title */}
           {todo_task_step && (
-            <div className="mt-1.5 p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700/60">
+            <div className={`mt-1.5 ${isNestedTodoSubAgent ? 'p-1.5' : 'p-2'} rounded-lg ${isNestedTodoSubAgent ? 'bg-white/80 dark:bg-gray-800/70 border-violet-200/70 dark:border-violet-800/60' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/60'} border`}>
               <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">
                 Task: {todo_task_step.title || 'Untitled Step'}
               </p>
@@ -556,7 +610,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
           {/* Predefined Routes Count */}
           {predefined_routes && predefined_routes.length > 0 && (
-            <div className="mt-2 flex items-center gap-1.5 text-[10px] text-purple-600 dark:text-purple-400">
+            <div className={`mt-2 flex items-center gap-1.5 text-[10px] ${isNestedTodoSubAgent ? 'text-violet-600 dark:text-violet-400' : 'text-purple-600 dark:text-purple-400'}`}>
               <Bot className="w-3 h-3" />
               <span>{predefined_routes.length} predefined route{predefined_routes.length > 1 ? 's' : ''}</span>
             </div>
@@ -572,10 +626,10 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
           {/* Context Files - from main step (todo_task_step) */}
           {hasContext && (
-            <div className="space-y-1.5 mt-2">
+            <div className={`space-y-1.5 mt-2 ${isNestedTodoSubAgent ? 'opacity-90' : ''}`}>
               {contextInputs.length > 0 && (
                 <div className="flex items-start gap-2">
-                  <ArrowDownToLine className="w-3.5 h-3.5 text-purple-500 mt-0.5 flex-shrink-0" />
+                  <ArrowDownToLine className={`w-3.5 h-3.5 ${isNestedTodoSubAgent ? 'text-violet-500' : 'text-purple-500'} mt-0.5 flex-shrink-0`} />
                   <div className="flex flex-wrap gap-1">
                     {contextInputs.map((f, i) => {
                       const fileName = getFileName(f)
@@ -585,7 +639,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
                           key={i}
                           onClick={canOpen ? (e) => handleFileClick(f, e) : undefined}
                           className={`
-                            px-1.5 py-0.5 rounded text-[10px] bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300
+                            px-1.5 py-0.5 rounded text-[10px] ${isNestedTodoSubAgent ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'}
                             ${canOpen ? 'cursor-pointer hover:bg-purple-200 dark:hover:bg-purple-900/50 hover:underline' : ''}
                           `}
                           title={canOpen ? `Click to open: ${f}` : f}
@@ -681,10 +735,12 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       </div>
 
       {/* Config Footer */}
-      <div className="mt-2 mx-4">
+      <div className={`${isNestedTodoSubAgent ? 'mt-1 mx-2' : 'mt-2 mx-4'}`}>
         <NodeConfigFooter
           description={step?.description}
           successCriteria={step?.success_criteria}
+          routeName={routeName}
+          routeCondition={routeCondition}
           executionLLM={executionLLM}
           executionMaxTurns={executionMaxTurns}
           learningLLM={learningLLM}

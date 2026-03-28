@@ -1861,7 +1861,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 
 		if isStateChangingTool {
 			// Before sub-agent: emit current tasks.md state so UI shows pre-execution state
-			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx, "before_delegation")
 			hcpo.flushTodoTaskStatusDebouncer()
 		}
 
@@ -1870,7 +1870,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) wrapSubAgentToolExecutor(
 
 		if isStateChangingTool {
 			// After sub-agent completes, emit tasks.md state (debounced to coalesce parallel completions)
-			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx)
+			hcpo.emitTodoTaskStatusUpdate(ctx, args, execCtx, "after_delegation")
 		}
 
 		return result, err

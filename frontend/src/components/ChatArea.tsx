@@ -87,7 +87,7 @@ const STEP_TYPES = [
   { name: 'Conditional', desc: 'Evaluates a condition, then runs if_true or if_false branch steps' },
   { name: 'Decision', desc: 'Executes then evaluates output to route to different next steps' },
   { name: 'Routing', desc: 'Multi-way conditional — evaluates a question to pick one of several routes' },
-  { name: 'Todo Task', desc: 'Dynamic task list with sub-agents delegated per task' },
+  { name: 'Orchestrator', desc: 'Dynamic task list with sub-agents delegated per task' },
   { name: 'Human Input', desc: 'Collects user input (text, yes/no, or multiple choice)' },
 ]
 
@@ -516,11 +516,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const running = new Map<string, { name: string, agentType: string, type: 'agent' | 'delegation', depth: number }>()
 
     for (const event of tabEvents) {
+      const eventRecord = event as unknown as Record<string, unknown>
       const agentEvent = event.data as Record<string, unknown> | undefined
       const innerData = agentEvent?.data as Record<string, unknown> | undefined
+      const outerCorrelationId = (eventRecord.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+      const innerCorrelationId = (innerData?.correlation_id ?? '') as string
+      const outerDelegationId = (eventRecord.delegation_id ?? agentEvent?.delegation_id ?? '') as string
+      const innerDelegationId = (innerData?.delegation_id ?? '') as string
 
       if (event.type === 'orchestrator_agent_start') {
-        const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        const corrId = outerCorrelationId || innerCorrelationId
         const name = (innerData?.agent_name ?? agentEvent?.agent_name ?? 'Agent') as string
         const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
         if (corrId && !running.has(corrId)) {
@@ -545,10 +550,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           }
         }
       } else if (event.type === 'orchestrator_agent_end' || event.type === 'orchestrator_agent_error') {
-        const corrId = (innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        const corrId = outerCorrelationId || innerCorrelationId
         if (corrId) running.delete(corrId)
       } else if (event.type === 'delegation_start') {
-        const delegationId = (innerData?.delegation_id ?? agentEvent?.delegation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        const delegationId = outerDelegationId || innerDelegationId || outerCorrelationId || innerCorrelationId
         const rawName = (innerData?.agent_name ?? agentEvent?.agent_name ?? innerData?.instruction ?? agentEvent?.instruction ?? 'Sub-agent') as string
         const name = typeof rawName === 'string' && rawName.length > 50 ? rawName.substring(0, 50) + '...' : rawName
         if (delegationId && !running.has(delegationId)) {
@@ -556,7 +561,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           running.set(delegationId, { name: typeof name === 'string' ? name : 'Sub-agent', agentType: '', type: 'delegation', depth })
         }
       } else if (event.type === 'delegation_end') {
-        const delegationId = (innerData?.delegation_id ?? agentEvent?.delegation_id ?? innerData?.correlation_id ?? agentEvent?.correlation_id ?? '') as string
+        const delegationId = outerDelegationId || innerDelegationId || outerCorrelationId || innerCorrelationId
         if (delegationId) running.delete(delegationId)
       }
     }
@@ -1400,6 +1405,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         && event.type !== 'orchestrator_agent_start'
         && event.type !== 'orchestrator_agent_end'
         && event.type !== 'todo_task_step_completed'
+        && event.type !== 'todo_task_status_update'
         && event.type !== 'todo_task_route_selected'
         && event.type !== 'todo_task_item_created'
         && event.type !== 'todo_task_item_updated'

@@ -1053,6 +1053,7 @@ type PlanStep = PlanStepInterface
 // PlanningResponse represents the structured response from planning
 // Uses type-safe PlanStepInterface - all plans must be in new format with "type" field
 type PlanningResponse struct {
+	Objective   string              `json:"objective,omitempty"`
 	Steps       []PlanStepInterface `json:"-"`
 	OrphanSteps []PlanStepInterface `json:"-"`
 }
@@ -1121,6 +1122,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 // UnmarshalJSON implements custom unmarshaling for typed steps
 func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 	var temp struct {
+		Objective   string            `json:"objective"`
 		Steps       []json.RawMessage `json:"steps"`
 		OrphanSteps []json.RawMessage `json:"orphan_steps"`
 	}
@@ -1128,6 +1130,7 @@ func (pr *PlanningResponse) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("failed to unmarshal plan: %w", err)
 	}
 
+	pr.Objective = temp.Objective
 	pr.Steps = make([]PlanStepInterface, len(temp.Steps))
 	for i, stepData := range temp.Steps {
 		typedStep, err := parseStepFromJSON(stepData, i, "step")
@@ -1164,6 +1167,10 @@ func (pr PlanningResponse) MarshalJSON() ([]byte, error) {
 
 	result := map[string]interface{}{
 		"steps": wrappedSteps,
+	}
+
+	if pr.Objective != "" {
+		result["objective"] = pr.Objective
 	}
 
 	if len(pr.OrphanSteps) > 0 {
@@ -1733,9 +1740,9 @@ func getAddTodoTaskStepSchema() string {
 						},
 						"sub_agent_step": {
 							"type": "object",
-							"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation.",
+							"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation. Use type='regular' for a focused execution agent, or type='todo_task' when this top-level route needs its own nested orchestrator. Only one nested todo_task layer is allowed.",
 							"properties": {
-								"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular' for sub-agent steps."},
+								"type": {"type": "string", "description": "REQUIRED: Step type. Supported values for todo task routes: 'regular' or 'todo_task'. Nested todo_task routes may not contain another todo_task route."},
 								"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 								"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 								"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
@@ -1743,6 +1750,10 @@ func getAddTodoTaskStepSchema() string {
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 								"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
+								"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
+								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
+								"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
+								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {
 									"type": "object",
 									"description": "REQUIRED: Validation schema for the sub-agent output",
@@ -1761,7 +1772,7 @@ func getAddTodoTaskStepSchema() string {
 									}
 								}
 							},
-							"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output", "validation_schema"]
+							"required": ["type", "id", "title"]
 						}
 					},
 					"required": ["route_id", "route_name", "condition", "sub_agent_step"]
@@ -1827,9 +1838,9 @@ func getUpdateTodoTaskStepSchema() string {
 						},
 						"sub_agent_step": {
 							"type": "object",
-							"description": "The sub-agent step definition",
+							"description": "The sub-agent step definition. Can be a regular step or a nested todo_task step. Only one nested todo_task layer is allowed.",
 							"properties": {
-								"type": {"type": "string"},
+								"type": {"type": "string", "description": "Supported values: 'regular' or 'todo_task'."},
 								"id": {"type": "string"},
 								"title": {"type": "string"},
 								"description": {"type": "string"},
@@ -1837,6 +1848,10 @@ func getUpdateTodoTaskStepSchema() string {
 								"context_dependencies": {"type": "array", "items": {"type": "string"}},
 								"context_output": {"type": "string"},
 								"has_loop": {"type": "boolean"},
+								"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
+								"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
+								"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
+								"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 								"validation_schema": {"type": "object"}
 							}
 						}
@@ -1880,9 +1895,9 @@ func getAddTodoTaskRouteSchema() string {
 					},
 					"sub_agent_step": {
 						"type": "object",
-						"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation.",
+						"description": "REQUIRED: The sub-agent step definition. This agent has learning and prevalidation. Use type='regular' for a focused execution agent, or type='todo_task' when this top-level route needs its own nested orchestrator. Only one nested todo_task layer is allowed.",
 						"properties": {
-							"type": {"type": "string", "description": "REQUIRED: Step type - must be 'regular' for sub-agent steps."},
+							"type": {"type": "string", "description": "REQUIRED: Step type. Supported values for todo task routes: 'regular' or 'todo_task'. Nested todo_task routes may not contain another todo_task route."},
 							"id": {"type": "string", "description": "REQUIRED: Stable step ID for the sub-agent step"},
 							"title": {"type": "string", "description": "REQUIRED: Title of the sub-agent step"},
 							"description": {"type": "string", "description": "REQUIRED: Description of what this specialized agent does"},
@@ -1890,12 +1905,16 @@ func getAddTodoTaskRouteSchema() string {
 							"context_dependencies": {"type": "array", "items": {"type": "string"}},
 							"context_output": {"type": "string", "description": "REQUIRED: Context file this step will create."},
 							"has_loop": {"type": "boolean", "description": "REQUIRED: Always set to false."},
+							"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
+							"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
+							"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
+							"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 							"validation_schema": {
 								"type": "object",
 								"description": "OPTIONAL: Validation schema for the sub-agent output"
 							}
 						},
-						"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+						"required": ["type", "id", "title"]
 					},
 					"context_to_pass": {
 						"type": "string",
@@ -1932,9 +1951,9 @@ func getUpdateTodoTaskRouteSchema() string {
 			},
 			"sub_agent_step": {
 				"type": "object",
-				"description": "OPTIONAL: Updated sub-agent step. Must include all required fields if provided.",
+				"description": "OPTIONAL: Updated sub-agent step. Can be a regular step or a nested todo_task step. Only one nested todo_task layer is allowed.",
 				"properties": {
-					"type": {"type": "string"},
+					"type": {"type": "string", "description": "Supported values: 'regular' or 'todo_task'."},
 					"id": {"type": "string"},
 					"title": {"type": "string"},
 					"description": {"type": "string"},
@@ -1942,9 +1961,13 @@ func getUpdateTodoTaskRouteSchema() string {
 					"context_dependencies": {"type": "array", "items": {"type": "string"}},
 					"context_output": {"type": "string"},
 					"has_loop": {"type": "boolean"},
+					"todo_task_step": {"type": "object", "description": "When type='todo_task', the child orchestrator's inner regular step."},
+					"predefined_routes": {"type": "array", "description": "When type='todo_task', nested predefined routes for the child todo task."},
+					"enable_generic_agent": {"type": "boolean", "description": "When type='todo_task', whether the child todo task can use a generic agent."},
+					"next_step_id": {"type": "string", "description": "When type='todo_task', child next step ID. Ignored when used as a sub-agent."},
 					"validation_schema": {"type": "object"}
 				},
-				"required": ["type", "id", "title", "description", "success_criteria", "context_dependencies", "has_loop", "context_output"]
+				"required": ["type", "id", "title"]
 			},
 			"context_to_pass": {
 				"type": "string",
@@ -4675,6 +4698,61 @@ func validateTodoTaskStepFieldsTyped(step *TodoTaskPlanStep) error {
 			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required sub_agent_step field", step.Title, step.ID, i, route.RouteID)
 		}
 	}
+	if err := validateTodoTaskNestingDepth(step, 0); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateTodoTaskNestingDepth(step PlanStepInterface, todoRouteDepth int) error {
+	switch s := step.(type) {
+	case *TodoTaskPlanStep:
+		if todoRouteDepth > 1 {
+			return fmt.Errorf(
+				"todo_task step %q (ID: %s) exceeds the supported nesting depth. Only one nested todo_task layer is allowed under a todo task route",
+				s.GetTitle(),
+				s.GetID(),
+			)
+		}
+		if s.TodoTaskStep != nil {
+			if err := validateTodoTaskNestingDepth(s.TodoTaskStep, todoRouteDepth); err != nil {
+				return err
+			}
+		}
+		for i, route := range s.PredefinedRoutes {
+			if route.SubAgentStep == nil {
+				continue
+			}
+			if err := validateTodoTaskNestingDepth(route.SubAgentStep, todoRouteDepth+1); err != nil {
+				return fmt.Errorf("predefined_route[%d] (route_id: %s): %w", i, route.RouteID, err)
+			}
+		}
+	case *ConditionalPlanStep:
+		for i, nested := range s.IfTrueSteps {
+			if err := validateTodoTaskNestingDepth(nested, todoRouteDepth); err != nil {
+				return fmt.Errorf("conditional if_true_steps[%d]: %w", i, err)
+			}
+		}
+		for i, nested := range s.IfFalseSteps {
+			if err := validateTodoTaskNestingDepth(nested, todoRouteDepth); err != nil {
+				return fmt.Errorf("conditional if_false_steps[%d]: %w", i, err)
+			}
+		}
+	case *OrchestrationPlanStep:
+		if s.OrchestrationStep != nil {
+			if err := validateTodoTaskNestingDepth(s.OrchestrationStep, todoRouteDepth); err != nil {
+				return err
+			}
+		}
+		for i, route := range s.OrchestrationRoutes {
+			if route.SubAgentStep == nil {
+				continue
+			}
+			if err := validateTodoTaskNestingDepth(route.SubAgentStep, todoRouteDepth); err != nil {
+				return fmt.Errorf("orchestration_route[%d] (route_id: %s): %w", i, route.RouteID, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -5051,7 +5129,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_todo_task_step",
-		"Update a todo task step in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, enable_generic_agent, next_step_id). The plan.json file is updated immediately when this tool is called.",
+		"Update an Orchestrator step (todo_task type) in the plan. Provide existing_step_id (required) to identify which step to update, and only include the fields you want to change (title, todo_task_step, predefined_routes, enable_generic_agent, next_step_id). The plan.json file is updated immediately when this tool is called.",
 		todoTaskUpdateParams,
 		createUpdateTodoTaskStepExecutor(workspacePath, logger, readFile, writeFile, unlockLearningsFunc),
 		"workflow",
@@ -5067,7 +5145,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_todo_task_route",
-		"Add a new predefined route (sub-agent) to a todo task step. Provide parent_step_id and new_route with all required fields (route_id, route_name, condition, sub_agent_step). The plan.json file is updated immediately when this tool is called.",
+		"Add a new predefined route (sub-agent) to an Orchestrator step (todo_task type). Provide parent_step_id and new_route with all required fields (route_id, route_name, condition, sub_agent_step). The plan.json file is updated immediately when this tool is called.",
 		addTodoTaskRouteParams,
 		createAddTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -5082,7 +5160,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"update_todo_task_route",
-		"Update an existing predefined route (sub-agent) within a todo task step. Provide parent_step_id, existing_route_id, and only include the fields you want to change (route_name, condition, sub_agent_step, context_to_pass). The plan.json file is updated immediately when this tool is called.",
+		"Update an existing predefined route (sub-agent) within an Orchestrator step (todo_task type). Provide parent_step_id, existing_route_id, and only include the fields you want to change (route_name, condition, sub_agent_step, context_to_pass). The plan.json file is updated immediately when this tool is called.",
 		updateTodoTaskRouteParams,
 		createUpdateTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -5097,7 +5175,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"delete_todo_task_route",
-		"Delete a predefined route (sub-agent) from a todo task step. Provide parent_step_id and deleted_route_id. Unlike orchestration steps, todo task steps can have 0 predefined routes if enable_generic_agent is true. The plan.json file is updated immediately when this tool is called.",
+		"Delete a predefined route (sub-agent) from an Orchestrator step (todo_task type). Provide parent_step_id and deleted_route_id. Unlike routing steps, Orchestrator steps can have 0 predefined routes if enable_generic_agent is true. The plan.json file is updated immediately when this tool is called.",
 		deleteTodoTaskRouteParams,
 		createDeleteTodoTaskRouteExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -5146,13 +5224,40 @@ func registerPlanModificationTools(
 // createAddTodoTaskRouteExecutor creates an executor function for add_todo_task_route tool
 func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Accept parent_step_id or legacy alias step_id
 		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			parentStepID, ok = args["step_id"].(string)
+		}
 		if !ok || parentStepID == "" {
 			return "", fmt.Errorf("invalid or missing parent_step_id")
 		}
 
-		newRouteRaw, ok := args["new_route"].(map[string]interface{})
-		if !ok {
+		// Accept new_route or legacy alias predefined_route; handle JSON-string form
+		var newRouteRaw map[string]interface{}
+		if v, ok2 := args["new_route"]; ok2 {
+			switch val := v.(type) {
+			case map[string]interface{}:
+				newRouteRaw = val
+			case string:
+				if err := json.Unmarshal([]byte(val), &newRouteRaw); err != nil {
+					return "", fmt.Errorf("failed to parse new_route JSON string: %w", err)
+				}
+			}
+		}
+		if newRouteRaw == nil {
+			if v, ok2 := args["predefined_route"]; ok2 {
+				switch val := v.(type) {
+				case map[string]interface{}:
+					newRouteRaw = val
+				case string:
+					if err := json.Unmarshal([]byte(val), &newRouteRaw); err != nil {
+						return "", fmt.Errorf("failed to parse predefined_route JSON string: %w", err)
+					}
+				}
+			}
+		}
+		if newRouteRaw == nil {
 			return "", fmt.Errorf("invalid new_route argument")
 		}
 
@@ -5214,6 +5319,9 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 
 		// Add new route
 		todoTaskStep.PredefinedRoutes = append(todoTaskStep.PredefinedRoutes, newRoute)
+		if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
+			return "", fmt.Errorf("validation failed after adding route: %w", err)
+		}
 		plan.Steps[parentStepIndex] = todoTaskStep
 
 		// Write updated plan
@@ -5229,7 +5337,11 @@ func createAddTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger
 // createUpdateTodoTaskRouteExecutor creates an executor function for update_todo_task_route tool
 func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Accept parent_step_id or legacy alias step_id
 		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			parentStepID, ok = args["step_id"].(string)
+		}
 		if !ok || parentStepID == "" {
 			return "", fmt.Errorf("invalid or missing parent_step_id")
 		}
@@ -5310,6 +5422,10 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 			routeToUpdate.SubAgentStep = updatedSubAgentStep
 		}
 
+		if err := validateTodoTaskStepFieldsTyped(todoTaskStep); err != nil {
+			return "", fmt.Errorf("validation failed after route update: %w", err)
+		}
+
 		// Update the todo task step in the plan
 		plan.Steps[parentStepIndex] = todoTaskStep
 
@@ -5326,7 +5442,11 @@ func createUpdateTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Log
 // createDeleteTodoTaskRouteExecutor creates an executor function for delete_todo_task_route tool
 func createDeleteTodoTaskRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		// Accept parent_step_id or legacy alias step_id
 		parentStepID, ok := args["parent_step_id"].(string)
+		if !ok || parentStepID == "" {
+			parentStepID, ok = args["step_id"].(string)
+		}
 		if !ok || parentStepID == "" {
 			return "", fmt.Errorf("invalid or missing parent_step_id")
 		}

@@ -305,6 +305,7 @@ type TodoTaskStatusUpdateEvent struct {
 	TasksContent string `json:"tasks_content"` // Raw markdown content of tasks.md
 	RouteID      string `json:"route_id,omitempty"`
 	TodoID       string `json:"todo_id,omitempty"`
+	StatusPhase  string `json:"status_phase,omitempty"` // "before_delegation" or "after_delegation"
 }
 
 func (e *TodoTaskStatusUpdateEvent) GetEventType() baseevents.EventType {

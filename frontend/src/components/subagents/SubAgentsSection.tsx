@@ -11,7 +11,8 @@ export default function SubAgentsSection() {
   const [error, setError] = useState<string | null>(null)
   const [showDetails, setShowDetails] = useState(false)
 
-  const { getActiveTab, setTabConfig } = useChatStore()
+  const getActiveTab = useChatStore(state => state.getActiveTab)
+  const setTabConfig = useChatStore(state => state.setTabConfig)
 
   const loadSubAgents = useCallback(async () => {
     setIsLoading(true)

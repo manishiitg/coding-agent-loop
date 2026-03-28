@@ -162,8 +162,24 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 		return nil, false, fmt.Errorf("failed to parse workflow.json: %w", err)
 	}
 
+	// Track whether any schedule IDs need auto-assignment before applying defaults.
+	hadEmptyScheduleID := false
+	for _, s := range m.Schedules {
+		if s.ID == "" {
+			hadEmptyScheduleID = true
+			break
+		}
+	}
+
 	// Apply defaults for missing fields from older schema versions
 	applyManifestDefaults(&m)
+
+	// Persist auto-assigned schedule IDs so subsequent lookups find the same UUID.
+	if hadEmptyScheduleID {
+		if err := WriteWorkflowManifest(ctx, workspacePath, &m); err != nil {
+			log.Printf("[WARN] ReadWorkflowManifest: failed to persist auto-assigned schedule IDs for %s: %v", workspacePath, err)
+		}
+	}
 
 	return &m, true, nil
 }
@@ -315,6 +331,12 @@ func applyManifestDefaults(m *WorkflowManifest) {
 	}
 	if m.Schedules == nil {
 		m.Schedules = []WorkflowSchedule{}
+	}
+	// Auto-assign IDs to schedules that pre-date the ID field.
+	for i := range m.Schedules {
+		if m.Schedules[i].ID == "" {
+			m.Schedules[i].ID = uuid.New().String()
+		}
 	}
 }
 

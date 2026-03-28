@@ -260,6 +260,17 @@ func handleCallSubAgent(ctx context.Context, args map[string]interface{}) (strin
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
 	}
 
+	// Validate todo_id against tasks.md when the runtime provides a validator.
+	if validateTodoFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateTodoFunc != nil {
+		exists, totalTasks, tasksFilePath, err := validateTodoFunc(ctx, todoID)
+		if err != nil {
+			return "", fmt.Errorf("failed to validate todo_id %q: %w", todoID, err)
+		}
+		if !exists {
+			return "", fmt.Errorf("todo_id %q was not found in tasks.md (%d tasks parsed from %s)", todoID, totalTasks, tasksFilePath)
+		}
+	}
+
 	// Get the execution function from context
 	executeFunc, ok := ctx.Value(ExecutePredefinedSubAgentKey).(ExecutePredefinedSubAgentFunc)
 	if !ok || executeFunc == nil {
@@ -329,6 +340,17 @@ func handleCallGenericAgent(ctx context.Context, args map[string]interface{}) (s
 	// Extract share_browser param (defaults to true — shared browser)
 	if sb, ok := args["share_browser"].(bool); ok && !sb {
 		ctx = context.WithValue(ctx, SubAgentShareBrowserKey, false)
+	}
+
+	// Validate todo_id against tasks.md when the runtime provides a validator.
+	if validateTodoFunc, ok := ctx.Value(ValidateTodoExistsKey).(ValidateTodoExistsFunc); ok && validateTodoFunc != nil {
+		exists, totalTasks, tasksFilePath, err := validateTodoFunc(ctx, todoID)
+		if err != nil {
+			return "", fmt.Errorf("failed to validate todo_id %q: %w", todoID, err)
+		}
+		if !exists {
+			return "", fmt.Errorf("todo_id %q was not found in tasks.md (%d tasks parsed from %s)", todoID, totalTasks, tasksFilePath)
+		}
 	}
 
 	// Get the execution function from context
@@ -451,4 +473,3 @@ func handleGetSubAgentConversation(ctx context.Context, args map[string]interfac
 
 	return getConvFunc(ctx, todoID, fromLastX, offsetLastX)
 }
-

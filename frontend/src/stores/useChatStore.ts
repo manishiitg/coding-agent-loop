@@ -58,7 +58,8 @@ const tabEventIdSets = new Map<string, Set<string>>()
 // Instead of updating zustand state on every SSE event (10-50/sec),
 // buffer events and flush at most every BATCH_INTERVAL_MS.
 // This reduces render cascades (ChatArea → EventHierarchy) by ~10-50x.
-const BATCH_INTERVAL_MS = 200 // 200ms batching — balances render frequency vs responsiveness
+const BATCH_INTERVAL_MS = 200 // 200ms for the active session — keeps UI responsive
+const BACKGROUND_BATCH_INTERVAL_MS = 1000 // 1s for background sessions — only badge count needs updating
 const _eventBatchBuffers = new Map<string, PollingEvent[]>()
 const _eventBatchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -89,13 +90,16 @@ function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
   }
 
   if (hasImportant) {
-    // Flush immediately for important events
+    // Flush immediately for important events regardless of active/background
     const timer = _eventBatchTimers.get(sessionId)
     if (timer) clearTimeout(timer)
     _flushEventBatch(sessionId)
   } else if (!_eventBatchTimers.has(sessionId)) {
-    // Schedule flush
-    _eventBatchTimers.set(sessionId, setTimeout(() => _flushEventBatch(sessionId), BATCH_INTERVAL_MS))
+    // Use slower flush for background sessions — they only need badge count updates
+    const state = useChatStore.getState()
+    const activeSessionId = state.activeTabId ? state.chatTabs[state.activeTabId]?.sessionId : null
+    const interval = sessionId === activeSessionId ? BATCH_INTERVAL_MS : BACKGROUND_BATCH_INTERVAL_MS
+    _eventBatchTimers.set(sessionId, setTimeout(() => _flushEventBatch(sessionId), interval))
   }
 }
 

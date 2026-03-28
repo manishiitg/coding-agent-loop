@@ -13,7 +13,8 @@ export default function SkillsSection() {
   const [showDetails, setShowDetails] = useState(false)
   const [showImportDialog, setShowImportDialog] = useState(false)
   
-  const { getActiveTab, setTabConfig } = useChatStore()
+  const getActiveTab = useChatStore(state => state.getActiveTab)
+  const setTabConfig = useChatStore(state => state.setTabConfig)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)

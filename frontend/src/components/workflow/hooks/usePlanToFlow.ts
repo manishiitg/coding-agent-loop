@@ -114,6 +114,9 @@ export interface TodoTaskNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json (from todo_task_step)
+  parentOrchestratorTitle?: string  // Title of parent orchestrator node (for nested todo sub-agents)
+  routeName?: string  // Route name from orchestration/todo routes
+  routeCondition?: string  // Condition from orchestration/todo routes
   isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
@@ -1128,6 +1131,239 @@ function processSteps(
   // Track conditional nodes with empty branches for label purposes
   const conditionalEmptyBranches = new Map<string, { trueEmpty: boolean; falseEmpty: boolean }>()
 
+  const buildTodoTaskSubAgentGraph = (
+    todoTaskStep: PlanStep,
+    todoTaskNodeId: string,
+    todoTaskNodeData: TodoTaskNodeData,
+    includeCompletionEdge: boolean
+  ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } => {
+    const todoTaskEdges: WorkflowEdge[] = []
+    const todoTaskSubAgentNodes: WorkflowNode[] = []
+    const parentStepIndex = todoTaskNodeData.stepIndex
+    const todoTaskTitle = todoTaskNodeData.title || todoTaskStep.title || `Todo Task ${parentStepIndex + 1}`
+
+    if (isTodoTaskStep(todoTaskStep) && todoTaskStep.predefined_routes && todoTaskStep.predefined_routes.length > 0) {
+      todoTaskStep.predefined_routes.forEach((route) => {
+        const isEndRoute = route.route_id?.toLowerCase() === 'end'
+
+        if (isEndRoute) {
+          if (includeCompletionEdge) {
+            todoTaskEdges.push({
+              id: `${todoTaskNodeId}-route-${route.route_id}-to-end`,
+              source: todoTaskNodeId,
+              sourceHandle: route.route_id,
+              target: 'end',
+              type: 'smoothstep',
+              style: { stroke: '#ef4444', strokeWidth: 2 },
+              animated: false
+            })
+          }
+          return
+        }
+
+        if (!route.sub_agent_step) {
+          return
+        }
+
+        const routeId = route.route_id || route.sub_agent_step.id || String(todoTaskStep.predefined_routes?.indexOf(route) ?? 0)
+        const subAgentNodeId = `${todoTaskNodeId}-sub-agent-${routeId}`
+        const subAgentStep = route.sub_agent_step
+        const stepId = subAgentStep.id || subAgentNodeId
+
+        let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
+        if (stepStatusMap && stepStatusMap.has(stepId)) {
+          status = stepStatusMap.get(stepId)!
+        }
+
+        const changeType = getChangeType(stepId, changes)
+
+        if (isTodoTaskStep(subAgentStep)) {
+          const nestedTodoNode: WorkflowNode = {
+            id: subAgentNodeId,
+            type: 'todo_task',
+            position: { x: 0, y: 0 },
+            data: {
+              id: subAgentNodeId,
+              title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
+              description: subAgentStep.description,
+              success_criteria: subAgentStep.success_criteria,
+              status,
+              stepIndex: parentStepIndex,
+              step: subAgentStep,
+              changeType,
+              todo_task_step: subAgentStep.todo_task_step,
+              predefined_routes: subAgentStep.predefined_routes,
+              enable_generic_agent: subAgentStep.enable_generic_agent,
+              validation_schema: subAgentStep.todo_task_step?.validation_schema || subAgentStep.validation_schema,
+              workspacePath,
+              selectedRunFolder,
+              parentOrchestratorTitle: todoTaskTitle,
+              routeName: route.route_name || undefined,
+              routeCondition: route.condition || undefined
+            } as TodoTaskNodeData
+          }
+
+          todoTaskSubAgentNodes.push(nestedTodoNode)
+
+          const nestedTodoGraph = buildTodoTaskSubAgentGraph(
+            subAgentStep,
+            subAgentNodeId,
+            nestedTodoNode.data as TodoTaskNodeData,
+            false
+          )
+          todoTaskSubAgentNodes.push(...nestedTodoGraph.nodes)
+          todoTaskEdges.push(...nestedTodoGraph.edges)
+        } else {
+          const subAgentNode: WorkflowNode = {
+            id: subAgentNodeId,
+            type: 'step',
+            position: { x: 0, y: 0 },
+            data: {
+              id: subAgentNodeId,
+              title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
+              description: subAgentStep.description,
+              success_criteria: subAgentStep.success_criteria,
+              status,
+              stepIndex: parentStepIndex,
+              step: subAgentStep,
+              changeType,
+              validation_schema: subAgentStep.validation_schema,
+              workspacePath,
+              selectedRunFolder,
+              parentOrchestratorTitle: todoTaskTitle,
+              routeName: route.route_name || undefined,
+              routeCondition: route.condition || undefined
+            } as StepNodeData
+          }
+
+          todoTaskSubAgentNodes.push(subAgentNode)
+        }
+
+        const subAgentExitNodeId = subAgentNodeId
+
+        todoTaskEdges.push({
+          id: `${todoTaskNodeId}-route-${route.route_id}-to-sub-agent`,
+          source: todoTaskNodeId,
+          sourceHandle: route.route_id,
+          target: subAgentNodeId,
+          targetHandle: 'top',
+          type: 'smoothstep',
+          style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' },
+          animated: false
+        })
+
+        todoTaskEdges.push({
+          id: `${subAgentExitNodeId}-return-to-${todoTaskNodeId}`,
+          source: subAgentExitNodeId,
+          target: todoTaskNodeId,
+          type: 'smoothstep',
+          label: 'Return',
+          labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
+          labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
+          labelBgPadding: [2, 2] as [number, number],
+          labelBgBorderRadius: 3,
+          style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
+          animated: false
+        })
+      })
+    }
+
+    if (isTodoTaskStep(todoTaskStep) && todoTaskStep.enable_generic_agent) {
+      const routeId = 'generic'
+      const subAgentNodeId = `${todoTaskNodeId}-sub-agent-${routeId}`
+
+      let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
+      if (stepStatusMap && stepStatusMap.has(subAgentNodeId)) {
+        status = stepStatusMap.get(subAgentNodeId)!
+      }
+
+      const subAgentNode: WorkflowNode = {
+        id: subAgentNodeId,
+        type: 'step',
+        position: { x: 0, y: 0 },
+        data: {
+          id: subAgentNodeId,
+          title: 'Generic Agent',
+          description: 'Executes ad-hoc tasks using workspace tools',
+          success_criteria: 'Task completion verified by orchestrator',
+          status,
+          stepIndex: parentStepIndex,
+          step: {
+            id: subAgentNodeId,
+            title: 'Generic Agent',
+            description: 'Executes ad-hoc tasks using workspace tools',
+            type: 'regular',
+            agent_configs: {
+              disable_learning: true
+            }
+          } as PlanStep,
+          changeType: undefined,
+          workspacePath,
+          selectedRunFolder,
+          parentOrchestratorTitle: todoTaskTitle,
+          routeName: 'Generic Execution',
+          routeCondition: 'Ad-hoc tasks'
+        } as StepNodeData
+      }
+
+      todoTaskSubAgentNodes.push(subAgentNode)
+
+      todoTaskEdges.push({
+        id: `${todoTaskNodeId}-route-generic-to-sub-agent`,
+        source: todoTaskNodeId,
+        target: subAgentNodeId,
+        targetHandle: 'top',
+        type: 'smoothstep',
+        style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' },
+        animated: false
+      })
+
+      todoTaskEdges.push({
+        id: `${subAgentNodeId}-return-to-${todoTaskNodeId}`,
+        source: subAgentNodeId,
+        target: todoTaskNodeId,
+        type: 'smoothstep',
+        label: 'Return',
+        labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
+        labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
+        labelBgPadding: [2, 2] as [number, number],
+        labelBgBorderRadius: 3,
+        style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
+        animated: false
+      })
+    }
+
+    if (includeCompletionEdge && isTodoTaskStep(todoTaskStep) && todoTaskStep.next_step_id) {
+      const targetNodeId = stepIdToNodeIdMap?.get(todoTaskStep.next_step_id)
+      if (targetNodeId) {
+        todoTaskEdges.push({
+          id: `${todoTaskNodeId}-todo-task-to-${targetNodeId}`,
+          source: todoTaskNodeId,
+          target: targetNodeId,
+          type: 'smoothstep',
+          style: { stroke: '#8b5cf6', strokeWidth: 2 },
+          animated: false
+        })
+      } else if (todoTaskStep.next_step_id === 'end') {
+        todoTaskEdges.push({
+          id: `${todoTaskNodeId}-todo-task-to-end`,
+          source: todoTaskNodeId,
+          target: 'end',
+          type: 'smoothstep',
+          label: 'Complete',
+          labelStyle: { fill: '#8b5cf6', fontWeight: 600, fontSize: 11 },
+          labelBgStyle: { fill: '#f5f3ff', fillOpacity: 0.9 },
+          labelBgPadding: [4, 4] as [number, number],
+          labelBgBorderRadius: 4,
+          style: { stroke: '#8b5cf6', strokeWidth: 2 },
+          animated: false
+        })
+      }
+    }
+
+    return { nodes: todoTaskSubAgentNodes, edges: todoTaskEdges }
+  }
+
   steps.forEach((step, index) => {
     const node = stepToNode(step, index, parentId, branchType, changes, stepStatusMap, workspacePath, selectedRunFolder, completedStepIds)
     nodes.push(node)
@@ -1755,221 +1991,15 @@ function processSteps(
     // and optionally a generic agent. After sub-agents complete, they return to the main todo task node.
     // The todo task step connects to next_step_id when all tasks are complete.
     if (isTodoTaskStep(step)) {
-      const todoTaskEdges: WorkflowEdge[] = []
-      const todoTaskSubAgentNodes: WorkflowNode[] = []
+      const todoTaskGraph = buildTodoTaskSubAgentGraph(
+        step,
+        node.id,
+        node.data as TodoTaskNodeData,
+        true
+      )
 
-      // Use the todo_task node as source
-      const sourceNodeId = node.id
-
-      // Create nodes for predefined sub-agents (similar to orchestration routes)
-      if (step.predefined_routes && step.predefined_routes.length > 0) {
-        step.predefined_routes.forEach((route) => {
-          const isEndRoute = route.route_id?.toLowerCase() === "end"
-
-          // Handle "end" route - create edge to end node but skip sub-agent node creation
-          if (isEndRoute) {
-            todoTaskEdges.push({
-              id: `${node.id}-route-${route.route_id}-to-end`,
-              source: node.id,
-              sourceHandle: route.route_id,
-              target: 'end',
-              type: 'smoothstep',
-              style: { stroke: '#ef4444', strokeWidth: 2 },
-              animated: false
-            })
-            return
-          }
-
-          if (route.sub_agent_step) {
-            const routeId = route.route_id || route.sub_agent_step.id || String(step.predefined_routes?.indexOf(route) ?? 0)
-            const subAgentNodeId = `${node.id}-sub-agent-${routeId}`
-
-            const parentStepIndex = (node.data as TodoTaskNodeData).stepIndex
-            const todoTaskNodeData = node.data as TodoTaskNodeData
-            const todoTaskTitle = todoTaskNodeData.title || step.title || `Todo Task ${parentStepIndex + 1}`
-
-            const subAgentStep = route.sub_agent_step
-            const stepId = subAgentStep.id || subAgentNodeId
-
-            // Determine status
-            let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
-            if (stepStatusMap && stepStatusMap.has(stepId)) {
-              status = stepStatusMap.get(stepId)!
-            }
-
-            // Determine change type
-            const changeType = getChangeType(stepId, changes)
-
-            // Create the sub-agent node
-            const subAgentNode: WorkflowNode = {
-              id: subAgentNodeId,
-              type: 'step',
-              position: { x: 0, y: 0 },
-              data: {
-                id: subAgentNodeId,
-                title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
-                description: subAgentStep.description,
-                success_criteria: subAgentStep.success_criteria,
-                status,
-                stepIndex: parentStepIndex,
-                step: subAgentStep,
-                changeType,
-                validation_schema: subAgentStep.validation_schema,
-                workspacePath,
-                selectedRunFolder,
-                parentOrchestratorTitle: todoTaskTitle,
-                routeName: route.route_name || undefined,
-                routeCondition: route.condition || undefined
-              } as StepNodeData
-            }
-
-            todoTaskSubAgentNodes.push(subAgentNode)
-
-            const subAgentExitNodeId = subAgentNodeId
-
-            // Connect todo task node to sub-agent
-            todoTaskEdges.push({
-              id: `${node.id}-route-${route.route_id}-to-sub-agent`,
-              source: node.id,
-              sourceHandle: route.route_id,
-              target: subAgentNodeId,
-              targetHandle: 'top',
-              type: 'smoothstep',
-              style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' }, // Purple for todo_task
-              animated: false
-            })
-
-            // Connect sub-agent back to todo task node
-            todoTaskEdges.push({
-              id: `${subAgentExitNodeId}-return-to-${node.id}`,
-              source: subAgentExitNodeId,
-              target: node.id,
-              type: 'smoothstep',
-              label: 'Return',
-              labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
-              labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
-              labelBgPadding: [2, 2] as [number, number],
-              labelBgBorderRadius: 3,
-              style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
-              animated: false
-            })
-          }
-        })
-      }
-
-      // Create synthetic node for Generic Agent if enabled
-      if (step.enable_generic_agent) {
-        const routeId = 'generic'
-        const subAgentNodeId = `${node.id}-sub-agent-${routeId}`
-
-        const parentStepIndex = (node.data as TodoTaskNodeData).stepIndex
-        const todoTaskNodeData = node.data as TodoTaskNodeData
-        const todoTaskTitle = todoTaskNodeData.title || step.title || `Todo Task ${parentStepIndex + 1}`
-
-        // Determine status
-        let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
-        // Generic agent status is tricky since it's transient. 
-        // We can check if parent is running and use_generic_agent was selected in recent event?
-        // For now, default to pending or match parent status if executing
-        // Or check if there's a status entry for this specific sub-agent ID (unlikely for synthetic)
-        
-        // Use parent status if we can't find specific status
-        if (stepStatusMap && stepStatusMap.has(subAgentNodeId)) {
-          status = stepStatusMap.get(subAgentNodeId)!
-        }
-
-        const subAgentNode: WorkflowNode = {
-          id: subAgentNodeId,
-          type: 'step',
-          position: { x: 0, y: 0 },
-          data: {
-            id: subAgentNodeId,
-            title: 'Generic Agent',
-            description: 'Executes ad-hoc tasks using workspace tools',
-            success_criteria: 'Task completion verified by orchestrator',
-            status,
-            stepIndex: parentStepIndex,
-            step: { 
-              // Minimal step data for display
-              id: subAgentNodeId,
-              title: 'Generic Agent',
-              description: 'Executes ad-hoc tasks using workspace tools',
-              type: 'regular',
-              agent_configs: {
-                disable_learning: true
-              }
-            } as PlanStep,
-            changeType: undefined,
-            workspacePath,
-            selectedRunFolder,
-            parentOrchestratorTitle: todoTaskTitle,
-            routeName: 'Generic Execution',
-            routeCondition: 'Ad-hoc tasks'
-          } as StepNodeData
-        }
-
-        todoTaskSubAgentNodes.push(subAgentNode)
-
-        // Connect todo task node to generic agent
-        todoTaskEdges.push({
-          id: `${node.id}-route-generic-to-sub-agent`,
-          source: node.id,
-          target: subAgentNodeId,
-          targetHandle: 'top',
-          type: 'smoothstep',
-          style: { stroke: '#8b5cf6', strokeWidth: 2, strokeDasharray: '5,5' }, // Purple dashed
-          animated: false
-        })
-
-        // Connect generic agent back to todo task node
-        todoTaskEdges.push({
-          id: `${subAgentNodeId}-return-to-${node.id}`,
-          source: subAgentNodeId,
-          target: node.id,
-          type: 'smoothstep',
-          label: 'Return',
-          labelStyle: { fill: '#6b7280', fontWeight: 500, fontSize: 9 },
-          labelBgStyle: { fill: '#f9fafb', fillOpacity: 0.9 },
-          labelBgPadding: [2, 2] as [number, number],
-          labelBgBorderRadius: 3,
-          style: { stroke: '#6b7280', strokeWidth: 1.5, strokeDasharray: '3,3' },
-          animated: false
-        })
-      }
-
-      // Add sub-agent nodes to the nodes array
-      nodes.push(...todoTaskSubAgentNodes)
-
-      // Todo task steps connect to next_step_id when all tasks are complete
-      if (step.next_step_id) {
-        const targetNodeId = stepIdToNodeIdMap?.get(step.next_step_id)
-        if (targetNodeId) {
-          todoTaskEdges.push({
-            id: `${sourceNodeId}-todo-task-to-${targetNodeId}`,
-            source: sourceNodeId,
-            target: targetNodeId,
-            type: 'smoothstep',
-            style: { stroke: '#8b5cf6', strokeWidth: 2 }, // Purple for todo_task
-            animated: false
-          })
-        } else if (step.next_step_id === 'end') {
-          todoTaskEdges.push({
-            id: `${sourceNodeId}-todo-task-to-end`,
-            source: sourceNodeId,
-            target: 'end',
-            type: 'smoothstep',
-            label: 'Complete',
-            labelStyle: { fill: '#8b5cf6', fontWeight: 600, fontSize: 11 },
-            labelBgStyle: { fill: '#f5f3ff', fillOpacity: 0.9 },
-            labelBgPadding: [4, 4] as [number, number],
-            labelBgBorderRadius: 4,
-            style: { stroke: '#8b5cf6', strokeWidth: 2 },
-            animated: false
-          })
-        }
-      }
-
-      edges.push(...todoTaskEdges)
+      nodes.push(...todoTaskGraph.nodes)
+      edges.push(...todoTaskGraph.edges)
 
       // Todo task steps handle their own routing - don't connect to next sequential step
       lastExitNodeId = null

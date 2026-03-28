@@ -3,6 +3,7 @@ package step_based_workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/shared"
+	orchestratorevents "mcp-agent-builder-go/agent_go/pkg/orchestrator/events"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -369,6 +371,92 @@ func (hcpo *StepBasedWorkflowOrchestrator) runSuccessLearningPhase(ctx context.C
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to update learning metadata for %s: %v", learningPathIdentifier, metadataErr))
 	}
 	return nil
+}
+
+// startTrackedSuccessLearningPhase launches success learning as a background workshop execution
+// when workshop tracking is available. Returns true when tracking was set up and the launch
+// was handled here; callers should fall back to the legacy fire-and-forget path when it returns false.
+func (hcpo *StepBasedWorkflowOrchestrator) startTrackedSuccessLearningPhase(
+	stepIndex int,
+	stepPath string,
+	learningPathIdentifier string,
+	totalSteps int,
+	step PlanStepInterface,
+	executionHistory []llmtypes.MessageContent,
+	validationResponse *ValidationResponse,
+	isCodeExecutionMode bool,
+	usedTempLLM string,
+	turnCount int,
+	executionLLM string,
+	triggerReason string,
+) bool {
+	if hcpo.workshopStepRegistry == nil {
+		return false
+	}
+
+	baseCtx := hcpo.workshopSessionCtx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+
+	stepLabel := strings.TrimSpace(step.GetTitle())
+	if stepLabel == "" {
+		stepLabel = step.GetID()
+	}
+	if stepLabel == "" {
+		stepLabel = learningPathIdentifier
+	}
+	execLabel := fmt.Sprintf("Learning: %s", stepLabel)
+	execID := fmt.Sprintf("learn-%s-%05d", learningPathIdentifier, time.Now().UnixNano()%100000)
+	execCtx, cancel := context.WithCancel(baseCtx)
+	agentSessionID := fmt.Sprintf("workshop-learning-%s-%d", learningPathIdentifier, time.Now().UnixNano())
+	execCtx = context.WithValue(execCtx, orchestratorevents.AgentSessionIDKey, agentSessionID)
+	execCtx = context.WithValue(execCtx, orchestratorevents.ForceCorrelationIDKey, agentSessionID)
+	execCtx = context.WithValue(execCtx, orchestratorevents.IsSubAgentContextKey, true)
+
+	exec := &WorkshopStepExecution{
+		ID:             execID,
+		StepID:         execLabel,
+		AgentSessionID: agentSessionID,
+		Status:         WorkshopStepRunning,
+		cancel:         cancel,
+	}
+	hcpo.workshopStepRegistry.Register(exec)
+
+	if hcpo.workshopExecutionNotifier != nil {
+		hcpo.workshopExecutionNotifier.OnExecutionStart(execID, execLabel)
+	}
+
+	hcpo.GetLogger().Info(fmt.Sprintf("🧠 Started tracked background success learning for %s (execution_id=%s)", learningPathIdentifier, execID))
+
+	go func() {
+		bgErr := hcpo.runSuccessLearningPhase(execCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+
+		result := fmt.Sprintf("Success learning completed for %s", stepLabel)
+		exec.mu.Lock()
+		alreadyCancelled := exec.Status == WorkshopStepCancelled
+		if !alreadyCancelled {
+			if bgErr != nil {
+				if execCtx.Err() != nil || errors.Is(bgErr, context.Canceled) || errors.Is(bgErr, context.DeadlineExceeded) {
+					exec.Status = WorkshopStepCancelled
+				} else {
+					exec.Status = WorkshopStepFailed
+				}
+				exec.Err = bgErr
+				result = fmt.Sprintf("Success learning failed for %s: %v", stepLabel, bgErr)
+			} else {
+				exec.Status = WorkshopStepDone
+				exec.Result = result
+			}
+		}
+		exec.mu.Unlock()
+
+		if hcpo.workshopExecutionNotifier != nil && !alreadyCancelled {
+			hcpo.workshopExecutionNotifier.OnExecutionComplete(execID, execLabel, result, nil, bgErr)
+		}
+	}()
+
+	return true
 }
 
 // runFailureLearningPhase analyzes failed executions to provide refined task descriptions for retry

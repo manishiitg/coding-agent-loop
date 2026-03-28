@@ -94,6 +94,7 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["StepSummary"] = templateVars["StepSummary"]
 		templateData["WorkshopMode"] = templateVars["WorkshopMode"]
 		templateData["UnoptimizedSteps"] = templateVars["UnoptimizedSteps"]
+		templateData["WorkflowObjective"] = templateVars["WorkflowObjective"]
 		templateData["UseToolSearchMode"] = templateVars["UseToolSearchMode"]
 		templateData["PlanJSON"] = ""    // Intentionally empty — agent reads plan.json on demand via shell command
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
@@ -175,6 +176,7 @@ func (s *WorkshopChatSession) SetExtraSubAgentNotifier(n SubAgentNotifier) {
 // workshop step/background executions in bgAgentRegistry (keeps frontend polling alive).
 func (s *WorkshopChatSession) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
 	s.executionNotifier = n
+	s.controller.SetWorkshopExecutionNotifier(n)
 }
 
 // SetWorkshopModeOverride sets the frontend-selected workshop mode.
@@ -394,6 +396,7 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	registry := NewWorkshopStepRegistry()
 	wsn := &workshopSubAgentNotifier{registry: registry}
 	controller.SetSubAgentNotifier(wsn)
+	controller.SetWorkshopExecutionContext(sessionCtx, registry)
 
 	return &WorkshopChatSession{
 		controller:           controller,

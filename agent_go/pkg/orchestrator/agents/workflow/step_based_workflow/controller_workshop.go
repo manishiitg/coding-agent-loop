@@ -432,35 +432,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveGroupRunFolder(ctx context.Con
 // appended to its description. This mirrors what executePredefinedSubAgent does when the
 // todo_task orchestrator delegates to a sub-agent via call_sub_agent.
 func appendInstructionsToStep(step PlanStepInterface, instructions string) PlanStepInterface {
-	switch s := step.(type) {
-	case *RegularPlanStep:
-		copy := *s
-		if copy.Description != "" {
-			copy.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", copy.Description, instructions)
-		} else {
-			copy.Description = instructions
-		}
-		return &copy
-	case *ConditionalPlanStep:
-		copy := *s
-		if copy.Description != "" {
-			copy.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", copy.Description, instructions)
-		} else {
-			copy.Description = instructions
-		}
-		return &copy
-	case *DecisionPlanStep:
-		copy := *s
-		if copy.Description != "" {
-			copy.Description = fmt.Sprintf("%s\n\n## Orchestrator Instructions\n\n%s", copy.Description, instructions)
-		} else {
-			copy.Description = instructions
-		}
-		return &copy
-	default:
-		// For step types without a direct Description field, return as-is
+	if instructions == "" {
 		return step
 	}
+
+	updatedStep, err := cloneStepWithDelegationOverrides(step, instructions, "")
+	if err != nil {
+		return step
+	}
+	return updatedStep
 }
 
 // loadStepResultFromLogsByPath reads the latest execution result from logs using a custom step path.

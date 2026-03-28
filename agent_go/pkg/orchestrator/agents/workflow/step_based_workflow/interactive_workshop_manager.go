@@ -446,20 +446,20 @@ type WorkshopExecutionNotifier interface {
 
 // InteractiveWorkshopManager manages the interactive workshop phase
 type InteractiveWorkshopManager struct {
-	controller           *StepBasedWorkflowOrchestrator
-	presetLLM            *AgentLLMConfig
-	sessionID            string
-	workflowID           string
-	stepRegistry         *WorkshopStepRegistry
-	sessionCtx           context.Context                             // long-lived ctx for background goroutines
-	toolCallQueryFunc    ToolCallQueryFunc                           // optional: query live tool calls for running steps
-	mainSessionID        string                                      // event store session ID for tool call queries
-	schedulerWorkspacePath string                                    // workspace path for schedule management
-	schedulerFuncs       *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
-	skillFuncs           *SkillCallbacks                             // skill import/delete callbacks from server.go
-	listAvailableSecrets func(ctx context.Context) ([]string, error) // list all available secret names
-	executionNotifier    WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
-	workshopModeOverride string                                       // frontend-selected workshop mode (takes priority over auto-detection)
+	controller             *StepBasedWorkflowOrchestrator
+	presetLLM              *AgentLLMConfig
+	sessionID              string
+	workflowID             string
+	stepRegistry           *WorkshopStepRegistry
+	sessionCtx             context.Context                             // long-lived ctx for background goroutines
+	toolCallQueryFunc      ToolCallQueryFunc                           // optional: query live tool calls for running steps
+	mainSessionID          string                                      // event store session ID for tool call queries
+	schedulerWorkspacePath string                                      // workspace path for schedule management
+	schedulerFuncs         *SchedulerCallbacks                         // schedule CRUD callbacks from server.go
+	skillFuncs             *SkillCallbacks                             // skill import/delete callbacks from server.go
+	listAvailableSecrets   func(ctx context.Context) ([]string, error) // list all available secret names
+	executionNotifier      WorkshopExecutionNotifier                   // optional: notifies server when executions start/complete
+	workshopModeOverride   string                                      // frontend-selected workshop mode (takes priority over auto-detection)
 }
 
 // persistWorkflowConfigToManifest writes the current in-memory workflow config
@@ -645,6 +645,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Step config & analysis tools
 	stepConfig := []string{
 		"update_step_config", "analyze_step", "generate_learnings", "optimize_step",
+		"infer_objective", "set_workflow_objective", "optimize_workflow",
 	}
 
 	// Plan modification tools
@@ -843,6 +844,10 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 	if iwm.controller.UseKnowledgebase() {
 		useKB = "true"
 	}
+	workflowObjective := ""
+	if iwm.controller.approvedPlan != nil {
+		workflowObjective = iwm.controller.approvedPlan.Objective
+	}
 	templateVars := map[string]string{
 		"WorkspacePath":       workspacePath,
 		"RunFolder":           iwm.controller.selectedRunFolder,
@@ -857,6 +862,7 @@ func (iwm *InteractiveWorkshopManager) InteractiveWorkshopOnly(ctx context.Conte
 		"SessionID":           iwm.sessionID,
 		"WorkflowID":          iwm.workflowID,
 		"UseKnowledgebase":    useKB,
+		"WorkflowObjective":   workflowObjective,
 	}
 
 	// Execute workshop agent via OrchestratorAgent interface
@@ -1006,6 +1012,13 @@ You are the intelligent orchestrator of an automated workflow system. Workflow s
 **OPTIMIZE MODE** — The workflow structure is set. Your job is to make every step reliable and efficient.
 {{if .UnoptimizedSteps}}- **Steps not yet optimized**: {{.UnoptimizedSteps}}{{end}}
 
+**Before optimizing individual steps, ensure the plan structure is sound:**
+1. {{if .WorkflowObjective}}**Objective is set**: "{{.WorkflowObjective}}" — proceed to step-by-step optimization or run `+"`optimize_workflow`"+` to verify the plan structure achieves it.{{else}}**Objective is missing** — run `+"`infer_objective`"+` first. It reads the plan, proposes an objective, and asks you to confirm before saving. A clear objective is required for `+"`optimize_workflow`"+` to analyze whether the plan structure is optimal.{{end}}
+2. Once the objective is confirmed, run `+"`optimize_workflow`"+` **once** at the start of an optimization session. It analyzes the full plan against the objective and returns a full structural report including: missing steps to add, redundant steps to remove, wrong step ordering, wrong step types, and broken context dependencies. **Fix all structural issues before optimizing individual steps.**
+3. When `+"`optimize_workflow`"+` recommends structural changes, act on them immediately using plan modification tools (add_regular_step, delete_plan_steps, update_regular_step, etc.). Do NOT defer structural fixes to the user — you are the builder, make the changes.
+4. After structural fixes are applied, re-run `+"`optimize_workflow`"+` to confirm the plan now fully covers the objective before starting step-by-step optimization.
+5. Then optimize steps one by one using the workflow below.
+
 **IMPORTANT: Optimize ONE step at a time.** Do NOT batch multiple steps. Focus entirely on a single step — run it, review, fix, verify, mark optimized — then ask the user which step to work on next. This gives the user control over the order and lets them review each step's optimization before moving on.
 
 **Optimization workflow (one step at a time):**
@@ -1059,7 +1072,7 @@ When reviewing a step, check: if it makes 2+ MCP tool calls, switch it to code e
 
 **Goal**: Each step should execute with the **fewest possible tool calls and LLM turns** — no exploration, no wrong server names, no retries. Prefer code execution mode with a single comprehensive Python script. The learnings and description should be precise enough that the agent gets it right on the first try.
 
-If structural changes are needed (add/remove steps), ask the user to switch to Build mode.
+If structural changes are needed (add/remove/reorder steps based on optimize_workflow output), use plan modification tools directly — same tools available as in Build mode.
 {{else if eq .WorkshopMode "debugger"}}
 **DEBUG MODE** — Investigate existing runs without re-executing. Analyze what happened and why.
 
@@ -1120,6 +1133,7 @@ Do NOT modify execution steps or evaluation steps in output mode unless the user
 
 - **Workspace**: {{.WorkspacePath}} (`+"`/app/workspace-docs/{{.WorkspacePath}}/`"+`)
 - **Run Folder**: {{.RunFolder}}
+- **Workflow Objective**: {{if .WorkflowObjective}}{{.WorkflowObjective}}{{else}}⚠️ Not defined — use `+"`infer_objective`"+` to infer and confirm it{{end}}
 - **Step Configs**: {{if .StepConfigSummary}}{{.StepConfigSummary}}{{else}}No step configs yet{{end}}
 - **Progress**: {{if .ProgressSummary}}{{.ProgressSummary}}{{else}}No progress tracked yet{{end}}
 
@@ -1181,9 +1195,9 @@ Every step reads from prior steps and writes for downstream steps:
 - Steps can read from and write to knowledgebase/ — reference files as 'knowledgebase/file.ext' in step descriptions.
 - Use **update_step_config** with 'disable_knowledgebase: true' for steps that don't need persistent storage access.
 {{end}}
-### Step 4: When to Use Todo Task (Sub-Workflow / Pipeline) with Sub-Agents
+### Step 4: When to Use Orchestrator (Sub-Workflow / Pipeline) with Sub-Agents
 
-**Note:** Users may refer to todo_task steps as "sub-workflows" or "pipelines", and to the routes/sub-agent steps within them as "sub-agents". These are the same concept.
+**Note:** Users may refer to todo_task steps as "Orchestrators", "orchestrators", "sub-workflows", or "pipelines", and to the routes/sub-agent steps within them as "sub-agents". These are all the same concept — the internal type name is todo_task.
 
 **Use todo_task when the step manages MULTIPLE discrete tasks**, especially when:
 - The tasks are **known in advance** and will run each time (e.g., "process each form field", "check each compliance item")
@@ -1230,7 +1244,7 @@ Every step MUST have a **validation_schema** — the automated gate that pass/fa
 - **Regular** (type: "regular"): Standard task. Executes an agent that produces a context_output file.
 - **Decision** (type: "decision"): Executes a step, then branches based on evidence in context. Contains **if_true_steps** and **if_false_steps**.
 - **Conditional** (type: "conditional"): Inspection-only branch (no execution). Contains **if_true_steps** and **if_false_steps** — evaluated based on prior context.
-- **Todo Task / Sub-Workflow** (type: "todo_task"): Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning).
+- **Orchestrator / Todo Task / Sub-Workflow** (type: "todo_task"): Also called "orchestrator" by users. Manages a dynamic todo list. Has a **todo_task_step** (orchestrator) and **predefined_routes** — each route has a **sub_agent_step** (inner step with its own description, tools, and learning). Route sub-agents are usually **regular** steps, but can also be another **todo_task** (nested orchestrator) when that route needs its own nested orchestration. Only one nested todo_task layer is allowed: top-level todo_task -> nested todo_task is valid, but a nested todo_task must not contain another nested todo_task.
 - **Routing / Orchestration** (type: "routing"): N-way LLM-based routing. Has an **orchestration_step** and **orchestration_routes** — each route has a **sub_agent_step**.
 - **Human Input** (type: "human_input"): Asks a question to the user and blocks until response. Supports: 'text', 'yesno', 'multiple_choice'. Can route based on response.
 - **Loop** (type: "loop"): Repeat until criteria met (polled progress).
@@ -1439,8 +1453,8 @@ When the user asks to enable code execution for a step, use: update_step_config(
 - **Already-optimized steps** (optimized=true in step_config) skip the optimization prompt on completion — the notification just says "proceed to next step".
 - **Reset optimization** (optimized=false) only if you make major changes to the step description, tools, or validation schema — then re-run and re-optimize once.
 
-### 9. Todo Task (Sub-Workflow / Pipeline) — The Preferred Multi-Step Pattern
-**Default to todo_task** when a step involves multiple distinct sub-tasks. Users may call this a "sub-workflow" or "pipeline" — it's the most powerful step type, giving each sub-task (sub-agent) independent learnings, tools, skills, and debugging.
+### 9. Orchestrator (Sub-Workflow / Pipeline) — The Preferred Multi-Step Pattern
+**Default to todo_task** when a step involves multiple distinct sub-tasks. Users may call this an "orchestrator", "sub-workflow", or "pipeline" — it's the most powerful step type, giving each sub-task (sub-agent) independent learnings, tools, skills, and debugging.
 
 **When to use todo_task (prefer this over a single large regular step):**
 - The step has **3+ distinct actions** (e.g., "login, extract data, generate report") — each becomes a sub-agent
@@ -1459,6 +1473,7 @@ When the user asks to enable code execution for a step, use: update_step_config(
 - Each sub-agent has its own **learning files**, **server/tool scoping**, **skills (via enabled_skills in step_config)**, and **validation schemas**
 - Sub-agents can be **individually debugged, re-run, and optimized** via the workshop tools
 - The orchestrator stays lean — it manages task flow, while sub-agents handle execution details
+- If one route still has **multiple known sub-tasks**, make that route's **sub_agent_step** another **todo_task** instead of forcing a single overloaded regular step — but stop at one nested layer. A nested todo_task should break work into regular sub-agents, not another todo_task.
 
 **Design principle:** If you find yourself writing a step description with "First do X, then do Y, then do Z", convert it to a todo_task with sub-agents for X, Y, and Z. Each sub-agent gets its own learnings, tools, and optimization lifecycle.
 
@@ -1513,7 +1528,10 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 - **update_step_config(step_id, ...)** — Update servers, tools, skills, learning settings, execution mode, LLMs, optimized flag
 - **analyze_step(step_id)** — Config and execution history analysis
 {{if eq .WorkshopMode "optimizer"}}- **generate_learnings(step_id, guidance?, execution_history?)** — Start learning agent in background
-- **optimize_step(step_id, focus?, forced?)** — Start optimization agent in background{{end}}
+- **optimize_step(step_id, focus?, forced?)** — Start optimization agent in background for a single step
+- **infer_objective(focus?)** — Infer the workflow objective from the plan; returns a proposed objective for you to confirm with the user before saving
+- **set_workflow_objective(objective)** — Save the confirmed objective to plan.json
+- **optimize_workflow(focus?)** — Analyze the entire plan structure against the objective; flags structural issues (missing steps, wrong order, redundant steps, bad step types){{end}}
 - **get_cost_summary** — Token usage and cost breakdown
 {{end}}
 
@@ -1557,9 +1575,12 @@ Do NOT modify execution steps or plan.json in eval mode. Switch to Build mode fo
 {{end}}
 
 {{if eq .WorkshopMode "optimizer"}}
-### Validation (for optimization)
-- **update_validation_schema** — Add or update a step's validation schema
-- **update_success_criteria** — Update step success criteria
+### Plan Modification (structural fixes from optimize_workflow)
+- **Steps**: add_regular_step, add_conditional_step, add_decision_step, add_loop_step, add_human_input_step, add_todo_task_step, add_routing_step, delete_plan_steps
+- **Update**: update_regular_step, update_conditional_step, update_decision_step, update_human_input_step, update_routing_step, update_todo_task_step
+- **Todo task routes**: add_todo_task_route, update_todo_task_route, delete_todo_task_route
+- **Validation & criteria**: update_validation_schema, update_success_criteria
+- **Versioning**: publish_workflow_version(label), restore_workflow_version(version)
 {{end}}
 
 {{if eq .WorkshopMode "eval"}}
@@ -4564,6 +4585,284 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_step tool: %v", err))
 	}
 
+	// Tool 7c: infer_objective — background agent that infers workflow objective from plan structure
+	if err := mcpAgent.RegisterCustomTool(
+		"infer_objective",
+		"Start a background agent that reads plan.json and infers the workflow objective from the step structure. Returns execution_id immediately. You will be notified when done. After reviewing the result, present the proposed objective to the user for confirmation before calling set_workflow_objective.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus guidance, e.g., 'end-to-end business outcome', 'data processing goal', 'automation target'.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = s
+				}
+			}
+
+			execID := fmt.Sprintf("infer-obj-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-infer-obj-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "infer-objective",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, "Infer Objective")
+			}
+
+			go func() {
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-infer-objective",
+						AgentName:     "Infer Objective",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
+						Data: startEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				result, err := iwm.runInferObjectiveAgent(execCtx, focus)
+
+				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+						} else {
+							exec.Status = WorkshopStepFailed
+						}
+						exec.Err = err
+					} else {
+						exec.Status = WorkshopStepDone
+						exec.Result = result
+					}
+				}
+				exec.mu.Unlock()
+
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-infer-objective",
+						AgentName:     "Infer Objective",
+						Success:       err == nil,
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+						Data: endEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, "Infer Objective", result, nil, err)
+				}
+			}()
+
+			logger.Info(fmt.Sprintf("🔍 Workshop: infer_objective agent started in background, execution_id=%q", execID))
+			return fmt.Sprintf("Infer objective agent started in background.\nexecution_id: %q\nYou will be automatically notified when it completes. After reviewing the proposed objective, present it to the user and ask for confirmation before calling set_workflow_objective.", execID), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register infer_objective tool: %v", err))
+	}
+
+	// Tool 7d: set_workflow_objective — save confirmed objective to plan.json
+	if err := mcpAgent.RegisterCustomTool(
+		"set_workflow_objective",
+		"Save the user-confirmed workflow objective to the 'objective' field in planning/plan.json. Call this ONLY after the user has confirmed the proposed objective from infer_objective.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"objective": map[string]interface{}{
+					"type":        "string",
+					"description": "The confirmed objective string to store in plan.json.",
+				},
+			},
+			"required": []string{"objective"},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			objectiveRaw, ok := args["objective"]
+			if !ok || objectiveRaw == nil {
+				return "objective is required", nil
+			}
+			objective, ok := objectiveRaw.(string)
+			if !ok || strings.TrimSpace(objective) == "" {
+				return "objective must be a non-empty string", nil
+			}
+			objective = strings.TrimSpace(objective)
+
+			// Reload plan to get current content
+			if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+				return fmt.Sprintf("Failed to load plan.json: %v", err), nil
+			}
+			plan := iwm.controller.approvedPlan
+			if plan == nil {
+				return "No plan loaded. Create a plan first.", nil
+			}
+
+			// Set objective and marshal back to JSON
+			plan.Objective = objective
+			planBytes, err := json.MarshalIndent(plan, "", "  ")
+			if err != nil {
+				return fmt.Sprintf("Failed to marshal plan.json: %v", err), nil
+			}
+			if err := iwm.controller.WriteWorkspaceFile(ctx, "planning/plan.json", string(planBytes)); err != nil {
+				return fmt.Sprintf("Failed to write plan.json: %v", err), nil
+			}
+
+			logger.Info(fmt.Sprintf("✅ Workshop: workflow objective set: %q", objective))
+			return fmt.Sprintf("Workflow objective saved to planning/plan.json:\n%q\n\nYou can now run optimize_workflow to analyze the plan structure against this objective.", objective), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register set_workflow_objective tool: %v", err))
+	}
+
+	// Tool 7e: optimize_workflow — background agent that analyzes the full plan against the objective
+	if err := mcpAgent.RegisterCustomTool(
+		"optimize_workflow",
+		"Start a background agent that analyzes the complete plan structure against the workflow objective. Identifies structural issues: missing steps, redundant steps, wrong step ordering, wrong step types, broken context flow. Run this ONCE at the start of an optimization session before optimizing individual steps. Returns execution_id immediately — you will be automatically notified when it completes.",
+		map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"focus": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional focus for the analysis, e.g., 'step ordering', 'missing steps', 'context flow', 'step type choices'.",
+				},
+			},
+		},
+		func(ctx context.Context, args map[string]interface{}) (string, error) {
+			focus := ""
+			if val, ok := args["focus"]; ok && val != nil {
+				if s, ok := val.(string); ok {
+					focus = s
+				}
+			}
+
+			execID := fmt.Sprintf("opt-workflow-%05d", time.Now().UnixNano()%100000)
+			execCtx, cancel := context.WithCancel(iwm.sessionCtx)
+
+			agentSessionID := fmt.Sprintf("workshop-opt-workflow-%d", time.Now().UnixNano())
+			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
+			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
+
+			exec := &WorkshopStepExecution{
+				ID:             execID,
+				StepID:         "optimize-workflow",
+				AgentSessionID: agentSessionID,
+				Status:         WorkshopStepRunning,
+				cancel:         cancel,
+			}
+			iwm.stepRegistry.Register(exec)
+
+			if iwm.executionNotifier != nil {
+				iwm.executionNotifier.OnExecutionStart(execID, "Optimize Workflow Structure")
+			}
+
+			go func() {
+				eventBridge := iwm.controller.GetContextAwareBridge()
+				if eventBridge != nil {
+					startEvent := &orchestrator_events.OrchestratorAgentStartEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-optimize-workflow",
+						AgentName:     "Optimize Workflow Structure",
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentStart, Timestamp: time.Now(),
+						Data: startEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				result, err := iwm.runOptimizeWorkflowAgent(execCtx, focus)
+
+				exec.mu.Lock()
+				alreadyCancelled := exec.Status == WorkshopStepCancelled
+				if !alreadyCancelled {
+					if err != nil {
+						if execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+							exec.Status = WorkshopStepCancelled
+						} else {
+							exec.Status = WorkshopStepFailed
+						}
+						exec.Err = err
+					} else {
+						exec.Status = WorkshopStepDone
+						exec.Result = result
+					}
+				}
+				exec.mu.Unlock()
+
+				if eventBridge != nil {
+					isCancelled := execCtx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || alreadyCancelled
+					endEvent := &orchestrator_events.OrchestratorAgentEndEvent{
+						BaseEventData: baseevents.BaseEventData{Timestamp: time.Now(), Component: "orchestrator"},
+						AgentType:     "workshop-optimize-workflow",
+						AgentName:     "Optimize Workflow Structure",
+						Success:       err == nil,
+					}
+					if err != nil {
+						if isCancelled {
+							endEvent.Result = fmt.Sprintf("Cancelled: %v", err)
+						} else {
+							endEvent.Result = fmt.Sprintf("Failed: %v", err)
+						}
+					} else {
+						endEvent.Result = result
+					}
+					eventBridge.HandleEvent(execCtx, &baseevents.AgentEvent{
+						Type: orchestrator_events.OrchestratorAgentEnd, Timestamp: time.Now(),
+						Data: endEvent, CorrelationID: agentSessionID,
+					})
+				}
+
+				if iwm.executionNotifier != nil && !alreadyCancelled {
+					iwm.executionNotifier.OnExecutionComplete(execID, "Optimize Workflow Structure", result, nil, err)
+				}
+			}()
+
+			focusInfo := ""
+			if focus != "" {
+				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
+			}
+			logger.Info(fmt.Sprintf("🔍 Workshop: optimize_workflow agent started in background, execution_id=%q", execID))
+			return fmt.Sprintf("Workflow structure optimization agent started in background.\nexecution_id: %q%s\nYou will be automatically notified when it completes.", execID, focusInfo), nil
+		},
+		"workflow",
+	); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ Failed to register optimize_workflow tool: %v", err))
+	}
+
 	// Tool 8: get_cost_summary — parse token_usage.json and show formatted cost breakdown
 	if err := mcpAgent.RegisterCustomTool(
 		"get_cost_summary",
@@ -6326,6 +6625,152 @@ Ranked list of the top 3-5 most impactful changes, with specific instructions fo
 
 var optimizationAgentUserTemplate = MustRegisterTemplate("optimizationAgentUser", `Analyze step "{{.StepID}}" and produce an optimization report.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
 
+// inferObjectiveAgentSystemTemplate is the system prompt for the objective inference agent
+var inferObjectiveAgentSystemTemplate = MustRegisterTemplate("inferObjectiveAgentSystem", `# Workflow Objective Inference Agent
+
+You are a read-only analyst. Your task is to infer a concise, accurate objective for this workflow by studying its plan structure.
+
+## ROLE
+Read `+"`planning/plan.json`"+` and analyze all steps — their titles, descriptions, types, context flow, and outputs — to understand what the workflow is trying to achieve end-to-end. Then propose a clear, 1-3 sentence objective.
+
+## RULES
+1. **Read-Only**: Do NOT modify any files.
+2. **Infer from structure**: Base the objective on what the steps actually do, not on what you guess might be intended.
+3. **Be specific**: Name the domain, the inputs, and the expected end result.
+4. **Be concise**: 1-3 sentences max. Avoid vague language like "automate tasks" or "process data".
+
+## WORKSPACE
+- **Workspace**: {{.WorkspacePath}}
+- **Plan file**: `+"`planning/plan.json`"+`
+
+{{if .PlanJSON}}## PLAN
+`+"```json\n{{.PlanJSON}}\n```"+`
+{{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands.{{end}}
+
+{{if .Focus}}## FOCUS
+The user wants you to pay special attention to: **{{.Focus}}**
+{{end}}
+
+## OUTPUT FORMAT
+
+Produce your response in this exact structure:
+
+### Proposed Objective
+<1-3 sentence objective that captures WHAT the workflow automates, for WHOM, and WHAT the end result is.>
+
+### Reasoning
+<2-4 bullet points explaining how you derived the objective from the step structure.>
+
+### Alternative Framing (optional)
+<If there's a meaningfully different way to frame the objective, offer it here.>
+`)
+
+var inferObjectiveAgentUserTemplate = MustRegisterTemplate("inferObjectiveAgentUser", `Infer the workflow objective from the plan structure and propose it for user confirmation.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+
+// optimizeWorkflowAgentSystemTemplate is the system prompt for the whole-plan optimization agent
+var optimizeWorkflowAgentSystemTemplate = MustRegisterTemplate("optimizeWorkflowAgentSystem", `# Workflow Plan Optimization Agent
+
+You are a workflow architect. Your job is to analyze the complete plan structure — every step and every nested sub-step — against the stated objective, and produce a structured report that the builder can act on immediately.
+
+You do NOT optimize individual step content (descriptions, learnings, schemas) — that is optimize_step's job. You evaluate whether the plan structure itself is correct and complete for achieving the objective.
+
+## RULES
+1. **Read-Only**: Do NOT modify any files.
+2. **Be specific**: Always reference exact step IDs. Never use generic placeholders like "[step-id]" when the actual ID is available.
+3. **Be actionable**: Every finding must map to a concrete change the builder can make with a specific tool call.
+4. **Cover all levels**: Analyze top-level steps AND every nested sub-step (routes, branches, sub-agents).
+5. **No hallucinated steps**: Do not reference or recommend steps that don't exist in the plan.
+
+## CONTEXT
+
+- **Workspace**: {{.WorkspacePath}}
+{{if .WorkflowObjective}}- **Workflow Objective**: {{.WorkflowObjective}}{{else}}- **Workflow Objective**: ⚠️ NOT SET — analyze based on inferred intent from step structure and flag this as the first priority action{{end}}
+{{if .RunFolder}}- **Run Folder**: {{.RunFolder}}{{end}}
+
+{{if .PlanJSON}}## CURRENT PLAN
+`+"```json\n{{.PlanJSON}}\n```"+`
+{{else}}Read the plan from `+"`planning/plan.json`"+` using shell commands before starting the analysis.{{end}}
+
+{{if .StepConfigSummary}}## OPTIMIZATION STATE (from step_config.json)
+{{.StepConfigSummary}}
+{{end}}
+
+{{if .Focus}}## FOCUS
+Prioritize this area: **{{.Focus}}**
+{{end}}
+
+## PLAN STRUCTURE REFERENCE
+
+The plan JSON uses these nested structures — analyze ALL of them:
+
+| Step type | Nested field | What to check |
+|-----------|-------------|---------------|
+| `+"`todo_task`"+` | `+"`todo_task_step`"+` (orchestrator) + `+"`predefined_routes[].sub_agent_step`"+` | Do routes cover all cases? Any missing route? Is the orchestrator description clear enough to dispatch correctly? |
+| `+"`orchestration`"+` | `+"`orchestration_step`"+` + `+"`orchestration_routes[].sub_agent_step`"+` | Same as todo_task |
+| `+"`conditional`"+` | `+"`if_true_steps[]`"+` + `+"`if_false_steps[]`"+` | Is each branch populated correctly? Is a branch empty when it should have steps? |
+| `+"`decision`"+` | `+"`decision_step`"+` + branch steps | Is the decision logic right for the objective? |
+| `+"`routing`"+` | `+"`routes[]`"+` (each with `+"`sub_agent_step`"+`) | Are all necessary routes present? Any route that should be split or merged? |
+
+Reference nested steps as `+"`parent-id > sub-id`"+`.
+Also check `+"`orphan_steps`"+` if present — orphan steps are not in the main flow but may reveal missing routes or forgotten cleanup steps.
+
+## ANALYSIS PROCEDURE
+
+Work through these checks in order:
+
+1. **Objective coverage** — Walk through the objective stage by stage. For each stage, identify which step (or route) covers it. Flag any stage with no step covering it.
+2. **Nested orchestrator completeness** — For every `+"`todo_task`"+` / `+"`orchestration`"+` / `+"`routing`"+` step: list all routes and check if any case the objective requires is unhandled.
+3. **Step ordering and dependencies** — Are steps and routes sequenced correctly? Does each step have the right `+"`context_dependencies`"+` pointing to the outputs it needs?
+4. **Step type correctness** — Is each step using the right type? Flag: `+"`regular`"+` steps doing multi-path logic (should be `+"`routing`"+` or `+"`conditional`"+`), single-task `+"`todo_task`"+` steps (over-engineered), missing `+"`human_input`"+` where user confirmation is needed.
+5. **Granularity** — Any step too coarse (multiple distinct outputs, should be split)? Any two steps that should be merged (share context, no independent value)?
+6. **Redundancy** — Any two steps or routes doing the same work?
+7. **Orphan steps** — Are any `+"`orphan_steps`"+` actually needed in the main flow?
+
+## REPORT FORMAT
+
+### Objective Alignment
+Score the plan 1-10 against the objective and explain why. If no objective is set, estimate from the step structure and note that the objective should be defined.
+
+### Step Structure Analysis
+List only steps with structural issues (skip steps that are correctly placed and typed). For steps with no issues, give a one-line count at the top: "X of Y top-level steps have no structural issues."
+
+For each problematic step:
+- **[actual-step-id]** (`+"`type`"+`): <the specific structural problem and its impact on the objective>
+- For nested steps: **[parent-id > sub-id]** (`+"`type`"+`): <problem>
+
+### Missing Steps / Routes
+For each gap in the objective that no existing step covers:
+
+- **Gap**: <which part of the objective is not covered>
+- **Suggested ID**: <kebab-case-id>
+- **Title**: <short title>
+- **Type**: <regular | todo_task | conditional | decision | routing | human_input>
+- **Location**: top-level after `+"`[step-id]`"+` | new route in `+"`[parent-step-id]`"+` | `+"`if_true`"+`/`+"`if_false`"+` branch in `+"`[parent-step-id]`"+`
+- **Description**: <1-2 sentences: what the agent should do and what it should output>
+- **Context output**: <filename>
+- **Context dependencies**: <files it needs from prior steps, or none>
+- **Add using**: `+"`add_regular_step`"+` | `+"`add_todo_task_route(parent_id)`"+` | `+"`add_routing_step`"+` | `+"`add_conditional_step`"+` | `+"`add_todo_task_step`"+` | `+"`add_decision_step`"+`
+
+### Redundant / Misplaced Steps
+For each step or route that duplicates work or is in the wrong position:
+- **[actual-step-id]**: <why redundant or misplaced> — **Fix**: <remove via delete_plan_steps | merge into [step-id] | move after [step-id]>
+
+### Step Type Issues
+For each step using the wrong type:
+- **[actual-step-id]**: `+"`current-type`"+` → `+"`correct-type`"+` — <why>
+
+### Context Flow Issues
+For each broken or missing dependency:
+- **[actual-step-id]**: missing dependency on `+"`[output-file]`"+` from `+"`[step-id]`"+` — **Fix**: add `+"`[output-file]`"+` to context_dependencies
+
+### Priority Structural Changes
+The top 3-5 changes ordered by impact. Each must be a concrete tool call the builder should make next:
+1. <specific action with tool name, step IDs, and what it achieves for the objective>
+2. ...
+`)
+
+var optimizeWorkflowAgentUserTemplate = MustRegisterTemplate("optimizeWorkflowAgentUser", `Analyze the complete workflow plan structure against the objective and produce a structural optimization report.{{if .Focus}} Focus especially on: {{.Focus}}{{end}}`)
+
 // WorkflowOptimizationAgent performs deep read-only analysis of a step
 type WorkflowOptimizationAgent struct {
 	*agents.BaseOrchestratorAgent
@@ -6372,6 +6817,64 @@ func (agent *WorkflowOptimizationAgent) Execute(ctx context.Context, templateVar
 		return "", nil, err
 	}
 
+	return result, updatedHistory, nil
+}
+
+// WorkflowInferObjectiveAgent infers the workflow objective from the plan structure.
+type WorkflowInferObjectiveAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowInferObjectiveAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowInferObjectiveAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
+	return &WorkflowInferObjectiveAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+func (agent *WorkflowInferObjectiveAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+	var systemPrompt, userMessage strings.Builder
+	if err := inferObjectiveAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := inferObjectiveAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
+	if err != nil {
+		return "", nil, err
+	}
+	return result, updatedHistory, nil
+}
+
+// WorkflowPlanOptimizationAgent analyzes the complete plan structure against the workflow objective.
+type WorkflowPlanOptimizationAgent struct {
+	*agents.BaseOrchestratorAgent
+}
+
+func newWorkflowPlanOptimizationAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowPlanOptimizationAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
+	return &WorkflowPlanOptimizationAgent{BaseOrchestratorAgent: baseAgent}
+}
+
+func (agent *WorkflowPlanOptimizationAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
+	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
+		return "", nil, fmt.Errorf("agent not initialized")
+	}
+	var systemPrompt, userMessage strings.Builder
+	if err := optimizeWorkflowAgentSystemTemplate.Execute(&systemPrompt, templateVars); err != nil {
+		return "", nil, err
+	}
+	if err := optimizeWorkflowAgentUserTemplate.Execute(&userMessage, templateVars); err != nil {
+		return "", nil, err
+	}
+	inputProcessor := func(map[string]string) string { return userMessage.String() }
+	result, updatedHistory, err := agent.ExecuteWithTemplateValidation(ctx, templateVars, inputProcessor, conversationHistory, struct{}{}, systemPrompt.String(), true)
+	if err != nil {
+		return "", nil, err
+	}
 	return result, updatedHistory, nil
 }
 
@@ -6557,6 +7060,156 @@ func (iwm *InteractiveWorkshopManager) runOptimizeStepAgent(ctx context.Context,
 		return "", fmt.Errorf("optimization agent failed: %w", err)
 	}
 
+	return result, nil
+}
+
+// runInferObjectiveAgent reads the plan and proposes an inferred workflow objective for user confirmation.
+func (iwm *InteractiveWorkshopManager) runInferObjectiveAgent(ctx context.Context, focus string) (string, error) {
+	workspacePath := iwm.controller.GetWorkspacePath()
+
+	planJSON := ""
+	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
+		planJSON = planContent
+	}
+
+	readPaths := []string{workspacePath, fmt.Sprintf("%s/planning", workspacePath)}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
+
+	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+		return "", fmt.Errorf("no valid LLM configuration for infer_objective agent")
+	}
+	llmConfigToUse := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: iwm.controller.presetPhaseLLM.Provider,
+			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("infer-objective-agent", 20, agents.OutputFormatStructured, llmConfigToUse)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
+	config.UseToolSearchMode = false
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowInferObjectiveAgent(cfg, log, tracer, eventBridge)
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx, config, "infer-objective", 0, 0, "infer-objective",
+		createAgentFunc, phaseTools, phaseExecutors, true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create infer_objective agent: %w", err)
+	}
+
+	templateVars := map[string]string{
+		"WorkspacePath": workspacePath,
+		"PlanJSON":      planJSON,
+		"Focus":         focus,
+		"SessionID":     iwm.sessionID,
+		"WorkflowID":    iwm.workflowID,
+	}
+
+	iwm.controller.GetLogger().Info(fmt.Sprintf("🔍 Running infer_objective agent (focus: %q)", focus))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("infer_objective agent failed: %w", err)
+	}
+	return result, nil
+}
+
+// runOptimizeWorkflowAgent analyzes the complete plan structure against the workflow objective.
+func (iwm *InteractiveWorkshopManager) runOptimizeWorkflowAgent(ctx context.Context, focus string) (string, error) {
+	workspacePath := iwm.controller.GetWorkspacePath()
+	logger := iwm.controller.GetLogger()
+
+	// Read full plan JSON
+	planJSON := ""
+	if planContent, err := iwm.controller.ReadWorkspaceFile(ctx, "planning/plan.json"); err == nil {
+		planJSON = planContent
+	}
+
+	// Read step config summary
+	stepConfigSummary := ""
+	if stepConfigs, err := iwm.controller.ReadStepConfigs(ctx); err == nil && len(stepConfigs) > 0 {
+		var sb strings.Builder
+		for _, sc := range stepConfigs {
+			optimized := false
+			if sc.AgentConfigs != nil && sc.AgentConfigs.Optimized != nil {
+				optimized = *sc.AgentConfigs.Optimized
+			}
+			sb.WriteString(fmt.Sprintf("- %s: optimized=%v\n", sc.ID, optimized))
+		}
+		stepConfigSummary = sb.String()
+	}
+
+	// Reload plan to get the latest objective (plan.json may have been updated via set_workflow_objective or direct edits)
+	if err := iwm.controller.LoadPlanForWorkshop(ctx); err != nil {
+		logger.Warn(fmt.Sprintf("⚠️ optimize_workflow: failed to reload plan for objective: %v (using cached value)", err))
+	}
+	workflowObjective := ""
+	if iwm.controller.approvedPlan != nil {
+		workflowObjective = iwm.controller.approvedPlan.Objective
+	}
+
+	// Read-only folder guard
+	readPaths := []string{
+		workspacePath,
+		fmt.Sprintf("%s/runs", workspacePath),
+		fmt.Sprintf("%s/planning", workspacePath),
+		fmt.Sprintf("%s/learnings", workspacePath),
+	}
+	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
+
+	if iwm.controller.presetPhaseLLM == nil || iwm.controller.presetPhaseLLM.Provider == "" {
+		return "", fmt.Errorf("no valid LLM configuration for optimize_workflow agent")
+	}
+	llmConfigToUse := &orchestrator.LLMConfig{
+		Primary: orchestrator.LLMModel{
+			Provider: iwm.controller.presetPhaseLLM.Provider,
+			ModelID:  iwm.controller.presetPhaseLLM.ModelID,
+		},
+		Fallbacks: iwm.controller.GetFallbacks(),
+		APIKeys:   iwm.controller.GetAPIKeys(),
+	}
+
+	config := iwm.controller.CreateStandardAgentConfigWithLLM("optimize-workflow-agent", 50, agents.OutputFormatStructured, llmConfigToUse)
+	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
+	config.UseToolSearchMode = false
+	config.ServerNames = []string{mcpclient.NoServers}
+
+	phaseTools, phaseExecutors := iwm.controller.BaseOrchestrator.PreparePhaseAgentTools()
+	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
+		return newWorkflowPlanOptimizationAgent(cfg, log, tracer, eventBridge)
+	}
+	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
+		ctx, config, "optimize-workflow", 0, 0, "optimize-workflow",
+		createAgentFunc, phaseTools, phaseExecutors, true,
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to create optimize_workflow agent: %w", err)
+	}
+
+	runFolder := iwm.controller.selectedRunFolder
+
+	templateVars := map[string]string{
+		"WorkspacePath":     workspacePath,
+		"RunFolder":         runFolder,
+		"PlanJSON":          planJSON,
+		"StepConfigSummary": stepConfigSummary,
+		"WorkflowObjective": workflowObjective,
+		"Focus":             focus,
+		"SessionID":         iwm.sessionID,
+		"WorkflowID":        iwm.workflowID,
+	}
+
+	logger.Info(fmt.Sprintf("🔍 Running optimize_workflow agent (objective: %q, focus: %q)", workflowObjective, focus))
+	result, _, err := agent.Execute(ctx, templateVars, nil)
+	if err != nil {
+		return "", fmt.Errorf("optimize_workflow agent failed: %w", err)
+	}
 	return result, nil
 }
 

@@ -289,7 +289,10 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   onNewChat
 }) => {
   const { selectedModeCategory } = useModeStore()
-  const { currentWorkflowPhase, setCurrentWorkflowPhase, getTabEvents } = useChatStore()
+  // Narrow selectors: bare useChatStore() re-renders on every store update (10x/sec with 2 parallel sessions)
+  const currentWorkflowPhase = useChatStore(state => state.currentWorkflowPhase)
+  const setCurrentWorkflowPhase = useChatStore(state => state.setCurrentWorkflowPhase)
+  const getTabEvents = useChatStore(state => state.getTabEvents)
   // Get events from active tab instead of global events
   const activeTab = useChatStore(state => state.getActiveTab())
   const activeSessionId = activeTab?.sessionId
@@ -321,10 +324,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const chatAreaRef = useRef<ChatAreaRef>(null)
   // Ref for the WorkflowCanvas component (for triggering refresh)
   const canvasRef = useRef<WorkflowCanvasRef>(null)
-  // Track the last processed event index to avoid duplicate refreshes
-  const lastProcessedEventIndexRef = useRef(-1)
-  // Track the last processed step progress event index to avoid duplicate workspace refreshes
-  const lastProcessedStepProgressIndexRef = useRef(-1)
+  // Per-session high-water marks for event processing.
+  // Using Maps instead of single refs prevents re-scanning all historical events when switching
+  // between workflow tabs. Without this, every tab switch fires canvasRef.refresh() for every
+  // historical todo_steps_extracted event — causing hangs proportional to event history depth.
+  const lastProcessedEventIndexRef = useRef<Map<string, number>>(new Map())
+  const lastProcessedStepProgressIndexRef = useRef<Map<string, number>>(new Map())
   // Store pending query to submit after ChatArea mounts
   const pendingQueryRef = useRef<{ query: string; executionOptions?: ExecutionOptions } | null>(null)
   // Loading state for session restoration (shown between chat tabs and chat area)
@@ -487,17 +492,30 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Get plan data to map step indices to step IDs
   const { plan } = usePlanData(workspacePath)
 
-  // Reset lastProcessedEventIndexRef when switching tabs/sessions to ensure we process events for the new session
+  // When switching to a session we haven't seen yet, initialize its high-water mark to the
+  // current event count — skipping all historical events. The canvas initializes via usePlanData
+  // independently; replaying old todo_steps_extracted events would fire multiple canvas.refresh()
+  // calls for no benefit and cause the visible hang on tab switch.
   useEffect(() => {
-    lastProcessedEventIndexRef.current = -1
+    const sid = activeTab?.sessionId
+    if (!sid) return
+    if (!lastProcessedEventIndexRef.current.has(sid)) {
+      const evts = useChatStore.getState().tabEvents[sid] ?? []
+      lastProcessedEventIndexRef.current.set(sid, evts.length - 1)
+    }
+    if (!lastProcessedStepProgressIndexRef.current.has(sid)) {
+      const evts = useChatStore.getState().tabEvents[sid] ?? []
+      lastProcessedStepProgressIndexRef.current.set(sid, evts.length - 1)
+    }
   }, [activeTab?.sessionId])
 
   // Listen for todo_steps_extracted events to auto-refresh the canvas (with granular data from backend)
   useEffect(() => {
-    if (events.length === 0) return
-    
+    if (events.length === 0 || !activeSessionId) return
+
     // Find new todo_steps_extracted events that we haven't processed yet
-    for (let i = lastProcessedEventIndexRef.current + 1; i < events.length; i++) {
+    const lastIdx = lastProcessedEventIndexRef.current.get(activeSessionId) ?? events.length - 1
+    for (let i = lastIdx + 1; i < events.length; i++) {
       const event = events[i]
       
       if (event.type === 'todo_steps_extracted') {
@@ -562,9 +580,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       }
       
       // Update index processed - do this for ALL events to avoid re-scanning
-      lastProcessedEventIndexRef.current = i
+      lastProcessedEventIndexRef.current.set(activeSessionId, i)
     }
-  }, [events])
+  }, [events, activeSessionId])
 
   // Listen for step_progress_updated events to refresh workspace files for current iteration
   useEffect(() => {
@@ -573,7 +591,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
 
     // Find new step_progress_updated events that we haven't processed yet
-    for (let i = lastProcessedStepProgressIndexRef.current + 1; i < events.length; i++) {
+    const lastStepIdx = lastProcessedStepProgressIndexRef.current.get(activeSessionId ?? '') ?? events.length - 1
+    for (let i = lastStepIdx + 1; i < events.length; i++) {
       const event = events[i]
 
       if (event.type === 'step_progress_updated') {
@@ -615,11 +634,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           // shows a "Files may be out of date" banner for manual refresh.
           useWorkspaceStore.getState().setNeedsRefresh(true)
           
-          lastProcessedStepProgressIndexRef.current = i
+          lastProcessedStepProgressIndexRef.current.set(activeSessionId ?? '', i)
         }
       }
     }
-  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, updateStepProgressFromEvent, plan])
+  }, [events, workspacePath, selectedRunFolder, setSelectedRunFolder, updateStepProgressFromEvent, plan, activeSessionId])
 
   // Track if reconnection has already been attempted to prevent duplicates
   const hasReconnectedRef = useRef(false)

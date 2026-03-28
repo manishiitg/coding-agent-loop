@@ -1571,16 +1571,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 								hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to populate runtime fields for learning: %v", err))
 							}
 							triggerReason := "Loop condition met (step completed successfully)"
-							// Run success learning in background so next step can start immediately
-							go func() {
-								bgCtx := context.Background()
-								err := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
-								if err != nil {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
-								} else {
-									hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d", stepIndex+1))
-								}
-							}()
+							// Run success learning in background so next step can start immediately.
+							// In workshop mode, register it as a tracked execution so the UI can show it
+							// and stop_step/stop_all_executions can cancel it.
+							if !hcpo.startTrackedSuccessLearningPhase(
+								stepIndex,
+								stepPath,
+								learningPathIdentifier,
+								totalSteps,
+								step,
+								executionConversationHistory,
+								validationResponse,
+								isCodeExecutionMode,
+								usedTempLLM,
+								turnCount,
+								executionLLM,
+								triggerReason,
+							) {
+								go func() {
+									bgCtx := context.Background()
+									err := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, step, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+									if err != nil {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, err))
+									} else {
+										hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for step %d", stepIndex+1))
+									}
+								}()
+							}
 						} else {
 							skipReason := ""
 							if isFastExecuteStep {
@@ -2103,16 +2120,33 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 							if hasLoop(step) {
 								triggerReason = "Loop condition met (step completed successfully)"
 							}
-							// Run success learning in background so next step can start immediately
-							go func() {
-								bgCtx := context.Background()
-								bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
-								if bgErr != nil {
-									hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, bgErr))
-								} else {
-									hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
-								}
-							}()
+							// Run success learning in background so next step can start immediately.
+							// In workshop mode, register it as a tracked execution so the UI can show it
+							// and stop_step/stop_all_executions can cancel it.
+							if !hcpo.startTrackedSuccessLearningPhase(
+								stepIndex,
+								stepPath,
+								learningPathIdentifier,
+								totalSteps,
+								todoStep,
+								executionConversationHistory,
+								validationResponse,
+								isCodeExecutionMode,
+								usedTempLLM,
+								turnCount,
+								executionLLM,
+								triggerReason,
+							) {
+								go func() {
+									bgCtx := context.Background()
+									bgErr := hcpo.runSuccessLearningPhase(bgCtx, stepIndex, stepPath, learningPathIdentifier, totalSteps, todoStep, executionConversationHistory, validationResponse, isCodeExecutionMode, usedTempLLM, turnCount, executionLLM, triggerReason)
+									if bgErr != nil {
+										hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Success learning phase failed for %s: %v", stepPath, bgErr))
+									} else {
+										hcpo.GetLogger().Info(fmt.Sprintf("✅ Success learning analysis completed for %s", stepPath))
+									}
+								}()
+							}
 						}
 					} else {
 						// Failure Learning Agent - analyze what went wrong and provide refined task description

@@ -32,9 +32,8 @@ export const WorkflowModeHandler = forwardRef<WorkflowModeHandlerRef, WorkflowMo
 
   // Store subscriptions
   const { agentMode } = useAppStore()
-  const { 
-    currentWorkflowPhase
-  } = useChatStore()
+  // Narrow selector: bare useChatStore() re-renders on every store update (10x/sec with 2 parallel sessions)
+  const currentWorkflowPhase = useChatStore(state => state.currentWorkflowPhase)
   
   const { getActivePreset } = usePresetApplication()
   

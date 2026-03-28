@@ -518,9 +518,16 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
         const before = str.substring(Math.max(0, offset - 1), offset)
         const after = str.substring(offset + match.length, offset + match.length + 1)
         
-        // If capture group 1 (backtick) is present, we are unwrapping, so we don't skip.
-        // If capture group 1 is empty, we check if we are inside OTHER code/links/formatting.
+        // If capture group 1 (backtick) is present, we are unwrapping a `path` span, so proceed.
+        // If capture group 1 is empty, check if we are inside a code span or other formatting.
         if (!backtick) {
+           // Skip if path is inside an inline code span: count backticks before this offset.
+           // An odd count means the path is inside an open backtick span (e.g. `cat skills/foo.md`).
+           // Fenced blocks (``` ... ```) contribute 3 backticks each — this heuristic handles both.
+           const backticksBefore = (str.substring(0, offset).match(/`/g) || []).length
+           if (backticksBefore % 2 === 1) {
+             return match
+           }
            if (before === '`' || before === '[' || before === '(' || before === '*' || after === ']' || after === '`' || after === '*') {
              return match
            }

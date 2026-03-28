@@ -1698,7 +1698,7 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
               {/* Todo Task Step Info */}
               <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
                 <p className="text-xs text-purple-700 dark:text-purple-300 mb-2">
-                  <strong>Todo Task Step:</strong> Manages a dynamic task list with trackable todos. The orchestrator creates tasks, delegates to sub-agents, and tracks progress until the objective is achieved.
+                  <strong>Orchestrator Step:</strong> Manages a dynamic task list with trackable todos. The orchestrator creates tasks, delegates to sub-agents, and tracks progress until the objective is achieved.
                 </p>
 
                 {/* Main Task Step Details */}
@@ -1784,10 +1784,13 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
           ) : (
             <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
               {/* Show note for sub-agents (check for both patterns: -sub-agent- and nodes with undefined in ID that might be sub-agents) */}
-              {(node.id.includes('-sub-agent-') || (node.id.includes('undefined') && (node.type as string) === 'step')) && (
+              {(node.id.includes('-sub-agent-') || (node.id.includes('undefined') && ((node.type as string) === 'step' || (node.type as string) === 'todo_task'))) && (
                 <div className="mb-3 p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
                   <p className="text-xs text-indigo-700 dark:text-indigo-300">
-                    <strong>Sub-Agent:</strong> This configuration applies to the sub-agent step within an orchestration route.
+                    <strong>{(node.type as string) === 'todo_task' ? 'Nested Todo Task Sub-Agent:' : 'Sub-Agent:'}</strong>{' '}
+                    {(node.type as string) === 'todo_task'
+                      ? 'This configuration applies to a nested todo-task sub-agent within an orchestration route.'
+                      : 'This configuration applies to the sub-agent step within an orchestration route.'}
                   </p>
                 </div>
               )}
@@ -1876,4 +1879,3 @@ export const StepSidebar: React.FC<StepSidebarProps> = ({
 }
 
 export default StepSidebar
-

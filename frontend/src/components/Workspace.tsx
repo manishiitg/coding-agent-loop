@@ -43,7 +43,8 @@ export default function Workspace({
   // Get mode-specific file context and handlers
   const { selectedModeCategory } = useModeStore()
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
-  const { getActiveTab, setTabConfig } = useChatStore()
+  const getActiveTab = useChatStore(state => state.getActiveTab)
+  const setTabConfig = useChatStore(state => state.setTabConfig)
   const { getActivePreset } = usePresetApplication()
   
   // Get file context based on mode: multi-agent mode uses tab config, workflow mode uses preset

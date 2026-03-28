@@ -1069,15 +1069,20 @@ func runServer(cmd *cobra.Command, args []string) {
 	go api.cleanupInactiveSessions()
 
 	// Initialize and start the cron scheduler
+	// Set SCHEDULER_ENABLED=false in .env to disable on secondary machines sharing the same workspace files.
 	schedulerCtx, schedulerCancel := context.WithCancel(context.Background())
 	defer schedulerCancel()
 	schedulerSvc := NewSchedulerService(api)
 	api.scheduler = schedulerSvc
-	go func() {
-		if err := schedulerSvc.Start(schedulerCtx); err != nil {
-			log.Printf("[SCHEDULER] Error: %v", err)
-		}
-	}()
+	if os.Getenv("SCHEDULER_ENABLED") == "false" {
+		log.Printf("[SCHEDULER] Disabled via SCHEDULER_ENABLED=false — skipping cron execution on this machine")
+	} else {
+		go func() {
+			if err := schedulerSvc.Start(schedulerCtx); err != nil {
+				log.Printf("[SCHEDULER] Error: %v", err)
+			}
+		}()
+	}
 
 	// Register scheduler routes
 	SchedulerRoutes(router, schedulerSvc)

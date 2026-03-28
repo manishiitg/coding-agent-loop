@@ -131,6 +131,12 @@ type StepBasedWorkflowOrchestrator struct {
 	// SubAgentNotifier is called when a todo task sub-agent starts/completes.
 	// Used by the server layer to inject auto-notifications into the main workshop agent.
 	subAgentNotifier SubAgentNotifier
+
+	// Workshop execution tracking hooks allow controller-launched background work
+	// (like automatic success learning) to appear in the workshop registry/UI and be stoppable.
+	workshopSessionCtx        context.Context
+	workshopStepRegistry      *WorkshopStepRegistry
+	workshopExecutionNotifier WorkshopExecutionNotifier
 }
 
 // SetSubAgentNotifier sets the notifier called on todo task sub-agent start/completion.
@@ -141,6 +147,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) SetSubAgentNotifier(n SubAgentNotifie
 // GetSubAgentNotifier returns the current sub-agent notifier (may be nil).
 func (hcpo *StepBasedWorkflowOrchestrator) GetSubAgentNotifier() SubAgentNotifier {
 	return hcpo.subAgentNotifier
+}
+
+// SetWorkshopExecutionContext wires the workshop session context and execution registry
+// into the controller so controller-managed background tasks can be tracked and cancelled.
+func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionContext(sessionCtx context.Context, registry *WorkshopStepRegistry) {
+	hcpo.workshopSessionCtx = sessionCtx
+	hcpo.workshopStepRegistry = registry
+}
+
+// SetWorkshopExecutionNotifier wires the server-side execution notifier into the controller
+// so controller-managed background tasks keep the frontend polling/notification state updated.
+func (hcpo *StepBasedWorkflowOrchestrator) SetWorkshopExecutionNotifier(n WorkshopExecutionNotifier) {
+	hcpo.workshopExecutionNotifier = n
 }
 
 // NewStepBasedWorkflowOrchestrator creates a new human-controlled todo planner orchestrator

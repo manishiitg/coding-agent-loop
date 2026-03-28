@@ -220,6 +220,7 @@ export type EventTypeString =
   | 'model_change'
   | 'fallback_model_used'
   | 'fallback_attempt'
+  | 'broken_pipe'
   | 'throttling_detected'
   | 'token_limit_exceeded'
   | 'cache_event'
@@ -422,6 +423,8 @@ export interface EventTypeToDataMap {
   // Delegation Events
   'delegation_start': DelegationStartEvent;
   'delegation_end': DelegationEndEvent;
+  // Broken Pipe Events
+  'broken_pipe': BrokenPipeEvent;
 }
 
 // Todo Task event data types (not in generated schema)
@@ -569,9 +572,20 @@ export interface TodoTaskStatusUpdateEvent {
   tasks_content?: string;
   route_id?: string;
   todo_id?: string;
+  status_phase?: string;
 }
 
 // Delegation event data types (not in generated schema)
+export interface BrokenPipeEvent {
+  timestamp?: string;
+  operation?: string; // "broken_pipe_detected", "retry_success", "retry_failure"
+  tool_name?: string;
+  server_name?: string;
+  tool_call_id?: string;
+  error?: string;
+  duration?: string;
+}
+
 export interface DelegationStartEvent {
   timestamp?: string;
   trace_id?: string;

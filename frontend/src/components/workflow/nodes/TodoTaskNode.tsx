@@ -551,7 +551,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
       {/* Rectangle Shape Card */}
       <div
         className={`
-          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-gradient-to-br from-violet-50 via-white to-purple-50 dark:from-violet-950/40 dark:via-gray-900 dark:to-purple-950/30 shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
+          relative rounded-xl border-2 ${isNestedTodoSubAgent ? 'bg-gradient-to-br from-violet-50 via-violet-50 to-purple-50 dark:bg-gray-900 dark:bg-none shadow-md' : 'bg-white dark:bg-gray-900 shadow-lg'} overflow-visible
           ${statusBorderColors[status]}
           ${selected ? 'ring-2 ring-purple-500/60' : ''}
           ${status === 'running' || status === 'executing' || status === 'evaluating' || status === 'orchestrating' ? 'animate-pulse' : ''}
@@ -601,7 +601,7 @@ export const TodoTaskNode = memo(({ data, selected }: TodoTaskNodeProps) => {
 
           {/* Main todo task step title */}
           {todo_task_step && (
-            <div className={`mt-1.5 ${isNestedTodoSubAgent ? 'p-1.5' : 'p-2'} rounded-lg ${isNestedTodoSubAgent ? 'bg-white/80 dark:bg-gray-800/70 border-violet-200/70 dark:border-violet-800/60' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/60'} border`}>
+            <div className={`mt-1.5 ${isNestedTodoSubAgent ? 'p-1.5' : 'p-2'} rounded-lg ${isNestedTodoSubAgent ? 'bg-violet-50/80 dark:bg-gray-800/80 border-violet-200/70 dark:border-violet-800/60' : 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/60'} border`}>
               <p className="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">
                 Task: {todo_task_step.title || 'Untitled Step'}
               </p>

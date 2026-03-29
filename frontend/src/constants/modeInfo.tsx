@@ -1,5 +1,5 @@
 import React from 'react'
-import { Building2, MessageCircle, Workflow, Users } from 'lucide-react'
+import { MessageCircle, Workflow, Users } from 'lucide-react'
 import { type ModeCategory } from '../stores/useModeStore'
 
 export interface ModeInfo {
@@ -35,19 +35,6 @@ export const MODE_INFO: Record<Exclude<ModeCategory, null>, ModeInfo> = {
       'Multi-LLM tier support',
       'Auto tool mode per task',
       'Sub-agent tracking in Chats/ folders'
-    ],
-    examples: [],
-    tips: []
-  },
-  'organization': {
-    icon: <Building2 className="w-16 h-16 text-emerald-500" />,
-    title: 'Organization Assistant',
-    description: 'Manage employees, workflow ownership, schedules, and run outputs in a dedicated organization workspace',
-    features: [
-      'Dedicated organization assistant thread',
-      'Employee and assignment management',
-      'Schedule and run visibility',
-      'Separate from multi-agent delegation chat'
     ],
     examples: [],
     tips: []

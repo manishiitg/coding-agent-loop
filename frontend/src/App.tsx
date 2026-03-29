@@ -858,9 +858,7 @@ function App() {
     if (hasCompletedInitialSetup && selectedModeCategory) {
       // Add a small delay to ensure stores are fully initialized
       const timer = setTimeout(() => {
-        const activePreset = selectedModeCategory === 'organization'
-          ? null
-          : getActivePreset(selectedModeCategory)
+        const activePreset = getActivePreset(selectedModeCategory)
         if (activePreset) {
           hasRestoredPresetRef.current = true
           const result = applyPreset(activePreset.id, selectedModeCategory)
@@ -1007,14 +1005,6 @@ function App() {
         setModeCategory('workflow')
         setShowWorkflowsOverview(false)
       }
-      // Ctrl/Cmd + 3 for Organization (employees/workflows overview)
-      if ((event.metaKey || event.ctrlKey) && event.key === '3') {
-        event.preventDefault()
-        const { setModeCategory } = useModeStore.getState()
-        setModeCategory('organization')
-        setShowWorkflowsOverview(true)
-      }
-
       // Ctrl/Cmd + 5 for sidebar minimize
       if ((event.ctrlKey || event.metaKey) && event.key === '5') {
         event.preventDefault()
@@ -1025,7 +1015,7 @@ function App() {
         event.preventDefault()
         toggleWorkspaceMinimize()
       }
-      // Ctrl/Cmd + K for workflow quick switcher
+      // Ctrl/Cmd + K for the global quick switcher
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
         event.preventDefault()
         setShowQuickSwitcher(prev => !prev)
@@ -1069,7 +1059,6 @@ function App() {
           {/* Left Sidebar */}
           <div className={`${sidebarMinimized ? 'w-16' : 'w-72'} transition-all duration-300 ease-in-out relative z-30`}>
             <WorkspaceSidebar
-              onChatSessionSelect={handleChatSessionSelect}
               minimized={sidebarMinimized}
               onToggleMinimize={toggleSidebarMinimize}
             />
@@ -1090,10 +1079,10 @@ function App() {
             />
             
               <div className="flex-1 min-h-0 overflow-hidden relative">
-                <div className={showWorkflowsOverview || selectedModeCategory === 'organization' ? 'h-full' : 'hidden'}>
+                <div className={showWorkflowsOverview ? 'h-full' : 'hidden'}>
                   <WorkflowsOverviewPage />
                 </div>
-                <div className={!showWorkflowsOverview && selectedModeCategory !== 'organization' ? 'h-full' : 'hidden'}>
+                <div className={!showWorkflowsOverview ? 'h-full' : 'hidden'}>
                   <div className={selectedModeCategory === 'workflow' ? 'h-full' : 'hidden'}>
                     <WorkflowLayout
                       className="h-full"

@@ -445,6 +445,73 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       || (typeof corrId === 'string' && corrId.startsWith('delegation-'))
   }, [])
 
+  const getFirstNumber = useCallback((...values: unknown[]): number | undefined => {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value
+      }
+    }
+    return undefined
+  }, [])
+
+  const extractContextMetrics = useCallback((payload: Record<string, unknown> | undefined) => {
+    const generationInfo = (payload?.generation_info && typeof payload.generation_info === 'object')
+      ? payload.generation_info as Record<string, unknown>
+      : undefined
+    const metadata = (payload?.metadata && typeof payload.metadata === 'object')
+      ? payload.metadata as Record<string, unknown>
+      : undefined
+
+    const contextWindowUsage = getFirstNumber(
+      payload?.context_window_usage,
+      generationInfo?.current_context_window_usage,
+      metadata?.current_context_window_usage,
+      metadata?.context_window_usage
+    )
+    const modelContextWindow = getFirstNumber(
+      payload?.model_context_window,
+      generationInfo?.model_context_window,
+      metadata?.model_context_window
+    )
+    const directPercent = getFirstNumber(
+      payload?.context_usage_percent,
+      generationInfo?.context_usage_percent,
+      metadata?.context_usage_percent
+    )
+
+    const computedPercent = (
+      contextWindowUsage !== undefined &&
+      modelContextWindow !== undefined &&
+      modelContextWindow > 0
+    )
+      ? (contextWindowUsage / modelContextWindow) * 100
+      : undefined
+
+    const contextUsagePercent = directPercent && directPercent > 0
+      ? directPercent
+      : computedPercent ?? directPercent
+
+    const hasConcreteContextMetrics = contextWindowUsage !== undefined || modelContextWindow !== undefined
+    const normalizedContextUsagePercent = (
+      contextUsagePercent === undefined ||
+      contextUsagePercent === null ||
+      (contextUsagePercent === 0 && !hasConcreteContextMetrics)
+    )
+      ? undefined
+      : contextUsagePercent
+
+    return {
+      contextUsagePercent: normalizedContextUsagePercent,
+      contextWindowUsage,
+      modelContextWindow,
+      modelId: typeof payload?.model_id === 'string'
+        ? payload.model_id
+        : typeof metadata?.model_id === 'string'
+          ? metadata.model_id
+          : undefined,
+    }
+  }, [getFirstNumber])
+
   // Find the latest token usage (optimized with backward iteration)
   // In multi-agent mode, skip sub-agent events — show the PARENT agent's context usage
   //
@@ -479,14 +546,20 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     if (latestEvent && isEventType(latestEvent, 'token_usage')) {
       const tokenUsage = getEventData(latestEvent) as TokenUsageEvent
-      const isTotalEvent = tokenUsage.context === 'conversation_total'
-      const contextPercent = isTotalEvent
-        ? (tokenUsage.generation_info?.context_usage_percent as number | undefined) ?? tokenUsage.context_usage_percent
-        : tokenUsage.context_usage_percent ?? (tokenUsage.generation_info?.context_usage_percent as number | undefined)
+      const metrics = extractContextMetrics(tokenUsage as unknown as Record<string, unknown>)
+      const contextPercent = metrics.contextUsagePercent
 
-      return {
-        contextUsagePercent: contextPercent !== undefined && contextPercent !== null ? contextPercent : null,
-        latestTokenUsage: tokenUsage
+      if (contextPercent !== undefined && contextPercent !== null) {
+        return {
+          contextUsagePercent: contextPercent,
+          latestTokenUsage: {
+            ...tokenUsage,
+            context_usage_percent: contextPercent,
+            context_window_usage: metrics.contextWindowUsage ?? tokenUsage.context_window_usage,
+            model_context_window: metrics.modelContextWindow ?? tokenUsage.model_context_window,
+            model_id: metrics.modelId ?? tokenUsage.model_id,
+          }
+        }
       }
     }
 
@@ -497,16 +570,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       if (isEventType(event, 'llm_generation_end')) {
         const data = getEventData(event)
-        const metadata = data.metadata as Record<string, unknown> | undefined
-        const contextPercent = metadata?.context_usage_percent as number | undefined
-        if (contextPercent && contextPercent > 0) {
+        const metrics = extractContextMetrics(data as unknown as Record<string, unknown>)
+        if (metrics.contextUsagePercent !== undefined && metrics.contextUsagePercent > 0) {
           return {
-            contextUsagePercent: contextPercent,
+            contextUsagePercent: metrics.contextUsagePercent,
             latestTokenUsage: {
-              context_usage_percent: contextPercent,
-              model_context_window: metadata?.model_context_window as number | undefined,
-              context_window_usage: metadata?.current_context_window_usage as number | undefined,
-              model_id: metadata?.model_id as string | undefined,
+              context_usage_percent: metrics.contextUsagePercent,
+              model_context_window: metrics.modelContextWindow,
+              context_window_usage: metrics.contextWindowUsage,
+              model_id: metrics.modelId,
             }
           }
         }
@@ -514,15 +586,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
       if (isEventType(event, 'tool_call_end')) {
         const data = getEventData(event)
-        const contextPercent = data.context_usage_percent
-        if (contextPercent && contextPercent > 0) {
+        const metrics = extractContextMetrics(data as unknown as Record<string, unknown>)
+        if (metrics.contextUsagePercent !== undefined && metrics.contextUsagePercent > 0) {
           return {
-            contextUsagePercent: contextPercent,
+            contextUsagePercent: metrics.contextUsagePercent,
             latestTokenUsage: {
-              context_usage_percent: contextPercent,
-              model_context_window: data.model_context_window,
-              context_window_usage: data.context_window_usage,
-              model_id: data.model_id,
+              context_usage_percent: metrics.contextUsagePercent,
+              model_context_window: metrics.modelContextWindow,
+              context_window_usage: metrics.contextWindowUsage,
+              model_id: metrics.modelId,
             }
           }
         }
@@ -530,7 +602,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
 
     return { contextUsagePercent: null, latestTokenUsage: null }
-  }, [tabEvents, isSubAgentEvent])
+  }, [tabEvents, isSubAgentEvent, extractContextMetrics])
 
   // Always use tab-specific config (ChatInput is only in multi-agent mode)
   // Memoize to prevent unnecessary re-renders when other config values change

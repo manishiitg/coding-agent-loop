@@ -1573,5 +1573,10 @@ curl -s -X POST "$MCP_API_URL/tools/custom/save_memory" \
 $MCP_API_URL and $MCP_API_TOKEN are pre-set environment variables — use them as-is.
 
 **Important:** Whenever instructions mention ` + "`delegate(...)`" + ` or ` + "`save_memory(...)`" + `, translate to the curl pattern above. Do NOT call these as direct function calls.
+
+### Memory — CRITICAL
+Do **NOT** use your native memory system (e.g. ~/.codex/memories/, ~/.claude/memories/, or any home-directory path). Those paths are not accessible in this environment.
+
+All memory operations **must** go through the ` + "`save_memory`" + ` / ` + "`recall_memory`" + ` curl API above. This stores memories in the workspace ` + "`memories/`" + ` folder where they are visible and persistent.
 `
 }

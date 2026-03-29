@@ -77,9 +77,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       activePresetIds: {
         'workflow': null,
         'multi-agent': null,
-        'organization': null,
       },
-      
+
       currentPresetServers: [],
       currentPresetTools: [],
       selectedPresetFolder: null,
@@ -815,7 +814,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             activePresetIds: {
               workflow: state.activePresetIds.workflow === id ? null : state.activePresetIds.workflow,
               'multi-agent': state.activePresetIds['multi-agent'] === id ? null : state.activePresetIds['multi-agent'],
-              'organization': state.activePresetIds.organization === id ? null : state.activePresetIds.organization,
             }
           }))
         } catch (error) {
@@ -1237,7 +1235,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           activePresetIds: {
             'workflow': null,
             'multi-agent': null,
-            'organization': null,
           }
         })
       },
@@ -1261,8 +1258,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             return preset.agentMode === 'simple'
           } else if (modeCategory === 'workflow') {
             return preset.agentMode === 'workflow'
-          } else if (modeCategory === 'organization') {
-            return false
           }
           return false
         })

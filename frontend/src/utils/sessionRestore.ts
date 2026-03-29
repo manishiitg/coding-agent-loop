@@ -4,9 +4,25 @@ import { useLLMStore } from '../stores/useLLMStore'
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
+import { summarizeEventForDebug } from './eventOrdering'
 import { truncateTabTitle } from './textUtils'
 
 const TAG = '[SessionRestore]'
+
+type RuntimeSessionState = {
+  status: string
+  hasRunningBackgroundAgents?: boolean
+  isSyntheticTurn?: boolean
+  canSteer?: boolean
+}
+
+function isForegroundStreaming(state: RuntimeSessionState): boolean {
+  if (state.status !== 'running') return false
+  // Background-only work should not lock the composer after restore.
+  // Keep the UI in "streaming" mode only when a foreground turn is actually active,
+  // or when the running turn is a synthetic auto-notification that should stay locked.
+  return !state.hasRunningBackgroundAgents || !!state.isSyntheticTurn || !!state.canSteer
+}
 
 /**
  * Per-session async lock to prevent duplicate restores.
@@ -18,12 +34,15 @@ const restoreInProgress = new Map<string, Promise<string>>()
 /**
  * Apply session status (completed/streaming/restored) to a tab.
  */
-function applySessionStatus(tabId: string, status: string): void {
+function applySessionStatus(tabId: string, state: RuntimeSessionState): void {
   const chatStore = useChatStore.getState()
-  const isDone = status === 'completed' || status === 'stopped'
-  const isError = status === 'error'
+  const isDone = state.status === 'completed' || state.status === 'stopped'
+  const isError = state.status === 'error'
   chatStore.setTabCompleted(tabId, isDone)
-  chatStore.setTabStreaming(tabId, !isDone && !isError)
+  chatStore.setTabStreaming(isDone || isError ? false : isForegroundStreaming(state))
+  chatStore.setTabHasRunningBgAgents(tabId, !!state.hasRunningBackgroundAgents)
+  chatStore.setTabSyntheticTurn(tabId, !!state.isSyntheticTurn)
+  chatStore.setTabCanSteer(tabId, !!state.canSteer)
   if (isDone || isError) {
     chatStore.setTabMetadata(tabId, { isRestored: true })
   }
@@ -73,23 +92,34 @@ async function doRestoreSession(
   const chatStore = useChatStore.getState()
 
   // Step 1: Check for existing tab with events already loaded
-  const existingTab = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
+  const existingTabWithSession = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === sessionId)
+  const existingTab = existingTabWithSession
+  const existingEventCount = existingTab ? chatStore.getTabEvents(sessionId).length : 0
   if (existingTab) {
-    const existingEvents = chatStore.getTabEvents(sessionId)
-    if (existingEvents.length > 0) {
-      console.log(`${TAG} [${src}] Tab ${existingTab.tabId} already has ${existingEvents.length} events, returning early`)
-      return existingTab.tabId
+    if (existingEventCount > 0) {
+      console.log(`${TAG} [${src}] Tab ${existingTab.tabId} already has ${existingEventCount} events, refreshing runtime state`)
+    } else {
+      console.log(`${TAG} [${src}] Tab ${existingTab.tabId} exists but has 0 events, will hydrate`)
     }
-    console.log(`${TAG} [${src}] Tab ${existingTab.tabId} exists but has 0 events, will hydrate`)
   }
 
   // Step 2: Fetch session details
   let chatSession: Awaited<ReturnType<typeof agentApi.getChatSession>> | null = null
-  try {
-    chatSession = await agentApi.getChatSession(sessionId)
-    console.log(`${TAG} [${src}] Fetched session: status=${chatSession.status}, hasConfig=${!!chatSession.config}, delegation_mode=${chatSession.config?.delegation_mode ?? 'none'}`)
-  } catch (err) {
-    console.error(`${TAG} [${src}] Failed to fetch session ${sessionId}:`, err)
+  const shouldFetchSessionDetails = !(existingTab && options?.skipConfigRestore)
+  if (shouldFetchSessionDetails) {
+    try {
+      chatSession = await agentApi.getChatSession(sessionId)
+      console.log(`${TAG} [${src}] Fetched session: status=${chatSession.status}, hasConfig=${!!chatSession.config}, delegation_mode=${chatSession.config?.delegation_mode ?? 'none'}`)
+    } catch (err) {
+      const status = (err as { response?: { status?: number } } | undefined)?.response?.status
+      if (status === 404) {
+        console.warn(`${TAG} [${src}] Session metadata not found for ${sessionId}; continuing with persisted tab state/runtime hydration`)
+      } else {
+        console.error(`${TAG} [${src}] Failed to fetch session ${sessionId}:`, err)
+      }
+    }
+  } else {
+    console.log(`${TAG} [${src}] Skipped session metadata fetch (using persisted tab state)`)
   }
 
   // Step 3: Detect mode
@@ -120,7 +150,7 @@ async function doRestoreSession(
   // Step 5: Apply status IMMEDIATELY after tab creation to prevent polling from
   // overriding with stale 'running' status while we load events asynchronously.
   if (chatSession) {
-    applySessionStatus(tabId, chatSession.status)
+    applySessionStatus(tabId, { status: chatSession.status })
     console.log(`${TAG} [${src}] Applied status=${chatSession.status} to tab ${tabId}`)
   }
 
@@ -136,13 +166,35 @@ async function doRestoreSession(
     console.log(`${TAG} [${src}] Skipped config restore (already persisted)`)
   }
 
-  // Step 7: Load events
+  // Step 7: Sync runtime state / events
   try {
-    await hydrateTabEvents(sessionId)
-    const eventCount = chatStore.getTabEvents(sessionId).length
-    console.log(`${TAG} [${src}] Hydrated ${eventCount} events`)
+    if (existingEventCount > 0) {
+      const currentLastIndex = chatStore.getTabLastEventIndex(sessionId)
+      const runtime = await agentApi.getSessionEvents(sessionId, currentLastIndex)
+      applySessionStatus(tabId, {
+        status: runtime.session_status,
+        hasRunningBackgroundAgents: runtime.has_running_background_agents,
+        isSyntheticTurn: runtime.is_synthetic_turn,
+        canSteer: runtime.can_steer,
+      })
+      if (runtime.events.length > 0) {
+        chatStore.addTabEvents(sessionId, runtime.events)
+      }
+      if (runtime.last_processed_index !== undefined) {
+        chatStore.setTabLastEventIndex(sessionId, runtime.last_processed_index)
+      }
+      if (runtime.has_more !== undefined) {
+        chatStore.setTabHasMoreOlderEvents(sessionId, runtime.has_more)
+      }
+      console.log(`${TAG} [${src}] Refreshed runtime state for existing tab ${tabId}`)
+    } else {
+      const runtime = await hydrateTabEvents(sessionId)
+      applySessionStatus(tabId, runtime)
+      const eventCount = chatStore.getTabEvents(sessionId).length
+      console.log(`${TAG} [${src}] Hydrated ${eventCount} events`)
+    }
   } catch (err) {
-    console.error(`${TAG} [${src}] Failed to load events for ${sessionId}:`, err)
+    console.error(`${TAG} [${src}] Failed to sync runtime state for ${sessionId}:`, err)
   }
 
   console.log(`${TAG} [${src}] Done session=${sessionId} tab=${tabId}`)
@@ -238,7 +290,7 @@ export function buildTabConfigFromSession(config: ChatSessionConfig): Partial<Ch
  */
 export async function hydrateTabEvents(
   sessionId: string,
-): Promise<void> {
+): Promise<RuntimeSessionState> {
   const chatStore = useChatStore.getState()
 
   // Try the in-memory polling API first (works for active sessions)
@@ -246,12 +298,24 @@ export async function hydrateTabEvents(
 
   if (response.events.length > 0) {
     chatStore.setTabEvents(sessionId, response.events)
+    console.log('[RESTORE_SOURCE]', {
+      sessionId,
+      source: 'memory-or-polling',
+      count: response.events.length,
+      first: response.events.slice(0, 3).map(summarizeEventForDebug),
+      last: response.events.slice(-5).map(summarizeEventForDebug),
+    })
     const lastIndex = response.last_processed_index ?? (response.events.length > 0 ? response.events.length - 1 : -1)
     chatStore.setTabLastEventIndex(sessionId, lastIndex)
     if (response.has_more !== undefined) {
       chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
     }
-    return
+    return {
+      status: response.session_status,
+      hasRunningBackgroundAgents: response.has_running_background_agents,
+      isSyntheticTurn: response.is_synthetic_turn,
+      canSteer: response.can_steer,
+    }
   }
 
   // Polling API returned 0 events — session is likely completed/historical.
@@ -259,7 +323,20 @@ export async function hydrateTabEvents(
   const dbResponse = await agentApi.getChatSessionEvents(sessionId, 1000, 0)
   if (dbResponse.events.length > 0) {
     chatStore.setTabEvents(sessionId, dbResponse.events)
+    console.log('[RESTORE_SOURCE]', {
+      sessionId,
+      source: 'db',
+      count: dbResponse.events.length,
+      first: dbResponse.events.slice(0, 3).map(summarizeEventForDebug),
+      last: dbResponse.events.slice(-5).map(summarizeEventForDebug),
+    })
     chatStore.setTabLastEventIndex(sessionId, dbResponse.events.length - 1)
     chatStore.setTabHasMoreOlderEvents(sessionId, dbResponse.total > dbResponse.events.length)
+  }
+  return {
+    status: response.session_status,
+    hasRunningBackgroundAgents: response.has_running_background_agents,
+    isSyntheticTurn: response.is_synthetic_turn,
+    canSteer: response.can_steer,
   }
 }

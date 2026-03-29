@@ -193,23 +193,6 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			toolCategories[name] = workspaceBasicCategory
 		}
 
-		// Add human tools
-		humanCategory := virtualtools.GetHumanToolCategory()
-		humanTools := virtualtools.CreateHumanTools()
-		humanExecutors := virtualtools.CreateHumanToolExecutors()
-
-		allTools = append(allTools, humanTools...)
-		for name, executor := range humanExecutors {
-			allExecutors[name] = executor
-		}
-
-		// Assign category to human tools
-		for _, tool := range humanTools {
-			if tool.Function != nil {
-				toolCategories[tool.Function.Name] = humanCategory
-			}
-		}
-
 		// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.
 		// The todo task orchestrator now manages tasks via tasks.md using shell commands.
 
@@ -227,7 +210,6 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 	specialTools := map[string]bool{
 		"sync_workspace_to_github":    true,
 		"get_workspace_github_status": true,
-		"human_feedback":              true,
 	}
 	if specialTools[toolName] {
 		return originalDescription
@@ -252,13 +234,12 @@ func enhanceToolDescriptionForChatMode(toolName, originalDescription string) str
 	return originalDescription + accessInfo.String()
 }
 
-// enhanceToolDescriptionForPlanMode augments workspace tool descriptions for multi-agent plan mode.
+// enhanceToolDescriptionForMultiAgentMode augments workspace tool descriptions for multi-agent plan mode.
 // Tells the LLM that its primary write folder is Chats/.
-func enhanceToolDescriptionForPlanMode(toolName, originalDescription string) string {
+func enhanceToolDescriptionForMultiAgentMode(toolName, originalDescription string) string {
 	specialTools := map[string]bool{
 		"sync_workspace_to_github":    true,
 		"get_workspace_github_status": true,
-		"human_feedback":              true,
 	}
 	if specialTools[toolName] {
 		return originalDescription

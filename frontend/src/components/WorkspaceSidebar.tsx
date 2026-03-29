@@ -5,29 +5,23 @@ import MCPServersSection from './sidebar/MCPServersSection'
 import { SkillsSection } from './skills'
 import { SecretsSection } from './secrets'
 import { SubAgentsSection } from './subagents'
-import ChatHistorySection from './sidebar/ChatHistorySection'
 import LLMConfigurationModal from './LLMConfigurationModal'
 import DelegationTierConfigModal from './DelegationTierConfigModal'
-import type { ActiveSessionInfo } from '../services/api-types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { useMCPStore, useLLMStore } from '../stores'
 import { useModeStore } from '../stores/useModeStore'
-import { Layers, LogOut, User, Bell, BellOff, Play, Download } from 'lucide-react'
+import { LogOut, User, Bell, BellOff, Play, Download } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { useCommandDialogStore } from '../stores/useCommandDialogStore'
 import { playNotificationSound } from '../utils/sound'
 
 interface WorkspaceSidebarProps {
-  // Chat session selection
-  onChatSessionSelect?: (sessionId: string, sessionTitle?: string, sessionType?: 'active' | 'completed', activeSessionInfo?: ActiveSessionInfo) => void
-  
   // Minimize functionality
   minimized: boolean
   onToggleMinimize: () => void
 }
 
 export default function WorkspaceSidebar({
-  onChatSessionSelect,
   minimized,
   onToggleMinimize
 }: WorkspaceSidebarProps) {
@@ -170,39 +164,6 @@ export default function WorkspaceSidebar({
             <LLMConfigurationSummary
               minimized={minimized}
             />
-
-            {/* Sub-Agent Models - Visible in Multi Agent Chat mode */}
-            {selectedModeCategory === 'multi-agent' && (
-              <div className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-gray-200 dark:border-slate-700">
-                <button
-                  onClick={() => setShowTierModal(true)}
-                  className="w-full p-3 flex items-center justify-between text-left hover:bg-gray-100 dark:hover:bg-slate-700 transition-colors rounded-lg"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Layers className="w-4 h-4 text-indigo-500 flex-shrink-0" />
-                    <div className="min-w-0">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Sub-Agent Models</span>
-                      {delegationTierConfig && (delegationTierConfig.high || delegationTierConfig.medium || delegationTierConfig.low) ? (
-                        <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">
-                          {[
-                            delegationTierConfig.high && `H: ${delegationTierConfig.high.model_id.split('/').pop()}`,
-                            delegationTierConfig.medium && `M: ${delegationTierConfig.medium.model_id.split('/').pop()}`,
-                            delegationTierConfig.low && `L: ${delegationTierConfig.low.model_id.split('/').pop()}`,
-                          ].filter(Boolean).join(' | ')}
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-gray-400 dark:text-gray-500">Click to configure tiers</div>
-                      )}
-                    </div>
-                  </div>
-                  <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </button>
-              </div>
-            )}
-
-
             {/* MCP Servers */}
             <MCPServersSection />
 
@@ -214,16 +175,6 @@ export default function WorkspaceSidebar({
 
             {/* Sub-Agent Templates */}
             <SubAgentsSection />
-
-            {/* Chat History */}
-            <ChatHistorySection
-              onSessionSelect={(sessionId, sessionTitle, sessionType, activeSessionInfo) => {
-                if (onChatSessionSelect) {
-                  onChatSessionSelect(sessionId, sessionTitle, sessionType, activeSessionInfo)
-                }
-              }}
-            />
-
             {/* Download App Promo - Only in Browser */}
             {!isElectron && (
               <div className="mt-auto pt-2">
@@ -389,9 +340,6 @@ export default function WorkspaceSidebar({
               <p>Skills</p>
             </TooltipContent>
           </Tooltip>
-
-          {/* Chat History Icon */}
-          <ChatHistorySection minimized={true} />
 
           {/* Spacer to push user section to bottom */}
           <div className="flex-1" />

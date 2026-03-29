@@ -976,7 +976,7 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 func (m *BotConversationManager) buildQueryRequest(query string, userID string) map[string]interface{} {
 	req := map[string]interface{}{
 		"query":                   query,
-		"delegation_mode":         "plan",
+		"delegation_mode":         "spawn",
 		"enable_workspace_access": true,
 	}
 

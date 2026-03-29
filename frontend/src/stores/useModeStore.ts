@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AgentMode } from './types'
 
-export type ModeCategory = 'workflow' | 'multi-agent' | 'organization' | null
+export type ModeCategory = 'workflow' | 'multi-agent' | null
 
 interface ModeState {
   // Core mode selection
@@ -12,13 +12,12 @@ interface ModeState {
   // Preset tracking per category
   lastSelectedPreset: {
     'workflow': string | null
-    'organization': string | null
   }
 
   // Actions
   setModeCategory: (category: ModeCategory) => void
   completeInitialSetup: () => void
-  setLastPreset: (category: 'workflow' | 'organization', presetId: string | null) => void
+  setLastPreset: (category: 'workflow', presetId: string | null) => void
   resetModeSelection: () => void
 
   // Helpers
@@ -38,7 +37,6 @@ export const useModeStore = create<ModeState>()(
           hasCompletedInitialSetup: false,
           lastSelectedPreset: {
             'workflow': null,
-            'organization': null
           },
 
           // Actions
@@ -93,7 +91,6 @@ export const useModeStore = create<ModeState>()(
               hasCompletedInitialSetup: false,
               lastSelectedPreset: {
                 'workflow': null,
-                'organization': null
               }
             })
           },
@@ -105,12 +102,8 @@ export const useModeStore = create<ModeState>()(
                 return 'multi-agent'
               case 'workflow':
                 return 'workflow'
-              case 'organization':
-                return 'organization'
               case 'multi-agent':
                 return 'multi-agent'
-              case 'organization_chat':
-                return 'organization'
               default:
                 return null
             }
@@ -120,8 +113,6 @@ export const useModeStore = create<ModeState>()(
             switch (category) {
               case 'workflow':
                 return 'workflow'
-              case 'organization':
-                return 'organization_chat'
               case 'multi-agent':
                 return 'simple'
               default:

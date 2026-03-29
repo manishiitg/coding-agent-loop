@@ -27,7 +27,7 @@ func GetAgentInstructions(workspaceAbsPath string) string {
 	// Add workspace root path info
 	wsPathNote := ""
 	if workspaceAbsPath != "" {
-		wsPathNote = fmt.Sprintf("\n**Workspace root (absolute path):** `%s`\nAll relative paths below are relative to this root.\n", workspaceAbsPath)
+		wsPathNote = fmt.Sprintf("\n**Workspace root:** `%s`\n**Always use absolute paths** in shell commands (e.g., `cat %s/config/employees.json`, `ls %s/Workflow/`).\n", workspaceAbsPath, workspaceAbsPath, workspaceAbsPath)
 	}
 
 	// Build per-folder absolute path suffix when workspace root is known
@@ -56,12 +56,36 @@ The workspace is organized into the following folders:
 - Write: `+"`execute_shell_command(command: \"printf '%s' '{...json...}' > config/delegation-tier-config.json\")`"+`
 - Schema: `+"`{\"main\":{\"provider\":\"anthropic\",\"model_id\":\"...\"},\"high\":{...},\"medium\":{...},\"low\":{...},\"custom\":{\"my-tier\":{...}}}`"+`
 
-## Workflows
-Browse existing workflow definitions and their execution data (read-only):
-- List all: `+"`execute_shell_command(command: \"ls Workflow/\")`"+`
-- View steps & config: `+"`execute_shell_command(command: \"cat Workflow/<name>/workflow.json\")`"+`
-- View learnings: `+"`execute_shell_command(command: \"cat Workflow/<name>/learnings.md\")`"+`
-- View knowledgebase: `+"`execute_shell_command(command: \"cat Workflow/<name>/knowledgebase.md\")`"+`
+## Employees & Workflows
+Employees are virtual team members assigned to workflows. When creating employees, give them realistic human first names (e.g., "Priya", "Arjun", "Sarah") — not functional titles or descriptions.
+
+### Quick Reference
+- Employees: `+"`execute_shell_command(command: \"cat config/employees.json\")`"+`
+- Assignments (workflow_path → employee_id): `+"`execute_shell_command(command: \"cat config/employee-workflows.json\")`"+`
+- List workflows: `+"`execute_shell_command(command: \"ls Workflow/\")`"+`
+
+### Workflow Structure
+Each workflow lives in `+"`Workflow/<name>/`"+` with:
+- `+"`workflow.json`"+` — config, schedules, capabilities (can be large)
+- `+"`planning/plan.json`"+` — step definitions with IDs and titles
+- `+"`planning/step_config.json`"+` — per-step tool/skill config
+- `+"`learnings/<step-id>/SKILL.md`"+` — learnings accumulated per step
+- `+"`runs/`"+` — execution output folders
+
+### Efficient Parsing
+- **Step list (IDs + titles):** `+"`execute_shell_command(command: \"python3 -c \\\"import json; steps=json.load(open('Workflow/<name>/planning/plan.json')).get('steps',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s.get(\\\\\\\"label\\\\\\\",s.get(\\\\\\\"title\\\\\\\",\\\\\\\"\\\\\\\"))}') for s in steps]\\\"\")`"+`
+- **Schedules:** `+"`execute_shell_command(command: \"python3 -c \\\"import json; scheds=json.load(open('Workflow/<name>/workflow.json')).get('schedules',[]); [print(f'{s[\\\\\\\"id\\\\\\\"]}: {s[\\\\\\\"cron_expression\\\\\\\"]} enabled={s.get(\\\\\\\"enabled\\\\\\\",True)}') for s in scheds]\\\"\")`"+`
+- **Step learnings:** `+"`execute_shell_command(command: \"cat Workflow/<name>/learnings/<step-id>/SKILL.md\")`"+`
+- **Full config (when needed):** `+"`execute_shell_command(command: \"cat Workflow/<name>/workflow.json\")`"+`
+
+### When the user mentions an employee by name
+1. **Always read employees first**: `+"`execute_shell_command(command: \"cat config/employees.json\")`"+` to find the employee ID
+2. **Then read assignments**: `+"`execute_shell_command(command: \"cat config/employee-workflows.json\")`"+` to find their workflows
+3. **Then check workflow details**: Browse Workflow/<name>/ for runs, learnings, outputs
+
+### What You Can Do
+- **Reuse step learnings**: Workflow learnings contain detailed instructions (e.g., how to log into a bank). You can read these and use them in your own delegated tasks for related work the user asks for.
+- **Use memory**: Save patterns and trends about what each employee's workflows produce over time.
 
 `
 	return instructions

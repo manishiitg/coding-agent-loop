@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Workflow, Users, Building2, Settings, Trash2, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot } from 'lucide-react'
+import { Workflow, Users, Settings, Trash2, Copy, DollarSign, Keyboard, CalendarDays, SlidersHorizontal, Bot, Building2 } from 'lucide-react'
 import { useModeStore } from '../stores/useModeStore'
 import { usePresetApplication, usePresetManagement } from '../stores/useGlobalPresetStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
@@ -27,8 +27,6 @@ const getModeIcon = (category: string) => {
       return <Workflow className="w-3 h-3" />
     case 'multi-agent':
       return <Users className="w-3 h-3" />
-    case 'organization':
-      return <Building2 className="w-3 h-3" />
     default:
       return <Users className="w-3 h-3" />
   }
@@ -40,8 +38,6 @@ const getModeName = (category: string) => {
       return 'Workflow Mode'
     case 'multi-agent':
       return 'Chat'
-    case 'organization':
-      return 'Organization'
     default:
       return 'Chat'
   }
@@ -60,13 +56,6 @@ const MODE_PILLS = [
     label: 'Workflow',
     icon: Workflow,
     activeClasses: 'bg-purple-50 text-purple-700 shadow-sm ring-1 ring-purple-200 dark:bg-purple-500/20 dark:text-purple-100 dark:ring-purple-500/40',
-    inactiveClasses: 'text-gray-500 dark:text-gray-400',
-  },
-  {
-    key: 'organization' as const,
-    label: 'Organization',
-    icon: Building2,
-    activeClasses: 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-100 dark:ring-emerald-500/40',
     inactiveClasses: 'text-gray-500 dark:text-gray-400',
   },
 ] as const
@@ -140,24 +129,18 @@ export const ModePresetBar: React.FC = () => {
   const showWorkflowsOverview = useAppStore(s => s.showWorkflowsOverview)
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const delegationTierConfig = useLLMStore(state => state.delegationTierConfig)
-  const isOrganizationView = selectedModeCategory === 'organization' || showWorkflowsOverview
+  const isOrganizationView = showWorkflowsOverview
+  const shouldShowScheduleHeader = selectedModeCategory === 'workflow' || isOrganizationView
 
-  const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow' | 'organization') => {
-    if (modeKey === 'organization') {
-      setModeCategory('organization')
-      setShowWorkflowsOverview(true)
-      setWorkspaceMinimized(true)
-      return
-    }
-
+  const handleModePillClick = useCallback((modeKey: 'multi-agent' | 'workflow') => {
     setModeCategory(modeKey)
     setShowWorkflowsOverview(false)
-  }, [setModeCategory, setShowWorkflowsOverview, setWorkspaceMinimized])
+  }, [setModeCategory, setShowWorkflowsOverview])
 
   // Fetch global workflow schedule metadata for the header so it can show
   // running/total counts before the schedules popup is opened.
   useEffect(() => {
-    if (selectedModeCategory !== 'workflow') {
+    if (!shouldShowScheduleHeader) {
       setWorkflowScheduleCount(0)
       setRunningScheduledWorkflowCount(0)
       return
@@ -187,7 +170,7 @@ export const ModePresetBar: React.FC = () => {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [selectedModeCategory, showRunsPanel]) // refresh after runs panel closes or mode changes
+  }, [shouldShowScheduleHeader, showRunsPanel]) // refresh after runs panel closes or mode changes
 
   // Handle ESC and Enter keys for shortcuts modal
   useEffect(() => {
@@ -457,9 +440,7 @@ export const ModePresetBar: React.FC = () => {
             {/* Segmented control — single bordered container, active segment elevated */}
             <div className="flex items-center bg-gray-100 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-0.5" role="tablist" aria-label="Select mode">
               {MODE_PILLS.map((mode) => {
-                const isActive = mode.key === 'organization'
-                  ? showWorkflowsOverview
-                  : selectedModeCategory === mode.key && !showWorkflowsOverview
+                const isActive = selectedModeCategory === mode.key && !showWorkflowsOverview
                 const Icon = mode.icon
                 return (
                   <button
@@ -486,6 +467,21 @@ export const ModePresetBar: React.FC = () => {
                   </button>
                 )
               })}
+              <button
+                role="tab"
+                aria-selected={showWorkflowsOverview}
+                aria-label="Switch to Organization view"
+                onClick={() => setShowWorkflowsOverview(!showWorkflowsOverview)}
+                className={`relative flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 cursor-pointer ${
+                  showWorkflowsOverview
+                    ? 'bg-emerald-50 text-emerald-700 shadow-sm ring-1 ring-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-100 dark:ring-emerald-500/40'
+                    : 'text-gray-500 dark:text-gray-400'
+                }`}
+                type="button"
+              >
+                <Building2 className="w-3 h-3" />
+                <span>Organization</span>
+              </button>
             </div>
 
             {/* Center: Preset Information */}
@@ -663,7 +659,7 @@ export const ModePresetBar: React.FC = () => {
                 <TooltipContent side="bottom">Keyboard shortcuts</TooltipContent>
               </Tooltip>
 
-              {selectedModeCategory === 'multi-agent' && (
+              {selectedModeCategory === 'multi-agent' && !isOrganizationView && (
                 <>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -715,7 +711,7 @@ export const ModePresetBar: React.FC = () => {
                 </>
               )}
 
-              {selectedModeCategory === 'workflow' && (
+              {shouldShowScheduleHeader && (
                 <>
                   <Tooltip>
                     <TooltipTrigger asChild>

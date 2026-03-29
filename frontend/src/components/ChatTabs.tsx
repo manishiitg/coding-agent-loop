@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo } from 'react'
 import { X, Plus, ArrowDown } from 'lucide-react'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
+import { useAppStore } from '../stores/useAppStore'
 import { useModeStore } from '../stores/useModeStore'
 import { shouldShowEventByMode } from './events/eventModeUtils'
 import { logger } from '../utils/logger'
@@ -14,6 +15,7 @@ interface ChatTabsProps {
 
 export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScroll }) => {
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+  const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const {
     chatTabs,
     activeTabId,
@@ -48,17 +50,17 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
       if (activeTab && !isHiddenOrganizationTab(activeTab)) return
     }
 
-    if (selectedModeCategory !== 'multi-agent') return
+    if (selectedModeCategory !== 'multi-agent' || showWorkflowsOverview) return
     if (visibleTabs.length > 0) {
       const sorted = [...visibleTabs].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
       switchTab(sorted[0].tabId)
     }
-  }, [activeTabId, chatTabs, selectedModeCategory, switchTab, isHiddenOrganizationTab])
+  }, [activeTabId, chatTabs, selectedModeCategory, showWorkflowsOverview, switchTab, isHiddenOrganizationTab])
 
   // Filter tabs by current mode
   // In workflow mode, only show chat tabs in global ChatTabs (workflow tabs show in chat area)
   const modeTabs = useMemo(() => {
-    if (selectedModeCategory === 'workflow' || selectedModeCategory === 'organization') {
+    if (selectedModeCategory === 'workflow') {
       // In workflow mode, only show multi-agent tabs (workflow tabs are shown in the chat area panel)
       return Object.values(chatTabs).filter(tab => 
         tab.metadata?.mode === 'multi-agent'
@@ -165,7 +167,7 @@ export const ChatTabs: React.FC<ChatTabsProps> = ({ autoScroll, onToggleAutoScro
   }
   
   // Show tabs bar in multi-agent mode (workflow tabs are shown in WorkflowChatTabs inside ChatArea panel)
-  const shouldShowTabsBar = selectedModeCategory === 'multi-agent'
+  const shouldShowTabsBar = selectedModeCategory === 'multi-agent' && !showWorkflowsOverview
   const hasTabs = modeTabs.length > 0
   
   // In workflow mode, don't show ChatTabs at all

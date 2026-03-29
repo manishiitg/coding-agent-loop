@@ -3,138 +3,66 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
-	"mcp-agent-builder-go/agent_go/pkg/database"
-
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
-// EmployeeRoutes sets up employee API routes
-func EmployeeRoutes(router *mux.Router, db database.Database) {
-	apiRouter := router.PathPrefix("/api/employees").Subrouter()
+func EmployeeRoutes(router *mux.Router) {
+	apiRouter := router.PathPrefix("/employees").Subrouter()
 
-	apiRouter.HandleFunc("", listEmployeesHandler(db)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("", createEmployeeHandler(db)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/assign-workflow", assignWorkflowEmployeeHandler(db)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/{id}", getEmployeeHandler(db)).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/{id}", updateEmployeeHandler(db)).Methods("PUT", "OPTIONS")
-	apiRouter.HandleFunc("/{id}", deleteEmployeeHandler(db)).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("", listEmployeesHandler()).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("", createEmployeeHandler()).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/assign-workflow", assignWorkflowEmployeeHandler()).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/{id}", getEmployeeHandler()).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/{id}", updateEmployeeHandler()).Methods("PUT", "OPTIONS")
+	apiRouter.HandleFunc("/{id}", deleteEmployeeHandler()).Methods("DELETE", "OPTIONS")
 }
 
-func listEmployeesHandler(db database.Database) http.HandlerFunc {
+func listEmployeesHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		setCORS(w)
 		if r.Method == "OPTIONS" {
 			return
 		}
 
-		employees, err := db.ListEmployees(r.Context())
+		employees, err := readEmployeesFile()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+		}
+
+		assignments, _ := readEmployeeWorkflowsFile()
+		// Invert map once: employee_id → []workflow_path (O(m) instead of O(n*m))
+		byEmployee := make(map[string][]string, len(assignments))
+		for wfPath, empID := range assignments {
+			byEmployee[empID] = append(byEmployee[empID], wfPath)
+		}
+		type employeeWithWorkflows struct {
+			EmployeeFile
+			WorkflowCount int      `json:"workflow_count"`
+			Workflows     []string `json:"workflows"`
+		}
+		result := make([]employeeWithWorkflows, len(employees))
+		for i, emp := range employees {
+			normalized := normalizeEmployeeFile(emp)
+			wfs := byEmployee[normalized.ID]
+			result[i] = employeeWithWorkflows{
+				EmployeeFile:  normalized,
+				WorkflowCount: len(wfs),
+				Workflows:     wfs,
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"employees": employees,
+			"employees": result,
 		})
 	}
 }
 
-func createEmployeeHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == "OPTIONS" {
-			return
-		}
-
-		var emp database.Employee
-		if err := json.NewDecoder(r.Body).Decode(&emp); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		if emp.Name == "" {
-			http.Error(w, "Name is required", http.StatusBadRequest)
-			return
-		}
-
-		created, err := db.CreateEmployee(r.Context(), &emp)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(created)
-	}
-}
-
-func getEmployeeHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == "OPTIONS" {
-			return
-		}
-
-		id := mux.Vars(r)["id"]
-		emp, err := db.GetEmployee(r.Context(), id)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if emp == nil {
-			http.Error(w, "Employee not found", http.StatusNotFound)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(emp)
-	}
-}
-
-func updateEmployeeHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == "OPTIONS" {
-			return
-		}
-
-		id := mux.Vars(r)["id"]
-		var emp database.Employee
-		if err := json.NewDecoder(r.Body).Decode(&emp); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		updated, err := db.UpdateEmployee(r.Context(), id, &emp)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(updated)
-	}
-}
-
-func deleteEmployeeHandler(db database.Database) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		setCORS(w)
-		if r.Method == "OPTIONS" {
-			return
-		}
-
-		id := mux.Vars(r)["id"]
-		if err := db.DeleteEmployee(r.Context(), id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-func assignWorkflowEmployeeHandler(db database.Database) http.HandlerFunc {
+func createEmployeeHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		setCORS(w)
 		if r.Method == "OPTIONS" {
@@ -142,54 +70,228 @@ func assignWorkflowEmployeeHandler(db database.Database) http.HandlerFunc {
 		}
 
 		var req struct {
-			PresetQueryID string  `json:"preset_query_id"`
+			Name        string `json:"name"`
+			Role        string `json:"role"`
+			Status      string `json:"status"`
+			AvatarColor string `json:"avatar_color"`
+			Description string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "Name is required", http.StatusBadRequest)
+			return
+		}
+
+		employees, err := readEmployeesFile()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		emp := normalizeEmployeeFile(EmployeeFile{
+			ID:          uuid.New().String(),
+			Name:        req.Name,
+			Role:        req.Role,
+			Status:      req.Status,
+			AvatarColor: req.AvatarColor,
+			Description: req.Description,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		})
+		employees = append(employees, emp)
+
+		if err := writeEmployeesFile(employees); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(normalizeEmployeeFile(emp))
+	}
+}
+
+func getEmployeeHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == "OPTIONS" {
+			return
+		}
+
+		id := mux.Vars(r)["id"]
+		employees, err := readEmployeesFile()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		for _, emp := range employees {
+			if emp.ID == id {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(normalizeEmployeeFile(emp))
+				return
+			}
+		}
+		http.Error(w, "Employee not found", http.StatusNotFound)
+	}
+}
+
+func updateEmployeeHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == "OPTIONS" {
+			return
+		}
+
+		id := mux.Vars(r)["id"]
+		var req struct {
+			Name        *string `json:"name"`
+			Role        *string `json:"role"`
+			Status      *string `json:"status"`
+			AvatarColor *string `json:"avatar_color"`
+			Description *string `json:"description"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		employees, err := readEmployeesFile()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		found := false
+		for i := range employees {
+			if employees[i].ID == id {
+				if req.Name != nil {
+					employees[i].Name = *req.Name
+				}
+				if req.Role != nil {
+					employees[i].Role = *req.Role
+					if req.Description == nil {
+						employees[i].Description = *req.Role
+					}
+				}
+				if req.Status != nil {
+					employees[i].Status = *req.Status
+				}
+				if req.AvatarColor != nil {
+					employees[i].AvatarColor = *req.AvatarColor
+				}
+				if req.Description != nil {
+					employees[i].Description = *req.Description
+					if req.Role == nil {
+						employees[i].Role = *req.Description
+					}
+				}
+				employees[i].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				found = true
+
+				if err := writeEmployeesFile(employees); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(normalizeEmployeeFile(employees[i]))
+				return
+			}
+		}
+		if !found {
+			http.Error(w, "Employee not found", http.StatusNotFound)
+		}
+	}
+}
+
+func deleteEmployeeHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == "OPTIONS" {
+			return
+		}
+
+		id := mux.Vars(r)["id"]
+
+		employees, err := readEmployeesFile()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		found := false
+		var updated []EmployeeFile
+		for _, emp := range employees {
+			if emp.ID == id {
+				found = true
+				continue
+			}
+			updated = append(updated, emp)
+		}
+		if !found {
+			http.Error(w, "Employee not found", http.StatusNotFound)
+			return
+		}
+		if err := writeEmployeesFile(updated); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		assignments, _ := readEmployeeWorkflowsFile()
+		changed := false
+		for wfPath, empID := range assignments {
+			if empID == id {
+				delete(assignments, wfPath)
+				changed = true
+			}
+		}
+		if changed {
+			_ = writeEmployeeWorkflowsFile(assignments)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func assignWorkflowEmployeeHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		setCORS(w)
+		if r.Method == "OPTIONS" {
+			return
+		}
+
+		var req struct {
+			WorkspacePath string  `json:"workspace_path"`
 			EmployeeID    *string `json:"employee_id"` // null to unassign
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.PresetQueryID == "" {
-			http.Error(w, "preset_query_id is required", http.StatusBadRequest)
+		if req.WorkspacePath == "" {
+			http.Error(w, "workspace_path is required", http.StatusBadRequest)
 			return
 		}
 
-		sqlDB := db.GetDB()
-		var (
-			err    error
-			result interface{ RowsAffected() (int64, error) }
-		)
+		assignments, err := readEmployeeWorkflowsFile()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
 		if req.EmployeeID != nil && *req.EmployeeID != "" {
-			result, err = sqlDB.ExecContext(r.Context(),
-				`UPDATE preset_queries SET employee_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-				*req.EmployeeID, req.PresetQueryID)
+			assignments[req.WorkspacePath] = *req.EmployeeID
 		} else {
-			result, err = sqlDB.ExecContext(r.Context(),
-				`UPDATE preset_queries SET employee_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-				req.PresetQueryID)
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if rowsAffected == 0 {
-			http.Error(w, "preset_query_id not found", http.StatusNotFound)
-			return
+			delete(assignments, req.WorkspacePath)
 		}
 
-		// Also update manifest if it exists (dual-write for migration)
-		preset, pErr := db.GetPresetQuery(r.Context(), req.PresetQueryID)
-		if pErr == nil && preset != nil && preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
-			manifest, exists, mErr := ReadWorkflowManifest(r.Context(), preset.SelectedFolder.String)
-			if mErr == nil && exists {
-				manifest.Ownership.EmployeeID = req.EmployeeID
-				_ = WriteWorkflowManifest(r.Context(), preset.SelectedFolder.String, manifest)
-			}
+		if err := writeEmployeeWorkflowsFile(assignments); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")

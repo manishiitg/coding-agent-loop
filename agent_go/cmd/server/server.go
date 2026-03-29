@@ -1094,7 +1094,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/active-executions", api.handleGetActiveExecutions).Methods("GET", "OPTIONS")
 
 	// Employee API routes (in employee_routes.go)
-	EmployeeRoutes(router, chatDB)
+	EmployeeRoutes(apiRouter)
 
 	// Consolidated workspace state endpoint (NEW - loads everything in one call)
 	apiRouter.HandleFunc("/workspace/state", api.handleLoadWorkspaceState).Methods("GET", "OPTIONS")
@@ -1867,7 +1867,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Build typed config from request
 		var configJSON json.RawMessage
-		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != "" || req.AgentMode == "workflow" || req.AgentMode == "workflow_phase" || req.AgentMode == "organization_chat"
+		hasConfig := len(req.Servers) > 0 || len(req.EnabledServers) > 0 || req.UseCodeExecutionMode || req.EnableContextSummarization != nil || req.Provider != "" || req.ModelID != "" || req.LLMConfig != nil || len(req.SelectedSkills) > 0 || len(req.SelectedSubAgents) > 0 || req.DelegationMode != "" || req.AgentMode == "workflow" || req.AgentMode == "workflow_phase"
 		if hasConfig {
 			config := &database.ChatSessionConfig{
 				SelectedServers:      req.Servers,
@@ -2192,7 +2192,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Handle workflow phase chat mode - convert to simple agent with phase-specific prompt + tools
 	// This runs BEFORE the workflow orchestrator branch to intercept and redirect
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
-	isOrganizationChat := req.AgentMode == "organization_chat"
 	workflowPhaseID := req.PhaseID
 	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
 	_ = workflowPhaseFolder   // used later in the function
@@ -3072,7 +3071,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// The deduplication logic in the frontend will handle any duplicates
 
 	// Store last query request for synthetic turns and set session busy
-	if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+	if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 		req.userID = currentUserID
 		api.lastQueryMu.Lock()
 		api.lastQueryRequests[sessionID] = req
@@ -3105,7 +3104,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Process the query in the background
 	go func() {
 		// Clear session busy when the agent turn completes
-		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 			defer func() {
 				api.setSyntheticTurn(sessionID, false)
 				api.setSessionBusy(sessionID, false)
@@ -3262,7 +3261,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Sub-agents get their mode from the explicit tool_mode parameter on the delegate call.
 		// However, tool search mode is auto-enabled when many MCP servers are selected (>3)
 		// so the orchestrator can efficiently discover tools for research.
-		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 			if useCodeExecutionMode && req.Provider != "claude-code" && req.Provider != "gemini-cli" && req.Provider != "codex-cli" {
 				log.Printf("[CODE_EXECUTION] Disabling code execution mode for orchestrator in plan delegation mode")
 				useCodeExecutionMode = false
@@ -3298,7 +3297,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// In plan delegation mode, orchestrator uses Main tier model (falls back to High if Main not set)
-		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 			tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
 			if tierConfig != nil {
 				if tierConfig.Main != nil && tierConfig.Main.Provider != "" && tierConfig.Main.ModelID != "" {
@@ -3357,14 +3356,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Collect all virtual tool names so they're never hidden behind search
 				preDiscovered := collectVirtualToolNames(
 					virtualtools.CreateWorkspaceAdvancedTools(),
-					virtualtools.CreateHumanTools(),
 				)
-				if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-					// In plan mode, only async tools are registered
-					preDiscovered = append(preDiscovered, "delegate", "query_agent", "terminate_agent", "list_agents")
-				} else if req.DelegationMode == "spawn" {
-					// Spawn mode remains lightweight, but planner tool stays available when needed.
-					preDiscovered = append(preDiscovered, "delegate", "create_delegation_plan")
+				if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
+					preDiscovered = append(preDiscovered, "delegate", "query_agent", "terminate_agent", "list_agents", "create_delegation_plan")
 				}
 				if req.EnableBrowserAccess != nil && *req.EnableBrowserAccess {
 					preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
@@ -3642,7 +3636,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Note: Frontend always sends enable_workspace_access for chat mode (true/false)
 		// Chat mode is detected by: "simple", "" (empty/default), or "chat" agent mode
 		// Workflow/orchestrator modes handle workspace tools differently, so exclude them
-		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat" || isOrganizationChat
+		isChatMode := req.AgentMode == "simple" || req.AgentMode == "" || req.AgentMode == "chat"
 
 		// Check if skill-creator is in selected skills (mode-agnostic)
 		hasSkillCreator := false
@@ -3698,11 +3692,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Auto-enable workspace access for plan delegation mode
 			// Plan mode requires workspace tools for shell commands with proper FolderGuard
-			if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-				enableWorkspaceAccess = true
-			}
-
-			if isOrganizationChat {
+			if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 				enableWorkspaceAccess = true
 			}
 
@@ -3782,6 +3772,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
+				// Create memories/ folder if it doesn't exist
+				if err := skills.CreateFolder("memories"); err != nil {
+					log.Printf("[WORKSPACE] Warning: Could not create memories/ folder: %v", err)
+				}
+
 				// Chat mode: advanced workspace tools (shell, image, web fetch, PDF, diff_patch)
 				// Basic tools (list/read/write/search) and git tools are not needed — shell is sufficient
 				// These tools will be RESTRICTED to Chats/ folder via wrapExecutorsWithChatModeFolderGuard
@@ -3815,7 +3810,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Apply folder guard to restrict writes based on mode
 				// Multi-agent (plan) mode: primary write folder is Chats/
 				// Chat mode: writes go to Chats/
-				if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+				if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 					additionalFolders := []string{}
 					if hasSkillCreator {
 						additionalFolders = append(additionalFolders, "skills/custom/")
@@ -3825,10 +3820,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					additionalFolders = append(additionalFolders, fileContextFolders...)
 					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, virtualtools.PlanFileFolderPath, additionalFolders...)
-					workspace.SetSessionWorkingDir(sessionID, virtualtools.PlanFileFolderPath+"/")
+					workspace.SetSessionWorkingDir(sessionID, "")
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{virtualtools.PlanFileFolderPath + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
-						append([]string{virtualtools.PlanFileFolderPath + "/"}, additionalFolders...),
+						append([]string{virtualtools.PlanFileFolderPath + "/", "skills/", "subagents/", "Downloads/", "Workflow/", "config/", "memories/"}, additionalFolders...),
+						append([]string{virtualtools.PlanFileFolderPath + "/", "Downloads/", "config/", "memories/"}, additionalFolders...),
 					)
 					log.Printf("[MULTI-AGENT FOLDER GUARD] Applied %s/ folder restriction (additional: %v)", virtualtools.PlanFileFolderPath, additionalFolders)
 				} else {
@@ -3843,8 +3838,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 					workspace.SetSessionWorkingDir(sessionID, "")
 					workspace.SetSessionFolderGuard(sessionID,
-						append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}, extraFolders...),
-						append([]string{"Chats/", "Downloads/", "config/"}, extraFolders...),
+						append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...),
+						append([]string{"Chats/", "Downloads/", "config/", "memories/"}, extraFolders...),
 					)
 					log.Printf("[CHAT MODE FOLDER GUARD] Applied Chats/ + %v folder restriction", extraFolders)
 				}
@@ -3866,8 +3861,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					if executor, exists := workspaceExecutors[toolName]; exists {
 						// Enhance tool description based on mode
 						var enhancedDescription string
-						if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-							enhancedDescription = enhanceToolDescriptionForPlanMode(toolName, tool.Function.Description)
+						if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
+							enhancedDescription = enhanceToolDescriptionForMultiAgentMode(toolName, tool.Function.Description)
 						} else {
 							enhancedDescription = enhanceToolDescriptionForChatMode(toolName, tool.Function.Description)
 						}
@@ -3918,7 +3913,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					browserCategory := virtualtools.GetWorkspaceBrowserToolCategory()
 
 					// Apply same folder guard as workspace tools (reuse fileContextFolders from above)
-					if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+					if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 						additionalFolders := []string{}
 						if hasSkillCreator {
 							additionalFolders = append(additionalFolders, "skills/custom/")
@@ -4037,9 +4032,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Register delegation tool if delegation mode is enabled
 			// Note: This is outside the workspace access block because delegation should work regardless of workspace access
-			delegationMode := req.DelegationMode // "spawn", "plan", or ""
+			delegationMode := req.DelegationMode // "spawn" or ""
 
-			if delegationMode == "spawn" || delegationMode == "plan" {
+			if delegationMode == "spawn" {
 				// Build delegation tier config early so we can pass it to tool creation (for dynamic enum)
 				tierConfig := resolveDelegationTierConfig(req.DelegationTierConfig)
 				delegationTools := virtualtools.CreateDelegationTools(tierConfig, true)
@@ -4172,20 +4167,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			allTools, allExecutors, toolCategories := createCustomTools(false, currentUserID, sessionID) // Chat mode: session-aware
 
 			// In plan delegation mode (multi-agent), also include human tools (human_feedback)
-			// createCustomTools(false) only returns workspace_advanced; human tools need to be added explicitly
-			if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
-				humanCategory := virtualtools.GetHumanToolCategory()
-				for _, tool := range virtualtools.CreateHumanTools() {
-					allTools = append(allTools, tool)
-					if tool.Function != nil {
-						toolCategories[tool.Function.Name] = humanCategory
-					}
-				}
-				for name, executor := range virtualtools.CreateHumanToolExecutors() {
-					allExecutors[name] = executor
-				}
-			}
-
 			// Register each custom tool with the agent
 			// This will trigger code generation and update the registry
 			// Note: Workspace tools are already registered above, skip them in allTools
@@ -4199,12 +4180,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						continue
 					}
 
-					// Human tools: skip in regular chat mode, allow in plan delegation mode
-					if toolCategories[toolName] == virtualtools.GetHumanToolCategory() {
-						if req.DelegationMode != "plan" {
-							continue
-						}
-					}
 
 					if executor, exists := allExecutors[toolName]; exists {
 						// Convert executor to the expected function signature
@@ -4334,8 +4309,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[MEMORY TOOLS] Registered %d memory tools with agent", registeredMemoryCount)
 
-			isMultiAgentChat := req.DelegationMode == "plan" || req.DelegationMode == "spawn"
-			if workspaceAccessEnabledForChat && !isOrganizationChat && isMultiAgentChat {
+			isMultiAgentChat := req.DelegationMode == "spawn"
+			if workspaceAccessEnabledForChat && isMultiAgentChat {
 				if err := api.registerMultiAgentSkillTools(underlyingAgent); err != nil {
 					log.Printf("[SKILL TOOLS] Failed to register multi-agent skill tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent skill tools: %v", err), true)
@@ -4343,22 +4318,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				log.Printf("[SKILL TOOLS] Registered multi-agent skill tools")
 			}
-			if !isOrganizationChat && isMultiAgentChat {
+			if isMultiAgentChat {
 				if err := api.registerMultiAgentMCPServerTools(underlyingAgent); err != nil {
 					log.Printf("[MCP SERVER TOOLS] Failed to register multi-agent MCP server tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent MCP server tools: %v", err), true)
 					return
 				}
 				log.Printf("[MCP SERVER TOOLS] Registered multi-agent MCP server tools")
-			}
-
-			if isOrganizationChat {
-				if err := api.registerOrganizationChatTools(underlyingAgent, currentUserID, sessionID); err != nil {
-					log.Printf("[ORG CHAT] Failed to register organization tools: %v", err)
-					sendError(fmt.Sprintf("Failed to register organization tools: %v", err), true)
-					return
-				}
-				log.Printf("[ORG CHAT] Registered organization tools")
 			}
 
 			// Read session state early for guidance injection
@@ -4378,14 +4344,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// Add base instructions — skip for plan mode (multi-agent) since the
 			// main agent is an orchestrator, not a file writer. The Chats/ folder
 			// rules don't apply; background sub-agents get their own instructions.
-			// Also skip for organization chat — it has its own dedicated role and tools.
 			// Resolve workspace absolute path for use in instructions.
 			// Uses the shared root (not per-user) since skills/, subagents/, etc. live there.
 			wsAbsPath := getWorkspaceDocsAbsPath()
 
-			if isOrganizationChat {
-				underlyingAgent.AppendSystemPrompt(getOrganizationChatInstructions())
-			} else if req.DelegationMode != "plan" {
+			if req.DelegationMode != "plan" {
 				underlyingAgent.AppendSystemPrompt(GetAgentInstructions(wsAbsPath))
 			}
 
@@ -4411,9 +4374,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Add delegation instructions — unified autonomous mode for all delegation modes
-			// Skip for organization chat — it has its own role and tools, delegation doesn't apply.
 			// Placed before skills/browser/GWS since delegation is the agent's core operating mode.
-			if !isOrganizationChat && (req.DelegationMode == "plan" || req.DelegationMode == "spawn") {
+			if req.DelegationMode == "spawn" {
 				if req.PlanPhase == "execution" {
 					// Execution-only mode: skip planning, delegate directly
 					underlyingAgent.AppendSystemPrompt(virtualtools.GetExecutionOnlyInstructions())
@@ -4471,6 +4433,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			log.Printf("[SYSTEM_PROMPT] Final assembled prompt length=%d chars, hasGuidance=%v", len(underlyingAgent.GetSystemPrompt()), req.LLMGuidance != "" || llmGuidance != "")
 
+			// Add CLI-specific tool mapping for providers that use the api-bridge.
+			// These providers can only call mcp__api-bridge__* tools directly;
+			// delegation/memory tools must be called via curl through execute_shell_command.
+			if req.Provider == "claude-code" || req.Provider == "gemini-cli" || req.Provider == "codex-cli" {
+				underlyingAgent.AppendSystemPrompt(virtualtools.GetClaudeCodeDelegationOverride())
+				log.Printf("[CLI PROVIDER] Added custom tool HTTP API mapping for %s", req.Provider)
+			}
 
 			// [BROWSER_UPLOAD] Inject file upload instructions into the agent's system prompt
 			// and register the path transformer on the agent itself (primary interception point).
@@ -4557,7 +4526,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// Restrict shell commands to the workflow folder via Isolator
 					workspace.SetSessionFolderGuard(sessionID,
 						[]string{phaseWorkspacePath, "Chats", "skills", "subagents", "Downloads"},
-						[]string{phaseWorkspacePath},
+						[]string{phaseWorkspacePath, "Downloads"},
 					)
 				}
 
@@ -5545,7 +5514,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// The stored agent retains all tools, prompts, observers, and conversation history
 		// NOTE: isWorkflowPhase is used instead of req.AgentMode because req.AgentMode is
 		// overwritten to "simple" early in handleQuery (line ~2219) for workflow_phase sessions.
-		if req.DelegationMode == "plan" || isWorkflowPhase {
+		if req.DelegationMode == "spawn" || isWorkflowPhase {
 			api.sessionAgentsMux.Lock()
 			api.sessionAgents[sessionID] = llmAgent
 			api.sessionAgentsMux.Unlock()
@@ -5558,7 +5527,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		api.agentCancelMux.Unlock()
 
 		// --- BEGIN: Persist plan state for session resume ---
-		if req.DelegationMode == "plan" || req.AgentMode == "workflow_phase" {
+		if req.DelegationMode == "spawn" || req.AgentMode == "workflow_phase" {
 			planState := api.getOrCreatePlanSessionState(sessionID)
 			if planState.PlanID != "" {
 				// Read existing config, merge plan state, and save
@@ -6123,6 +6092,16 @@ func getSessionEventsHandler(db database.Database) http.HandlerFunc {
 			convertedEvents = append(convertedEvents, *convertedEvent)
 		}
 
+		// Match the polling API's DB-fallback behavior:
+		// persisted DB events often have EventIndex=0, so assign stable sequential
+		// indices on restore. Without this, sessions restored from chat-history have a
+		// different ordering shape than sessions restored through the live polling path.
+		for i := range convertedEvents {
+			if convertedEvents[i].Data != nil && convertedEvents[i].Data.EventIndex == 0 {
+				convertedEvents[i].Data.EventIndex = i
+			}
+		}
+
 		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, parse_errors=%d", len(dbEvents), len(convertedEvents), parseErrors)
 
 		// Get total count using COUNT(*) - O(1) with index, avoids fetching all events
@@ -6293,7 +6272,7 @@ func getAllSessionCostsHandler(db database.Database) http.HandlerFunc {
 			// Determine display mode
 			displayMode := session.AgentMode
 			if session.AgentMode == "simple" {
-				if cfg, err := database.ChatSessionConfigFromJSON(session.Config); err == nil && cfg != nil && cfg.DelegationMode == "plan" {
+				if cfg, err := database.ChatSessionConfigFromJSON(session.Config); err == nil && cfg != nil && (cfg.DelegationMode == "spawn" || cfg.DelegationMode == "plan") {
 					displayMode = "multi-agent"
 				}
 			}
@@ -6662,7 +6641,7 @@ func getAllDelegationLogsHandler(db database.Database) http.HandlerFunc {
 		var multiAgentSessions []sessionInfo
 		for _, s := range sessions {
 			cfg, err := database.ChatSessionConfigFromJSON(s.Config)
-			if err == nil && cfg != nil && cfg.DelegationMode == "plan" {
+			if err == nil && cfg != nil && (cfg.DelegationMode == "spawn" || cfg.DelegationMode == "plan") {
 				multiAgentSessions = append(multiAgentSessions, sessionInfo{summary: s})
 			}
 		}
@@ -7562,7 +7541,6 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 			}
 			preDiscovered := collectVirtualToolNames(
 				virtualtools.CreateWorkspaceAdvancedTools(),
-				virtualtools.CreateHumanTools(),
 			)
 			if parentReq.EnableBrowserAccess != nil && *parentReq.EnableBrowserAccess {
 				preDiscovered = append(preDiscovered, collectVirtualToolNames(virtualtools.CreateWorkspaceBrowserTools())...)
@@ -7901,7 +7879,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				workspace.SetSessionWorkingDir(sessionID, planFolder+"/")
 				workspace.SetSessionFolderGuard(sessionID,
 					append([]string{planFolder + "/", "skills/", "subagents/", "Downloads/"}, additionalFolders...),
-					append([]string{planFolder + "/"}, additionalFolders...),
+					append([]string{planFolder + "/", "Downloads/"}, additionalFolders...),
 				)
 				log.Printf("[DELEGATION] Applied plan folder guard: writes restricted to %s/", planFolder)
 			} else {
@@ -7916,8 +7894,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				workspaceExecutors = wrapExecutorsWithChatModeFolderGuard(workspaceExecutors, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, "")
 				workspace.SetSessionFolderGuard(sessionID,
-					append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/"}, extraFolders...),
-					append([]string{"Chats/", "Downloads/", "config/"}, extraFolders...),
+					append([]string{"Chats/", "Downloads/", "skills/", "subagents/", "Workflow/", "config/", "memories/"}, extraFolders...),
+					append([]string{"Chats/", "Downloads/", "config/", "memories/"}, extraFolders...),
 				)
 			}
 
@@ -10821,503 +10799,6 @@ func formatToolCallSummaries(api *StreamingAPI) todo_creation_human.ToolCallQuer
 		}
 		return sb.String()
 	}
-}
-
-func getOrganizationChatInstructions() string {
-	return `# Organization Assistant
-
-You manage organization operations across workflows.
-
-Primary responsibilities:
-1. Manage employees.
-2. Assign multiple workflows to employees.
-3. Manage workflow schedules.
-4. Inspect latest workflow outputs and recent scheduled runs.
-
-Operating rules:
-- Stay in organization scope unless the user explicitly asks to switch to workflow design.
-- Prefer the dedicated organization tools over ad-hoc shell/database inspection.
-- When you change an employee assignment or schedule, state exactly what changed.
-- Treat "output" as the latest workflow run and its artifacts unless the user defines a stricter business-output contract.
-- If a workflow has no runs yet, say that explicitly instead of implying an output exists.`
-}
-
-func marshalOrganizationResult(v interface{}) (string, error) {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func (api *StreamingAPI) registerOrganizationChatTools(underlyingAgent *mcpagent.Agent, currentUserID string, sessionID string) error {
-	if underlyingAgent == nil {
-		return fmt.Errorf("underlying agent is nil")
-	}
-
-	wsClient := workspace.NewClient(
-		getWorkspaceAPIURL(),
-		workspace.WithUserID(currentUserID),
-	)
-
-	listWorkflowSummaries := func(ctx context.Context) ([]map[string]interface{}, error) {
-		var (
-			presets []database.PresetQuery
-			err     error
-		)
-		if currentUserID != "" {
-			presets, _, err = api.chatDB.ListPresetQueriesWithUser(ctx, 500, 0, currentUserID)
-		} else {
-			presets, _, err = api.chatDB.ListPresetQueries(ctx, 500, 0)
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		employees, err := api.chatDB.ListEmployees(ctx)
-		if err != nil {
-			return nil, err
-		}
-		employeeNames := make(map[string]string, len(employees))
-		for _, emp := range employees {
-			employeeNames[emp.ID] = emp.Name
-		}
-
-		entityType := database.ScheduleEntityWorkflow
-		jobs, _, err := api.chatDB.ListScheduledJobs(ctx, 500, 0, &entityType, nil)
-		if err != nil {
-			return nil, err
-		}
-		scheduleCountByPreset := make(map[string]int, len(jobs))
-		for _, job := range jobs {
-			scheduleCountByPreset[job.PresetQueryID]++
-		}
-
-		workflows := make([]map[string]interface{}, 0, len(presets))
-		for _, preset := range presets {
-			if preset.AgentMode != database.AgentModeWorkflow {
-				continue
-			}
-
-			summary := map[string]interface{}{
-				"preset_query_id":    preset.ID,
-				"label":              preset.Label,
-				"employee_id":        nil,
-				"employee_name":      nil,
-				"workspace_path":     "",
-				"schedule_count":     scheduleCountByPreset[preset.ID],
-				"latest_run_folder":  nil,
-				"latest_output_path": nil,
-				"latest_logs_path":   nil,
-			}
-
-			if preset.EmployeeID.Valid && preset.EmployeeID.String != "" {
-				summary["employee_id"] = preset.EmployeeID.String
-				if name := employeeNames[preset.EmployeeID.String]; name != "" {
-					summary["employee_name"] = name
-				}
-			}
-
-			if preset.SelectedFolder.Valid && preset.SelectedFolder.String != "" {
-				workspacePath := preset.SelectedFolder.String
-				summary["workspace_path"] = workspacePath
-				latestRunFolder := resolveLatestRunFolder(ctx, workspacePath, wsClient)
-				if latestRunFolder != "" {
-					summary["latest_run_folder"] = latestRunFolder
-					summary["latest_output_path"] = filepath.ToSlash(filepath.Join(workspacePath, "runs", latestRunFolder, "execution"))
-					summary["latest_logs_path"] = filepath.ToSlash(filepath.Join(workspacePath, "runs", latestRunFolder, "logs"))
-				}
-			}
-
-			workflows = append(workflows, summary)
-		}
-
-		sort.Slice(workflows, func(i, j int) bool {
-			li, _ := workflows[i]["label"].(string)
-			lj, _ := workflows[j]["label"].(string)
-			return strings.ToLower(li) < strings.ToLower(lj)
-		})
-
-		return workflows, nil
-	}
-
-	registerTool := func(name, description string, params map[string]interface{}, exec func(context.Context, map[string]interface{}) (string, error)) error {
-		return underlyingAgent.RegisterCustomTool(name, description, params, exec, "organization_tools")
-	}
-
-	if err := registerTool("list_employees", "List all employees available for workflow assignment.", map[string]interface{}{}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		employees, err := api.chatDB.ListEmployees(ctx)
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"employees": employees})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("create_employee", "Create a new employee record.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"name":         map[string]interface{}{"type": "string", "description": "Employee name."},
-			"avatar_color": map[string]interface{}{"type": "string", "description": "Optional hex color.", "default": "#6366f1"},
-			"description":  map[string]interface{}{"type": "string", "description": "Optional employee description or role."},
-		},
-		"required": []string{"name"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		name, _ := args["name"].(string)
-		name = strings.TrimSpace(name)
-		if name == "" {
-			return "", fmt.Errorf("name is required")
-		}
-		avatarColor, _ := args["avatar_color"].(string)
-		description, _ := args["description"].(string)
-		created, err := api.chatDB.CreateEmployee(ctx, &database.Employee{
-			Name:        name,
-			AvatarColor: strings.TrimSpace(avatarColor),
-			Description: strings.TrimSpace(description),
-			UserID:      currentUserID,
-		})
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"employee": created, "success": true})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("update_employee", "Update an existing employee record.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"employee_id":  map[string]interface{}{"type": "string", "description": "Employee ID."},
-			"name":         map[string]interface{}{"type": "string", "description": "Updated employee name."},
-			"avatar_color": map[string]interface{}{"type": "string", "description": "Updated hex color."},
-			"description":  map[string]interface{}{"type": "string", "description": "Updated description or role."},
-		},
-		"required": []string{"employee_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		employeeID, _ := args["employee_id"].(string)
-		employeeID = strings.TrimSpace(employeeID)
-		if employeeID == "" {
-			return "", fmt.Errorf("employee_id is required")
-		}
-		current, err := api.chatDB.GetEmployee(ctx, employeeID)
-		if err != nil {
-			return "", err
-		}
-		if current == nil {
-			return "", fmt.Errorf("employee %q not found", employeeID)
-		}
-		if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
-			current.Name = strings.TrimSpace(name)
-		}
-		if avatarColor, ok := args["avatar_color"].(string); ok && strings.TrimSpace(avatarColor) != "" {
-			current.AvatarColor = strings.TrimSpace(avatarColor)
-		}
-		if description, ok := args["description"].(string); ok {
-			current.Description = strings.TrimSpace(description)
-		}
-		updated, err := api.chatDB.UpdateEmployee(ctx, employeeID, current)
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"employee": updated, "success": true})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("delete_employee", "Delete an employee. Assigned workflows become unassigned.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"employee_id": map[string]interface{}{"type": "string", "description": "Employee ID."},
-		},
-		"required": []string{"employee_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		employeeID, _ := args["employee_id"].(string)
-		employeeID = strings.TrimSpace(employeeID)
-		if employeeID == "" {
-			return "", fmt.Errorf("employee_id is required")
-		}
-		if err := api.chatDB.DeleteEmployee(ctx, employeeID); err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"success": true, "employee_id": employeeID})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("list_workflows", "List workflow presets with current employee assignment, schedules, and latest output locations.", map[string]interface{}{}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		workflows, err := listWorkflowSummaries(ctx)
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"workflows": workflows})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("assign_workflow_employee", "Assign or unassign a workflow preset to an employee.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"preset_query_id": map[string]interface{}{"type": "string", "description": "Workflow preset ID."},
-			"employee_id":     map[string]interface{}{"type": "string", "description": "Employee ID. Leave empty to unassign."},
-		},
-		"required": []string{"preset_query_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		presetQueryID, _ := args["preset_query_id"].(string)
-		presetQueryID = strings.TrimSpace(presetQueryID)
-		if presetQueryID == "" {
-			return "", fmt.Errorf("preset_query_id is required")
-		}
-		employeeID, _ := args["employee_id"].(string)
-		employeeID = strings.TrimSpace(employeeID)
-
-		sqlDB := api.chatDB.GetDB()
-		if sqlDB == nil {
-			return "", fmt.Errorf("database connection unavailable")
-		}
-
-		var (
-			result interface{ RowsAffected() (int64, error) }
-			err    error
-		)
-		if employeeID != "" {
-			result, err = sqlDB.ExecContext(ctx,
-				`UPDATE preset_queries SET employee_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-				employeeID, presetQueryID)
-		} else {
-			result, err = sqlDB.ExecContext(ctx,
-				`UPDATE preset_queries SET employee_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-				presetQueryID)
-		}
-		if err != nil {
-			return "", err
-		}
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return "", err
-		}
-		if rowsAffected == 0 {
-			return "", fmt.Errorf("preset_query_id %q not found", presetQueryID)
-		}
-
-		return marshalOrganizationResult(map[string]interface{}{
-			"success":         true,
-			"preset_query_id": presetQueryID,
-			"employee_id":     employeeID,
-		})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("list_workflow_schedules", "List schedules for workflow presets. Optionally filter by preset_query_id.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"preset_query_id": map[string]interface{}{"type": "string", "description": "Optional workflow preset ID filter."},
-		},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		presetQueryID, _ := args["preset_query_id"].(string)
-		presetQueryID = strings.TrimSpace(presetQueryID)
-		entityType := database.ScheduleEntityWorkflow
-		jobs, _, err := api.chatDB.ListScheduledJobs(ctx, 500, 0, &entityType, nil)
-		if err != nil {
-			return "", err
-		}
-		filtered := make([]database.ScheduledJob, 0, len(jobs))
-		for _, job := range jobs {
-			if presetQueryID != "" && job.PresetQueryID != presetQueryID {
-				continue
-			}
-			filtered = append(filtered, job)
-		}
-		return marshalOrganizationResult(map[string]interface{}{"jobs": filtered})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("create_workflow_schedule", "Create a schedule for a workflow preset.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"preset_query_id": map[string]interface{}{"type": "string", "description": "Workflow preset ID."},
-			"name":            map[string]interface{}{"type": "string", "description": "Schedule name."},
-			"cron_expression": map[string]interface{}{"type": "string", "description": "Cron expression."},
-			"timezone":        map[string]interface{}{"type": "string", "description": "Timezone name.", "default": "Asia/Kolkata"},
-			"description":     map[string]interface{}{"type": "string", "description": "Optional description."},
-			"enabled":         map[string]interface{}{"type": "boolean", "description": "Whether schedule is enabled.", "default": true},
-			"group_ids":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Optional workflow group IDs."},
-		},
-		"required": []string{"preset_query_id", "name", "cron_expression"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		presetQueryID, _ := args["preset_query_id"].(string)
-		name, _ := args["name"].(string)
-		cronExpression, _ := args["cron_expression"].(string)
-		timezone, _ := args["timezone"].(string)
-		description, _ := args["description"].(string)
-		if strings.TrimSpace(presetQueryID) == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(cronExpression) == "" {
-			return "", fmt.Errorf("preset_query_id, name, and cron_expression are required")
-		}
-		if strings.TrimSpace(timezone) == "" {
-			timezone = "Asia/Kolkata"
-		}
-		var groupIDs []string
-		if rawGroupIDs, ok := args["group_ids"].([]interface{}); ok {
-			for _, item := range rawGroupIDs {
-				if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
-					groupIDs = append(groupIDs, strings.TrimSpace(value))
-				}
-			}
-		}
-		enabled := true
-		if value, ok := args["enabled"].(bool); ok {
-			enabled = value
-		}
-		job, err := api.chatDB.CreateScheduledJob(ctx, &database.CreateScheduledJobRequest{
-			Name:           strings.TrimSpace(name),
-			Description:    strings.TrimSpace(description),
-			EntityType:     database.ScheduleEntityWorkflow,
-			PresetQueryID:  strings.TrimSpace(presetQueryID),
-			GroupIDs:       groupIDs,
-			CronExpression: strings.TrimSpace(cronExpression),
-			Timezone:       strings.TrimSpace(timezone),
-			Enabled:        &enabled,
-		})
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"job": job, "success": true})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("update_workflow_schedule", "Update an existing workflow schedule.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"schedule_id":     map[string]interface{}{"type": "string", "description": "Schedule ID."},
-			"name":            map[string]interface{}{"type": "string", "description": "Updated name."},
-			"description":     map[string]interface{}{"type": "string", "description": "Updated description."},
-			"cron_expression": map[string]interface{}{"type": "string", "description": "Updated cron expression."},
-			"timezone":        map[string]interface{}{"type": "string", "description": "Updated timezone."},
-			"enabled":         map[string]interface{}{"type": "boolean", "description": "Enable or disable the schedule."},
-			"group_ids":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Updated workflow group IDs."},
-		},
-		"required": []string{"schedule_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		scheduleID, _ := args["schedule_id"].(string)
-		scheduleID = strings.TrimSpace(scheduleID)
-		if scheduleID == "" {
-			return "", fmt.Errorf("schedule_id is required")
-		}
-		req := &database.UpdateScheduledJobRequest{}
-		if name, ok := args["name"].(string); ok && strings.TrimSpace(name) != "" {
-			req.Name = strings.TrimSpace(name)
-		}
-		if description, ok := args["description"].(string); ok {
-			req.Description = strings.TrimSpace(description)
-		}
-		if cronExpression, ok := args["cron_expression"].(string); ok && strings.TrimSpace(cronExpression) != "" {
-			req.CronExpression = strings.TrimSpace(cronExpression)
-		}
-		if timezone, ok := args["timezone"].(string); ok && strings.TrimSpace(timezone) != "" {
-			req.Timezone = strings.TrimSpace(timezone)
-		}
-		if enabled, ok := args["enabled"].(bool); ok {
-			req.Enabled = &enabled
-		}
-		if rawGroupIDs, ok := args["group_ids"].([]interface{}); ok {
-			req.SetGroupIDs = true
-			for _, item := range rawGroupIDs {
-				if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
-					req.GroupIDs = append(req.GroupIDs, strings.TrimSpace(value))
-				}
-			}
-		}
-		job, err := api.chatDB.UpdateScheduledJob(ctx, scheduleID, req)
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"job": job, "success": true})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("delete_workflow_schedule", "Delete a workflow schedule.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"schedule_id": map[string]interface{}{"type": "string", "description": "Schedule ID."},
-		},
-		"required": []string{"schedule_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		scheduleID, _ := args["schedule_id"].(string)
-		scheduleID = strings.TrimSpace(scheduleID)
-		if scheduleID == "" {
-			return "", fmt.Errorf("schedule_id is required")
-		}
-		if err := api.chatDB.DeleteScheduledJob(ctx, scheduleID); err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"success": true, "schedule_id": scheduleID})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("list_schedule_runs", "List recent runs for a schedule.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"schedule_id": map[string]interface{}{"type": "string", "description": "Schedule ID."},
-			"limit":       map[string]interface{}{"type": "number", "description": "Maximum runs to return.", "default": 20},
-		},
-		"required": []string{"schedule_id"},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		scheduleID, _ := args["schedule_id"].(string)
-		scheduleID = strings.TrimSpace(scheduleID)
-		if scheduleID == "" {
-			return "", fmt.Errorf("schedule_id is required")
-		}
-		limit := 20
-		if rawLimit, ok := args["limit"].(float64); ok && rawLimit > 0 {
-			limit = int(rawLimit)
-		}
-		runs, _, err := api.chatDB.ListScheduledJobRuns(ctx, scheduleID, limit, 0)
-		if err != nil {
-			return "", err
-		}
-		return marshalOrganizationResult(map[string]interface{}{"runs": runs})
-	}); err != nil {
-		return err
-	}
-
-	if err := registerTool("inspect_workflow_outputs", "Show the latest run/output paths for workflow presets. Optionally filter by preset_query_id.", map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"preset_query_id": map[string]interface{}{"type": "string", "description": "Optional workflow preset ID filter."},
-		},
-	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		presetQueryID, _ := args["preset_query_id"].(string)
-		presetQueryID = strings.TrimSpace(presetQueryID)
-		workflows, err := listWorkflowSummaries(ctx)
-		if err != nil {
-			return "", err
-		}
-		if presetQueryID != "" {
-			filtered := make([]map[string]interface{}, 0, 1)
-			for _, workflow := range workflows {
-				if workflowID, _ := workflow["preset_query_id"].(string); workflowID == presetQueryID {
-					filtered = append(filtered, workflow)
-				}
-			}
-			workflows = filtered
-		}
-		return marshalOrganizationResult(map[string]interface{}{"outputs": workflows})
-	}); err != nil {
-		return err
-	}
-
-	workspace.SetSessionWorkingDir(sessionID, "Workflow/")
-	workspace.SetSessionFolderGuard(sessionID,
-		[]string{"Workflow/", "Chats/", "Downloads/", "skills/", "subagents/"},
-		[]string{"Chats/", "Downloads/"},
-	)
-
-	return nil
 }
 
 // workshopExtractLLM extracts an AgentLLMConfig from preset config, with legacy fallback.

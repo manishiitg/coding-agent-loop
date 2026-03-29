@@ -12,6 +12,7 @@ import { useMCPStore } from './useMCPStore'
 import { useLLMStore } from './useLLMStore'
 import { MAX_EVENTS_TO_PROCESS, CLEANUP_THRESHOLD } from '../constants/events'
 import { logger } from '../utils/logger'
+import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -216,7 +217,7 @@ export interface ChatTab {
   metadata?: {
     phaseId?: string  // For workflow mode: phase ID
     phaseName?: string  // For workflow mode: phase name
-    mode?: 'workflow' | 'multi-agent' | 'organization'  // Which mode this tab belongs to
+    mode?: 'workflow' | 'multi-agent'  // Which mode this tab belongs to
     presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
     isOrganizationAssistant?: boolean // True when tab is reserved for Organization panel
     isRestored?: boolean  // True when restored from history (sidebar, resume dialog, page refresh)
@@ -227,7 +228,7 @@ export interface ChatTab {
 
 // Helper function to get default tab config from current global state
 // Uses mode-specific configs for LLM and server selections
-const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' | 'organization' = 'multi-agent'): ChatTabConfig => {
+const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): ChatTabConfig => {
   const mcpStore = useMCPStore?.getState?.()
   const llmStore = useLLMStore?.getState?.()
   const appStore = useAppStore?.getState?.()
@@ -291,11 +292,7 @@ const cleanupOldEvents = (events: PollingEvent[]): PollingEvent[] => {
   if (important.length > MAX_EVENTS) {
     // Keep only the newest MAX_EVENTS important events
     trimmedImportant = important
-      .sort((a, b) => {
-        const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-        const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-        return bTime - aTime // Sort newest first
-      })
+      .sort(compareEventsReverseChronologically)
       .slice(0, MAX_EVENTS)
   }
   
@@ -306,11 +303,7 @@ const cleanupOldEvents = (events: PollingEvent[]): PollingEvent[] => {
   const keepRegular = budget > 0 ? regular.slice(-budget) : []
   
   // Combine and sort by timestamp
-  return [...trimmedImportant, ...keepRegular].sort((a, b) => {
-    const aTime = a.timestamp ? new Date(a.timestamp).getTime() : 0
-    const bTime = b.timestamp ? new Date(b.timestamp).getTime() : 0
-    return aTime - bTime
-  })
+  return [...trimmedImportant, ...keepRegular].sort(compareEventsChronologically)
 }
 
 interface ChatState extends StoreActions {
@@ -451,7 +444,7 @@ interface ChatState extends StoreActions {
   closeTab: (tabId: string, stopSession?: boolean, keepEvents?: boolean) => Promise<void>
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
-  getTabsByMode: (mode: 'multi-agent' | 'workflow' | 'organization') => ChatTab[]
+  getTabsByMode: (mode: 'multi-agent' | 'workflow') => ChatTab[]
   getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => ChatTab[]  // Find workflow tabs by phaseId (optionally scoped to preset)
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
@@ -708,7 +701,6 @@ export const useChatStore = create<ChatState>()(
           }
 
           const newEvents = [...currentEvents, ...uniqueNewEvents]
-
           // Trigger cleanup if threshold exceeded
           let finalEvents = newEvents
           let didCleanup = false
@@ -719,7 +711,6 @@ export const useChatStore = create<ChatState>()(
             // Rebuild ID index after cleanup discards events
             tabEventIdSets.set(sessionId, new Set(finalEvents.map(e => e.id).filter(Boolean) as string[]))
           }
-
           // Update lastViewedEventCounts for the ACTIVE tab if it owns this session.
           // Events arriving on the active tab are visible to the user in real-time,
           // so they shouldn't show as "new" in the badge.
@@ -1546,7 +1537,7 @@ export const useChatStore = create<ChatState>()(
         return state.chatTabs[state.activeTabId]
       },
       
-      getTabsByMode: (mode: 'multi-agent' | 'workflow' | 'organization') => {
+      getTabsByMode: (mode: 'multi-agent' | 'workflow') => {
         const state = get()
         return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
       },
@@ -2158,7 +2149,7 @@ export const useChatStore = create<ChatState>()(
           chatTabs: Object.fromEntries(
             Object.entries(state.chatTabs)
               .filter(([, tab]) => {
-                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent' || tab.metadata?.mode === 'organization'
+                const isRelevantMode = tab.metadata?.mode === 'workflow' || tab.metadata?.mode === 'multi-agent'
                 if (!isRelevantMode) return false
                 // Drop tabs older than 24 hours - they won't have active sessions
                 const MAX_TAB_AGE = 24 * 60 * 60 * 1000
@@ -2196,7 +2187,7 @@ export const useChatStore = create<ChatState>()(
           // Persist activeTabId for workflow and multi-agent tabs
           activeTabId: (() => {
             const activeTab = state.activeTabId ? state.chatTabs[state.activeTabId] : null
-            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent' || activeTab?.metadata?.mode === 'organization') ? state.activeTabId : null
+            return (activeTab?.metadata?.mode === 'workflow' || activeTab?.metadata?.mode === 'multi-agent') ? state.activeTabId : null
           })()
           // Exclude all other state (isStreaming, pollingInterval, tabEvents, etc.)
         }),

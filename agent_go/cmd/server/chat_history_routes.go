@@ -322,6 +322,14 @@ func getSessionEvents(db database.Database) gin.HandlerFunc {
 			})
 		}
 
+		// Match polling API DB-fallback behavior so restored history from the DB path
+		// has the same ordering metadata as in-memory restores.
+		for i := range convertedEvents {
+			if convertedEvents[i].Data != nil && convertedEvents[i].Data.EventIndex == 0 {
+				convertedEvents[i].Data.EventIndex = i
+			}
+		}
+
 		log.Printf("[CHAT_HISTORY] Converted %d events: converted=%d, filtered_out=%d, parse_errors=%d", len(dbEvents), len(convertedEvents), filteredOut, parseErrors)
 
 		// Get total count using COUNT(*) - O(1) with index

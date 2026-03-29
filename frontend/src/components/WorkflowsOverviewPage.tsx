@@ -1,15 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { Loader2, ChevronLeft, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap, MessageSquare } from 'lucide-react'
+import { Loader2, ChevronRight, ChevronDown, FileText, BarChart3, DollarSign, Clock, AlertCircle, X, CheckCircle2, PlayCircle, Circle, Timer, Zap } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { usePresetApplication } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useAppStore } from '../stores/useAppStore'
-import { useChatStore } from '../stores/useChatStore'
 import ExecutionLogsPopup from './workflow/ExecutionLogsPopup'
 import EvaluationPopup from './workflow/EvaluationPopup'
 import CostsPopup from './workflow/CostsPopup'
 import { EmployeeDashboard } from './EmployeeDashboard'
-import ChatArea from './ChatArea'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { RunFolderInfo, EvaluationReportsResponse, EvaluationReportEntry, StepProgress, RunMetadataModels } from '../services/api-types'
 
@@ -686,145 +684,6 @@ const PopupGroup: React.FC<{ p: ReturnType<typeof usePopupState> }> = ({ p }) =>
   </>
 )
 
-const ORG_CHAT_STARTER_PROMPT = `Help me manage employees and workflow ownership.
-
-Use available tools/APIs to:
-1. List employees
-2. Create, edit, and delete employees
-3. Assign and unassign workflows
-4. Create, edit, enable/disable, and delete workflow schedules
-5. Show latest workflow outputs and where to inspect them
-6. Explain what changed and suggest next cleanup actions.`
-
-const ORG_TOOL_GUIDE = [
-  { title: 'List Employees', desc: 'Show current employees and assignment coverage.' },
-  { title: 'Create Employee', desc: 'Add employee profile with name, color, and description.' },
-  { title: 'Update Employee', desc: 'Rename or edit role/description for existing employee.' },
-  { title: 'Delete Employee', desc: 'Remove employee; workflows become unassigned.' },
-  { title: 'Assign Workflow', desc: 'Attach workflow preset to a specific employee.' },
-  { title: 'Unassign Workflow', desc: 'Clear employee assignment from a workflow preset.' },
-  { title: 'Manage Schedules', desc: 'Create/update cron schedules for workflow presets.' },
-  { title: 'Inspect Outputs', desc: 'Surface the latest report, evaluation, cost, and run health.' },
-]
-
-const OrganizationChatPanel: React.FC<{
-  minimized: boolean
-  onToggleMinimized: () => void
-}> = ({ minimized, onToggleMinimized }) => {
-  const [orgTabId, setOrgTabId] = useState<string | null>(null)
-  const hasConversationStarted = useChatStore(state => {
-    if (!orgTabId) return false
-    const tab = state.chatTabs[orgTabId]
-    if (!tab) return false
-    if (tab.isStreaming) return true
-    const sessionId = tab.sessionId
-    return !!sessionId && (state.tabEvents[sessionId]?.length ?? 0) > 0
-  })
-
-  useEffect(() => {
-    let cancelled = false
-
-    const ensureOrgTab = async () => {
-      const chatStore = useChatStore.getState()
-      // Only match tabs that were explicitly created as org assistant (via metadata flag).
-      // Never match by tab name — that can co-opt normal chat tabs.
-      const orgTabs = Object.values(chatStore.chatTabs).filter(
-        tab => tab.metadata?.isOrganizationAssistant === true
-      )
-
-      const primaryOrgTab = orgTabs.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0]
-      const tabId = primaryOrgTab
-        ? primaryOrgTab.tabId
-        : await chatStore.createChatTab('Organization Assistant', {
-          mode: 'organization',
-          isOrganizationAssistant: true
-        })
-
-      if (!primaryOrgTab) {
-        chatStore.setTabConfig(tabId, { inputText: ORG_CHAT_STARTER_PROMPT })
-      }
-
-      // Keep exactly one Organization tab.
-      const extraOrgTabs = orgTabs.filter(tab => tab.tabId !== tabId)
-      await Promise.all(extraOrgTabs.map(tab => chatStore.closeTab(tab.tabId, false, true)))
-
-      chatStore.switchTab(tabId)
-      if (!cancelled) setOrgTabId(tabId)
-    }
-
-    ensureOrgTab().catch((err) => {
-      console.error('[OrganizationChatPanel] Failed to initialize tab:', err)
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const handleOrgNewChat = useCallback(() => {
-    // Single-thread organization assistant by design.
-  }, [])
-
-  if (minimized) {
-    return (
-      <div className="w-full xl:w-16 xl:min-w-16 xl:max-w-16 h-14 xl:h-full shrink-0 border-b xl:border-b-0 xl:border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex items-center justify-between xl:justify-start xl:flex-col xl:py-4 px-4 xl:px-2">
-        <div className="flex items-center gap-2 xl:flex-col xl:gap-3 text-gray-600 dark:text-gray-300">
-          <MessageSquare className="w-4 h-4" />
-          <span className="text-xs font-medium xl:hidden">Organization Chat</span>
-        </div>
-        <button
-          onClick={onToggleMinimized}
-          className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          title="Expand organization chat"
-        >
-          <ChevronRight className="w-4 h-4 xl:rotate-180" />
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="w-full xl:w-[46%] xl:min-w-[420px] h-full flex flex-col min-h-0 border-b xl:border-b-0 xl:border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Organization Assistant</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Single assistant thread for employee and workflow management.</p>
-        </div>
-        <button
-          onClick={onToggleMinimized}
-          className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          title="Minimize organization chat"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-      </div>
-
-      {!hasConversationStarted && (
-        <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {ORG_TOOL_GUIDE.map(tool => (
-              <div key={tool.title} className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-2">
-                <div className="text-xs font-semibold text-gray-800 dark:text-gray-200">{tool.title}</div>
-                <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">{tool.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="flex-1 min-h-0 bg-white dark:bg-gray-900">
-        {orgTabId ? (
-          <ChatArea onNewChat={handleOrgNewChat} tabId={orgTabId} hideHeader compact />
-        ) : (
-          <div className="h-full flex items-center justify-center">
-            <Loader2 className="w-5 h-5 animate-spin text-indigo-500" />
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // Full page view
 export const WorkflowsOverviewPage: React.FC = () => {
   const { rows, loading, loadData } = useWorkflowRows()
@@ -833,7 +692,6 @@ export const WorkflowsOverviewPage: React.FC = () => {
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const popups = usePopupState()
   const [activeTab, setActiveTab] = useState<'workflows' | 'employees'>('employees')
-  const [orgChatMinimized, setOrgChatMinimized] = useState(false)
 
   useEffect(() => { loadData() }, [loadData])
 
@@ -845,48 +703,39 @@ export const WorkflowsOverviewPage: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col bg-white dark:bg-gray-900">
-      <div className="flex-1 min-h-0 flex flex-col xl:flex-row">
-        <OrganizationChatPanel
-          minimized={orgChatMinimized}
-          onToggleMinimized={() => setOrgChatMinimized(prev => !prev)}
-        />
-
-        <div className="h-full min-h-0 flex-1 min-w-0 flex flex-col">
-          <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700">
-            <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 w-fit">
-              <button
-                onClick={() => setActiveTab('workflows')}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                  activeTab === 'workflows'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400'
-                }`}
-              >
-                Runs
-              </button>
-              <button
-                onClick={() => setActiveTab('employees')}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                  activeTab === 'employees'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
-                    : 'text-gray-500 dark:text-gray-400'
-                }`}
-              >
-                Employees
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-auto">
-            {activeTab === 'workflows' ? (
-              <WorkflowTable rows={rows} loading={loading} onOpenWorkflow={handleOpenWorkflow} onOpenLogs={popups.handleOpenLogs} onOpenEval={popups.handleOpenEval} onOpenCost={popups.handleOpenCost} />
-            ) : (
-              <div className="p-6">
-                <EmployeeDashboard />
-              </div>
-            )}
-          </div>
+      <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 w-fit">
+          <button
+            onClick={() => setActiveTab('workflows')}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+              activeTab === 'workflows'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                : 'text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            Runs
+          </button>
+          <button
+            onClick={() => setActiveTab('employees')}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+              activeTab === 'employees'
+                ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm'
+                : 'text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            Employees
+          </button>
         </div>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-auto">
+        {activeTab === 'workflows' ? (
+          <WorkflowTable rows={rows} loading={loading} onOpenWorkflow={handleOpenWorkflow} onOpenLogs={popups.handleOpenLogs} onOpenEval={popups.handleOpenEval} onOpenCost={popups.handleOpenCost} />
+        ) : (
+          <div className="p-6">
+            <EmployeeDashboard />
+          </div>
+        )}
       </div>
       <PopupGroup p={popups} />
     </div>

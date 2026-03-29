@@ -1374,11 +1374,52 @@ export const agentApi = {
     await api.delete(`/api/employees/${id}`)
   },
 
-  assignWorkflowEmployee: async (presetQueryId: string, employeeId: string | null): Promise<void> => {
+  assignWorkflowEmployee: async (workspacePath: string, employeeId: string | null): Promise<void> => {
     await api.post('/api/employees/assign-workflow', {
-      preset_query_id: presetQueryId,
+      workspace_path: workspacePath,
       employee_id: employeeId,
     })
+  },
+
+  // --- Workflow Manifest API (file-backed workflow definitions) ---
+
+  listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
+    const response = await api.get('/api/workflows/manifests')
+    return response.data
+  },
+
+  getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {
+    const response = await api.get('/api/workflows/manifest', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
+    const response = await api.post('/api/workflows/manifest', request)
+    return response.data
+  },
+
+  updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
+    const response = await api.put('/api/workflows/manifest', request)
+    return response.data
+  },
+
+  deleteWorkflowManifest: async (workspacePath: string) => {
+    const response = await api.delete('/api/workflows/manifest', {
+      params: { workspace_path: workspacePath }
+    })
+    return response.data
+  },
+
+  duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
+    const response = await api.post('/api/workflows/manifest/duplicate', request)
+    return response.data
+  },
+
+  migrateWorkflowsToManifests: async (overwrite: boolean = false): Promise<MigrateWorkflowsResponse> => {
+    const response = await api.post(`/api/workflows/migrate?overwrite=${overwrite}`)
+    return response.data
   },
 
 }
@@ -1517,47 +1558,6 @@ export const sessionShareApi = {
   // Get a shared session (no auth required)
   getSharedSession: async (shareToken: string): Promise<SharedSessionResponse> => {
     const response = await api.get(`/api/shared/${shareToken}`)
-    return response.data
-  },
-
-  // --- Workflow Manifest API (file-backed workflow definitions) ---
-
-  listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {
-    const response = await api.get('/api/workflows/manifests')
-    return response.data
-  },
-
-  getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {
-    const response = await api.get('/api/workflows/manifest', {
-      params: { workspace_path: workspacePath }
-    })
-    return response.data
-  },
-
-  createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
-    const response = await api.post('/api/workflows/manifest', request)
-    return response.data
-  },
-
-  updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
-    const response = await api.put('/api/workflows/manifest', request)
-    return response.data
-  },
-
-  deleteWorkflowManifest: async (workspacePath: string) => {
-    const response = await api.delete('/api/workflows/manifest', {
-      params: { workspace_path: workspacePath }
-    })
-    return response.data
-  },
-
-  duplicateWorkflowManifest: async (request: DuplicateWorkflowManifestRequest) => {
-    const response = await api.post('/api/workflows/manifest/duplicate', request)
-    return response.data
-  },
-
-  migrateWorkflowsToManifests: async (overwrite: boolean = false): Promise<MigrateWorkflowsResponse> => {
-    const response = await api.post(`/api/workflows/migrate?overwrite=${overwrite}`)
     return response.data
   },
 }

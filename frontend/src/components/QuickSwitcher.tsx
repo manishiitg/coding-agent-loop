@@ -46,7 +46,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const isWorkflowMode = selectedModeCategory === 'workflow'
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
-  const activeTabId = useChatStore(state => state.activeTabId)
+  const activeSessionId = useChatStore(state => {
+    const activeTabId = state.activeTabId
+    return activeTabId ? state.chatTabs[activeTabId]?.sessionId || null : null
+  })
 
   // Track Shift key state to show "minimize" hint on selected item
   const [shiftHeld, setShiftHeld] = useState(false)
@@ -65,6 +68,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   // Reset state on open
   useEffect(() => {
     if (isOpen) {
+      let cancelled = false
       setQuery('')
       setSelectedIndex(0)
       setTimeout(() => searchInputRef.current?.focus(), 50)
@@ -72,11 +76,32 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       // Load chat history for non-workflow modes
       if (!isWorkflowMode) {
         setIsLoadingChats(true)
-        const modeKey = 'multi-agent'
-        useChatStore.getState().getChatHistory(modeKey, true)
-          .then(sessions => setChatSessions(sessions))
-          .catch(err => console.error('[QuickSwitcher] Failed to load chat history:', err))
-          .finally(() => setIsLoadingChats(false))
+        const modeKey = selectedModeCategory || 'multi-agent'
+        ;(async () => {
+          try {
+            let sessions = await useChatStore.getState().getChatHistory(modeKey, true)
+            if (cancelled) return
+            setChatSessions(sessions)
+
+            // Ctrl+K is now the primary entry point for previous chats, so keep
+            // loading additional history pages while the switcher stays open.
+            while (!cancelled && useChatStore.getState().getChatHistoryHasMore()) {
+              sessions = await useChatStore.getState().loadMoreChatHistory(modeKey)
+              if (cancelled) return
+              setChatSessions(sessions)
+            }
+          } catch (err) {
+            console.error('[QuickSwitcher] Failed to load chat history:', err)
+          } finally {
+            if (!cancelled) {
+              setIsLoadingChats(false)
+            }
+          }
+        })()
+      }
+
+      return () => {
+        cancelled = true
       }
     }
   }, [isOpen, isWorkflowMode, selectedModeCategory])
@@ -132,11 +157,11 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           id: s.session_id,
           label: s.title || 'Untitled',
           subtitle: formatTime(s.last_activity || s.created_at),
-          isActive: false,
+          isActive: activeSessionId === s.session_id,
           session: s
         }))
     }
-  }, [isOpen, isWorkflowMode, activePresetId, chatSessions, selectedModeCategory])
+  }, [isOpen, isWorkflowMode, activePresetId, chatSessions, selectedModeCategory, activeSessionId])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
@@ -238,10 +263,10 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   if (!isOpen) return null
 
-  const placeholder = isWorkflowMode ? 'Switch workflow...' : 'Search conversations...'
+  const placeholder = isWorkflowMode ? 'Switch workflow...' : 'Search previous chats...'
   const emptyText = isWorkflowMode
     ? (query ? 'No matching workflows' : 'No workflow presets available')
-    : (query ? 'No matching conversations' : 'No previous conversations')
+    : (query ? 'No matching chats' : 'No previous chats')
   const Icon = isWorkflowMode ? Layers : MessageSquare
 
   return (

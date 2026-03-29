@@ -21,6 +21,7 @@ import type { CustomPreset } from '../types/preset'
 import { WORKSPACE_TOOLS } from '../utils/customToolNames'
 import { restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
+import { summarizeEventForDebug } from '../utils/eventOrdering'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
 import {
@@ -29,7 +30,6 @@ import {
   buildQueryRequestPayload,
   resolveOrCreateTab,
   createUserMessageEvent,
-  createConversationResumedEvent,
   validateExecutionGroups,
   isChatCompatiblePhase,
 } from '../utils/chatSubmitHelpers'
@@ -510,7 +510,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // are implicitly running but not interesting to display.
   const hasRunningBgAgents = activeTab?.hasRunningBgAgents ?? false
   const activeAgents = useMemo(() => {
-    if ((!isStreaming && !hasRunningBgAgents) || tabEvents.length === 0) return []
+    if (tabEvents.length === 0) return []
 
     // Track running agents by correlation ID with depth (based on how many are already running when each starts)
     const running = new Map<string, { name: string, agentType: string, type: 'agent' | 'delegation', depth: number }>()
@@ -523,6 +523,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const innerCorrelationId = (innerData?.correlation_id ?? '') as string
       const outerDelegationId = (eventRecord.delegation_id ?? agentEvent?.delegation_id ?? '') as string
       const innerDelegationId = (innerData?.delegation_id ?? '') as string
+      const outerParentId = (eventRecord.parent_id ?? agentEvent?.parent_id ?? '') as string
+      const innerParentId = (innerData?.parent_id ?? '') as string
 
       if (event.type === 'orchestrator_agent_start') {
         const corrId = outerCorrelationId || innerCorrelationId
@@ -549,7 +551,30 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             running.set(corrId, { name, agentType, type: 'agent', depth })
           }
         }
+      } else if (event.type === 'agent_start') {
+        const corrId = outerCorrelationId || innerCorrelationId
+        const agentType = (innerData?.agent_type ?? agentEvent?.agent_type ?? '') as string
+        const parentId = outerParentId || innerParentId
+        const looksNested = !!parentId || corrId.startsWith('delegation-')
+        const name = (
+          innerData?.agent_name ??
+          agentEvent?.agent_name ??
+          innerData?.name ??
+          agentEvent?.name ??
+          agentType ??
+          'Agent'
+        ) as string
+
+        // Skip the top-level simple chat agent; we only want the background/sub-agent activity
+        // that mirrors the workflow builder chat indicator.
+        if (corrId && !running.has(corrId) && (looksNested || agentType !== 'simple')) {
+          const depth = running.size
+          running.set(corrId, { name, agentType, type: 'agent', depth })
+        }
       } else if (event.type === 'orchestrator_agent_end' || event.type === 'orchestrator_agent_error') {
+        const corrId = outerCorrelationId || innerCorrelationId
+        if (corrId) running.delete(corrId)
+      } else if (event.type === 'agent_end' || event.type === 'agent_error') {
         const corrId = outerCorrelationId || innerCorrelationId
         if (corrId) running.delete(corrId)
       } else if (event.type === 'delegation_start') {
@@ -560,6 +585,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const depth = running.size
           running.set(delegationId, { name: typeof name === 'string' ? name : 'Sub-agent', agentType: '', type: 'delegation', depth })
         }
+      } else if (event.type === 'background_agent_started') {
+        const fields = (innerData?.fields as Record<string, unknown> | undefined) || innerData || agentEvent
+        const agentId = (fields?.agent_id ?? '') as string
+        const name = (fields?.name ?? agentEvent?.name ?? 'Background agent') as string
+        if (agentId && !running.has(agentId)) {
+          const depth = running.size
+          running.set(agentId, { name, agentType: 'background', type: 'agent', depth })
+        }
+      } else if (event.type === 'background_agent_completed' || event.type === 'background_agent_terminated') {
+        const fields = (innerData?.fields as Record<string, unknown> | undefined) || innerData || agentEvent
+        const agentId = (fields?.agent_id ?? '') as string
+        if (agentId) running.delete(agentId)
       } else if (event.type === 'delegation_end') {
         const delegationId = outerDelegationId || innerDelegationId || outerCorrelationId || innerCorrelationId
         if (delegationId) running.delete(delegationId)
@@ -568,7 +605,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     if (running.size === 0) return []
     return Array.from(running.values())
-  }, [isStreaming, hasRunningBgAgents, tabEvents])
+  }, [tabEvents])
 
   // --- Render tracking (filter by [Render] in console) ---
   useRenderLogger('ChatArea', {
@@ -1067,6 +1104,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const hasBgAgents = response.has_running_background_agents ?? false
       const isSyntheticTurn = response.is_synthetic_turn ?? false
       const canSteer = response.can_steer ?? false
+      const isForegroundStreaming = sessionStatus === 'running' && (!hasBgAgents || isSyntheticTurn || canSteer)
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         if (hasBgAgents) {
           chatStore.setTabCompleted(tab.tabId, false)
@@ -1078,7 +1116,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         chatStore.clearStreamingText(actualSessionId)
       } else if (sessionStatus === 'running') {
         chatStore.setTabCompleted(tab.tabId, false)
-        chatStore.setTabStreaming(tab.tabId, true)
+        chatStore.setTabStreaming(tab.tabId, isForegroundStreaming)
       } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
         chatStore.setTabCompleted(tab.tabId, false)
         chatStore.setTabStreaming(tab.tabId, false)
@@ -1088,13 +1126,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       setTabSyntheticTurn(tab.tabId, isSyntheticTurn)
       setTabCanSteer(tab.tabId, canSteer)
     } else if (!tab && sessionStatus) {
+      const hasBgAgents = response.has_running_background_agents ?? false
+      const isSyntheticTurn = response.is_synthetic_turn ?? false
+      const canSteer = response.can_steer ?? false
+      const isForegroundStreaming = sessionStatus === 'running' && (!hasBgAgents || isSyntheticTurn || canSteer)
       if (sessionStatus === 'completed' || sessionStatus === 'error') {
         setIsStreaming(false)
         setIsCompleted(true)
         setHasActiveChat(false)
         chatStore.clearStreamingText(actualSessionId)
       } else if (sessionStatus === 'running') {
-        setIsStreaming(true)
+        setIsStreaming(isForegroundStreaming)
         setIsCompleted(false)
       } else if (sessionStatus === 'stopped' || sessionStatus === 'inactive') {
         setIsStreaming(false)
@@ -1503,6 +1545,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // workflow would be permanently lost. UI side effects (workspace refresh, canvas updates,
     // auto-notifications) are still gated on isActivePresetTab above.
     if (tab && newEvents.length > 0) {
+      console.log('[EVENT_APPEND]', {
+        sessionId: actualSessionId,
+        count: newEvents.length,
+        events: newEvents.map(summarizeEventForDebug),
+      })
       const finalTab = chatStore.getTab(tab.tabId)
       if (!finalTab) return
       addTabEvents(actualSessionId, newEvents)
@@ -2178,17 +2225,26 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       useAppStore.getState().setCurrentQuery(queryWithContext)
     }
 
-    // Only inject a conversation_resumed separator when the tab was restored from history
-    // (e.g., page refresh, sidebar click). Don't inject on normal multi-turn conversations
-    // where the agent just finished a turn — that would hide the ongoing conversation.
-    const existingEvents = chatStore.getTabEvents(tabSessionId)
-    const eventsToAdd: PollingEvent[] = []
-    const isRestoredTab = currentTab?.metadata?.isRestored === true
-    if (isRestoredTab && existingEvents.length > 0 && !existingEvents.some(e => e.type === 'conversation_resumed')) {
-      eventsToAdd.push(createConversationResumedEvent(existingEvents.length))
-    }
-    eventsToAdd.push(createUserMessageEvent(query.trim()))
-    chatStore.addTabEvents(tabSessionId, eventsToAdd)
+    // Restored chats should resume naturally in the same session.
+    // Only seed an optimistic event_index when the restored history already has backend
+    // indices. Mixing "history without indices" and "optimistic message with index 0"
+    // creates inconsistent ordering metadata and can make the first follow-up jump around.
+    const existingSessionEvents = chatStore.getTabEvents(tabSessionId)
+    const indexedEvents = existingSessionEvents.filter((event) => typeof event.event_index === 'number')
+    const nextEventIndex = indexedEvents.length > 0
+      ? indexedEvents.reduce((maxIndex, event) => Math.max(maxIndex, event.event_index as number), -1) + 1
+      : undefined
+    const latestExistingTimestampMs = existingSessionEvents.reduce((latest, event) => {
+      const ts = getEventTimestampMs(event)
+      return ts === null ? latest : Math.max(latest, ts)
+    }, 0)
+    const optimisticTimestampMs = Math.max(Date.now(), latestExistingTimestampMs + 1)
+    const optimisticUserMessage = createUserMessageEvent(
+      query.trim(),
+      nextEventIndex,
+      new Date(optimisticTimestampMs).toISOString()
+    )
+    chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
 
     // Enable auto-scroll and scroll to bottom
     chatStore.setAutoScroll(true)

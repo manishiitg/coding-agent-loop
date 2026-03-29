@@ -7,6 +7,7 @@ import { MAX_EVENTS_TO_PROCESS, MAX_CHILD_EVENTS_PER_DELEGATION } from '../../co
 import { NEVER_DISPLAY_EVENTS, HIDDEN_EVENTS, SUMMARY_MODE_EVENTS } from './eventModeUtils';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { useRenderLogger, useMemoLogger } from '../../utils/renderLogger';
+import { compareEventsChronologically, summarizeEventForDebug } from '../../utils/eventOrdering';
 import './EventHierarchy.css';
 
 // Event types that get grouped and collapsed together as "tool calls".
@@ -193,18 +194,15 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
       result.push(event);
     }
 
-    result.sort((a, b) => {
-      const timeA = a.timestamp ? (Date.parse(a.timestamp) || 0) : 0;
-      const timeB = b.timestamp ? (Date.parse(b.timestamp) || 0) : 0;
-      return timeA - timeB;
-    });
+    const sourceOrder = new Map<string, number>()
+    result.forEach((event, index) => {
+      sourceOrder.set(event.id, index)
+    })
+    result.sort((a, b) => compareEventsChronologically(a, b, sourceOrder));
 
-    // When a conversation_resumed separator exists, drop all events before AND including it.
-    // This hides old restored events so the user sees only the new conversation.
-    const resumeIdx = result.findIndex(e => e.type === 'conversation_resumed');
-    if (resumeIdx >= 0) {
-      result.splice(0, resumeIdx + 1);
-    }
+    // Keep restored conversation history in the timeline.
+    // The synthetic conversation_resumed event acts as a visual divider between
+    // the restored history and the new follow-up turn, instead of hiding prior events.
 
     // REF-STABILITY: Return previous array ref when output hasn't changed,
     // preventing downstream cascade (eventTree → flattenedItems → Virtuoso).
@@ -277,6 +275,18 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     capped.reverse();
     return returnStable(capped);
   }, [events, loadedOlderEvents, viewMode]);
+
+  useEffect(() => {
+    const interesting = displayEvents.filter(event =>
+      event.type === 'user_message' ||
+      event.type === 'tool_call_start' ||
+      event.type === 'tool_call_end' ||
+      event.type === 'delegation_start' ||
+      event.type === 'orchestrator_agent_start' ||
+      event.type === 'background_agent_started'
+    )
+    console.log('[RENDER_BOUNDARY]', interesting.slice(-20).map(summarizeEventForDebug))
+  }, [displayEvents]);
 
   // Tool call grouping is done in flattenedItems (after tree building + flattening),
   // so sub-agent events — which are excluded from the flat list at delegation_start nodes —
@@ -482,9 +492,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
     // When an intermediate parent within a delegation is evicted, its children become orphans.
     // Instead of showing them as root events in the main chat, re-parent them to delegation_start.
     const delegationIdToEventId = new Map<string, string>();
-    // Build agent session correlation_id -> orchestrator_agent_start event ID map.
-    // This enables grouping tool calls from parallel agents under their respective agent card.
-    const agentSessionToEventId = new Map<string, string>();
+    // Build precise event membership for orchestrator agent sessions.
+    // Important: correlation_id alone is not enough when a restored chat resumes later.
+    // New tool calls can reuse a correlation_id from an older agent card, which would
+    // incorrectly render them up in old history. Only events that actually fall inside
+    // a specific orchestrator_agent_start/end span should be grouped under that card.
+    const agentSessionEventToStartId = new Map<string, string>();
     for (const event of filteredEvents) {
       if (event.type === 'delegation_start' && event.data && typeof event.data === 'object') {
         const data = event.data as Record<string, unknown>;
@@ -495,16 +508,17 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
           delegationIdToEventId.set(delegationId, event.id);
         }
       }
-      // Map orchestrator_agent_start correlation_id to its event ID
-      if (event.type === 'orchestrator_agent_start' && event.data && typeof event.data === 'object') {
-        const data = event.data as Record<string, unknown>;
-        const innerData = (data.data && typeof data.data === 'object') ? data.data as Record<string, unknown> : data;
-        const cid = (innerData?.correlation_id ?? data.correlation_id) as string | undefined;
-        if (cid) {
-          agentSessionToEventId.set(cid, event.id);
-        }
-      }
     }
+
+    findEventsBetweenStartEnd.forEach((eventIds, sessionKey) => {
+      const startEvent = filteredEvents.find(event => getAgentSessionKey(event) === sessionKey && event.type === 'orchestrator_agent_start')
+      if (!startEvent) return
+      eventIds.forEach((eventId) => {
+        if (eventId !== startEvent.id) {
+          agentSessionEventToStartId.set(eventId, startEvent.id)
+        }
+      })
+    })
 
     // Helper: extract correlation_id from event data
     const getCorrelationId = (event: PollingEvent): string | undefined => {
@@ -537,14 +551,12 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         }
       }
 
-      // Parent events under their orchestrator_agent_start via correlation_id.
-      // This groups tool calls from parallel agents under their respective agent card.
-      // Exclude orchestrator_agent_end — it should remain visible as a standalone event.
+      // Parent only events that are explicitly inside an orchestrator agent session span.
+      // Using correlation_id alone is too broad for restored/resumed chats because later
+      // events can otherwise get sucked into an old agent card near the top of history.
       if (!parentId || !filteredEventIds.has(parentId)) {
-        const cid = getCorrelationId(event);
-        if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)
-            && event.type !== 'orchestrator_agent_end') {
-          const agentStartId = agentSessionToEventId.get(cid)!;
+        const agentStartId = agentSessionEventToStartId.get(event.id)
+        if (agentStartId && event.type !== 'orchestrator_agent_end') {
           // Don't parent the agent_start under itself
           if (event.id !== agentStartId) {
             parentId = agentStartId;
@@ -579,11 +591,10 @@ export const EventHierarchy: React.FC<EventHierarchyProps> = React.memo(({
         if (delegStartId && event.id !== delegStartId) return false;
       }
 
-      // Never promote agent session child events to root — they belong inside agent cards.
+      // Never promote true agent-session child events to root — they belong inside agent cards.
       // orchestrator_agent_end is excluded: it should show at the top level after the agent card.
-      if (cid && !cid.startsWith('delegation-') && agentSessionToEventId.has(cid)
-          && event.type !== 'orchestrator_agent_end') {
-        const agentStartId = agentSessionToEventId.get(cid)!;
+      const agentStartId = agentSessionEventToStartId.get(event.id)
+      if (agentStartId && event.type !== 'orchestrator_agent_end') {
         if (event.id !== agentStartId) return false; // Child of agent session, not root
       }
 

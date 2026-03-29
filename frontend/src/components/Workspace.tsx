@@ -329,10 +329,10 @@ export default function Workspace({
       // Just adjust filepaths to show workflow folder as root
       result = adjustFilePathsRecursive(result, effectiveWorkflowFolderPath)
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Chats/, Downloads/, skills/ and subagents/ folders
+      // Multi Agent Chat mode: show Chats/, Downloads/, skills/, subagents/ and memories/ folders
       result = filesToProcess.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories'
       })
     }
 
@@ -638,10 +638,10 @@ export default function Workspace({
         result = result.map(node => pruneRunsToIteration(node, effectiveDisplayedIteration))
       }
     } else if (selectedModeCategory === 'multi-agent') {
-      // Multi Agent Chat mode: show Chats/, Downloads/, skills/ and subagents/ folders
+      // Multi Agent Chat mode: show Chats/, Downloads/, skills/, subagents/ and memories/ folders
       result = files.filter(f => {
         const topFolder = f.filepath.split('/')[0]
-        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents'
+        return topFolder === 'Chats' || topFolder === 'Downloads' || topFolder === 'skills' || topFolder === 'subagents' || topFolder === 'memories'
       })
     }
 
